@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-07 (C001 closure)
+Last planning reconciliation: 2026-10-07 (post-Phase-6 corrective registration)
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -63,7 +63,7 @@ Runtime dependency adoption remains evidence-driven.
 | Subsystem | Status | Roadmap | Current milestone |
 |---|---|---|---|
 | Linux network-control foundation | closed | `plans/subsystems/network-control-roadmap.md` + `plans/subsystems/network-control-post-foundation-reconciliation-addendum.md` | M001–M005 and C001 closed |
-| Durable state/restart reconciliation | closed | `plans/subsystems/durable-state-restart-reconciliation-roadmap.md` | Phase 6 complete; M001–M004 closed |
+| Durable state/restart reconciliation | closed / corrective active | `plans/subsystems/durable-state-restart-reconciliation-roadmap.md` + `plans/subsystems/durable-state-post-phase6-reconciliation-addendum.md` | Phase 6 complete; M001–M004 closed; post-Phase-6 C001 ready |
 | Management service/auth/UI | ready to plan | not yet written | Phase 2 is closed; typed netd protocol and network foundation are stable |
 | Distribution/install/update | proposed | not yet written | begins after service/state layout stabilizes |
 
@@ -71,11 +71,15 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 ## 5. Ready and active implementation plans
 
-None. Phase 6 closed with durable-state M004, and Phase 7 (management service, auth, HTTP/API/UI) is unblocked but has no implementation plan yet. The Phase 7 plans must be written against the now-stable contracts before anything can be promoted.
+| Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
+|---|---|---|---|---|
+| Durable-state post-Phase-6 reconciliation | C001 current-state reconciliation + missing disable-path evidence + pre-Phase-7 boundary cleanup | **ready** | `plans/implementation/durable-state/c001-post-phase6-reconciliation-and-pre-phase7-hardening.md` | Phase 6 M001–M004 strict closure |
+
+C001 is the sole implementation-ready plan. Phase 7 is still unblocked for research/planning, but production implementation should wait until this corrective closes so it consumes the reconciled management/state boundary and the remaining rootful evidence debt is retired.
 
 ## 6. Blocked implementation plans
 
-No implementation plan is currently blocked. Phase 6 is fully planned and M001–M004 and C001 are closed. Phase 7 has no implementation plan yet and must be written before it can be promoted. Phase 8 remains blocked until Phase 7 closes. Revalidate exact crate APIs and repository paths at each promotion.
+No Phase 7 implementation plan exists yet. Phase 7 may be researched and planned while C001 runs, but its first implementation milestone should remain blocked on post-Phase-6 C001 closure. Phase 8 remains blocked until Phase 7 closes.
 
 ## 7. Recently closed work
 
@@ -157,13 +161,13 @@ Durable-state M004 is closed at `772203d` and **Phase 6 is closed with it**. Onl
 
 Phase 6 is complete under ADR-002 and `plans/subsystems/durable-state-restart-reconciliation-roadmap.md`.
 
-Canonical documents should remain stable during Phase 7 planning unless a material contradiction is discovered.
+Canonical documents remain stable except for the bounded current-state reconciliation explicitly owned by post-Phase-6 C001. Phase 7 research/planning may proceed in parallel, but implementation should wait for C001 closure.
 
 If later implementation evidence reveals a material architecture contradiction, record it and revise the appropriate plan/ADR deliberately rather than silently altering the contract.
 
 ## 13. Closure handoff
 
-M001–M005, C001, and durable-state M001–M004 are closed and their strict evidence is recorded. **Phase 6 is closed.** Phase 7 is unblocked for planning and implementation; it has no implementation plan yet. Phase 8 remains blocked until Phase 7 closes.
+M001–M005, network-control C001, and durable-state M001–M004 are closed and their strict evidence is recorded. **Phase 6 remains closed.** Post-Phase-6 durable-state C001 is now the sole ready implementation plan. Phase 7 is unblocked for research/planning, but its production implementation should begin after C001 closes. Phase 8 remains blocked until Phase 7 closes.
 
 At each future closure, update:
 
