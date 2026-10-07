@@ -1,6 +1,6 @@
 # Durable State Post-Phase-6 Reconciliation Addendum
 
-Status: active; C001 ready
+Status: closed; C001 strictly closed at `635a130`
 
 Canonical references:
 
