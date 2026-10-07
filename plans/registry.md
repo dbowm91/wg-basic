@@ -17,6 +17,7 @@ This file is the compact control surface for active wg-basic planning. Detailed 
 | `plans/adr/001-linux-native-control-plane.md` | accepted Linux-native/privilege-separated architecture |
 | `plans/adr/002-durable-state-generations-and-ownership.md` | accepted Phase 6 persistence/generation/ownership architecture |
 | `plans/adr/003-management-http-auth-and-worker-boundary.md` | accepted Phase 7 HTTP/auth/worker security architecture |
+| `plans/adr/004-product-management-enrollment-and-api-semantics.md` | accepted Phase 8 product mutation/enrollment/API architecture |
 
 Authority order for implementation handoff:
 
@@ -66,7 +67,8 @@ Runtime dependency adoption remains evidence-driven.
 | Linux network-control foundation | closed | `plans/subsystems/network-control-roadmap.md` + `plans/subsystems/network-control-post-foundation-reconciliation-addendum.md` | M001–M005 and C001 closed |
 | Durable state/restart reconciliation | closed | `plans/subsystems/durable-state-restart-reconciliation-roadmap.md` + `plans/subsystems/durable-state-post-phase6-reconciliation-addendum.md` | Phase 6 complete; M001–M004 and post-Phase-6 C001 closed |
 | Management service/auth/security substrate | closed / corrective active | `plans/subsystems/management-service-security-roadmap.md` + `plans/subsystems/management-service-post-phase7-reconciliation-addendum.md` | M001–M004 closed; post-Phase-7 C001 ready |
-| Distribution/install/update | proposed | not yet written | begins after the Phase 7 service layout stabilizes |
+| Product management/enrollment/UI | planned | `plans/subsystems/product-management-enrollment-ui-roadmap.md` | M001 blocked on post-Phase-7 C001; M002–M005 ordered behind M001 |
+| Distribution/install/update | proposed | not yet written | Phase 10; blocked behind Phase 9 operational hardening |
 
 Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
 
@@ -78,7 +80,7 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 C001 is the sole implementation-ready plan. Phase 8 may be researched/planned in parallel, but its first production implementation milestone should remain blocked until C001 closes on a green current-head CI baseline.
 
-Phase 7 contributed no configuration-mutating route, and Phase 8 inherits four
+Phase 8 planning is complete under ADR-004 and `plans/subsystems/product-management-enrollment-ui-roadmap.md`. Phase 7 contributed no configuration-mutating route, and Phase 8 inherits four
 constraints from its closure rather than from any milestone document:
 
 * the M003 perimeter guards apply unchanged to the first configuration-mutating
@@ -92,7 +94,15 @@ constraints from its closure rather than from any milestone document:
 
 ## 6. Blocked implementation plans
 
-Phase 8 implementation plans are not yet written. Phase 8 research/planning is unblocked, but production implementation is temporarily gated on post-Phase-7 C001 closure so the product line begins from a green deterministic baseline.
+| Subsystem | Milestone | Status | Implementation plan | Hard blocker |
+|---|---|---|---|---|
+| Product management/enrollment/UI | M001 product model + schema v3 + generation-safe mutations | blocked | `plans/implementation/product-management/001-product-model-and-generation-safe-mutations.md` | post-Phase-7 C001 |
+| Product management/enrollment/UI | M002 authenticated product CRUD API | blocked | `plans/implementation/product-management/002-authenticated-product-crud-api.md` | Phase 8 M001 |
+| Product management/enrollment/UI | M003 export + QR + one-time enrollment | blocked | `plans/implementation/product-management/003-export-qr-and-one-time-enrollment.md` | Phase 8 M002 |
+| Product management/enrollment/UI | M004 live telemetry + audit surface | blocked | `plans/implementation/product-management/004-live-telemetry-and-audit-surface.md` | Phase 8 M003 |
+| Product management/enrollment/UI | M005 embedded product UI + Phase 8 qualification | blocked | `plans/implementation/product-management/005-embedded-product-ui-and-phase8-qualification.md` | Phase 8 M004 |
+
+Phase 8 is fully researched/planned under ADR-004. Only implementation is gated by the current corrective.
 
 ## 7. Recently closed work
 
@@ -207,6 +217,7 @@ At each future closure, update:
 - `plans/subsystems/network-control-roadmap.md` milestone table;
 - `plans/subsystems/durable-state-restart-reconciliation-roadmap.md` milestone table;
 - `plans/subsystems/management-service-security-roadmap.md` milestone table;
+- `plans/subsystems/product-management-enrollment-ui-roadmap.md` milestone table;
 - this registry;
 - current architecture/operator docs.
 
