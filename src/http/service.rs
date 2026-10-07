@@ -72,6 +72,14 @@ pub const SESSION_PATH: &str = "/api/v1/session";
 /// The authenticated health route.
 pub const API_HEALTH_PATH: &str = "/api/v1/health";
 
+/// The operator shell, and the only route that is not under `/api` or `/healthz`.
+///
+/// Unauthenticated on purpose: it has to be reachable for an operator to have
+/// something to type a password into. It is a login frame and a health readout,
+/// and it contains no appliance state — everything it shows comes from the two
+/// authenticated routes it calls.
+pub const SHELL_PATH: &str = "/";
+
 /// What a request target matched.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Route {
@@ -85,6 +93,10 @@ pub enum Route {
     Session,
     /// Authenticated management health.
     ApiHealth,
+    /// The embedded operator shell document.
+    Shell,
+    /// One embedded stylesheet or script, matched from a closed table.
+    Asset,
     /// A path this surface does not have.
     Unknown,
 }
@@ -105,7 +117,9 @@ impl Route {
     /// method here would set the precedent that methods are added implicitly.
     fn accepts(&self, method: &str) -> bool {
         match self {
-            Self::Healthz | Self::Session | Self::ApiHealth => method == "GET",
+            Self::Healthz | Self::Session | Self::ApiHealth | Self::Shell | Self::Asset => {
+                method == "GET"
+            }
             Self::Login | Self::Logout => method == "POST",
             Self::Unknown => false,
         }
@@ -132,6 +146,11 @@ pub fn route(path: &str) -> Route {
         LOGOUT_PATH => Route::Logout,
         SESSION_PATH => Route::Session,
         API_HEALTH_PATH => Route::ApiHealth,
+        SHELL_PATH => Route::Shell,
+        // An embedded asset is matched exactly by its own lookup, which is a
+        // closed table of three entries -- so there is no prefix rule here that
+        // could match more than it should.
+        path if super::assets::asset(path).is_some() => Route::Asset,
         _ => Route::Unknown,
     }
 }
@@ -200,7 +219,13 @@ impl ManagementService {
         // 6 and 7. Session, CSRF, and the handler.
         match matched {
             Route::Healthz => match self.api.worker_health().await {
-                Ok(health) => response::liveness(Liveness::from_health(&health)),
+                // Classified once, then projected down to two tokens. The
+                // reasons `Readiness` carries are not rendered here and have no
+                // path to this response -- only the operator's startup log and
+                // the authenticated route below can name them.
+                Ok(health) => response::liveness(Liveness::from_readiness(
+                    super::Readiness::from_health(&health),
+                )),
                 Err(error) => response_for_worker_error(error),
             },
             Route::Login => match self.api.login(head, body, peer).await {
@@ -234,9 +259,28 @@ impl ManagementService {
                 if self.api.authenticate(head).await.is_none() {
                     return refusal(RequestRejection::NotAuthenticated);
                 }
-                match self.api.worker_health().await {
-                    Ok(health) => self.api.health(&health),
+                match self.api.health().await {
+                    Ok(response) => response,
                     Err(error) => response_for_worker_error(error),
+                }
+            }
+            // The shell and its two assets. Unauthenticated, because a login
+            // frame nobody can reach is not a login frame -- and empty of
+            // appliance state, because everything it shows arrives from the
+            // authenticated routes it calls. Both still go out through the same
+            // single `seal`, so the security headers are not optional here.
+            Route::Shell | Route::Asset => {
+                match super::assets::response_body(head.target().path()) {
+                    Some(body) => response::build(
+                        super::assets::status(),
+                        super::assets::content_type(head.target().path()),
+                        body,
+                    ),
+                    // Unreachable: `route()` only returns `Shell`/`Asset` for a
+                    // path the inventory holds. Refused rather than panicked,
+                    // because a panic in a request handler is a denial of
+                    // service and a 404 here is indistinguishable from a typo.
+                    None => response::not_found(),
                 }
             }
             Route::Unknown => response::not_found(),
@@ -360,10 +404,22 @@ mod tests {
         assert_eq!(route("/api/v1/logout"), Route::Logout);
         assert_eq!(route("/api/v1/session"), Route::Session);
         assert_eq!(route("/api/v1/health"), Route::ApiHealth);
+        assert_eq!(route("/"), Route::Shell);
+        assert_eq!(route("/assets/app.css"), Route::Asset);
+        assert_eq!(route("/assets/app.js"), Route::Asset);
 
+        // Every one of these is a near miss rather than a typo fix. A surface
+        // that normalises its own paths has normalisation rules, and those are
+        // rules an attacker gets to probe.
         for target in [
-            "/",
+            "//",
             "",
+            "/index.html",
+            "/assets/",
+            "/assets/app.css/",
+            "/assets/app.css.map",
+            "/assets/app.css?v=2",
+            "/assets/../assets/app.css",
             "/healthz/",
             "/api/v1/",
             "/api/v1",
@@ -389,6 +445,8 @@ mod tests {
             Route::Logout,
             Route::Session,
             Route::ApiHealth,
+            Route::Shell,
+            Route::Asset,
             Route::Unknown,
         ] {
             assert!(!matched.accepts_body(), "{matched:?} must accept no body");

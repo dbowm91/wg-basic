@@ -51,6 +51,24 @@ impl ManagementHealth {
     }
 }
 
+/// What a live, read-only probe of the authorized backend observed.
+///
+/// Separate from [`ManagementHealth`] because the two answer different
+/// questions: `ManagementHealth::netd_reachable` is *recorded* evidence, this is
+/// an observation made now. Only the authenticated route renders this, so an
+/// unauthenticated caller cannot make the process dial the backend.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct BackendProbe {
+    /// Whether the backend answered a `Ping` just now.
+    pub answered: bool,
+    /// The service name it identified itself with, when it answered.
+    ///
+    /// A fixed protocol string, not attacker-controlled content: it comes from
+    /// netd's own dispatch, not from the request.
+    pub service: Option<String>,
+}
+
 /// Derives the projected convergence state from stored evidence.
 ///
 /// Evidence is stronger than a category: a recorded `Converged` disposition only

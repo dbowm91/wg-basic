@@ -1,9 +1,9 @@
 # Management HTTP boundary and the bounded worker
 
-This document describes **current implemented behaviour**. The embedded asset
-shell and the Phase 7 end-to-end qualification are described in
-[the management service roadmap](../plans/subsystems/management-service-security-roadmap.md)
-as a later milestone, not here.
+This document describes **current implemented behaviour**. Phase 7 is closed:
+the service lifecycle, the embedded asset shell, and the end-to-end and abuse
+qualification all landed in M004. What is still absent is stated plainly in
+[What Phase 8 still owns](#what-phase-8-still-owns).
 
 Architecture decisions behind this boundary are recorded in
 [ADR-003](../plans/adr/003-management-http-auth-and-worker-boundary.md).
@@ -12,20 +12,40 @@ Credentials and sessions are in
 
 ## What exists today
 
-`wg-basic serve` is the unprivileged management service role. It publishes five
-HTTP routes:
+`wg-basic serve` is the unprivileged management service role. It publishes eight
+HTTP routes: five API routes, one liveness probe, and the embedded operator shell.
 
-| Method | Path                | Auth    | CSRF     | Origin |
-| ------ | ------------------- | ------- | -------- | ------ |
-| `POST` | `/api/v1/login`     | none    | none     | exact  |
-| `POST` | `/api/v1/logout`    | session | required | exact  |
-| `GET`  | `/api/v1/session`   | session | none     | —      |
-| `GET`  | `/api/v1/health`    | session | none     | —      |
-| `GET`  | `/healthz`          | none    | none     | —      |
+| Method | Path                | Auth    | CSRF     | Origin | Body |
+| ------ | ------------------- | ------- | -------- | ------ | ---- |
+| `POST` | `/api/v1/login`     | none    | none     | exact  | JSON ≤ 4 KiB |
+| `POST` | `/api/v1/logout`    | session | required | exact  | none |
+| `GET`  | `/api/v1/session`   | session | none     | —      | none |
+| `GET`  | `/api/v1/health`    | session | none     | —      | none |
+| `GET`  | `/healthz`          | none    | none     | —      | none |
+| `GET`  | `/`                 | none    | none     | —      | none |
+| `GET`  | `/assets/app.css`   | none    | none     | —      | none |
+| `GET`  | `/assets/app.js`    | none    | none     | —      | none |
+
+Login is the only route that accepts a body. The three shell routes answer only
+`GET` and accept none, and are matched exactly from a closed three-entry table —
+there is no prefix rule, so `/assets/` and `/assets/app.css.map` are `404`.
 
 There is **no** peer, client, or interface route. Phase 8 owns those. M003's job
 was to close the perimeter *before* a configuration-mutating route exists to be
-abused through it.
+abused through it, and M004 kept it that way.
+
+## What Phase 8 still owns
+
+Nothing in this document implies product management exists. Specifically:
+
+* **No peer, client, or interface CRUD.** There is no route that creates,
+  modifies, or deletes anything. `/` is a login frame and a health readout.
+* **No enrollment flow.** The local administrator is provisioned by the CLI,
+  never through the browser surface.
+* **No direct TLS.** Phase 7 terminates none; the HTTPS story is a
+  TLS-terminating reverse proxy in front of a loopback listener.
+* **No multi-user or roles.** Exactly one local administrator, no groups, no
+  permissions model.
 
 `HEAD` is answered nowhere. A probe that cannot distinguish `HEAD` from `GET` is
 not this probe, and accepting a second method per route would set the precedent
@@ -47,8 +67,8 @@ src/http/                          src/management/
   ratelimit.rs   │
   response.rs    │
   session_cookie.rs
-  service.rs   ──┘
-  serve.rs
+  assets.rs    ──┤   readiness.rs │
+  service.rs   ──┘                 serve.rs
 ```
 
 * `src/http/` owns the wire protocol: configuration and limits, origin policy,
@@ -57,6 +77,13 @@ src/http/                          src/management/
   configuration values.
 * `src/management/worker.rs` owns the single OS thread that holds
   `ManagementRuntime`. It is the only way into management state.
+
+`src/http/assets.rs` embeds the operator shell at compile time with
+`include_str!`. There is no document root, no filesystem lookup at request time,
+no external origin, and no build step: the three files in `src/http/assets/` are
+the whole shell, 12,723 bytes in total. They need no inline script or style, so
+the `default-src 'self'` policy every other response already carries applies to
+them unchanged — the shell required no CSP concession, which was the point.
 
 HTTP code never opens the database and never contacts `netd`. A request handler
 reaching either would block a Tokio worker thread on synchronous disk I/O or on a
@@ -271,10 +298,63 @@ request: the request *was* answered. Serving it as `503` would conflate "the
 thing you asked about is unhealthy" with "this endpoint is unavailable", and
 would make a liveness probe restart a healthy listener.
 
-`/api/v1/health` renders the full safe `ManagementHealth` projection — identifiers,
-generations, categories — but only to a caller that has already proven a session.
-The projection itself has no receipt, error string, or key material field, so it
-cannot carry one.
+`/api/v1/health` renders two things, but only to a caller that has already proven
+a session:
+
+```json
+{
+  "health":  { "database_healthy": true, "netd_reachable": false,
+               "installation_id": "…", "current_desired_generation": 1,
+               "last_converged_generation": 1, "convergence": "converged",
+               "last_failure_category": null },
+  "backend": { "answered": true, "service": "wg-basic-netd" }
+}
+```
+
+`health` is the **record**: what stored evidence says. `backend` is one live,
+read-only `Ping` over the authorized socket — what the backend says *now*.
+
+Both are necessary, and neither subsumes the other. On a fresh installation that
+manages an interface, `netd_reachable` is `false` because no reconcile had been
+recorded when the snapshot was taken, while `backend.answered` is `true` because
+netd is up. Collapsing them would leave an operator unable to tell "the backend is
+down" from "nothing has been applied yet".
+
+The probe costs a socket round trip, which is exactly why only the authenticated
+route calls it. An unauthenticated caller must not be able to make this process
+dial the privileged backend — so `/healthz` never probes, which has the
+consequence, stated plainly: **`/healthz` reports the record and can be stale.**
+A backend that dies after the last successful reconcile is invisible to
+`/healthz` and visible immediately to `/api/v1/health`.
+
+Neither payload has a receipt, error string, or key-material field, so neither
+can carry one.
+
+## Readiness is one lossy projection
+
+`src/http/readiness.rs` holds the four states an operator has to tell apart, as
+one exhaustive decision rather than four ad-hoc booleans:
+
+| State                    | Meaning                                             | Listener |
+| ------------------------ | --------------------------------------------------- | -------- |
+| `Ready`                  | bound, answering, every observable dependency healthy | up     |
+| `Degraded { unhealthy }` | bound and answering, but named dependencies are not  | up      |
+| `Fatal { dependency }`   | the state could not be opened                        | never    |
+
+`public_token()` reduces all of that to `ok` or `degraded`, and those two words
+are literals in that module. Adding a dependency, or a reason, changes what the
+operator's log says and cannot change what an anonymous caller receives — which
+is the M003 carry-forward, enforced rather than merely intended.
+
+Startup and runtime deliberately answer different questions:
+
+* `Readiness::from_startup` asks *"did the mandatory startup work succeed?"*
+* `Readiness::from_health` asks *"is the appliance healthy right now?"*
+
+So a fresh install with nothing to apply and no netd listening is `Ready` at
+startup and `Degraded` on `/healthz`. That is not a contradiction: there was
+genuinely nothing to converge, and there is genuinely no evidence netd ever
+answered.
 
 ## Configured limits
 
@@ -330,21 +410,44 @@ unauthenticated HTTP response.
 
 ## Lifecycle and shutdown
 
-`wg-basic serve` runs in this order:
+`wg-basic serve` runs in this order, and the order is the contract — each step
+depends on the previous one having succeeded:
 
 1. validate the HTTP configuration and the origin policy — before any
    authority-bearing resource is opened, so a bad configuration cannot leave a
    half-started service holding the store;
 2. start the worker, which opens the store and attempts the startup reconcile;
 3. bind EggServe;
-4. report readiness to the log, including the effective exposure mode;
-5. serve;
-6. on Ctrl-C: stop accepting, drain in-flight requests under the grace period,
-   stop the worker, release the store, and exit.
+4. report readiness to the log, including the effective exposure mode and the
+   classified readiness;
+5. publish the startup snapshot to `run_publishing`'s callback, then serve;
+6. on a signal: stop accepting, drain in-flight requests under the grace period,
+7. stop the worker and join its thread, releasing the store,
+8. exit `0`.
+
+`run_publishing` exists so a supervisor — or a test that bound an ephemeral port
+— can act on the startup snapshot without waiting for shutdown. It is a
+parameter, not a global, so publishing readiness cannot be added for one
+deployment and forgotten for another.
 
 The worker is stopped and joined **unconditionally**, so a saturated queue during
 shutdown cannot leave the database open. A test proves this by reopening the
 store after the run returns.
+
+### Both roles stop on `SIGTERM`
+
+Both long-running roles handle `SIGINT` **and `SIGTERM`**/`SIGHUP`. Only `SIGINT`
+is what a terminal sends; a process supervisor sends `SIGTERM`, so a role that
+handled only `SIGINT` could not be stopped by one and had to be killed — which
+skipped steps 6 to 8 entirely. That was a real defect: `serve` exited on the
+signal with status `-1` and never drained. `tests/service_e2e.rs` and
+`tests/service_rootful_e2e.rs` now assert exit status `0` on `SIGTERM`, and an
+architecture guard pins the dependency feature that makes it work.
+
+`Shutdown` is an ordinary queue entry, so after a saturated burst it waits behind
+the backlog. Its *confirmation* can miss the five-second reply deadline; the
+thread is joined either way. The wait is bounded by the queue draining, not by
+the deadline.
 
 ## Command line
 

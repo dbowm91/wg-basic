@@ -8,7 +8,7 @@
 use super::{
     coordinator::ReconcileCoordinator,
     error::{classify_io, ManagementError, ProjectionFailure},
-    health::{convergence_state, netd_reachability, ManagementHealth},
+    health::{convergence_state, netd_reachability, BackendProbe, ManagementHealth},
 };
 use crate::{
     aggregate::{AggregateStatus, InstallationNetworkIntent},
@@ -240,6 +240,48 @@ impl ManagementRuntime {
             last_converged_generation: convergence.last_converged_generation,
             convergence: state,
             last_failure_category: category,
+        }
+    }
+
+    /// Asks the authorized netd whether it is answering *right now*.
+    ///
+    /// [`ManagementRuntime::health`] deliberately contacts nothing: it reports
+    /// what is recorded, which is cheap and safe to serve to an unauthenticated
+    /// `/healthz`. That is the right answer for a liveness probe and the wrong
+    /// answer for an operator, because a fresh installation with nothing applied
+    /// records no evidence at all and is indistinguishable from an installation
+    /// whose backend is down. Both report `netd_reachable: false`.
+    ///
+    /// This is the live half: one `Ping` over the authorized socket, carrying no
+    /// request that could mutate anything. It costs a socket round trip, which is
+    /// exactly why only the authenticated route calls it — an unauthenticated
+    /// caller must not be able to make this process dial the backend.
+    ///
+    /// Never fails as an error: the *answer* is "not answering", which is the
+    /// information an operator asked for. A panic would be the one thing a health
+    /// check must never do.
+    pub fn probe_backend(&self) -> BackendProbe {
+        // A request id that cannot collide with a reconcile's: those are
+        // generation numbers, and a probe is not one of them.
+        const PROBE_REQUEST_ID: u64 = u64::MAX;
+        let answer =
+            crate::protocol::request(&self.socket, RequestOperation::Ping, PROBE_REQUEST_ID);
+        match answer {
+            Ok(ResponseBody::Pong { service, .. }) => BackendProbe {
+                answered: true,
+                service: Some(service),
+            },
+            // Something answered, but not with a pong. The backend is *up* and
+            // behaving unexpectedly, which is a different fault from being down
+            // and an operator needs to be able to tell them apart.
+            Ok(_) => BackendProbe {
+                answered: false,
+                service: None,
+            },
+            Err(_) => BackendProbe {
+                answered: false,
+                service: None,
+            },
         }
     }
 }

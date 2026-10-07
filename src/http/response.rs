@@ -16,9 +16,12 @@ use eggserve_primitives::{Response, ResponseBody, StatusCode};
 
 /// The whole-body ceiling for a management response.
 ///
-/// Every literal in this module is far below it. The constant exists so the
-/// invariant is stated once and can be asserted, rather than assumed.
-pub const MAX_MANAGEMENT_BODY_BYTES: usize = 256;
+/// Every API literal in this module is far below it. The bound is the
+/// `assets::MAX_EMBEDDED_ASSET_BYTES_EACH` ceiling raised to a round number, so
+/// the embedded operator shell fits while nothing assembled at runtime can: no
+/// code path formats a value into a response body, so the only bodies that
+/// exist are the fixed literals and the compile-time assets.
+pub const MAX_MANAGEMENT_BODY_BYTES: usize = 16 * 1024;
 
 /// `text/plain` responses are never cached by a browser or an intermediary.
 ///
@@ -65,6 +68,11 @@ pub fn build(status: StatusCode, content_type: &'static str, body: ResponseBody)
 }
 
 /// The two-state liveness answer this surface publishes.
+///
+/// This is the *public* projection of [`Readiness`](crate::http::Readiness).
+/// It is a separate type on purpose: a route renders one of exactly two
+/// literals, so there is no way to reach the reasons that
+/// [`Readiness`](crate::http::Readiness) carries by formatting this type.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Liveness {
     /// The service is serving and its backing state is healthy.
@@ -94,14 +102,27 @@ impl Liveness {
 
     /// Classifies a management health snapshot without disclosing it.
     ///
-    /// Only the boolean outcome crosses this boundary. No installation ID,
-    /// generation, path, desired-state fact, or backend failure category is
-    /// consulted, because none of them may reach an unauthenticated caller.
+    /// The whole snapshot crosses into [`Readiness`](crate::http::Readiness)
+    /// first, so every reason is computed; only the resulting boolean crosses
+    /// this boundary. No installation ID, generation, path, desired-state fact,
+    /// or backend failure category is consulted, because none of them may reach
+    /// an unauthenticated caller.
     pub fn from_health(health: &crate::management::ManagementHealth) -> Self {
-        if health.is_healthy() {
-            Self::Ok
-        } else {
-            Self::Degraded
+        Self::from_readiness(crate::http::Readiness::from_health(health))
+    }
+
+    /// Projects a classified readiness onto the public two-token answer.
+    ///
+    /// [`Readiness::Fatal`](crate::http::Readiness::Fatal) is rendered as
+    /// `Degraded`, not `Ok`. It is unreachable here — a fatal state exits before
+    /// a listener exists — so which token it maps to is unobservable. It maps to
+    /// `Degraded` because if a future change ever made it reachable, the safe
+    /// direction to fail is the one that says "do not trust this", not the one
+    /// that reports a healthy appliance.
+    pub fn from_readiness(readiness: crate::http::Readiness) -> Self {
+        match readiness.public_token() {
+            Some("ok") => Self::Ok,
+            _ => Self::Degraded,
         }
     }
 }

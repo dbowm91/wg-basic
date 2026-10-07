@@ -140,3 +140,70 @@ sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo \
 `durable_restart` is a process-level fixture: it runs the real `wg-basic netd` binary and the real `wg-basic reconcile` management role as separate child processes against a temporary on-disk SQLite file, disposable namespaces, real RTNETLINK, and real nftables. It proves restart recovery rather than in-process reconstruction, so it depends on a built `wg-basic` executable and leaves its `netd` children to be reaped by the harness. CI runs these as the `durable-owner`, `durable-restart`, and `durable-backup` jobs.
 
 The `-E env ... CARGO_HOME=...` form exists because `sudo` resets `HOME`, and Cargo needs a writable home to resolve the toolchain and registry cache when the tests are run as root.
+
+## Phase 7 service suites
+
+Phase 7 added six unprivileged suites and one rootful fixture. The unprivileged
+ones need nothing but a loopback socket and run with the ordinary suite:
+
+| Suite                            | What it qualifies |
+| -------------------------------- | ----------------- |
+| `management_http`                | real EggServe over real TCP: routing, perimeter, security headers |
+| `authenticated_api`              | pure request policy: `Host`, `Origin`, `Sec-Fetch-*`, CSRF, cookie, limiter |
+| `auth_sessions`                  | real migration v1→v2, Argon2id cost, session persistence |
+| `architecture_guards`            | 43 static invariants over the shipped source |
+| `service_session_restart`        | §5: sessions across a real `serve` restart, over real cookies |
+| `service_resource_limits`        | §7: connection, in-flight, worker-queue, body, timeout, and shutdown saturation |
+| `service_e2e`                    | §6: real `admin`, `netd`, and `serve` child processes over a real socket |
+| `service_footprint`              | §9: footprint and latency on the release binary |
+
+```
+cargo test --locked
+cargo test --release --locked --test service_footprint -- --nocapture
+```
+
+`service_footprint` prints the figures — cold readiness, `/healthz` latency, login
+Argon2 latency, serve and netd RSS, idle CPU, shell size — and asserts only on
+bounds that are properties of the design. It asserts a *floor* on login latency,
+because a login that got faster than a millisecond would mean the Argon2id
+parameters had been weakened, which Phase 7 forbids outright.
+
+### The rootful service fixture
+
+```
+sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo \
+  cargo test --locked --features linux-integration --test service_rootful_e2e -- --test-threads=1
+```
+
+It starts a real `netd` inside a disposable network namespace and runs `serve` on
+the host against it over the shared socket path, then drives the management HTTP
+surface. Three cases qualify: that the surface reflects real network state in
+both directions (converged → `ok`, backend gone → `degraded`), that the
+management role survives its backend disappearing and picks it up again without a
+restart, and that no key material reaches any rendered response.
+
+`serve` runs on the host rather than inside the namespace because a namespace has
+its own loopback: a listener bound to `127.0.0.1` inside one is a different
+socket from `127.0.0.1` outside it. `ip netns exec` does not remount `/tmp`, so
+the netd socket is the same file on both sides and `serve` reaches the
+in-namespace backend over exactly the authorized Unix socket the unprivileged
+deployment uses.
+
+### What the abort/resource cases actually prove
+
+Every wait in these suites is a deadline that turns into a test failure, never a
+sleep. Where a case needs the server to give up on a misbehaving client, the test
+blocks on a *read* with its own timeout and asserts what the server did — a close
+or a `408` — so removing a bound fails a test instead of hanging CI.
+
+Two findings came out of writing them and are worth knowing before editing that
+code:
+
+* **The login limiter, not the worker queue, is the binding constraint over
+  HTTP.** The global budget is 20 and the queue is 32, and every non-login route
+  issues at most one fast command, so the queue cannot be filled through the
+  surface. The queue bound is therefore qualified directly at the `WorkerClient`,
+  where `Authenticate` is the only slow enough command to fill it.
+* **`Shutdown` is an ordinary queue entry.** After a saturated burst its
+  confirmation can miss the five-second reply deadline. The thread is joined
+  either way, so the database is always released; only the confirmation is late.

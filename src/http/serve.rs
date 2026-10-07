@@ -31,6 +31,7 @@
 use super::config::{HttpError, ManagementHttpConfig};
 use super::origin::{OriginConfigError, OriginPolicy};
 use super::ratelimit::{Bucket, LoginLimiter};
+use super::readiness::{Dependency, Readiness};
 use crate::management::{spawn, StartupReconcile, WorkerConfig, WorkerError};
 use eggserve_server::Server;
 use std::{future::Future, net::SocketAddr, path::PathBuf, sync::Arc};
@@ -198,6 +199,14 @@ pub struct ServeReport {
     pub reconcile: StartupReconcile,
     /// Whether the listener was reachable beyond loopback.
     pub off_host: bool,
+    /// The classified readiness at the moment the listener started serving.
+    ///
+    /// The one value an operator or a supervisor can read to tell a healthy
+    /// appliance from a listener that is up only so a fault can be diagnosed. It
+    /// is [`Readiness::Ready`] or [`Readiness::Degraded`] — never
+    /// [`Readiness::Fatal`], because a fatal state exits before this struct is
+    /// ever built.
+    pub readiness: Readiness,
 }
 
 /// Runs the management service until `shutdown` resolves.
@@ -209,15 +218,51 @@ pub async fn run(
     config: ServeConfig,
     shutdown: impl Future<Output = ()>,
 ) -> Result<ServeReport, ServeError> {
+    run_publishing(config, shutdown, |_| {}).await
+}
+
+/// Runs the management service, publishing the snapshot the moment it serves.
+///
+/// `serving` is called exactly once, after the listener is bound and the
+/// readiness line has been logged, with the same [`ServeReport`] the run will
+/// eventually return. Nothing in the report changes between that moment and the
+/// end of the run — it is a startup snapshot — so a supervisor (or a test that
+/// bound an ephemeral port) can act on it without waiting for shutdown.
+///
+/// It is a parameter rather than a global so that publishing readiness is not
+/// something a later edit can add for one deployment and forget for another.
+pub async fn run_publishing(
+    config: ServeConfig,
+    shutdown: impl Future<Output = ()>,
+    serving: impl FnOnce(&ServeReport),
+) -> Result<ServeReport, ServeError> {
     // 1. Validate before anything authority-bearing is opened.
     let runtime_config = config.http.runtime_config()?;
     let off_host = config.is_off_host_bind();
 
     // 2. The worker opens the store and attempts the startup reconcile. Both a
     //    failure here and a degraded outcome return here; only a degraded one
-    //    lets the run continue.
-    let worker = spawn(WorkerConfig::new(&config.state_path, &config.netd_socket))?;
+    //    lets the run continue. A state failure is the fatal case: the process
+    //    exits without ever binding, because there is no authoritative state to
+    //    administer and a live surface would be a lie.
+    let worker = match spawn(WorkerConfig::new(&config.state_path, &config.netd_socket)) {
+        Ok(worker) => worker,
+        Err(error) => {
+            // Reported before returning so an operator sees the *classified*
+            // reason, not only the underlying error. The reason reaches the log
+            // and nowhere else -- there is no listener to serve it from.
+            eprintln!(
+                "wg-basic serve {}",
+                Readiness::Fatal {
+                    dependency: Dependency::Database
+                }
+                .describe()
+            );
+            return Err(ServeError::State(error));
+        }
+    };
     let reconcile = worker.reconcile();
+    let startup_readiness = Readiness::from_startup(reconcile);
 
     // 3. Bind.
     let server = Server::builder().runtime(runtime_config).build()?;
@@ -237,11 +282,12 @@ pub async fn run(
     //    to see from the log of a headless install.
     eprintln!("wg-basic serve listening on http://{bound}");
     eprintln!("wg-basic serve {}", config.origin.describe());
+    eprintln!("wg-basic serve readiness: {}", startup_readiness.describe());
     eprintln!(
         "wg-basic serve startup reconciliation: {}",
         reconcile.as_str()
     );
-    if reconcile.is_degraded() {
+    if startup_readiness.is_degraded() {
         eprintln!(
             "wg-basic serve: the network is not converged; the management surface is up \
              so this can be diagnosed and fixed"
@@ -256,7 +302,15 @@ pub async fn run(
         );
     }
 
-    // 5. Serve until signalled, or until the runtime ends on its own.
+    // 5. Publish the startup snapshot, then serve until signalled — or until the
+    //    runtime ends on its own.
+    let report = ServeReport {
+        bound,
+        reconcile,
+        off_host,
+        readiness: startup_readiness,
+    };
+    serving(&report);
     let server_finished_first = tokio::select! {
         _ = shutdown => false,
         _ = completion.wait() => true,
@@ -273,11 +327,7 @@ pub async fn run(
     //    a database close always follows a successful bind.
     worker.stop().await?;
 
-    Ok(ServeReport {
-        bound,
-        reconcile,
-        off_host,
-    })
+    Ok(report)
 }
 
 /// Starts the service on a fresh multi-threaded Tokio runtime.
@@ -505,6 +555,24 @@ mod tests {
         assert!(report.bound.port() > 0);
         assert_eq!(report.reconcile, StartupReconcile::NothingToApply);
         assert!(!report.off_host);
+
+        // Two readiness classifications, answering two different questions, and
+        // both correct -- which is the point of keeping them separate.
+        //
+        // `report.readiness` is the *startup* classification: did the mandatory
+        // startup reconcile succeed? Here there was no interface to apply, so
+        // there was nothing to converge and nothing failed.
+        assert_eq!(report.readiness, Readiness::Ready);
+        assert!(report.readiness.is_serving());
+
+        // `/healthz` is the *live* classification, and on this same run it says
+        // `degraded`: there is no recorded evidence that netd ever answered. A
+        // fresh install is therefore "ready at startup, degraded at runtime",
+        // and the two answers cannot be reconciled into one boolean -- which is
+        // exactly why the surface projects a classification rather than a flag.
+        //
+        // Asserted in `tests/service_lifecycle.rs` against this same
+        // configuration, over a real socket, so the two are pinned together.
 
         // Proving the store was released is deliberately left to the integration
         // suite: it needs a real second `StateStore` open, and `src/http/` must
