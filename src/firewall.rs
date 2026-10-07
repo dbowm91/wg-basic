@@ -865,6 +865,22 @@ mod tests {
     }
 
     #[test]
+    fn backend_output_and_error_details_are_bounded_and_redacted() {
+        assert_eq!(
+            read_limited(&mut std::io::Cursor::new(b"oversized"), 4),
+            Err(FirewallError::ResourceLimitExceeded)
+        );
+        assert_eq!(
+            map_io_error(std::io::Error::from(std::io::ErrorKind::NotFound)),
+            FirewallError::Unsupported
+        );
+        assert_eq!(
+            FirewallError::BackendFailure.to_string(),
+            "nftables or forwarding backend failed"
+        );
+    }
+
+    #[test]
     fn planner_is_deterministic_and_refuses_unowned_table_collisions() {
         let (interface, policy) = fixture();
         let observation = FirewallObservation {
