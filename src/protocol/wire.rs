@@ -99,6 +99,10 @@ mod tests {
             r#"{"protocol_version":1,"request_id":1,"operation":"ping","unexpected":true}"#
         )
         .is_err());
+        assert!(serde_json::from_str::<RequestEnvelope>(
+            r#"{"protocol_version":1,"request_id":1,"operation":"ping","parameters":{"unexpected":true}}"#
+        )
+        .is_err());
         for operation in [
             "exec",
             "shell",
