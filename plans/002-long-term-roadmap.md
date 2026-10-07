@@ -264,7 +264,7 @@ Phase 7 deliberately stops before peer/client CRUD, QR/config export, and the fu
 
 ## 10. Phase 8 — Management API, UI, and enrollment
 
-Status: blocked on Phases 6–7.
+Status: unblocked for research/planning because Phases 6–7 are closed. Production implementation should begin after the bounded post-Phase-7 C001 corrective restores a green deterministic current-head baseline.
 
 Objective:
 
