@@ -159,6 +159,7 @@ struct TableObservation {
     rule_markers: BTreeSet<String>,
     chain_count: usize,
     rule_count: usize,
+    chain_names: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -248,6 +249,7 @@ impl FirewallService {
                     policy,
                     plan.desired_hash.as_deref().unwrap_or(""),
                     before.table.present,
+                    &before.table.chain_names,
                 ),
                 None => remove_table(),
             };
@@ -293,6 +295,14 @@ fn plan_firewall(
     observation: &FirewallObservation,
 ) -> Result<FirewallPlan, FirewallError> {
     if observation.table.present && !observation.table.owned {
+        return Err(FirewallError::TableOwnershipConflict);
+    }
+    if observation
+        .table
+        .chain_names
+        .iter()
+        .any(|name| name != "forward" && name != "postrouting")
+    {
         return Err(FirewallError::TableOwnershipConflict);
     }
     let mut actions = Vec::new();
@@ -415,6 +425,7 @@ fn observe_firewall() -> Result<FirewallObservation, FirewallError> {
                 rule_markers: BTreeSet::new(),
                 chain_count: 0,
                 rule_count: 0,
+                chain_names: BTreeSet::new(),
             },
         });
     };
@@ -428,6 +439,7 @@ fn observe_firewall() -> Result<FirewallObservation, FirewallError> {
                 rule_markers: BTreeSet::new(),
                 chain_count: 0,
                 rule_count: 0,
+                chain_names: BTreeSet::new(),
             },
         });
     }
@@ -437,10 +449,14 @@ fn observe_firewall() -> Result<FirewallObservation, FirewallError> {
     let mut markers = BTreeSet::new();
     let mut chain_count = 0;
     let mut rule_count = 0;
+    let mut chain_names = BTreeSet::new();
     if let Some(objects) = json.get("nftables").and_then(serde_json::Value::as_array) {
         for object in objects {
             if let Some(chain) = object.get("chain") {
                 chain_count += 1;
+                if let Some(name) = chain.get("name").and_then(serde_json::Value::as_str) {
+                    chain_names.insert(name.to_owned());
+                }
                 if let Some(comment) = chain.get("comment").and_then(serde_json::Value::as_str) {
                     markers.insert(comment.to_owned());
                 }
@@ -461,6 +477,7 @@ fn observe_firewall() -> Result<FirewallObservation, FirewallError> {
             rule_markers: markers,
             chain_count,
             rule_count,
+            chain_names,
         },
     })
 }
@@ -478,12 +495,19 @@ fn replace_table(
     policy: &DesiredNetworkPolicy,
     hash: &str,
     table_present: bool,
+    existing_chains: &BTreeSet<String>,
 ) -> Result<(), FirewallError> {
     let wireguard_interface = nft_quoted(wireguard_interface.as_str());
     let egress_interface = nft_quoted(policy.egress_interface.as_str());
     let mut script = String::new();
     if table_present {
         script.push_str(&format!("flush table inet {TABLE_NAME}\n"));
+        if existing_chains.contains("forward") {
+            script.push_str(&format!("delete chain inet {TABLE_NAME} forward\n"));
+        }
+        if existing_chains.contains("postrouting") {
+            script.push_str(&format!("delete chain inet {TABLE_NAME} postrouting\n"));
+        }
     } else {
         script.push_str(&format!(
             r#"add table inet {TABLE_NAME} {{ comment "{TABLE_OWNER}"; }}"#
@@ -699,6 +723,7 @@ mod tests {
                 rule_markers: BTreeSet::new(),
                 chain_count: 0,
                 rule_count: 0,
+                chain_names: BTreeSet::new(),
             },
         };
         let first = plan_firewall(&interface, Some(&policy), &observation).unwrap();
@@ -721,6 +746,7 @@ mod tests {
                 rule_markers: BTreeSet::new(),
                 chain_count: 0,
                 rule_count: 0,
+                chain_names: BTreeSet::new(),
             },
         };
         assert_eq!(
@@ -741,6 +767,7 @@ mod tests {
                 rule_markers: policy.rule_markers(&hash, &interface),
                 chain_count: 2,
                 rule_count: 4,
+                chain_names: BTreeSet::from(["forward".to_owned(), "postrouting".to_owned()]),
             },
         };
         assert!(plan_firewall(&interface, Some(&policy), &observation)
