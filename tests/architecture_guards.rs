@@ -11,6 +11,14 @@ const PRODUCTION_SOURCES: &[(&str, &str)] = &[
     ("src/error.rs", include_str!("../src/error.rs")),
     ("src/wireguard.rs", include_str!("../src/wireguard.rs")),
     (
+        "src/wireguard/backend.rs",
+        include_str!("../src/wireguard/backend.rs"),
+    ),
+    (
+        "src/wireguard/keys.rs",
+        include_str!("../src/wireguard/keys.rs"),
+    ),
+    (
         "src/protocol/mod.rs",
         include_str!("../src/protocol/mod.rs"),
     ),
@@ -238,6 +246,73 @@ fn protocol_operation_vocabulary_is_closed_and_version_pinned() {
             "{\"operation\":\"inspect_capabilities\"}".to_owned(),
         ]
     );
+}
+
+#[test]
+fn the_management_state_store_never_reaches_a_privileged_boundary() {
+    // The state module is unprivileged and must not open the privileged socket
+    // or run any kernel/network control path itself.
+    for (path, source) in PRODUCTION_SOURCES {
+        if !path.starts_with("src/state/") {
+            continue;
+        }
+        for forbidden in [
+            "crate::protocol",
+            "std::process::Command",
+            "Command::new",
+            "rtnetlink",
+            "nl_wireguard",
+            "tokio::spawn",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{path} must not reach the privileged boundary ({forbidden})"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_privileged_service_never_opens_the_state_database() {
+    // netd must stay database-free: durable provenance is the management side's
+    // job, and the privileged service independently revalidates what it is sent.
+    for path in [
+        "src/protocol/mod.rs",
+        "src/protocol/auth.rs",
+        "src/protocol/capability.rs",
+        "src/protocol/client.rs",
+        "src/protocol/dispatch.rs",
+        "src/protocol/framing.rs",
+        "src/protocol/socket.rs",
+        "src/protocol/wire.rs",
+        "src/reconcile/mod.rs",
+        "src/reconcile/model.rs",
+        "src/reconcile/planner.rs",
+        "src/reconcile/service.rs",
+        "src/reconcile/linux.rs",
+        "src/firewall/mod.rs",
+        "src/firewall/policy.rs",
+        "src/firewall/planner.rs",
+        "src/firewall/nft.rs",
+        "src/firewall/service.rs",
+        "src/wireguard.rs",
+        "src/wireguard/backend.rs",
+        "src/wireguard/keys.rs",
+    ] {
+        let source = PRODUCTION_SOURCES
+            .iter()
+            .find(|(registered, _)| *registered == path)
+            .unwrap_or_else(|| panic!("{path} must be a registered guard source"))
+            .1;
+        assert!(
+            !source.contains("crate::state"),
+            "{path} is on the privileged path and must not depend on the state store"
+        );
+        assert!(
+            !source.contains("rusqlite"),
+            "{path} must not open the state database"
+        );
+    }
 }
 
 #[test]

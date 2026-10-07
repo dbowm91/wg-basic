@@ -1,0 +1,883 @@
+//! The typed desired-state store.
+//!
+//! One store owns one `rusqlite` connection behind a single synchronization
+//! boundary. `Connection` is never part of the public API, there are no async
+//! traits, and no caller can issue SQL.
+//!
+//! Phase 7 must cross into this blocking store through a bounded
+//! blocking-worker adapter rather than by making this API async.
+
+use super::{
+    error::StateError,
+    identifiers::{DesiredGeneration, InstallationId, INITIAL_DESIRED_GENERATION},
+    model::{
+        CommittedDesiredState, ConvergenceRecord, InstallationMetadata, PersistedDesiredState,
+    },
+    schema::{self, OpenIntent},
+};
+use crate::domain::{
+    validate_desired_state, ClientRoutePolicy, DesiredAddress, DesiredClient, DesiredInterface,
+    DesiredNetworkPolicy, DesiredPeer, DesiredState, InterfaceId, InterfaceName, LinkLifecycle,
+    ManagedRoute, NetworkPrefix, OwnershipDeclaration, PresharedKey, PrivateKey, PublicKey,
+    ResourcePresence,
+};
+use ipnet::IpNet;
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};
+use std::{
+    net::{IpAddr, SocketAddr},
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
+
+/// The authoritative unprivileged application-state store.
+pub struct StateStore {
+    path: PathBuf,
+    connection: Mutex<Connection>,
+}
+
+impl std::fmt::Debug for StateStore {
+    /// Deliberately opaque: the store holds secret-bearing rows.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StateStore")
+            .field("path", &self.path)
+            .finish_non_exhaustive()
+    }
+}
+
+impl StateStore {
+    /// Creates a new store and runs every migration.
+    ///
+    /// Generates the installation identity. Refuses to touch an existing file.
+    pub fn initialize(path: impl AsRef<Path>) -> Result<Self, StateError> {
+        Self::with_expected_owner(path.as_ref(), OpenIntent::Initialize, current_uid())
+    }
+
+    /// Opens an existing store and applies any pending migrations.
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, StateError> {
+        Self::with_expected_owner(path.as_ref(), OpenIntent::Reopen, current_uid())
+    }
+
+    /// Opens a store with an explicit expected owner.
+    ///
+    /// Exposed so tests can assert the ownership checks independently of the
+    /// process uid.
+    pub fn open_with_expected_owner(
+        path: impl AsRef<Path>,
+        expected_uid: u32,
+    ) -> Result<Self, StateError> {
+        Self::with_expected_owner(path.as_ref(), OpenIntent::Reopen, expected_uid)
+    }
+
+    fn with_expected_owner(
+        path: &Path,
+        intent: OpenIntent,
+        expected_uid: u32,
+    ) -> Result<Self, StateError> {
+        let connection = schema::open_connection(path, intent, expected_uid)?;
+        if intent == OpenIntent::Initialize {
+            schema::seed_installation(
+                &connection,
+                &InstallationId::new(),
+                INITIAL_DESIRED_GENERATION,
+            )?;
+        }
+        Ok(Self {
+            path: path.to_path_buf(),
+            connection: Mutex::new(connection),
+        })
+    }
+
+    /// The path this store was opened from.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, StateError> {
+        self.connection
+            .lock()
+            .map_err(|_| StateError::Corrupt("state store mutex poisoned"))
+    }
+
+    /// Reads installation metadata, including the current desired generation.
+    pub fn installation_metadata(&self) -> Result<InstallationMetadata, StateError> {
+        let connection = self.lock()?;
+        read_installation(&connection)
+    }
+
+    /// Reads the current desired generation.
+    pub fn current_generation(&self) -> Result<DesiredGeneration, StateError> {
+        Ok(self.installation_metadata()?.desired_generation)
+    }
+
+    /// Loads the full desired snapshot together with its generation.
+    pub fn load(&self) -> Result<PersistedDesiredState, StateError> {
+        let connection = self.lock()?;
+        load_desired(&connection)
+    }
+
+    /// Reads the recorded reconciliation evidence.
+    pub fn convergence(&self) -> Result<ConvergenceRecord, StateError> {
+        let connection = self.lock()?;
+        connection
+            .query_row(
+                "SELECT last_attempted_generation, last_converged_generation,
+                        last_attempt_timestamp, last_outcome
+                 FROM convergence_state WHERE singleton = 1",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<i64>>(0)?,
+                        row.get::<_, Option<i64>>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                    ))
+                },
+            )
+            .map_err(StateError::database)
+            .and_then(|(attempted, converged, timestamp, outcome)| {
+                Ok(ConvergenceRecord {
+                    last_attempted_generation: read_optional_generation(attempted, "attempted")?,
+                    last_converged_generation: read_optional_generation(converged, "converged")?,
+                    last_attempt_timestamp: timestamp,
+                    last_outcome: outcome,
+                })
+            })
+    }
+
+    /// Commits a new desired snapshot if `expected_generation` is still current.
+    ///
+    /// The full snapshot is validated inside the same write transaction that
+    /// advances the generation. A stale writer, a validation failure, or any
+    /// write failure performs no row changes and does not advance the
+    /// generation.
+    pub fn mutate(
+        &self,
+        expected_generation: DesiredGeneration,
+        update: impl FnOnce(&DesiredState) -> Result<DesiredState, StateError>,
+    ) -> Result<CommittedDesiredState, StateError> {
+        let mut connection = self.lock()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(StateError::database)?;
+
+        let current = read_generation(&transaction)?;
+        if current != expected_generation {
+            return Err(StateError::StaleGeneration {
+                expected: expected_generation.to_storage() as u64,
+                actual: current.to_storage() as u64,
+            });
+        }
+
+        let state = load_desired(&transaction)?;
+        let next_state = update(&state.state)?;
+        validate_desired_state(&next_state)?;
+
+        let next_generation = current.next().ok_or(StateError::GenerationExhausted)?;
+
+        write_desired(&transaction, &next_state)?;
+        transaction
+            .execute(
+                "UPDATE installation SET desired_generation = ?1, updated_at = ?2 WHERE singleton = 1",
+                rusqlite::params![next_generation.to_storage(), schema::now_seconds()],
+            )
+            .map_err(StateError::database)?;
+
+        transaction.commit().map_err(StateError::database)?;
+
+        Ok(CommittedDesiredState {
+            generation: next_generation,
+            state: next_state,
+        })
+    }
+}
+
+/// The uid the store refuses to share a database with.
+fn current_uid() -> u32 {
+    // The management role runs unprivileged; the store refuses a database or
+    // parent directory it does not own rather than widening access to it.
+    std::os::unix::fs::MetadataExt::uid(
+        &std::fs::metadata("/proc/self").expect("effective uid is readable from /proc/self"),
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Row reading. Row structs intentionally have no `Debug` derive so that a
+// future field addition cannot silently expose secret material through logging.
+// ---------------------------------------------------------------------------
+
+fn read_installation(connection: &Connection) -> Result<InstallationMetadata, StateError> {
+    let row = connection
+        .query_row(
+            "SELECT installation_id, desired_generation, created_at, updated_at
+             FROM installation WHERE singleton = 1",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(StateError::database)?
+        .ok_or(StateError::Corrupt("installation row missing"))?;
+
+    let installation_id: InstallationId = row
+        .0
+        .parse()
+        .map_err(|_| StateError::Corrupt("invalid installation id"))?;
+    let generation =
+        DesiredGeneration::from_storage(row.1).ok_or(StateError::Corrupt("invalid generation"))?;
+    Ok(InstallationMetadata {
+        installation_id,
+        desired_generation: generation,
+        created_at: row.2,
+        updated_at: row.3,
+    })
+}
+
+/// Decodes a nullable generation column, treating a stored invalid value as
+/// corruption rather than as "unset".
+fn read_optional_generation(
+    raw: Option<i64>,
+    column: &'static str,
+) -> Result<Option<DesiredGeneration>, StateError> {
+    match raw {
+        None => Ok(None),
+        Some(value) => DesiredGeneration::from_storage(value)
+            .map(Some)
+            .ok_or(StateError::Corrupt(match column {
+                "attempted" => "invalid attempted generation",
+                _ => "invalid converged generation",
+            })),
+    }
+}
+
+fn read_generation(connection: &Connection) -> Result<DesiredGeneration, StateError> {
+    let raw: i64 = connection
+        .query_row(
+            "SELECT desired_generation FROM installation WHERE singleton = 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(StateError::database)?
+        .ok_or(StateError::Corrupt("installation row missing"))?;
+    DesiredGeneration::from_storage(raw).ok_or(StateError::Corrupt("invalid generation"))
+}
+
+fn load_desired(connection: &Connection) -> Result<PersistedDesiredState, StateError> {
+    let generation = read_generation(connection)?;
+    let state = read_desired(connection)?;
+    Ok(PersistedDesiredState { generation, state })
+}
+
+fn read_desired(connection: &Connection) -> Result<DesiredState, StateError> {
+    let mut interfaces = Vec::new();
+    let interface_rows = {
+        let mut statement = connection
+            .prepare(
+                "SELECT id, name, ownership, lifecycle, admin_up, private_key, listen_port,
+                        manage_all_peers
+                 FROM managed_interfaces ORDER BY position, id",
+            )
+            .map_err(StateError::database)?;
+        let rows = statement
+            .query_map([], read_interface_row)
+            .map_err(StateError::database)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StateError::database)?
+    };
+
+    for row in interface_rows {
+        interfaces.push(assemble_interface(connection, row)?);
+    }
+
+    let client_routes = ClientRoutePolicy {
+        prefixes: parse_prefix_column(query_prefixes(
+            connection,
+            "SELECT prefix FROM client_global_route_prefixes ORDER BY position",
+        )?)?,
+    };
+
+    let network_policy = read_network_policy(connection, &interfaces)?;
+
+    Ok(DesiredState {
+        interfaces,
+        client_routes,
+        network_policy,
+    })
+}
+
+struct InterfaceRow {
+    id: String,
+    name: String,
+    ownership: String,
+    lifecycle: String,
+    admin_up: Option<i64>,
+    private_key: String,
+    listen_port: Option<i64>,
+    manage_all_peers: i64,
+}
+
+fn read_interface_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<InterfaceRow> {
+    Ok(InterfaceRow {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        ownership: row.get(2)?,
+        lifecycle: row.get(3)?,
+        admin_up: row.get(4)?,
+        private_key: row.get(5)?,
+        listen_port: row.get(6)?,
+        manage_all_peers: row.get(7)?,
+    })
+}
+
+fn assemble_interface(
+    connection: &Connection,
+    row: InterfaceRow,
+) -> Result<DesiredInterface, StateError> {
+    let id: InterfaceId = row
+        .id
+        .parse()
+        .map_err(|_| StateError::Corrupt("invalid interface id"))?;
+    let name: InterfaceName = row
+        .name
+        .parse()
+        .map_err(|_| StateError::Corrupt("invalid interface name"))?;
+    let ownership = parse_ownership(&row.ownership)?;
+    let lifecycle = parse_lifecycle(&row.lifecycle)?;
+
+    let tunnel_prefixes = query_prefixes_for(
+        connection,
+        "SELECT prefix FROM interface_tunnel_prefixes WHERE interface_id = ?1 ORDER BY position",
+        &row.id,
+    )?;
+
+    let mut addresses = Vec::new();
+    {
+        let mut statement = connection
+            .prepare(
+                "SELECT address, presence FROM interface_addresses
+                 WHERE interface_id = ?1 ORDER BY position",
+            )
+            .map_err(StateError::database)?;
+        let rows = statement
+            .query_map([&row.id], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })
+            .map_err(StateError::database)?;
+        for value in rows {
+            let (address, presence) = value.map_err(StateError::database)?;
+            addresses.push(DesiredAddress {
+                address: parse_ipnet(&address)?,
+                presence: parse_presence(&presence)?,
+            });
+        }
+    }
+
+    let mut routes = Vec::new();
+    {
+        let mut statement = connection
+            .prepare(
+                "SELECT destination, gateway, presence FROM managed_routes
+                 WHERE interface_id = ?1 ORDER BY position",
+            )
+            .map_err(StateError::database)?;
+        let rows = statement
+            .query_map([&row.id], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, Option<String>>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(StateError::database)?;
+        for value in rows {
+            let (destination, gateway, presence) = value.map_err(StateError::database)?;
+            routes.push(ManagedRoute {
+                destination: parse_prefix(&destination)?,
+                gateway: gateway.as_deref().map(parse_ipaddr).transpose()?,
+                presence: parse_presence(&presence)?,
+            });
+        }
+    }
+
+    let mut peers = Vec::new();
+    let peer_ids: Vec<String> = {
+        let mut statement = connection
+            .prepare("SELECT id FROM peers WHERE interface_id = ?1 ORDER BY position, id")
+            .map_err(StateError::database)?;
+        let rows = statement
+            .query_map([&row.id], |r| r.get::<_, String>(0))
+            .map_err(StateError::database)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StateError::database)?
+    };
+    for peer_id in peer_ids {
+        peers.push(assemble_peer(connection, &peer_id)?);
+    }
+
+    let mut clients = Vec::new();
+    {
+        let mut statement = connection
+            .prepare(
+                "SELECT id, peer_id, assigned_address FROM clients
+                 WHERE interface_id = ?1 ORDER BY position, id",
+            )
+            .map_err(StateError::database)?;
+        let rows = statement
+            .query_map([&row.id], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(StateError::database)?;
+        let collected: Vec<(String, String, String)> = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(StateError::database)?;
+        for (id, peer_id, assigned) in collected {
+            clients.push(DesiredClient {
+                id: id.parse().map_err(|_| StateError::Corrupt("invalid client id"))?,
+                peer_id: peer_id
+                    .parse()
+                    .map_err(|_| StateError::Corrupt("invalid client peer id"))?,
+                assigned_address: parse_ipnet(&assigned)?,
+                route_policy: ClientRoutePolicy {
+                    prefixes: query_prefixes_for(
+                        connection,
+                        "SELECT prefix FROM client_route_prefixes WHERE client_id = ?1 ORDER BY position",
+                        &id,
+                    )?,
+                },
+            });
+        }
+    }
+
+    Ok(DesiredInterface {
+        id,
+        name,
+        ownership,
+        lifecycle,
+        admin_up: row.admin_up.map(|value| value == 1),
+        private_key: PrivateKey::new(row.private_key)
+            .map_err(|_| StateError::Corrupt("invalid private key"))?,
+        listen_port: row.listen_port.map(|value| value as u16),
+        manage_all_peers: row.manage_all_peers == 1,
+        tunnel_prefixes,
+        addresses,
+        routes,
+        peers,
+        clients,
+    })
+}
+
+fn assemble_peer(connection: &Connection, peer_id: &str) -> Result<DesiredPeer, StateError> {
+    let row = connection
+        .query_row(
+            "SELECT id, public_key, private_key, preshared_key,
+                    persistent_keepalive_seconds, endpoint
+             FROM peers WHERE id = ?1",
+            [peer_id],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                    r.get::<_, Option<String>>(3)?,
+                    r.get::<_, Option<i64>>(4)?,
+                    r.get::<_, Option<String>>(5)?,
+                ))
+            },
+        )
+        .map_err(StateError::database)?;
+
+    let allowed_ips = query_prefixes_for(
+        connection,
+        "SELECT prefix FROM peer_allowed_ips WHERE peer_id = ?1 ORDER BY position",
+        peer_id,
+    )?;
+
+    Ok(DesiredPeer {
+        id: row
+            .0
+            .parse()
+            .map_err(|_| StateError::Corrupt("invalid peer id"))?,
+        public_key: PublicKey::new(row.1)
+            .map_err(|_| StateError::Corrupt("invalid peer public key"))?,
+        private_key: row
+            .2
+            .map(PrivateKey::new)
+            .transpose()
+            .map_err(|_| StateError::Corrupt("invalid peer private key"))?,
+        preshared_key: row
+            .3
+            .map(PresharedKey::new)
+            .transpose()
+            .map_err(|_| StateError::Corrupt("invalid peer preshared key"))?,
+        allowed_ips,
+        persistent_keepalive_seconds: row.4.map(|value| value as u16),
+        endpoint: row.5.as_deref().map(parse_socket_addr).transpose()?,
+    })
+}
+
+fn read_network_policy(
+    connection: &Connection,
+    interfaces: &[DesiredInterface],
+) -> Result<Option<DesiredNetworkPolicy>, StateError> {
+    let row = connection
+        .query_row(
+            "SELECT wireguard_interface, ipv4_forwarding_required, egress_interface, masquerade
+             FROM network_policy WHERE singleton = 1",
+            [],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(StateError::database)?;
+
+    let Some((interface, forwarding_required, egress, masquerade)) = row else {
+        return Ok(None);
+    };
+    let wireguard_interface: InterfaceName = interface
+        .parse()
+        .map_err(|_| StateError::Corrupt("invalid policy interface"))?;
+    if !interfaces.iter().any(|i| i.name == wireguard_interface) {
+        return Err(StateError::Corrupt(
+            "policy references an unmanaged interface",
+        ));
+    }
+    Ok(Some(DesiredNetworkPolicy {
+        wireguard_interface,
+        ipv4_forwarding_required: forwarding_required == 1,
+        egress_interface: egress
+            .parse()
+            .map_err(|_| StateError::Corrupt("invalid policy egress"))?,
+        source_prefixes: parse_prefix_column(query_prefixes(
+            connection,
+            "SELECT prefix FROM network_policy_source_prefixes ORDER BY position",
+        )?)?,
+        masquerade: masquerade == 1,
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// Writing
+// ---------------------------------------------------------------------------
+
+fn write_desired(transaction: &Transaction<'_>, state: &DesiredState) -> Result<(), StateError> {
+    // The snapshot is replaced wholesale: child rows are removed and rewritten so
+    // the stored state cannot retain a row the desired state no longer contains.
+    for table in [
+        "interface_tunnel_prefixes",
+        "interface_addresses",
+        "managed_routes",
+        "peer_allowed_ips",
+        "client_route_prefixes",
+        "clients",
+        "peers",
+        "managed_interfaces",
+    ] {
+        transaction
+            .execute(&format!("DELETE FROM {table}"), [])
+            .map_err(StateError::database)?;
+    }
+    transaction
+        .execute("DELETE FROM network_policy_source_prefixes", [])
+        .map_err(StateError::database)?;
+    transaction
+        .execute("DELETE FROM network_policy", [])
+        .map_err(StateError::database)?;
+    transaction
+        .execute("DELETE FROM client_global_route_prefixes", [])
+        .map_err(StateError::database)?;
+
+    for (position, interface) in state.interfaces.iter().enumerate() {
+        let interface_id = interface.id.to_string();
+        transaction
+            .execute(
+                "INSERT INTO managed_interfaces
+                     (id, name, ownership, lifecycle, admin_up, private_key, listen_port,
+                      manage_all_peers, position)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                rusqlite::params![
+                    interface_id,
+                    interface.name.as_str(),
+                    ownership_label(interface.ownership),
+                    lifecycle_label(interface.lifecycle),
+                    interface.admin_up.map(i64::from),
+                    interface.private_key.expose_secret(),
+                    interface.listen_port.map(i64::from),
+                    i64::from(interface.manage_all_peers),
+                    position as i64,
+                ],
+            )
+            .map_err(StateError::database)?;
+
+        insert_prefixes(
+            transaction,
+            Some(&interface_id),
+            &prefix_strings(&interface.tunnel_prefixes),
+            "INSERT INTO interface_tunnel_prefixes (interface_id, prefix, position) VALUES (?1, ?2, ?3)",
+            "",
+        )?;
+
+        for (index, address) in interface.addresses.iter().enumerate() {
+            transaction
+                .execute(
+                    "INSERT INTO interface_addresses (interface_id, address, presence, position)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    rusqlite::params![
+                        interface_id,
+                        address.address.to_string(),
+                        presence_label(address.presence),
+                        index as i64,
+                    ],
+                )
+                .map_err(StateError::database)?;
+        }
+
+        for (index, route) in interface.routes.iter().enumerate() {
+            transaction
+                .execute(
+                    "INSERT INTO managed_routes (interface_id, destination, gateway, presence, position)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    rusqlite::params![
+                        interface_id,
+                        route.destination.to_string(),
+                        route.gateway.map(|gateway| gateway.to_string()),
+                        presence_label(route.presence),
+                        index as i64,
+                    ],
+                )
+                .map_err(StateError::database)?;
+        }
+
+        for (index, peer) in interface.peers.iter().enumerate() {
+            let peer_id = peer.id.to_string();
+            transaction
+                .execute(
+                    "INSERT INTO peers
+                         (id, interface_id, public_key, private_key, preshared_key,
+                          persistent_keepalive_seconds, endpoint, position)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    rusqlite::params![
+                        peer_id,
+                        interface_id,
+                        peer.public_key.expose(),
+                        peer.private_key.as_ref().map(|key| key.expose_secret()),
+                        peer.preshared_key.as_ref().map(|key| key.expose_secret()),
+                        peer.persistent_keepalive_seconds.map(i64::from),
+                        peer.endpoint.map(|endpoint| endpoint.to_string()),
+                        index as i64,
+                    ],
+                )
+                .map_err(StateError::database)?;
+
+            insert_prefixes(
+                transaction,
+                Some(&peer_id),
+                &prefix_strings(&peer.allowed_ips),
+                "INSERT INTO peer_allowed_ips (peer_id, prefix, position) VALUES (?1, ?2, ?3)",
+                "",
+            )?;
+
+            for (client_index, client) in interface.clients.iter().enumerate() {
+                if client.peer_id != peer.id {
+                    continue;
+                }
+                let client_id = client.id.to_string();
+                transaction
+                    .execute(
+                        "INSERT INTO clients (id, interface_id, peer_id, assigned_address, position)
+                         VALUES (?1, ?2, ?3, ?4, ?5)",
+                        rusqlite::params![
+                            client_id,
+                            interface_id,
+                            peer_id,
+                            client.assigned_address.to_string(),
+                            client_index as i64,
+                        ],
+                    )
+                    .map_err(StateError::database)?;
+                insert_prefixes(
+                    transaction,
+                    Some(&client_id),
+                    &prefix_strings(&client.route_policy.prefixes),
+                    "INSERT INTO client_route_prefixes (client_id, prefix, position) VALUES (?1, ?2, ?3)",
+                    "",
+                )?;
+            }
+        }
+    }
+
+    insert_prefixes(
+        transaction,
+        None,
+        &prefix_strings(&state.client_routes.prefixes),
+        "",
+        "INSERT INTO client_global_route_prefixes (position, prefix) VALUES (?1, ?2)",
+    )?;
+
+    if let Some(policy) = &state.network_policy {
+        transaction
+            .execute(
+                "INSERT INTO network_policy
+                     (singleton, wireguard_interface, ipv4_forwarding_required, egress_interface, masquerade)
+                 VALUES (1, ?1, ?2, ?3, ?4)",
+                rusqlite::params![
+                    policy.wireguard_interface.as_str(),
+                    i64::from(policy.ipv4_forwarding_required),
+                    policy.egress_interface.as_str(),
+                    i64::from(policy.masquerade),
+                ],
+            )
+            .map_err(StateError::database)?;
+        insert_prefixes(
+            transaction,
+            None,
+            &prefix_strings(&policy.source_prefixes),
+            "",
+            "INSERT INTO network_policy_source_prefixes (position, prefix) VALUES (?1, ?2)",
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Inserts an ordered, optionally foreign-key-scoped prefix list.
+fn insert_prefixes(
+    transaction: &Transaction<'_>,
+    key: Option<&str>,
+    prefixes: &[String],
+    keyed_statement: &str,
+    unkeyed_statement: &str,
+) -> Result<(), StateError> {
+    for (index, prefix) in prefixes.iter().enumerate() {
+        let position = index as i64;
+        match key {
+            Some(key) => transaction
+                .execute(keyed_statement, rusqlite::params![key, prefix, position])
+                .map_err(StateError::database)?,
+            None => transaction
+                .execute(unkeyed_statement, rusqlite::params![position, prefix])
+                .map_err(StateError::database)?,
+        };
+    }
+    Ok(())
+}
+
+/// Reads one ordered prefix column.
+fn query_prefixes(connection: &Connection, sql: &str) -> Result<Vec<String>, StateError> {
+    let mut statement = connection.prepare(sql).map_err(StateError::database)?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(StateError::database)?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(StateError::database)
+}
+
+/// Reads an ordered, foreign-key-scoped prefix column.
+fn query_prefixes_for(
+    connection: &Connection,
+    sql: &str,
+    key: &str,
+) -> Result<Vec<NetworkPrefix>, StateError> {
+    let mut statement = connection.prepare(sql).map_err(StateError::database)?;
+    let rows = statement
+        .query_map([key], |row| row.get::<_, String>(0))
+        .map_err(StateError::database)?;
+    let values = rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(StateError::database)?;
+    values.iter().map(|value| parse_prefix(value)).collect()
+}
+
+/// Parses an ordered prefix column that carries no foreign key.
+fn parse_prefix_column(values: Vec<String>) -> Result<Vec<NetworkPrefix>, StateError> {
+    values.iter().map(|value| parse_prefix(value)).collect()
+}
+
+/// Renders prefixes in their canonical stored form.
+fn prefix_strings(prefixes: &[NetworkPrefix]) -> Vec<String> {
+    prefixes.iter().map(|prefix| prefix.to_string()).collect()
+}
+
+fn parse_prefix(value: &str) -> Result<NetworkPrefix, StateError> {
+    value
+        .parse()
+        .map_err(|_| StateError::Corrupt("stored prefix is not a valid network prefix"))
+}
+
+fn parse_ipnet(value: &str) -> Result<IpNet, StateError> {
+    value
+        .parse()
+        .map_err(|_| StateError::Corrupt("stored address is not a valid prefix"))
+}
+
+fn parse_ipaddr(value: &str) -> Result<IpAddr, StateError> {
+    value
+        .parse()
+        .map_err(|_| StateError::Corrupt("stored gateway is not a valid address"))
+}
+
+fn parse_socket_addr(value: &str) -> Result<SocketAddr, StateError> {
+    value
+        .parse()
+        .map_err(|_| StateError::Corrupt("stored endpoint is not a valid socket address"))
+}
+
+fn parse_ownership(value: &str) -> Result<OwnershipDeclaration, StateError> {
+    match value {
+        "managed" => Ok(OwnershipDeclaration::Managed),
+        "observe_only" => Ok(OwnershipDeclaration::ObserveOnly),
+        _ => Err(StateError::Corrupt("unknown ownership declaration")),
+    }
+}
+
+fn parse_lifecycle(value: &str) -> Result<LinkLifecycle, StateError> {
+    match value {
+        "present" => Ok(LinkLifecycle::Present),
+        "absent" => Ok(LinkLifecycle::Absent),
+        _ => Err(StateError::Corrupt("unknown link lifecycle")),
+    }
+}
+
+fn parse_presence(value: &str) -> Result<ResourcePresence, StateError> {
+    match value {
+        "present" => Ok(ResourcePresence::Present),
+        "absent" => Ok(ResourcePresence::Absent),
+        _ => Err(StateError::Corrupt("unknown resource presence")),
+    }
+}
+
+fn ownership_label(value: OwnershipDeclaration) -> &'static str {
+    match value {
+        OwnershipDeclaration::Managed => "managed",
+        OwnershipDeclaration::ObserveOnly => "observe_only",
+    }
+}
+
+fn lifecycle_label(value: LinkLifecycle) -> &'static str {
+    match value {
+        LinkLifecycle::Present => "present",
+        LinkLifecycle::Absent => "absent",
+    }
+}
+
+fn presence_label(value: ResourcePresence) -> &'static str {
+    match value {
+        ResourcePresence::Present => "present",
+        ResourcePresence::Absent => "absent",
+    }
+}
