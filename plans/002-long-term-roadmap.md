@@ -64,7 +64,7 @@ Phases 6 and 7 may proceed partly in parallel after the kernel reconciliation co
 
 ## 3. Phase 1 — Repository and domain foundation
 
-Status: ready.
+Status: closed.
 
 Owned by:
 
@@ -89,7 +89,7 @@ This phase is infrastructure/invariant work, not a claim of a functional VPN ser
 
 ## 4. Phase 2 — Privileged protocol and host capability boundary
 
-Status: blocked on Phase 1 closure.
+Status: closed.
 
 Owned by:
 
@@ -158,7 +158,7 @@ Required outcomes:
 
 ## 7. Phase 5 — Firewall, forwarding, NAT, and network-namespace qualification
 
-Status: active; hard dependency Phase 4 strictly closed.
+Status: closed; hard dependency Phase 4 strictly closed.
 
 Owned by:
 
@@ -183,7 +183,7 @@ M005 is the first kernel-control foundation closure boundary. Later service/UI w
 
 ## 8. Phase 6 — Durable desired state and migration substrate
 
-Status: ready to plan; implementation may overlap late Phase 5 testing.
+Status: ready to plan; Phases 4 and 5 contracts are stable.
 
 Owned by:
 
@@ -205,7 +205,7 @@ Expected outcomes:
 
 ## 9. Phase 7 — Service/security substrate
 
-Status: blocked on Phase 2 and stable privileged protocol; may overlap Phase 6.
+Status: ready to plan; Phase 2 is closed and the typed privileged protocol is stable.
 
 Owned by:
 
@@ -228,7 +228,7 @@ Expected outcomes:
 
 ## 10. Phase 8 — Management API, UI, and enrollment
 
-Status: blocked on Phases 5–7.
+Status: blocked on Phases 6–7.
 
 Objective:
 
@@ -379,14 +379,14 @@ Before the first public production claim:
 
 | Phase | Status | Owning plan/roadmap | Blocker |
 |---|---|---|---|
-| 1 repository/domain foundation | ready | network-control M001 | — |
-| 2 privileged protocol/capabilities | blocked | network-control M002 | Phase 1 |
+| 1 repository/domain foundation | closed | network-control M001 | — |
+| 2 privileged protocol/capabilities | closed | network-control M002 | — |
 | 3 WireGuard kernel control | closed | network-control M003 | Phase 2 |
 | 4 link/address/route reconciliation | closed | network-control M004 | Phase 3 |
-| 5 firewall/forwarding/E2E | ready | network-control M005 | Phase 4 |
-| 6 durable state | ready to plan | future state roadmap | stable Phase 4/5 contracts |
-| 7 service/security substrate | proposed | future management roadmap | Phase 2 + stable protocol |
-| 8 management UI/enrollment | proposed | future management roadmap | Phases 5–7 |
+| 5 firewall/forwarding/E2E | closed | network-control M005 | — |
+| 6 durable state | ready to plan | future state roadmap | — |
+| 7 service/security substrate | ready to plan | future management roadmap | — |
+| 8 management UI/enrollment | blocked | future management roadmap | Phases 6–7 |
 | 9 operational hardening | proposed | future operations roadmap | Phase 8 |
 | 10 distribution/update | proposed | future distribution roadmap | Phase 9 |
 | 11 IPv6/route-policy qualification | deferred | future roadmap | stable product baseline |

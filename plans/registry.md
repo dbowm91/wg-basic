@@ -37,7 +37,7 @@ The architecture separates:
 
 The privileged service does not expose arbitrary shell, command, file-write, sysctl-path, nft-script, or raw-netlink execution.
 
-Current production code state: **M001–M004 are strictly closed, including rootful link/address/route reconciliation; M005 firewall/forwarding/NAT is active.**
+Current production code state: **M001–M005 are strictly closed, including rootful three-namespace WireGuard forwarding and NAT qualification. No implementation plans remain ready or active.**
 
 ## 3. Eggstack reuse disposition
 
@@ -61,9 +61,9 @@ Runtime dependency adoption remains evidence-driven.
 
 | Subsystem | Status | Roadmap | Current milestone |
 |---|---|---|---|
-| Linux network-control foundation | active planning | `plans/subsystems/network-control-roadmap.md` | M001–M004 closed; M005 active |
-| Durable state/restart reconciliation | ready to plan | not yet written | M004 ownership contract is stable; broad product integration waits for M005 |
-| Management service/auth/UI | proposed | not yet written | begins after privilege protocol + stable network foundation |
+| Linux network-control foundation | active planning | `plans/subsystems/network-control-roadmap.md` | M001–M005 closed |
+| Durable state/restart reconciliation | ready to plan | not yet written | M004/M005 ownership and policy contracts are stable |
+| Management service/auth/UI | ready to plan | not yet written | Phase 2 is closed; typed netd protocol and network foundation are stable |
 | Distribution/install/update | proposed | not yet written | begins after service/state layout stabilizes |
 
 Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
@@ -72,9 +72,9 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
-| Network control | M005 nftables/forwarding/NAT/E2E | **active** | `plans/implementation/network-control/005-firewall-forwarding-end-to-end.md` | M004 strictly closed; baseline revalidated at `e01f35b` |
+| — | — | — | — | — |
 
-M005 is the only active implementation plan.
+No implementation plans remain ready or active. Phase 6 and Phase 7 are ready for bounded planning handoffs; neither has an implementation plan yet.
 
 ## 6. Blocked implementation plans
 
@@ -90,14 +90,15 @@ No implementation plans are currently blocked. Revalidate dependency/API assumpt
 - M002 strict closure: `plans/closure/network-control/002-status.md`.
 - M003 strict closure: `plans/closure/network-control/003-status.md`.
 - M004 strict closure: `plans/closure/network-control/004-status.md`.
+- M005 strict closure: `plans/closure/network-control/005-status.md`.
 
-## 8. M004 closure and M005 handoff
+## 8. M005 closure and downstream handoff
 
-M004 is strictly closed using the M001–M003 contracts. Its RTNETLINK choice and ownership/retry semantics are recorded in `architecture/reconciliation.md`; the full requirement-to-evidence matrix is in `plans/closure/network-control/004-status.md`. Rootful hosted CI supplies real link/address/route evidence.
+M004 and M005 are strictly closed using their predecessor contracts. M004's RTNETLINK choice and ownership/retry semantics are recorded in `architecture/reconciliation.md`; M005's firewall/forwarding/NAT evidence is recorded in `plans/closure/network-control/005-status.md`. Rootful hosted CI supplies real kernel and end-to-end traffic evidence.
 
 ## 9. Kernel/network research handoff
 
-M003 selected and qualified `nl-wireguard` 0.3.0. M004 selected and qualified `rtnetlink` 0.23.0 without rewriting the working WireGuard backend solely for dependency uniformity. M005 is revalidating nftables library/process choices in its active plan.
+M003 selected and qualified `nl-wireguard` 0.3.0. M004 selected and qualified `rtnetlink` 0.23.0 without rewriting the working WireGuard backend solely for dependency uniformity. M005 selected and qualified the bounded `nft` process backend under ADR-001 constraints; see `architecture/firewall.md` and its closure record.
 
 Candidate families include:
 
@@ -106,7 +107,7 @@ Candidate families include:
 - `netlink-packet-wireguard` + Generic Netlink;
 - newer consolidated Linux netlink libraries where mature.
 
-M005 must recheck direct nftables/NETLINK_NETFILTER libraries. A bounded internal `nft` process backend is allowed only under ADR-001's strict constraints; no shell and no raw caller-provided nft source.
+The firewall backend research and selection are closed in M005. Its process boundary remains direct invocation with typed input, internal rendering, version/output/time bounds, and atomic table transactions; no shell or raw caller-provided nft source.
 
 ## 10. External prior-art boundary
 
@@ -140,7 +141,7 @@ No network milestone may substitute mocked kernel behavior for its required real
 
 ## 12. Planning hygiene
 
-M001–M004 have strict closure records. M005 is active against the M004 final implementation head `e01f35b`.
+M001–M005 have strict closure records. The M005 implementation was verified at `c67fff8` (CI run `37593324627`).
 
 There are no active corrective plans.
 
@@ -150,7 +151,7 @@ If later implementation evidence reveals a material architecture contradiction, 
 
 ## 13. Closure handoff
 
-M003 and M004 are closed and their strict evidence is recorded. M005 is active against `e01f35b`.
+M001–M005 are closed and their strict evidence is recorded. Phases 6 and 7 are unblocked for planning; Phase 8 remains blocked until both have implementation plans and close. No further implementation plan is eligible now, and no successor implementation plan exists yet. Per the planning process, do not draft implementation plans until each successor has a bounded, evidence-backed handoff.
 
 At each future closure, update:
 
