@@ -149,7 +149,9 @@ fn convert_observed(
             public_key,
             allowed_ips,
             persistent_keepalive_seconds: peer.persistent_keepalive.filter(|seconds| *seconds != 0),
-            endpoint: peer.endpoint,
+            endpoint: peer
+                .endpoint
+                .filter(|endpoint| !(endpoint.ip().is_unspecified() && endpoint.port() == 0)),
             latest_handshake: peer.last_handshake,
             rx_bytes: peer.rx_bytes,
             tx_bytes: peer.tx_bytes,
@@ -364,9 +366,11 @@ mod tests {
         let mut peer = WireguardPeerParsed::default();
         peer.public_key = Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".into());
         peer.persistent_keepalive = Some(0);
+        peer.endpoint = Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0));
         let mut parsed = WireguardParsed::default();
         parsed.peers = Some(vec![peer]);
         let observed = convert_observed("wg0".parse().unwrap(), &parsed).unwrap();
         assert_eq!(observed.peers[0].persistent_keepalive_seconds, None);
+        assert_eq!(observed.peers[0].endpoint, None);
     }
 }
