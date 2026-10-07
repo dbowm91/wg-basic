@@ -2,6 +2,7 @@ use super::{
     read_frame, write_frame, NetworkCapabilitySnapshot, ProtocolError, RequestEnvelope,
     RequestOperation, ResponseBody, ResponseEnvelope, PROTOCOL_VERSION,
 };
+use crate::firewall::{FirewallError, FirewallService};
 use crate::reconcile::{ReconcileError, ReconciliationService};
 use crate::wireguard::{WireGuardBackend, WireGuardValidationError};
 use nix::sys::socket::{getsockopt, listen, sockopt::PeerCredentials, Backlog};
@@ -55,6 +56,7 @@ pub struct SocketServer {
     authorization: AuthorizationPolicy,
     wireguard: WireGuardBackend,
     reconciliation: ReconciliationService,
+    firewall: FirewallService,
 }
 
 #[derive(Clone, Copy)]
@@ -120,6 +122,7 @@ impl SocketServer {
             authorization,
             wireguard: WireGuardBackend,
             reconciliation: ReconciliationService::default(),
+            firewall: FirewallService::default(),
         })
     }
 
@@ -209,6 +212,22 @@ impl SocketServer {
                 .apply(&desired)
                 .map(ResponseBody::ManagedInterfaceApplied)
                 .map_err(map_reconcile_error),
+            RequestOperation::PlanNetworkPolicy {
+                wireguard_interface,
+                policy,
+            } => self
+                .firewall
+                .plan(&wireguard_interface, policy.as_ref())
+                .map(ResponseBody::NetworkPolicyPlan)
+                .map_err(map_firewall_error),
+            RequestOperation::ApplyNetworkPolicy {
+                wireguard_interface,
+                policy,
+            } => self
+                .firewall
+                .apply(&wireguard_interface, policy.as_ref())
+                .map(ResponseBody::NetworkPolicyApplied)
+                .map_err(map_firewall_error),
         };
         ResponseEnvelope {
             protocol_version: PROTOCOL_VERSION,
@@ -219,6 +238,18 @@ impl SocketServer {
 
     pub fn socket_path(&self) -> &Path {
         &self.socket_path
+    }
+}
+
+fn map_firewall_error(error: FirewallError) -> ProtocolError {
+    match error {
+        FirewallError::InvalidPolicy | FirewallError::ResourceLimitExceeded => {
+            ProtocolError::InvalidInput
+        }
+        FirewallError::TableOwnershipConflict => ProtocolError::Conflict,
+        FirewallError::PermissionDenied => ProtocolError::PermissionDenied,
+        FirewallError::Unsupported => ProtocolError::UnsupportedBackend,
+        FirewallError::BackendFailure => ProtocolError::BackendFailure,
     }
 }
 

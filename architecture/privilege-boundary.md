@@ -8,7 +8,7 @@ The socket parent must already exist, be a real directory owned by the effective
 
 By default netd authorizes its own effective UID and root. `--allow-uid UID` adds an explicit management-service UID. The protocol carries no UID/PID authorization fields. The `serve` command is currently a one-shot local protocol client; it does not host HTTP. `doctor` asks netd for the capability snapshot. A dedicated systemd management user should be supplied to netd with `--allow-uid` and granted access to the socket's group as needed.
 
-The snapshot reports Linux, architecture, effective UID/GID, whether `CAP_NET_ADMIN` appears in `/proc/self/status`, kernel release, and runtime-directory safety. Namespace, WireGuard, and nftables capability fields remain `unknown` until their owning backends provide authoritative probes. Capability inspection does not create links/namespaces, load modules, change sysctls, or install firewall objects. WireGuard operations use the typed Rust backend against an existing device; netd does not invoke `wg`, `wg-quick`, or `ip`.
+The snapshot reports Linux, architecture, effective UID/GID, whether `CAP_NET_ADMIN` appears in `/proc/self/status`, kernel release, and runtime-directory safety. Namespace, WireGuard, and nftables capability fields remain `unknown` until their owning backends provide authoritative probes. Capability inspection does not create links/namespaces, load modules, change sysctls, or install firewall objects. WireGuard and link/address/route operations use typed Rust netlink backends. Firewall policy uses a typed protocol operation and a bounded direct `nft` subprocess; it does not invoke a shell or accept raw nft source. Forwarding writes are fixed to `/proc/sys/net/ipv4/ip_forward`.
 
 ## Intended service privilege contract
 
@@ -20,4 +20,4 @@ When installed, use separate service identities where practical:
 
 No service unit is shipped yet; package installation and service lifecycle belong to later distribution work. M004–M005 will extend this protocol with typed network operations while retaining peer authorization and bounded framing. Arbitrary command, path-based sysctl, nftables-source, file-write, and raw-netlink operations are not part of the protocol.
 
-WireGuard configuration and telemetry are implemented for existing devices. Link lifecycle, route/address changes, firewalling, forwarding, persistence, and HTTP are not implemented.
+The Linux network service supports typed WireGuard configuration, managed interface/address/route reconciliation, and IPv4 firewall/forwarding policy. The firewall service owns only `inet wg_basic`; it never flushes unrelated tables. Disabling that policy removes the owned table but deliberately leaves `net.ipv4.ip_forward` enabled. The supported policy and external-firewall interaction are documented in [firewall ownership](firewall.md). Persistence and HTTP are not implemented.
