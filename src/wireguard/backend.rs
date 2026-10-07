@@ -148,7 +148,7 @@ fn convert_observed(
         observed_peers.push(ObservedWireGuardPeer {
             public_key,
             allowed_ips,
-            persistent_keepalive_seconds: peer.persistent_keepalive,
+            persistent_keepalive_seconds: peer.persistent_keepalive.filter(|seconds| *seconds != 0),
             endpoint: peer.endpoint,
             latest_handshake: peer.last_handshake,
             rx_bytes: peer.rx_bytes,
@@ -357,5 +357,16 @@ mod tests {
         assert!(!display.contains("preshared_key"));
         assert!(display.contains("10"));
         assert_eq!(observed.peers[0].rx_bytes, Some(10));
+    }
+
+    #[test]
+    fn observed_device_normalizes_disabled_keepalive_to_none() {
+        let mut peer = WireguardPeerParsed::default();
+        peer.public_key = Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".into());
+        peer.persistent_keepalive = Some(0);
+        let mut parsed = WireguardParsed::default();
+        parsed.peers = Some(vec![peer]);
+        let observed = convert_observed("wg0".parse().unwrap(), &parsed).unwrap();
+        assert_eq!(observed.peers[0].persistent_keepalive_seconds, None);
     }
 }
