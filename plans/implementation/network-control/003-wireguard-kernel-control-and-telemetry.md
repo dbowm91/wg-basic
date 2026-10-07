@@ -1,8 +1,8 @@
 # Network Control M003 — WireGuard Kernel Control and Live Telemetry
 
-Status: blocked on M002 closure
+Status: active
 
-Repository planning baseline: `f14e7aec52e741d761f62a61390296c0bec8e1e0`
+Repository planning baseline: `f888e359e4828f3499a4fb6dbe1fe251fd20bdce` (M002 strict implementation)
 
 Source roadmap:
 

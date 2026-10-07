@@ -1,6 +1,6 @@
 # Network Control Foundation Roadmap
 
-Status: active planning; M001 closed, M002 active
+Status: active planning; M001–M002 closed, M003 ready
 
 Canonical references:
 
@@ -167,7 +167,7 @@ Exit conditions:
 
 ## 8. Milestone M002 — Privileged protocol and host capability boundary
 
-Status: active.
+Status: closed.
 
 Primary class: invariant / infrastructure.
 
@@ -202,7 +202,7 @@ Exit conditions:
 
 ## 9. Milestone M003 — WireGuard kernel control and live telemetry
 
-Status: blocked on M002.
+Status: active.
 
 Primary class: capability / invariant.
 
@@ -370,7 +370,7 @@ No plan should introduce a large CI matrix before a concrete qualification need 
 | Milestone | Status | Implementation plan | Closure record | Blockers |
 |---|---|---|---|---|
 | M001 repository/domain/runtime foundation | closed | `plans/implementation/network-control/001-repository-domain-runtime-foundation.md` | `plans/closure/network-control/001-status.md` | — |
-| M002 privileged protocol/capabilities | ready | `plans/implementation/network-control/002-privileged-protocol-and-capability-boundary.md` | — | — |
-| M003 WireGuard control/telemetry | blocked | `plans/implementation/network-control/003-wireguard-kernel-control-and-telemetry.md` | — | M002 |
+| M002 privileged protocol/capabilities | closed | `plans/implementation/network-control/002-privileged-protocol-and-capability-boundary.md` | `plans/closure/network-control/002-status.md` | — |
+| M003 WireGuard control/telemetry | active | `plans/implementation/network-control/003-wireguard-kernel-control-and-telemetry.md` | — | — |
 | M004 link/address/route reconciliation | blocked | `plans/implementation/network-control/004-link-address-route-reconciliation.md` | — | M003 |
 | M005 firewall/forwarding/E2E | blocked | `plans/implementation/network-control/005-firewall-forwarding-end-to-end.md` | — | M004 |
