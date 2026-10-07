@@ -1,6 +1,6 @@
 # Network Control M001 — Repository, Domain, and Runtime-Role Foundation
 
-Status: ready
+Status: closed
 
 Repository baseline: `539b06182a311e2cf71912cd54356bf80312e603`
 
