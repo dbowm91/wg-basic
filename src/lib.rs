@@ -6,6 +6,8 @@ pub mod domain;
 pub mod error;
 #[cfg(target_os = "linux")]
 pub mod firewall;
+#[cfg(target_os = "linux")]
+pub mod http;
 pub mod management;
 #[cfg(target_os = "linux")]
 pub mod protocol;

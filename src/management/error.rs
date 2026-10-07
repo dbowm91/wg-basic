@@ -5,7 +5,10 @@
 //! second call site cannot invent its own notion of "retryable" and quietly
 //! disagree with the first.
 
-use crate::{protocol::ProtocolError, state::StateError};
+use crate::{
+    protocol::ProtocolError,
+    state::{AttemptDisposition, StateError},
+};
 
 /// How a management operation failed.
 #[derive(Debug, thiserror::Error)]
@@ -36,6 +39,9 @@ pub enum ManagementError {
 
     #[error("the network service returned an unexpected response")]
     UnexpectedResponse,
+
+    #[error("could not start the dedicated management worker thread")]
+    WorkerStartFailed,
 }
 
 /// A projection problem, reported as a category rather than a message.
@@ -81,6 +87,40 @@ impl ManagementError {
             Self::Unauthorized | Self::Rejected => FailureClass::Refused,
             _ => FailureClass::Other,
         }
+    }
+
+    /// The stored evidence category this failure corresponds to.
+    ///
+    /// Used when a failure has to be reported as a category rather than a
+    /// message. Errors with no honest category become
+    /// [`AttemptDisposition::Rejected`] only when the network service was the
+    /// refusing party; anything that is a local state or thread problem reports
+    /// `None` so a caller never invents convergence evidence for it.
+    pub fn evidence_category(&self) -> Option<AttemptDisposition> {
+        Some(match self {
+            Self::BackendUnavailable => AttemptDisposition::BackendUnavailable,
+            Self::PartialFailure => AttemptDisposition::PartialFailure,
+            Self::Conflict => AttemptDisposition::StateConflict,
+            Self::Unauthorized => AttemptDisposition::Unauthorized,
+            Self::Rejected | Self::UnexpectedResponse => AttemptDisposition::Rejected,
+            Self::State(_)
+            | Self::Projection(_)
+            | Self::NothingToReconcile
+            | Self::WorkerStartFailed => return None,
+        })
+    }
+
+    /// Whether this failure means the service has no usable authoritative state.
+    ///
+    /// A database, path, migration, or projection failure is fatal: there is
+    /// nothing to administer. A netd outage, refusal, or ownership conflict is
+    /// not, because the operator needs the management surface in order to
+    /// diagnose and fix it.
+    pub fn is_fatal_without_authority(&self) -> bool {
+        matches!(
+            self,
+            Self::State(_) | Self::Projection(_) | Self::WorkerStartFailed
+        )
     }
 }
 

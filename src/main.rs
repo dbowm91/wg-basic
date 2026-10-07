@@ -12,10 +12,22 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Unprivileged management role; currently verifies the local netd protocol.
+    /// Unprivileged management role: serves the loopback management HTTP surface
+    /// and owns the bounded worker that holds the durable state.
+    ///
+    /// This role never escalates privileges and never spawns or elevates netd.
+    /// It reaches the network only through the authorized socket, from the
+    /// worker thread, on behalf of a request.
     Serve {
+        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        state: PathBuf,
         #[arg(long, default_value = DEFAULT_SOCKET)]
         socket: PathBuf,
+        /// Management listener address. Loopback only by default; a non-loopback
+        /// bind serves unauthenticated liveness to the network and must be an
+        /// explicit operator decision.
+        #[arg(long, default_value = wg_basic::http::config::DEFAULT_BIND)]
+        http_bind: String,
     },
     /// Privileged local network service; exposes typed WireGuard, network, and firewall operations.
     Netd {
@@ -120,30 +132,11 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
             );
             Ok(())
         }
-        Some(Command::Serve { socket }) => {
-            let result = request(&socket, RequestOperation::Ping, 1).map_err(|_| {
-                "could not contact local netd using the authorized protocol".to_owned()
-            })?;
-            match result {
-                ResponseBody::Pong { service, version } => {
-                    println!("management role connected to {service} {version}")
-                }
-                ResponseBody::Capabilities(_) => {
-                    return Err("netd returned an unexpected protocol response".into())
-                }
-                ResponseBody::WireGuardDevice(_)
-                | ResponseBody::WireGuardApplied(_)
-                | ResponseBody::ManagedInterfacePlan(_)
-                | ResponseBody::ManagedInterfaceApplied(_)
-                | ResponseBody::NetworkPolicyPlan(_)
-                | ResponseBody::NetworkPolicyApplied(_)
-                | ResponseBody::InstallationNetworkPlanned(_)
-                | ResponseBody::InstallationNetworkApplied(_) => {
-                    return Err("netd returned an unexpected protocol response".into())
-                }
-            }
-            Ok(())
-        }
+        Some(Command::Serve {
+            state,
+            socket,
+            http_bind,
+        }) => serve(state, socket, http_bind),
         Some(Command::Reconcile { state, socket }) => {
             let runtime = wg_basic::management::ManagementRuntime::open(&state, &socket)
                 .map_err(|error| error.to_string())?;
@@ -227,6 +220,34 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
         }
         Some(Command::State { action }) => run_state_action(action),
     }
+}
+
+/// Runs the unprivileged management service role.
+///
+/// The signal is delivered by a one-shot rather than an `AtomicBool` so the
+/// ordering — stop accepting, drain, stop the worker, release the store — lives
+/// in one place instead of being re-implemented here.
+#[cfg(target_os = "linux")]
+fn serve(state: PathBuf, socket: PathBuf, http_bind: String) -> Result<(), String> {
+    let config = wg_basic::http::ServeConfig::new(state, socket, &http_bind)
+        .map_err(|error| error.to_string())?;
+    let (signal, wait) = tokio::sync::oneshot::channel::<()>();
+    // The handler may fire more than once, so the sender lives behind a mutex:
+    // the first Ctrl-C consumes it, and later ones find nothing to do.
+    let signal = std::sync::Mutex::new(Some(signal));
+    ctrlc::set_handler(move || {
+        if let Ok(mut slot) = signal.lock() {
+            if let Some(sender) = slot.take() {
+                let _ = sender.send(());
+            }
+        }
+    })
+    .map_err(|_| "could not install graceful shutdown handler".to_owned())?;
+    wg_basic::http::run_blocking(config, async {
+        wait.await.ok();
+    })
+    .map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 /// Runs the state-focused operator surface.

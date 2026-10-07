@@ -23,7 +23,7 @@ install -d -m 700 /tmp/wg-basic-runtime
 cargo run --locked -- netd --socket /tmp/wg-basic-runtime/netd.sock
 ```
 
-In another terminal, use `cargo run --locked -- doctor --socket ...` or `cargo run --locked -- serve --socket ...`. The `serve` role currently checks local protocol connectivity; HTTP is not implemented. For a separate management UID, start netd with `--allow-uid UID` and arrange socket group access. `netd` exits on Ctrl-C and removes only the socket inode it created.
+In another terminal, use `cargo run --locked -- doctor --socket ...` or `cargo run --locked -- serve --socket ...`. `serve` is the unprivileged management service: it opens the durable state store on a dedicated bounded worker thread, attempts startup reconciliation, and serves a loopback-only HTTP surface (`--http-bind`, default `127.0.0.1:8000`) exposing `GET /healthz`. Phase 7 serves no TLS and no authentication; put a TLS-terminating reverse proxy in front of any non-loopback bind. For a separate management UID, start netd with `--allow-uid UID` and arrange socket group access. Both `netd` and `serve` exit on Ctrl-C; `netd` removes only the socket inode it created.
 
 Run Linux IPC integration coverage with:
 

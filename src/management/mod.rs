@@ -2,8 +2,8 @@
 //!
 //! The management role owns the state store, the current desired generation,
 //! projection into network intent, aggregate netd requests, and convergence
-//! evidence. It does **not** host HTTP: this milestone adds recovery and
-//! reconcile-on-write, not a web surface.
+//! evidence. It does **not** host HTTP: [`crate::http`] owns every byte of the
+//! wire protocol, and reaches this role only through [`WorkerClient`].
 //!
 //! # Module boundaries
 //!
@@ -12,13 +12,16 @@
 //!
 //! - [`health`] owns the safe, non-secret health projection and how a recorded
 //!   convergence state is derived. It is the only module that describes what an
-//!   operator would see, so a future Phase 7 surface has one subject to bind to.
+//!   operator would see, so the Phase 7 surface has one subject to bind to.
 //! - [`error`] owns the failure taxonomy and the one rule that maps a failure
 //!   onto a retry decision. Retry policy is not spread across call sites.
 //! - [`coordinator`] owns the bounded single-slot coalescing rule: when writes
 //!   collapse, and when a newer generation waits for a running apply.
 //! - [`runtime`] owns the startup sequence and the apply/retry loop, and is the
 //!   only module that talks to the state store or to netd.
+//! - [`worker`] owns the single blocking thread that holds [`runtime`], plus the
+//!   bounded command queue that is the *only* way into it. It is the ADR-003
+//!   boundary between synchronous authority and the async HTTP surface.
 //!
 //! # Startup
 //!
@@ -50,8 +53,12 @@ mod coordinator;
 mod error;
 mod health;
 mod runtime;
+mod worker;
 
 pub use coordinator::{CoordinatorAction, ReconcileCoordinator};
 pub use error::{FailureClass, ManagementError, ProjectionFailure};
 pub use health::{ConvergenceState, ManagementHealth};
 pub use runtime::{ManagementRuntime, ReconcileOutcome};
+pub use worker::{
+    spawn, StartupReconcile, WorkerClient, WorkerCommand, WorkerConfig, WorkerError, WorkerStartup,
+};
