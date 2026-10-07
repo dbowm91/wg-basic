@@ -4,8 +4,8 @@
 //! policy renders to, and refuses to touch an unowned same-name table.
 
 use super::policy::{
-    DesiredNetworkPolicy, FirewallActionKind, FirewallError, FirewallPlanSummary, FirewallWarning,
-    Ipv4Forwarding, NatMode, TABLE_NAME, TABLE_OWNER,
+    DesiredNetworkPolicy, FirewallActionKind, FirewallError, FirewallOwner, FirewallPlanSummary,
+    FirewallWarning, Ipv4Forwarding, NatMode, TABLE_NAME,
 };
 use crate::domain::InterfaceName;
 use std::collections::{BTreeMap, BTreeSet};
@@ -14,6 +14,8 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(crate) struct TableObservation {
     pub(crate) present: bool,
     pub(crate) owned: bool,
+    /// The table carries the pre-Phase-6 product-only marker.
+    pub(crate) legacy_marker: bool,
     pub(crate) rule_markers: BTreeSet<String>,
     pub(crate) chain_count: usize,
     pub(crate) rule_count: usize,
@@ -35,12 +37,19 @@ pub(crate) struct FirewallPlan {
 }
 
 pub(crate) fn plan_firewall(
+    owner: &FirewallOwner,
     wireguard_interface: &InterfaceName,
     policy: Option<&DesiredNetworkPolicy>,
     observation: &FirewallObservation,
 ) -> Result<FirewallPlan, FirewallError> {
     if observation.table.present && !observation.table.owned {
-        return Err(FirewallError::TableOwnershipConflict);
+        // An M005-era table is a conflict for operator cleanup, never an
+        // automatic adoption: ownership now binds to an installation identity.
+        return Err(if observation.table.legacy_marker {
+            FirewallError::LegacyTableOwnership
+        } else {
+            FirewallError::TableOwnershipConflict
+        });
     }
     if observation
         .table
@@ -54,7 +63,7 @@ pub(crate) fn plan_firewall(
     let desired_hash = if let Some(policy) = policy {
         policy.validate(wireguard_interface)?;
         let hash = policy_hash(policy, wireguard_interface);
-        let desired_markers = policy.rule_markers(&hash, wireguard_interface);
+        let desired_markers = policy.rule_markers(owner, &hash, wireguard_interface);
         if policy.ipv4_forwarding == Ipv4Forwarding::Required && !observation.forwarding_enabled {
             actions.push(FirewallActionKind::EnableIpv4Forwarding);
         }
@@ -67,7 +76,7 @@ pub(crate) fn plan_firewall(
                 0
             };
         let (expected_chain_objects, expected_rule_objects) =
-            expected_objects(policy, wireguard_interface, &hash);
+            expected_objects(owner, policy, wireguard_interface, &hash);
         if !observation.table.present
             || observation.table.rule_markers != desired_markers
             || observation.table.chain_count != expected_chains
@@ -95,6 +104,7 @@ pub(crate) fn plan_firewall(
 }
 
 pub(crate) fn matches_policy(
+    owner: &FirewallOwner,
     policy: Option<&DesiredNetworkPolicy>,
     interface: &InterfaceName,
     observation: &FirewallObservation,
@@ -116,9 +126,9 @@ pub(crate) fn matches_policy(
                 0
             };
         let (expected_chain_objects, expected_rule_objects) =
-            expected_objects(policy, interface, &hash);
+            expected_objects(owner, policy, interface, &hash);
         Ok(
-            observation.table.rule_markers == policy.rule_markers(&hash, interface)
+            observation.table.rule_markers == policy.rule_markers(owner, &hash, interface)
                 && observation.table.chain_count == expected_chains
                 && observation.table.rule_count == expected_rules
                 && observation.table.chains == expected_chain_objects
@@ -151,6 +161,7 @@ pub(crate) fn policy_hash(policy: &DesiredNetworkPolicy, interface: &InterfaceNa
 }
 
 pub(crate) fn expected_objects(
+    owner: &FirewallOwner,
     policy: &DesiredNetworkPolicy,
     interface: &InterfaceName,
     hash: &str,
@@ -166,7 +177,7 @@ pub(crate) fn expected_objects(
             "family": "inet",
             "table": TABLE_NAME,
             "name": "forward",
-            "comment": format!("{TABLE_OWNER}:chain:forward:{hash}"),
+            "comment": format!("{owner}:chain:forward:{hash}"),
             "type": "filter",
             "hook": "forward",
             "prio": 0,
@@ -180,7 +191,7 @@ pub(crate) fn expected_objects(
                 "family": "inet",
                 "table": TABLE_NAME,
                 "name": "postrouting",
-                "comment": format!("{TABLE_OWNER}:chain:postrouting:{hash}"),
+                "comment": format!("{owner}:chain:postrouting:{hash}"),
                 "type": "nat",
                 "hook": "postrouting",
                 "prio": 100,
@@ -189,7 +200,7 @@ pub(crate) fn expected_objects(
         );
     }
 
-    let return_comment = format!("{TABLE_OWNER}:rule:return:{hash}");
+    let return_comment = format!("{owner}:rule:return:{hash}");
     rules.insert(
         return_comment.clone(),
         serde_json::json!({
@@ -213,7 +224,7 @@ pub(crate) fn expected_objects(
                 "right": {"prefix": {"addr": network.addr().to_string(), "len": network.prefix_len()}}
             }
         });
-        let allow_comment = format!("{TABLE_OWNER}:rule:allow:{index}:{hash}");
+        let allow_comment = format!("{owner}:rule:allow:{index}:{hash}");
         rules.insert(
             allow_comment.clone(),
             serde_json::json!({
@@ -230,7 +241,7 @@ pub(crate) fn expected_objects(
             }),
         );
         if policy.nat == NatMode::Masquerade {
-            let nat_comment = format!("{TABLE_OWNER}:rule:nat:{index}:{hash}");
+            let nat_comment = format!("{owner}:rule:nat:{index}:{hash}");
             rules.insert(
                 nat_comment.clone(),
                 serde_json::json!({
@@ -247,7 +258,7 @@ pub(crate) fn expected_objects(
             );
         }
     }
-    let drop_comment = format!("{TABLE_OWNER}:rule:drop:{hash}");
+    let drop_comment = format!("{owner}:rule:drop:{hash}");
     rules.insert(
         drop_comment.clone(),
         serde_json::json!({
@@ -267,6 +278,17 @@ pub(crate) fn expected_objects(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One stable installation identity for the whole module: the table marker
+    /// must match between observation and the expected objects, so it cannot be
+    /// regenerated per call.
+    fn owner() -> FirewallOwner {
+        FirewallOwner::new(
+            "00000000-0000-4000-8000-0000000000a1"
+                .parse::<crate::domain::InstallationId>()
+                .unwrap(),
+        )
+    }
 
     fn fixture() -> (InterfaceName, DesiredNetworkPolicy) {
         (
@@ -288,6 +310,7 @@ mod tests {
             table: TableObservation {
                 present: false,
                 owned: false,
+                legacy_marker: false,
                 rule_markers: BTreeSet::new(),
                 chain_count: 0,
                 rule_count: 0,
@@ -296,7 +319,7 @@ mod tests {
                 rules: BTreeMap::new(),
             },
         };
-        let first = plan_firewall(&interface, Some(&policy), &observation).unwrap();
+        let first = plan_firewall(&owner(), &interface, Some(&policy), &observation).unwrap();
         assert_eq!(
             first.summary.actions,
             vec![
@@ -313,6 +336,7 @@ mod tests {
             table: TableObservation {
                 present: true,
                 owned: false,
+                legacy_marker: false,
                 rule_markers: BTreeSet::new(),
                 chain_count: 0,
                 rule_count: 0,
@@ -322,7 +346,7 @@ mod tests {
             },
         };
         assert_eq!(
-            plan_firewall(&interface, Some(&policy), &collision),
+            plan_firewall(&owner(), &interface, Some(&policy), &collision),
             Err(FirewallError::TableOwnershipConflict)
         );
     }
@@ -331,13 +355,14 @@ mod tests {
     fn repeated_desired_policy_is_a_noop_and_disable_preserves_forwarding() {
         let (interface, policy) = fixture();
         let hash = policy_hash(&policy, &interface);
-        let (chains, rules) = expected_objects(&policy, &interface, &hash);
+        let (chains, rules) = expected_objects(&owner(), &policy, &interface, &hash);
         let observation = FirewallObservation {
             forwarding_enabled: true,
             table: TableObservation {
                 present: true,
                 owned: true,
-                rule_markers: policy.rule_markers(&hash, &interface),
+                legacy_marker: false,
+                rule_markers: policy.rule_markers(&owner(), &hash, &interface),
                 chain_count: 2,
                 rule_count: 4,
                 chain_names: BTreeSet::from(["forward".to_owned(), "postrouting".to_owned()]),
@@ -345,13 +370,15 @@ mod tests {
                 rules,
             },
         };
-        assert!(plan_firewall(&interface, Some(&policy), &observation)
-            .unwrap()
-            .summary
-            .actions
-            .is_empty());
+        assert!(
+            plan_firewall(&owner(), &interface, Some(&policy), &observation)
+                .unwrap()
+                .summary
+                .actions
+                .is_empty()
+        );
         assert_eq!(
-            plan_firewall(&interface, None, &observation)
+            plan_firewall(&owner(), &interface, None, &observation)
                 .unwrap()
                 .summary
                 .actions,
@@ -363,16 +390,17 @@ mod tests {
     fn owned_expression_drift_plans_replacement_even_if_markers_remain() {
         let (interface, policy) = fixture();
         let hash = policy_hash(&policy, &interface);
-        let (chains, mut rules) = expected_objects(&policy, &interface, &hash);
+        let (chains, mut rules) = expected_objects(&owner(), &policy, &interface, &hash);
         rules
-            .get_mut(&format!("{TABLE_OWNER}:rule:allow:0:{hash}"))
+            .get_mut(&format!("{}:rule:allow:0:{hash}", owner()))
             .unwrap()["expr"][0]["match"]["right"] = serde_json::json!("wg-other");
         let observation = FirewallObservation {
             forwarding_enabled: true,
             table: TableObservation {
                 present: true,
                 owned: true,
-                rule_markers: policy.rule_markers(&hash, &interface),
+                legacy_marker: false,
+                rule_markers: policy.rule_markers(&owner(), &hash, &interface),
                 chain_count: 2,
                 rule_count: 4,
                 chain_names: BTreeSet::from(["forward".to_owned(), "postrouting".to_owned()]),
@@ -381,7 +409,7 @@ mod tests {
             },
         };
         assert_eq!(
-            plan_firewall(&interface, Some(&policy), &observation)
+            plan_firewall(&owner(), &interface, Some(&policy), &observation)
                 .unwrap()
                 .summary
                 .actions,

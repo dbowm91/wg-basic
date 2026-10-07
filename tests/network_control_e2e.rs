@@ -223,6 +223,14 @@ fn apply_interface(
     }
 }
 
+/// One installation identity for the whole fixture: the owned nftables table
+/// binds to it, and every policy operation must present the same identity.
+fn installation() -> InstallationId {
+    "00000000-0000-4000-8000-0000000000a1"
+        .parse::<InstallationId>()
+        .unwrap()
+}
+
 fn apply_policy(
     netd: &Netd,
     wireguard_interface: InterfaceName,
@@ -232,6 +240,7 @@ fn apply_policy(
     match request(
         &netd.socket(),
         RequestOperation::ApplyNetworkPolicy {
+            installation_id: installation(),
             wireguard_interface,
             policy,
         },
@@ -418,9 +427,9 @@ fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
     let client_interface: InterfaceName = "wg-client".parse().unwrap();
     // Each managed interface gets its own durable owner tag, derived from one
     // installation identity and the interface identity.
-    let installation = InstallationId::new();
-    let server_owner = OwnerTag::new(installation, InterfaceId::new());
-    let client_owner = OwnerTag::new(installation, InterfaceId::new());
+    let install = InstallationId::new();
+    let server_owner = OwnerTag::new(install, InterfaceId::new());
+    let client_owner = OwnerTag::new(install, InterfaceId::new());
 
     let server_state = || {
         managed_interface(
@@ -597,6 +606,7 @@ fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
     let collision = request(
         &server_netd.socket(),
         RequestOperation::PlanNetworkPolicy {
+            installation_id: installation(),
             wireguard_interface: server_interface.clone(),
             policy: Some(policy(NatMode::Masquerade)),
         },
