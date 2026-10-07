@@ -30,11 +30,18 @@ pub(crate) struct Migration {
 }
 
 /// Every migration in exact application order.
-pub(crate) const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "initial",
-    sql: include_str!("../migrations/001_initial.sql"),
-}];
+pub(crate) const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "initial",
+        sql: include_str!("../migrations/001_initial.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "auth_sessions",
+        sql: include_str!("../migrations/002_auth_sessions.sql"),
+    },
+];
 
 /// The highest schema version this binary understands.
 pub(crate) fn supported_version() -> i64 {
@@ -195,34 +202,13 @@ fn foreign_key_check(transaction: &rusqlite::Transaction<'_>) -> Result<(), rusq
     }
     Ok(())
 }
-#[cfg(test)]
-/// A simulated version history used **only** to qualify the migration runner.
-///
-/// Phase 6 shipped exactly one real migration, so there is no genuine 1 -> 2
-/// upgrade to replay. Rather than manufacturing production schema churn to
-/// create one, the tests below drive the real runner over this list. The extra
-/// version adds an unused metadata table: harmless, reversible in the sense that
-/// it is never shipped, and sufficient to prove the runner's ordering,
-/// version-stamping, foreign-key check, and state preservation.
-///
-/// This is a **test-only** harness. It is not migration history, and no closure
-/// record may claim a second schema version exists.
-pub(crate) fn test_only_migrations() -> Vec<Migration> {
-    let mut migrations = MIGRATIONS.to_vec();
-    migrations.push(Migration {
-        version: 2,
-        name: "test_only_marker",
-        sql: "CREATE TABLE test_only_marker (singleton INTEGER PRIMARY KEY CHECK (singleton = 1));\
-              INSERT INTO test_only_marker (singleton) VALUES (1);",
-    });
-    migrations
-}
-
-#[cfg(test)]
 /// Creates a database migrated only as far as `through_version`.
 ///
-/// Used to build a historical fixture at a boundary, so a later step can prove
-/// the runner upgrades it.
+/// The filter runs over the **production** migration list, so the result is a
+/// genuine historical database at that version rather than a simulated one.
+/// Phase 7 M002 added migration 2, so `initialize_at_version(path, 1)` now
+/// builds a real v1 store -- the boundary a real user would be upgrading from.
+#[cfg(test)]
 pub(super) fn initialize_at_version(path: &Path, through_version: i64) -> Result<(), StateError> {
     let connection = Connection::open_with_flags(
         path,
@@ -233,9 +219,10 @@ pub(super) fn initialize_at_version(path: &Path, through_version: i64) -> Result
     )
     .map_err(|_| StateError::DatabaseOpenFailed)?;
     configure(&connection)?;
-    let available: Vec<Migration> = test_only_migrations()
-        .into_iter()
+    let available: Vec<Migration> = MIGRATIONS
+        .iter()
         .filter(|migration| migration.version <= through_version)
+        .cloned()
         .collect();
     let mut connection = connection;
     apply_migrations(&mut connection, &available)?;

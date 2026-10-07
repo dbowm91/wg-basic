@@ -13,6 +13,10 @@
 //!   one as an atomic generation advance.
 //! - [`convergence`] owns reconciliation evidence: attempt start, attempt
 //!   result, and the guard that marks a generation converged.
+//! - [`auth`] owns administrator principals and server-side sessions. It stores
+//!   an already-computed Argon2 verifier and an already-hashed session digest, so
+//!   a slow hash is never triggered from inside a transaction and a raw session
+//!   token has no parameter it could be passed to.
 //! - [`sql`] owns row decoding shared by the two, so SQLite column values are
 //!   turned into domain types in exactly one place.
 //!
@@ -22,7 +26,11 @@
 //!
 //! Phase 7 must cross into this blocking store through a bounded
 //! blocking-worker adapter rather than by making this API async.
+//!
+//! [`StateStore`] re-exports the [`auth`] row types so a caller reads them from
+//! the store that owns them, exactly as it does for desired state.
 
+mod auth;
 mod convergence;
 mod desired;
 mod sql;
@@ -37,6 +45,8 @@ use std::{
     path::{Path, PathBuf},
     sync::{Mutex, MutexGuard},
 };
+
+pub use auth::{PrincipalRecord, SessionRecord, StoredSession};
 
 /// The authoritative unprivileged application-state store.
 pub struct StateStore {
@@ -102,6 +112,25 @@ impl StateStore {
         }
         // Checked after seeding, so "exactly one row" holds for a brand-new
         // store and a missing installation row fails closed on reopen.
+        schema::enforce_singleton(&connection)?;
+        super::inuse::register(path);
+        Ok(Self {
+            path: path.to_path_buf(),
+            connection: Mutex::new(connection),
+        })
+    }
+
+    /// Opens an existing store **without** running any migration.
+    ///
+    /// Only for building a genuine historical fixture. Every production entry
+    /// point migrates on open, so a version-1 database could not otherwise be
+    /// populated with real rows before something upgraded it -- and a fixture
+    /// that jumped the boundary would not prove that a real upgrade preserves
+    /// data. This never runs in a shipped binary.
+    #[cfg(test)]
+    pub(crate) fn open_without_migrating(path: impl AsRef<Path>) -> Result<Self, StateError> {
+        let path = path.as_ref();
+        let connection = schema::open_connection_without_migrating(path, current_uid())?;
         schema::enforce_singleton(&connection)?;
         super::inuse::register(path);
         Ok(Self {

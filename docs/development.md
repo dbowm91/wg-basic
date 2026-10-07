@@ -25,6 +25,26 @@ cargo run --locked -- netd --socket /tmp/wg-basic-runtime/netd.sock
 
 In another terminal, use `cargo run --locked -- doctor --socket ...` or `cargo run --locked -- serve --socket ...`. `serve` is the unprivileged management service: it opens the durable state store on a dedicated bounded worker thread, attempts startup reconciliation, and serves a loopback-only HTTP surface (`--http-bind`, default `127.0.0.1:8000`) exposing `GET /healthz`. Phase 7 serves no TLS and no authentication; put a TLS-terminating reverse proxy in front of any non-loopback bind. For a separate management UID, start netd with `--allow-uid UID` and arrange socket group access. Both `netd` and `serve` exit on Ctrl-C; `netd` removes only the socket inode it created.
 
+## Local administrator credentials
+
+Phase 7 keeps credential and session primitives in the management role but
+publishes no HTTP route for them yet. Provision or reset the local administrator
+from the terminal:
+
+```sh
+install -d -m 700 /tmp/wg-basic-runtime
+printf '%s\n' 'an administrator password' | \
+  cargo run --locked -- admin set-password --password-stdin \
+    --state /tmp/wg-basic-runtime/state.db
+cargo run --locked -- admin status --state /tmp/wg-basic-runtime/state.db
+```
+
+The password is read only from standard input and only with `--password-stdin`.
+It is never accepted as an argument or from the environment: an `argv` credential
+is readable by every process on the host through `/proc`, and an environment one
+is inherited by every child. `admin status` prints identity, enabled state, and
+the live session count, and never a verifier, token, or password.
+
 Run Linux IPC integration coverage with:
 
 ```sh

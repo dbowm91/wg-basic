@@ -37,6 +37,9 @@ id_type!(InterfaceId);
 id_type!(PeerId);
 id_type!(ClientId);
 
+id_type!(PrincipalId);
+id_type!(SessionId);
+
 #[cfg(test)]
 mod tests {
     use super::*;

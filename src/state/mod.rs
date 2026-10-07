@@ -47,7 +47,7 @@ pub use model::{
 };
 pub use projection::{ProjectionError, ResolvedNetworkIntent};
 pub use schema::OpenIntent;
-pub use store::StateStore;
+pub use store::{PrincipalRecord, SessionRecord, StateStore, StoredSession};
 
 #[cfg(target_os = "linux")]
 pub use projection::project;

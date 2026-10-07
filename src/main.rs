@@ -3,6 +3,9 @@ use std::path::PathBuf;
 
 const DEFAULT_SOCKET: &str = "/run/wg-basic/netd.sock";
 
+/// The Phase 7 local administrator's login name.
+const DEFAULT_ADMIN_USERNAME: &str = "admin";
+
 #[derive(Parser)]
 #[command(name = "wg-basic", version, about = "Linux-native WireGuard appliance")]
 struct Cli {
@@ -53,6 +56,16 @@ enum Command {
         #[arg(long, default_value = DEFAULT_SOCKET)]
         socket: PathBuf,
     },
+    /// Local administrator credentials.
+    ///
+    /// Neither action accepts a password as an argument or from the
+    /// environment. A credential in `argv` is visible to every process on the
+    /// host through `/proc`, and one in the environment is inherited by every
+    /// child; the only acceptable input is this process's own standard input.
+    Admin {
+        #[command(subcommand)]
+        action: AdminAction,
+    },
     /// Prints the durable management health projection and exits.
     Health {
         #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
@@ -68,6 +81,35 @@ enum Command {
     State {
         #[command(subcommand)]
         action: StateCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum AdminAction {
+    /// Creates the local administrator, or resets an existing password.
+    ///
+    /// A reset revokes every existing session in the same transaction: a
+    /// password changed in order to lock someone out must not leave their cookie
+    /// working.
+    SetPassword {
+        /// The administrator's login name.
+        #[arg(long, default_value = DEFAULT_ADMIN_USERNAME)]
+        username: String,
+        /// Read the password from standard input.
+        ///
+        /// Required, and explicit. Without the flag this command does nothing,
+        /// so a password can never arrive by accident through a pipe that some
+        /// other tool happened to provide.
+        #[arg(long)]
+        password_stdin: bool,
+        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        state: PathBuf,
+    },
+    /// Prints the safe administrator projection: identity, enabled state, and
+    /// live session count. Never a verifier, token, or password.
+    Status {
+        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        state: PathBuf,
     },
 }
 
@@ -218,8 +260,86 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
                 .run_until_shutdown(&shutdown)
                 .map_err(|_| "netd listener stopped after a runtime error".to_owned())
         }
+        Some(Command::Admin { action }) => run_admin_action(action),
         Some(Command::State { action }) => run_state_action(action),
     }
+}
+
+/// Runs the local administrator credential surface.
+///
+/// This path does not go through the worker: it is a one-shot operator command
+/// that opens the store directly, before any service is running. It still obeys
+/// the two rules that matter -- the password arrives only on stdin, and nothing
+/// here ever prints a verifier or a token.
+#[cfg(target_os = "linux")]
+fn run_admin_action(action: AdminAction) -> Result<(), String> {
+    use wg_basic::management;
+
+    match action {
+        AdminAction::SetPassword {
+            username,
+            password_stdin,
+            state,
+        } => {
+            if !password_stdin {
+                return Err(
+                    "--password-stdin is required: a password is never read from an argument \
+                     or from the environment"
+                        .to_owned(),
+                );
+            }
+            let password = read_password_from_stdin()?;
+            let status = management::set_password_at(&state, &username, &password)
+                .map_err(|error| error.to_string())?;
+            println!(
+                "administrator `{}` enabled; {} live session(s) remain",
+                status.username, status.live_sessions
+            );
+            Ok(())
+        }
+        AdminAction::Status { state } => {
+            match management::status_at(&state).map_err(|error| error.to_string())? {
+                Some(status) => println!(
+                    "administrator `{}` ({}) {}; {} live session(s)",
+                    status.username,
+                    status.principal_id,
+                    if status.enabled {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    },
+                    status.live_sessions
+                ),
+                None => println!("no local administrator has been provisioned"),
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Reads a password from standard input, trimming exactly one trailing newline.
+///
+/// Only the trailing newline a terminal or `echo` adds is removed; every other
+/// byte is preserved, because a silently altered password is a credential the
+/// operator did not choose and would have to debug by guessing. A password that
+/// genuinely ends in a newline can still be supplied through a pipe that does not
+/// append one.
+#[cfg(target_os = "linux")]
+fn read_password_from_stdin() -> Result<String, String> {
+    use std::io::Read as _;
+
+    let mut bytes = Vec::new();
+    std::io::stdin()
+        .read_to_end(&mut bytes)
+        .map_err(|_| "could not read the password from standard input".to_owned())?;
+    if bytes.last() == Some(&b'\n') {
+        bytes.pop();
+    }
+    if bytes.last() == Some(&b'\r') {
+        bytes.pop();
+    }
+    String::from_utf8(bytes)
+        .map_err(|_| "the password on standard input is not valid UTF-8".to_owned())
 }
 
 /// Runs the unprivileged management service role.

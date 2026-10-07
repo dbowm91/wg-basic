@@ -157,7 +157,9 @@ fn a_backup_is_a_consistent_snapshot_of_exactly_one_generation() {
 
     let receipt = store.backup(temp.path().join("second.db")).unwrap();
     assert_eq!(receipt.generation, DesiredGeneration::new(3).unwrap());
-    assert_eq!(receipt.schema_version, 1);
+    // Read rather than hard-code the head: a backup receipt must report the
+    // schema this binary actually wrote, and Phase 7 M002 moved it from 1 to 2.
+    assert_eq!(receipt.schema_version, store.schema_version().unwrap());
     assert_eq!(receipt.destination, temp.path().join("second.db"));
 
     // The snapshot must open independently and report the same generation and
@@ -345,7 +347,14 @@ fn a_restore_round_trips_identity_generation_and_typed_state() {
     let receipt = restore(&destination, target.db()).unwrap();
     assert_eq!(receipt.installation_id, identity);
     assert_eq!(receipt.generation, DesiredGeneration::new(3).unwrap());
-    assert_eq!(receipt.schema_version, 1);
+    assert_eq!(
+        receipt.schema_version,
+        StateStore::open(&destination)
+            .unwrap()
+            .schema_version()
+            .unwrap(),
+        "a restore receipt must report the schema it actually installed"
+    );
     assert_eq!(receipt.target, target.db());
 
     let restored = StateStore::open(target.db()).unwrap();
@@ -512,10 +521,11 @@ fn a_schema_newer_than_the_binary_is_refused_before_anything_is_replaced() {
             error,
             StateError::SchemaTooNew {
                 found: 99,
-                supported: 1
-            }
+                supported
+            } if (1..99).contains(&supported)
         ),
-        "a future schema must fail closed: {error:?}"
+        "a future schema must fail closed, naming the version this binary \
+         understands rather than a hard-coded one: {error:?}"
     );
     // `StateStore::open` refuses it too, so it can never drive reconciliation.
     assert!(matches!(

@@ -155,6 +155,19 @@ const PRODUCTION_SOURCES: &[(&str, &str)] = &[
         "src/management/worker.rs",
         include_str!("../src/management/worker.rs"),
     ),
+    ("src/domain/auth.rs", include_str!("../src/domain/auth.rs")),
+    (
+        "src/state/store/auth.rs",
+        include_str!("../src/state/store/auth.rs"),
+    ),
+    (
+        "src/state/migrations/002_auth_sessions.sql",
+        include_str!("../src/state/migrations/002_auth_sessions.sql"),
+    ),
+    (
+        "src/management/auth.rs",
+        include_str!("../src/management/auth.rs"),
+    ),
     ("src/http/mod.rs", include_str!("../src/http/mod.rs")),
     ("src/http/config.rs", include_str!("../src/http/config.rs")),
     (
@@ -743,5 +756,190 @@ fn the_comment_stripper_actually_strips_and_preserves() {
     assert!(
         !code.contains("crate::forbidden"),
         "no commented-out token may survive: {code}"
+    );
+}
+
+#[test]
+fn a_raw_session_token_has_no_path_into_the_database() {
+    // `store::auth` persists sessions. If it ever accepted a `SessionToken`, the
+    // raw bearer would have a route into SQLite and the whole "only the digest is
+    // stored" property would become a convention rather than a type error.
+    let store = &code_only(source_of("src/state/store/auth.rs"));
+    assert!(
+        store.contains("SessionTokenDigest"),
+        "the persistence layer stores and looks up digests"
+    );
+    // `SessionToken` is a prefix of `SessionTokenDigest`, so the digest form is
+    // removed before the raw name is looked for. Otherwise this guard would
+    // fire on the very type it is protecting.
+    let without_digest = store.replace("SessionTokenDigest", "");
+    assert!(
+        !without_digest.contains("SessionToken"),
+        "the persistence layer must never name the raw session token type"
+    );
+
+    // The one secret wrapper this module may read is the CSRF token, and only
+    // because the schema documents that it is not a credential: it is echoed back
+    // by the browser in a header and is useless without the bearer beside it.
+    let reader = code_only(source_of("src/state/store/auth.rs"));
+    assert!(
+        reader.contains("csrf_token.expose_once()"),
+        "the CSRF token is the one value read through expose_once here"
+    );
+    assert_eq!(
+        reader.matches(".expose_once()").count(),
+        1,
+        "exactly one value in the persistence layer may be read raw, and it is the CSRF \
+         token; anything else is a leak"
+    );
+
+    // The schema must never mention a bearer token at all.
+    let migration = code_only(source_of("src/state/migrations/002_auth_sessions.sql"));
+    assert!(
+        !migration.contains("session_token"),
+        "the session schema stores a digest, never a token"
+    );
+    assert!(
+        migration.contains("token_digest"),
+        "the session schema stores the token digest"
+    );
+}
+
+#[test]
+fn authentication_is_reached_only_through_the_bounded_worker() {
+    // Argon2id at the management policy costs ~19 MiB and tens of milliseconds
+    // per verification. Running it on a Tokio worker thread would turn a login
+    // into a thread stall, and unbounded concurrent verification would be a CPU
+    // denial of service. So the hash must live in the management role and be
+    // reachable only from the worker thread.
+    let http = code_only(source_of("src/http/service.rs"));
+    for forbidden in ["argon2", "PasswordVerifier", "check_password_policy"] {
+        assert!(
+            !http.contains(forbidden),
+            "the HTTP boundary must not perform credential hashing ({forbidden}); \
+             it reaches authentication only through the worker client"
+        );
+    }
+
+    let management_auth = code_only(source_of("src/management/auth.rs"));
+    assert!(
+        management_auth.contains("Argon2") || management_auth.contains("argon2"),
+        "the management role owns Argon2id"
+    );
+    assert!(
+        !management_auth.contains("tokio::"),
+        "authentication runs on the worker thread, never on an async task"
+    );
+
+    // The domain module is pure: no I/O, no database, no network.
+    let domain_auth = code_only(source_of("src/domain/auth.rs"));
+    for forbidden in [
+        "rusqlite",
+        "tokio::",
+        "std::fs",
+        "std::net",
+        "crate::state",
+        "crate::management",
+    ] {
+        assert!(
+            !domain_auth.contains(forbidden),
+            "credential primitives must stay pure ({forbidden})"
+        );
+    }
+}
+
+#[test]
+fn no_authentication_value_can_reach_a_database_query_as_plaintext() {
+    // The Argon2 verifier and the session digest are the only two credential
+    // values a session store may ever see, and each is stored through its own
+    // accessor. A query parameter that reached for `expose_for_storage` on
+    // something else would be the leak this test exists to prevent.
+    let store = code_only(source_of("src/state/store/auth.rs"));
+    for column in ["verifier", "token_digest", "csrf_token"] {
+        assert!(
+            store.contains(column),
+            "{column} must be persisted; its absence would mean the schema and the \
+             reader disagree"
+        );
+    }
+    // `reset_password_and_revoke_sessions` is a *method* name, not a value. The
+    // invariant that matters is structural: no parameter anywhere in this module
+    // can hold a raw password, so the plaintext has no route to a query at all.
+    for forbidden in [
+        "password:",
+        "password :",
+        "password: &",
+        "password: String",
+        "password:str",
+    ] {
+        assert!(
+            !store.contains(forbidden),
+            "the persistence layer must not accept a password parameter ({forbidden}): \
+             only a verifier"
+        );
+    }
+    // The only credential-shaped parameter is the verifier itself.
+    assert!(
+        store.contains("verifier: PasswordVerifier"),
+        "the one credential value this module may store is an Argon2 verifier"
+    );
+}
+
+#[test]
+fn a_migration_fixture_is_a_real_v1_database() {
+    // Phase 7 M002 added a genuine migration 2. The Phase 6 harness that
+    // simulated a second version must be gone, because it would collide with the
+    // real one and because a simulated version could not prove that a real
+    // upgrade preserves data.
+    let migrations = source_of("src/state/schema/migrations.rs");
+    assert!(
+        !migrations.contains("test_only_migrations"),
+        "the simulated version harness must be removed now that migration 2 is real"
+    );
+    assert!(
+        !migrations.contains("test_only_marker"),
+        "a test-only schema marker must not survive into the migration list"
+    );
+    let list = code_only(migrations);
+    assert_eq!(
+        list.matches("version: 1").count(),
+        1,
+        "migration 1 appears exactly once in the production list"
+    );
+    assert_eq!(
+        list.matches("version: 2").count(),
+        1,
+        "migration 2 appears exactly once in the production list"
+    );
+    assert!(
+        list.contains("002_auth_sessions.sql"),
+        "the production list must include the shipped auth/session migration"
+    );
+}
+
+#[test]
+fn the_admin_cli_offers_no_argv_or_environment_secret_path() {
+    // A password in `argv` is readable by every process on the host through
+    // /proc; one in the environment is inherited by every child. The only
+    // acceptable input is this process's own standard input, behind a flag that
+    // is mandatory.
+    let main = code_only(source_of("src/main.rs"));
+    for forbidden in ["env::var", "std::env", "env!(\"WG_BASIC"] {
+        assert!(
+            !main.contains(forbidden),
+            "the CLI must not read a secret from the environment ({forbidden})"
+        );
+    }
+    assert!(
+        !main.contains("password: String"),
+        "the CLI must never declare a password argument; read it from stdin instead"
+    );
+    assert!(
+        main.contains("--password-stdin is required"),
+        "the stdin path must be explicit and mandatory"
+    );
+    assert!(
+        main.contains("read_password_from_stdin"),
+        "the password must arrive on stdin"
     );
 }

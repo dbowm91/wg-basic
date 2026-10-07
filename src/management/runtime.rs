@@ -70,7 +70,14 @@ impl ManagementRuntime {
     }
 
     /// The store this runtime owns.
-    pub fn store(&self) -> &StateStore {
+    ///
+    /// Deliberately `pub(super)`: reachable from exactly one place, the worker
+    /// thread in [`super::worker`]. That is the ADR-003 boundary enforced by the
+    /// compiler rather than by a review comment — no other module in the crate
+    /// can reach SQLite through this accessor, and the HTTP boundary cannot
+    /// reach it at all. It was public before Phase 7 M002 had any caller; with
+    /// none, public was a promise the type system did not need to make.
+    pub(super) fn store(&self) -> &StateStore {
         &self.store
     }
 
