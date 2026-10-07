@@ -1,6 +1,6 @@
 # Durable State and Restart Reconciliation Roadmap
 
-Status: planned; M001 blocked on network-control C001 closure
+Status: active; M001 ready (network-control C001 strictly closed)
 
 Canonical references:
 
@@ -153,13 +153,13 @@ M003 — startup reconciliation + crash/restart recovery
 M004 — backup/restore + migration/recovery qualification
 ```
 
-C001 is a hard implementation dependency for Phase 6 M001 so the state layer is built against final post-foundation module boundaries rather than creating avoidable merge/refactor conflict.
+C001 was a hard implementation dependency for Phase 6 M001 so the state layer would be built against final post-foundation module boundaries rather than creating avoidable merge/refactor conflict. C001 closed at `0e74a40`, so M001 is unblocked and the state module follows the settled `reconcile/`, `firewall/`, and `protocol/` boundaries.
 
 Research/planning is not blocked by C001.
 
 ## 6. Milestone M001 — SQLite state store and desired-generation contract
 
-Status: blocked on network-control C001 closure.
+Status: active. Unblocked by network-control C001 strict closure at `0e74a40`.
 
 Primary class: infrastructure / invariant.
 
@@ -472,7 +472,7 @@ Phase 6 closure requires re-running the existing M003–M005 kernel/network suit
 
 | Milestone | Status | Implementation plan | Hard blocker |
 |---|---|---|---|
-| M001 SQLite store + generations | blocked | `plans/implementation/durable-state/001-sqlite-state-store-and-generations.md` | network-control C001 closure |
+| M001 SQLite store + generations | ready | `plans/implementation/durable-state/001-sqlite-state-store-and-generations.md` | — |
 | M002 durable ownership + aggregate reconcile | blocked | `plans/implementation/durable-state/002-durable-ownership-and-generation-reconcile.md` | M001 |
 | M003 startup reconciliation + recovery | blocked | `plans/implementation/durable-state/003-startup-reconciliation-and-recovery.md` | M002 |
 | M004 backup/restore + migration qualification | blocked | `plans/implementation/durable-state/004-backup-restore-and-migration-qualification.md` | M003 |

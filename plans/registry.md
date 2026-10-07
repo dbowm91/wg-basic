@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-07
+Last planning reconciliation: 2026-10-07 (C001 closure)
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -38,7 +38,7 @@ The architecture separates:
 
 The privileged service does not expose arbitrary shell, command, file-write, sysctl-path, nft-script, or raw-netlink execution.
 
-Current production code state: **M001–M005 are strictly closed, including rootful three-namespace WireGuard forwarding and NAT qualification. One contract-preserving post-foundation reconciliation/refactor plan (C001) is now ready; Phase 6 durable-state planning is being developed against the closed network contracts.**
+Current production code state: **M001–M005 and C001 are strictly closed. The network-control modules have been decomposed along ownership boundaries with no wire-format, protocol-version, network-policy, or reconciliation-ordering change, and static architecture guards now enforce those boundaries. Phase 6 durable-state implementation M001 is the sole ready plan.**
 
 ## 3. Eggstack reuse disposition
 
@@ -62,8 +62,8 @@ Runtime dependency adoption remains evidence-driven.
 
 | Subsystem | Status | Roadmap | Current milestone |
 |---|---|---|---|
-| Linux network-control foundation | closed foundation / corrective active | `plans/subsystems/network-control-roadmap.md` + `plans/subsystems/network-control-post-foundation-reconciliation-addendum.md` | M001–M005 closed; C001 ready |
-| Durable state/restart reconciliation | planned | `plans/subsystems/durable-state-restart-reconciliation-roadmap.md` | M001 blocked on network-control C001; M002–M004 ordered behind M001 |
+| Linux network-control foundation | closed | `plans/subsystems/network-control-roadmap.md` + `plans/subsystems/network-control-post-foundation-reconciliation-addendum.md` | M001–M005 and C001 closed |
+| Durable state/restart reconciliation | active | `plans/subsystems/durable-state-restart-reconciliation-roadmap.md` | M001 ready; M002–M004 ordered behind M001 |
 | Management service/auth/UI | ready to plan | not yet written | Phase 2 is closed; typed netd protocol and network foundation are stable |
 | Distribution/install/update | proposed | not yet written | begins after service/state layout stabilizes |
 
@@ -73,20 +73,19 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
-| Network control post-foundation reconciliation | C001 documentation reconciliation + module decomposition | **ready** | `plans/implementation/network-control/c001-post-foundation-reconciliation-and-module-decomposition.md` | M001–M005 strict closure; no semantic changes permitted |
+| Durable state/restart reconciliation | M001 SQLite state store + desired generations | **active** | `plans/implementation/durable-state/001-sqlite-state-store-and-generations.md` | network-control C001 strict closure — satisfied at `0e74a40` |
 
-C001 is the sole implementation-ready plan while Phase 6 research/planning proceeds in parallel.
+M001 is the sole implementation-ready plan. It must not change netd, protocol, or kernel ownership semantics.
 
 ## 6. Blocked implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Hard blocker |
 |---|---|---|---|---|
-| Durable state/restart reconciliation | M001 SQLite state store + desired generations | blocked | `plans/implementation/durable-state/001-sqlite-state-store-and-generations.md` | network-control C001 closure |
 | Durable state/restart reconciliation | M002 durable ownership + generation-aware aggregate reconcile | blocked | `plans/implementation/durable-state/002-durable-ownership-and-generation-reconcile.md` | Phase 6 M001 |
 | Durable state/restart reconciliation | M003 startup reconciliation + crash/restart recovery | blocked | `plans/implementation/durable-state/003-startup-reconciliation-and-recovery.md` | Phase 6 M002 |
 | Durable state/restart reconciliation | M004 backup/restore + migration qualification | blocked | `plans/implementation/durable-state/004-backup-restore-and-migration-qualification.md` | Phase 6 M003 |
 
-Phase 6 is fully planned, but none of its implementation milestones is eligible until C001 closes. Revalidate exact crate APIs and repository paths at each promotion.
+Phase 6 is fully planned. M001 is eligible now that C001 has closed; M002–M004 remain ordered behind their predecessors. Revalidate exact crate APIs and repository paths at each promotion.
 
 ## 7. Recently closed work
 
@@ -95,8 +94,11 @@ Phase 6 is fully planned, but none of its implementation milestones is eligible 
 - M003 strict closure: `plans/closure/network-control/003-status.md`.
 - M004 strict closure: `plans/closure/network-control/004-status.md`.
 - M005 strict closure: `plans/closure/network-control/005-status.md`.
+- C001 strict closure: `plans/closure/network-control-post-foundation-reconciliation/c001-status.md` (head `0e74a40`, CI run `37617879237`).
 
-## 8. M005 closure and downstream handoff
+## 8. M005 and C001 closure and downstream handoff
+
+C001 is strictly closed and preserves every M004/M005 contract; its evidence is recorded in `plans/closure/network-control-post-foundation-reconciliation/c001-status.md` and documents the before/after module inventory, the static guards, and the unchanged wire/protocol surface.
 
 M004 and M005 are strictly closed using their predecessor contracts. M004's RTNETLINK choice and ownership/retry semantics are recorded in `architecture/reconciliation.md`; M005's firewall/forwarding/NAT evidence is recorded in `plans/closure/network-control/005-status.md`. Rootful hosted CI supplies real kernel and end-to-end traffic evidence.
 
@@ -141,28 +143,31 @@ M004: real RTNETLINK reconciliation/idempotence/partial-failure/preservation.
 
 M005: three-node namespace traffic with nftables, forwarding, NAT, restart/reapply, disable, and unrelated-state preservation.
 
+C001: unchanged behavior proven by re-running every M003–M005 rootful suite, plus static source guards that pin the architecture boundaries (no `wg`/`wg-quick`/`ip` control path, process execution isolated to the nft backend, no shell, no generic protocol escape hatch, secret redaction).
+
 No network milestone may substitute mocked kernel behavior for its required real-kernel closure evidence.
 
 ## 12. Planning hygiene
 
-M001–M005 have strict closure records. The M005 implementation was verified at `c67fff8` (CI run `37593324627`).
+M001–M005 and C001 have strict closure records. M005 was verified at `c67fff8` (CI run `37593324627`); C001 was verified at `0e74a40` (CI run `37617879237`).
 
-C001 is the active corrective/polish handoff. It preserves M001–M005 behavior and exists to remove stale documentation and decompose large modules before persistence/UI add more consumers.
+C001 removed stale milestone-era documentation and decomposed `reconcile.rs`, `firewall.rs`, and `protocol/server.rs` into `reconcile/`, `firewall/`, and `protocol/` module trees before persistence/UI added more consumers.
 
-Phase 6 planning is now complete under ADR-002 and `plans/subsystems/durable-state-restart-reconciliation-roadmap.md`. Its implementation remains intentionally blocked behind C001.
+Phase 6 planning is complete under ADR-002 and `plans/subsystems/durable-state-restart-reconciliation-roadmap.md`. M001 is now active and unblocked.
 
-Canonical documents should remain stable during C001 implementation unless a material contradiction is discovered.
+Canonical documents should remain stable during Phase 6 M001 implementation unless a material contradiction is discovered.
 
 If later implementation evidence reveals a material architecture contradiction, record it and revise the appropriate plan/ADR deliberately rather than silently altering the contract.
 
 ## 13. Closure handoff
 
-M001–M005 are closed and their strict evidence is recorded. C001 is the sole ready implementation handoff. Phase 6 planning is complete, with M001–M004 registered but blocked in order behind C001. Phase 7 remains unblocked for planning. Phase 8 remains blocked until Phases 6 and 7 close.
+M001–M005 and C001 are closed and their strict evidence is recorded. Phase 6 planning is complete; M001 is the sole ready implementation handoff, and M002–M004 are registered and ordered behind their predecessors. Phase 7 remains unblocked for planning. Phase 8 remains blocked until Phases 6 and 7 close.
 
 At each future closure, update:
 
 - source implementation-plan status;
 - `plans/subsystems/network-control-roadmap.md` milestone table;
+- `plans/subsystems/durable-state-restart-reconciliation-roadmap.md` milestone table;
 - this registry;
 - current architecture/operator docs.
 
