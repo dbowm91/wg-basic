@@ -37,7 +37,7 @@ The architecture separates:
 
 The privileged service does not expose arbitrary shell, command, file-write, sysctl-path, nft-script, or raw-netlink execution.
 
-Current production code state: **M001–M005 are strictly closed, including rootful three-namespace WireGuard forwarding and NAT qualification. No implementation plans remain ready or active.**
+Current production code state: **M001–M005 are strictly closed, including rootful three-namespace WireGuard forwarding and NAT qualification. One contract-preserving post-foundation reconciliation/refactor plan (C001) is now ready; Phase 6 durable-state planning is being developed against the closed network contracts.**
 
 ## 3. Eggstack reuse disposition
 
@@ -61,8 +61,8 @@ Runtime dependency adoption remains evidence-driven.
 
 | Subsystem | Status | Roadmap | Current milestone |
 |---|---|---|---|
-| Linux network-control foundation | active planning | `plans/subsystems/network-control-roadmap.md` | M001–M005 closed |
-| Durable state/restart reconciliation | ready to plan | not yet written | M004/M005 ownership and policy contracts are stable |
+| Linux network-control foundation | closed foundation / corrective active | `plans/subsystems/network-control-roadmap.md` + `plans/subsystems/network-control-post-foundation-reconciliation-addendum.md` | M001–M005 closed; C001 ready |
+| Durable state/restart reconciliation | research/planning | not yet written | M004/M005 ownership and policy contracts are stable; C001 is contract-preserving |
 | Management service/auth/UI | ready to plan | not yet written | Phase 2 is closed; typed netd protocol and network foundation are stable |
 | Distribution/install/update | proposed | not yet written | begins after service/state layout stabilizes |
 
@@ -72,9 +72,9 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
-| — | — | — | — | — |
+| Network control post-foundation reconciliation | C001 documentation reconciliation + module decomposition | **ready** | `plans/implementation/network-control/c001-post-foundation-reconciliation-and-module-decomposition.md` | M001–M005 strict closure; no semantic changes permitted |
 
-No implementation plans remain ready or active. Phase 6 and Phase 7 are ready for bounded planning handoffs; neither has an implementation plan yet.
+C001 is the sole implementation-ready plan while Phase 6 research/planning proceeds in parallel.
 
 ## 6. Blocked implementation plans
 
@@ -143,15 +143,15 @@ No network milestone may substitute mocked kernel behavior for its required real
 
 M001–M005 have strict closure records. The M005 implementation was verified at `c67fff8` (CI run `37593324627`).
 
-There are no active corrective plans.
+C001 is the active corrective/polish handoff. It preserves M001–M005 behavior and exists to remove stale documentation and decompose large modules before persistence/UI add more consumers.
 
-Canonical documents should remain stable during ordinary M004 work.
+Canonical documents should remain stable during C001 implementation unless a material contradiction is discovered.
 
 If later implementation evidence reveals a material architecture contradiction, record it and revise the appropriate plan/ADR deliberately rather than silently altering the contract.
 
 ## 13. Closure handoff
 
-M001–M005 are closed and their strict evidence is recorded. Phases 6 and 7 are unblocked for planning; Phase 8 remains blocked until both have implementation plans and close. No further implementation plan is eligible now, and no successor implementation plan exists yet. Per the planning process, do not draft implementation plans until each successor has a bounded, evidence-backed handoff.
+M001–M005 are closed and their strict evidence is recorded. C001 is the sole ready implementation handoff. Phase 6 and Phase 7 remain unblocked for planning; Phase 8 remains blocked until both have implementation plans and close. Phase 6 planning may proceed while C001 is implemented because C001 is contract-preserving, but Phase 6 production implementation should begin only after C001 closes or its final module boundaries are otherwise reconciled.
 
 At each future closure, update:
 
