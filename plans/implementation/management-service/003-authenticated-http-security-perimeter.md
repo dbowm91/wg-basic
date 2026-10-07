@@ -1,6 +1,6 @@
 # Management Service M003 — Authenticated HTTP Security Perimeter
 
-Status: blocked on M002 closure
+Status: ready. M002 is closed (`plans/closure/management-service/002-status.md`).
 
 Source roadmap:
 
@@ -12,7 +12,15 @@ Canonical requirement:
 
 Primary class: security / capability
 
-Hard dependency: M002 strict closure.
+Hard dependency: M002 strict closure — **satisfied** at `60d1482`, closed 2026-10-07.
+
+Carry-forward from the M002 closure: measured Argon2id cost is ~300 ms per
+verification at m=19 MiB, t=2, p=1. With one worker thread and a 5-second reply
+deadline that is roughly sixteen concurrent verifications inside the deadline.
+Login throttling must therefore be decided **before** a command is admitted to
+the worker queue, sized against per-attempt cost rather than request rate, with
+the queue bound kept as a second line of defence. Throttling after hashing is
+forbidden and is now measurably an availability defect.
 
 ## 1. Objective
 

@@ -1,6 +1,6 @@
 # Management Service M002 — Local Administrator and Session Persistence
 
-Status: ready. M001 is closed (`plans/closure/management-service/001-status.md`).
+Status: closed. See `plans/closure/management-service/002-status.md`.
 
 Source roadmap:
 

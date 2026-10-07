@@ -1,6 +1,6 @@
 # Management Service and Security Substrate Roadmap
 
-Status: active; M001 closed, M002 ready
+Status: active; M001–M002 closed, M003 ready
 
 Canonical references:
 
@@ -144,7 +144,7 @@ Expected outcomes:
 
 ## 6. M002 — Local administrator and session persistence
 
-Status: ready. M001 closed strictly.
+Status: closed at `60d1482`; see `plans/closure/management-service/002-status.md`.
 
 Carry-forward from the M001 closure: `src/state/schema/mod.rs` currently
 exercises the migration runner through a `#[cfg(test)]`-only step stamped at
@@ -174,7 +174,15 @@ Expected outcomes:
 
 ## 7. M003 — Authenticated HTTP perimeter
 
-Status: blocked on M002.
+Status: ready. M001 and M002 closed strictly.
+
+Carry-forward from the M002 closure: measured Argon2id cost is **~300 ms per
+verification** at the required 19 MiB / t=2 / p=1 policy. On one worker thread
+with a 5-second reply deadline that is roughly sixteen concurrent verifications
+inside the deadline, and everything beyond that becomes a 503. M003's login
+throttling must therefore be decided *before* admission to the worker queue and
+sized against per-attempt cost, not request rate. The rule that throttling must
+precede hashing is now measurably load-bearing rather than stylistic.
 
 Plan:
 
@@ -367,6 +375,6 @@ unit routing/security primitives
 | Milestone | Status | Plan | Blocker |
 |---|---|---|---|
 | M001 EggServe + management worker | closed | `plans/implementation/management-service/001-eggserve-runtime-and-management-worker.md` | — |
-| M002 admin/session persistence | ready | `plans/implementation/management-service/002-local-admin-and-session-persistence.md` | M001 closed |
-| M003 authenticated HTTP perimeter | blocked | `plans/implementation/management-service/003-authenticated-http-security-perimeter.md` | M002 |
+| M002 admin/session persistence | closed | `plans/implementation/management-service/002-local-admin-and-session-persistence.md` | — |
+| M003 authenticated HTTP perimeter | ready | `plans/implementation/management-service/003-authenticated-http-security-perimeter.md` | M002 closed |
 | M004 lifecycle + Phase 7 qualification | blocked | `plans/implementation/management-service/004-service-lifecycle-and-phase7-qualification.md` | M003 |
