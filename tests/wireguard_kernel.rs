@@ -423,7 +423,7 @@ fn kernel_wireguard_handshake_telemetry_and_peer_preservation() {
             peer: Some(PeerMutation::Update(WireGuardPeerPatch {
                 public_key: remote_b.clone(),
                 preshared_key: FieldUpdate::Keep,
-                allowed_ips: FieldUpdate::Keep,
+                allowed_ips: FieldUpdate::Set(vec!["10.200.0.2/32".parse().unwrap()]),
                 persistent_keepalive_seconds: FieldUpdate::Set(25),
                 endpoint: FieldUpdate::Keep,
             })),
@@ -443,6 +443,15 @@ fn kernel_wireguard_handshake_telemetry_and_peer_preservation() {
             .unwrap()
             .persistent_keepalive_seconds,
         Some(25)
+    );
+    assert_eq!(
+        updated_a
+            .peers
+            .iter()
+            .find(|peer| peer.public_key == remote_b)
+            .unwrap()
+            .allowed_ips,
+        vec!["10.200.0.2/32".parse::<NetworkPrefix>().unwrap()]
     );
 
     let preserved_key = observe(&netd_a, &interface_a)
