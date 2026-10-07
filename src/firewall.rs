@@ -6,7 +6,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::{Read, Write},
     process::{Command, Stdio},
@@ -160,6 +160,8 @@ struct TableObservation {
     chain_count: usize,
     rule_count: usize,
     chain_names: BTreeSet<String>,
+    chains: BTreeMap<String, serde_json::Value>,
+    rules: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -321,10 +323,14 @@ fn plan_firewall(
             } else {
                 0
             };
+        let (expected_chain_objects, expected_rule_objects) =
+            expected_objects(policy, wireguard_interface, &hash);
         if !observation.table.present
             || observation.table.rule_markers != desired_markers
             || observation.table.chain_count != expected_chains
             || observation.table.rule_count != expected_rules
+            || observation.table.chains != expected_chain_objects
+            || observation.table.rules != expected_rule_objects
         {
             actions.push(FirewallActionKind::ReplaceOwnedNftablesTable);
         }
@@ -366,10 +372,14 @@ fn matches_policy(
             } else {
                 0
             };
+        let (expected_chain_objects, expected_rule_objects) =
+            expected_objects(policy, interface, &hash);
         Ok(
             observation.table.rule_markers == policy.rule_markers(&hash, interface)
                 && observation.table.chain_count == expected_chains
-                && observation.table.rule_count == expected_rules,
+                && observation.table.rule_count == expected_rules
+                && observation.table.chains == expected_chain_objects
+                && observation.table.rules == expected_rule_objects,
         )
     } else {
         Ok(!observation.table.present)
@@ -395,6 +405,120 @@ fn policy_hash(policy: &DesiredNetworkPolicy, interface: &InterfaceName) -> Stri
         hash = hash.wrapping_mul(0x100000001b3);
     }
     format!("{hash:016x}")
+}
+
+fn expected_objects(
+    policy: &DesiredNetworkPolicy,
+    interface: &InterfaceName,
+    hash: &str,
+) -> (
+    BTreeMap<String, serde_json::Value>,
+    BTreeMap<String, serde_json::Value>,
+) {
+    let mut chains = BTreeMap::new();
+    let mut rules = BTreeMap::new();
+    chains.insert(
+        "forward".to_owned(),
+        serde_json::json!({
+            "family": "inet",
+            "table": TABLE_NAME,
+            "name": "forward",
+            "comment": format!("{TABLE_OWNER}:chain:forward:{hash}"),
+            "type": "filter",
+            "hook": "forward",
+            "prio": 0,
+            "policy": "accept"
+        }),
+    );
+    if policy.nat == NatMode::Masquerade {
+        chains.insert(
+            "postrouting".to_owned(),
+            serde_json::json!({
+                "family": "inet",
+                "table": TABLE_NAME,
+                "name": "postrouting",
+                "comment": format!("{TABLE_OWNER}:chain:postrouting:{hash}"),
+                "type": "nat",
+                "hook": "postrouting",
+                "prio": 100,
+                "policy": "accept"
+            }),
+        );
+    }
+
+    let return_comment = format!("{TABLE_OWNER}:rule:return:{hash}");
+    rules.insert(
+        return_comment.clone(),
+        serde_json::json!({
+            "family": "inet",
+            "table": TABLE_NAME,
+            "chain": "forward",
+            "comment": return_comment,
+            "expr": [
+                {"match": {"op": "==", "left": {"meta": {"key": "oifname"}}, "right": interface.as_str()}},
+                {"match": {"op": "in", "left": {"ct": {"key": "state"}}, "right": ["established", "related"]}},
+                {"accept": null}
+            ]
+        }),
+    );
+    for (index, prefix) in policy.sorted_prefixes().iter().enumerate() {
+        let network = prefix.network();
+        let prefix_expr = serde_json::json!({
+            "match": {
+                "op": "==",
+                "left": {"payload": {"protocol": "ip", "field": "saddr"}},
+                "right": {"prefix": {"addr": network.addr().to_string(), "len": network.prefix_len()}}
+            }
+        });
+        let allow_comment = format!("{TABLE_OWNER}:rule:allow:{index}:{hash}");
+        rules.insert(
+            allow_comment.clone(),
+            serde_json::json!({
+                "family": "inet",
+                "table": TABLE_NAME,
+                "chain": "forward",
+                "comment": allow_comment,
+                "expr": [
+                    {"match": {"op": "==", "left": {"meta": {"key": "iifname"}}, "right": interface.as_str()}},
+                    {"match": {"op": "==", "left": {"meta": {"key": "oifname"}}, "right": policy.egress_interface.as_str()}},
+                    prefix_expr.clone(),
+                    {"accept": null}
+                ]
+            }),
+        );
+        if policy.nat == NatMode::Masquerade {
+            let nat_comment = format!("{TABLE_OWNER}:rule:nat:{index}:{hash}");
+            rules.insert(
+                nat_comment.clone(),
+                serde_json::json!({
+                    "family": "inet",
+                    "table": TABLE_NAME,
+                    "chain": "postrouting",
+                    "comment": nat_comment,
+                    "expr": [
+                        {"match": {"op": "==", "left": {"meta": {"key": "oifname"}}, "right": policy.egress_interface.as_str()}},
+                        prefix_expr,
+                        {"masquerade": null}
+                    ]
+                }),
+            );
+        }
+    }
+    let drop_comment = format!("{TABLE_OWNER}:rule:drop:{hash}");
+    rules.insert(
+        drop_comment.clone(),
+        serde_json::json!({
+            "family": "inet",
+            "table": TABLE_NAME,
+            "chain": "forward",
+            "comment": drop_comment,
+            "expr": [
+                {"match": {"op": "==", "left": {"meta": {"key": "iifname"}}, "right": interface.as_str()}},
+                {"drop": null}
+            ]
+        }),
+    );
+    (chains, rules)
 }
 
 fn observe_firewall() -> Result<FirewallObservation, FirewallError> {
@@ -426,6 +550,8 @@ fn observe_firewall() -> Result<FirewallObservation, FirewallError> {
                 chain_count: 0,
                 rule_count: 0,
                 chain_names: BTreeSet::new(),
+                chains: BTreeMap::new(),
+                rules: BTreeMap::new(),
             },
         });
     };
@@ -440,6 +566,8 @@ fn observe_firewall() -> Result<FirewallObservation, FirewallError> {
                 chain_count: 0,
                 rule_count: 0,
                 chain_names: BTreeSet::new(),
+                chains: BTreeMap::new(),
+                rules: BTreeMap::new(),
             },
         });
     }
@@ -450,22 +578,44 @@ fn observe_firewall() -> Result<FirewallObservation, FirewallError> {
     let mut chain_count = 0;
     let mut rule_count = 0;
     let mut chain_names = BTreeSet::new();
+    let mut chains = BTreeMap::new();
+    let mut rules = BTreeMap::new();
     if let Some(objects) = json.get("nftables").and_then(serde_json::Value::as_array) {
         for object in objects {
             if let Some(chain) = object.get("chain") {
                 chain_count += 1;
-                if let Some(name) = chain.get("name").and_then(serde_json::Value::as_str) {
-                    chain_names.insert(name.to_owned());
+                let mut observed = chain.clone();
+                if let Some(observed) = observed.as_object_mut() {
+                    observed.remove("handle");
+                }
+                let name = chain
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("__unmarked_chain_{chain_count}"));
+                if !name.starts_with("__unmarked_chain_") {
+                    chain_names.insert(name.clone());
                 }
                 if let Some(comment) = chain.get("comment").and_then(serde_json::Value::as_str) {
                     markers.insert(comment.to_owned());
                 }
+                chains.insert(name, observed);
             }
             if let Some(rule) = object.get("rule") {
                 rule_count += 1;
+                let mut observed = rule.clone();
+                if let Some(observed) = observed.as_object_mut() {
+                    observed.remove("handle");
+                }
+                let comment = rule
+                    .get("comment")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("__unmarked_rule_{rule_count}"));
                 if let Some(comment) = rule.get("comment").and_then(serde_json::Value::as_str) {
                     markers.insert(comment.to_owned());
                 }
+                rules.insert(comment, observed);
             }
         }
     }
@@ -478,6 +628,8 @@ fn observe_firewall() -> Result<FirewallObservation, FirewallError> {
             chain_count,
             rule_count,
             chain_names,
+            chains,
+            rules,
         },
     })
 }
@@ -724,6 +876,8 @@ mod tests {
                 chain_count: 0,
                 rule_count: 0,
                 chain_names: BTreeSet::new(),
+                chains: BTreeMap::new(),
+                rules: BTreeMap::new(),
             },
         };
         let first = plan_firewall(&interface, Some(&policy), &observation).unwrap();
@@ -747,6 +901,8 @@ mod tests {
                 chain_count: 0,
                 rule_count: 0,
                 chain_names: BTreeSet::new(),
+                chains: BTreeMap::new(),
+                rules: BTreeMap::new(),
             },
         };
         assert_eq!(
@@ -759,6 +915,7 @@ mod tests {
     fn repeated_desired_policy_is_a_noop_and_disable_preserves_forwarding() {
         let (interface, policy) = fixture();
         let hash = policy_hash(&policy, &interface);
+        let (chains, rules) = expected_objects(&policy, &interface, &hash);
         let observation = FirewallObservation {
             forwarding_enabled: true,
             table: TableObservation {
@@ -768,6 +925,8 @@ mod tests {
                 chain_count: 2,
                 rule_count: 4,
                 chain_names: BTreeSet::from(["forward".to_owned(), "postrouting".to_owned()]),
+                chains,
+                rules,
             },
         };
         assert!(plan_firewall(&interface, Some(&policy), &observation)
@@ -781,6 +940,36 @@ mod tests {
                 .summary
                 .actions,
             vec![FirewallActionKind::RemoveOwnedNftablesTable]
+        );
+    }
+
+    #[test]
+    fn owned_expression_drift_plans_replacement_even_if_markers_remain() {
+        let (interface, policy) = fixture();
+        let hash = policy_hash(&policy, &interface);
+        let (chains, mut rules) = expected_objects(&policy, &interface, &hash);
+        rules
+            .get_mut(&format!("{TABLE_OWNER}:rule:allow:0:{hash}"))
+            .unwrap()["expr"][0]["match"]["right"] = serde_json::json!("wg-other");
+        let observation = FirewallObservation {
+            forwarding_enabled: true,
+            table: TableObservation {
+                present: true,
+                owned: true,
+                rule_markers: policy.rule_markers(&hash, &interface),
+                chain_count: 2,
+                rule_count: 4,
+                chain_names: BTreeSet::from(["forward".to_owned(), "postrouting".to_owned()]),
+                chains,
+                rules,
+            },
+        };
+        assert_eq!(
+            plan_firewall(&interface, Some(&policy), &observation)
+                .unwrap()
+                .summary
+                .actions,
+            vec![FirewallActionKind::ReplaceOwnedNftablesTable]
         );
     }
 }
