@@ -37,10 +37,11 @@ impl ReconcileBackend for LinuxNetworkBackend {
             let _connection = tokio::spawn(connection);
 
             let mut links = handle.link().get().match_name(interface.as_str()).execute();
-            let link = links.try_next().await.map_err(|error| {
-                eprintln!("link observation failed: {error:?}");
-                ReconcileError::BackendFailure
-            })?;
+            let link = match links.try_next().await {
+                Ok(link) => link,
+                Err(error) if is_no_such_device(&error) => None,
+                Err(_) => return Err(ReconcileError::BackendFailure),
+            };
             let Some(link) = link else {
                 return Ok(ObservedManagedInterface {
                     interface: interface.clone(),
@@ -67,10 +68,11 @@ impl ReconcileBackend for LinuxNetworkBackend {
                 .get()
                 .set_link_index_filter(ifindex)
                 .execute();
-            while let Some(message) = address_stream.try_next().await.map_err(|error| {
-                eprintln!("address observation failed: {error:?}");
-                ReconcileError::BackendFailure
-            })? {
+            while let Some(message) = address_stream
+                .try_next()
+                .await
+                .map_err(|_| ReconcileError::BackendFailure)?
+            {
                 if let Some(address) = address_from_message(&message) {
                     if !addresses.contains(&address) {
                         addresses.push(address);
@@ -85,10 +87,11 @@ impl ReconcileBackend for LinuxNetworkBackend {
             let mut routes = Vec::new();
             let mut unsupported_route_count = 0;
             let mut route_stream = handle.route().get(RouteMessage::default()).execute();
-            while let Some(message) = route_stream.try_next().await.map_err(|error| {
-                eprintln!("route observation failed: {error:?}");
-                ReconcileError::BackendFailure
-            })? {
+            while let Some(message) = route_stream
+                .try_next()
+                .await
+                .map_err(|_| ReconcileError::BackendFailure)?
+            {
                 if route_output_interface(&message) != Some(ifindex) {
                     continue;
                 }
@@ -239,6 +242,11 @@ fn backend_runtime() -> Result<tokio::runtime::Runtime, ReconcileError> {
         .enable_all()
         .build()
         .map_err(|_| ReconcileError::BackendFailure)
+}
+
+fn is_no_such_device(error: &rtnetlink::Error) -> bool {
+    matches!(error, rtnetlink::Error::NetlinkError(message)
+        if message.to_io().raw_os_error() == Some(nix::libc::ENODEV))
 }
 
 async fn lookup_link_index(
