@@ -20,7 +20,7 @@ The wg-basic forward chain uses the standard `filter` priority and an `accept` b
 
 ## Disable and preservation
 
-Removing the network policy deletes only `inet wg_basic`; it does not change `ip_forward`. M004 link/address/route removal remains an explicit separate typed desired-state request. Namespace qualification verifies unrelated nftables objects and routes survive policy apply, no-NAT/NAT transition, reapply, netd restart, and disable. The firewall service does not enumerate or rewrite the rest of the host ruleset.
+Removing the network policy deletes only `inet wg_basic`; it does not change `ip_forward`. In the aggregate disable path the firewall removal is the first step, and the interface teardown runs only after it succeeds — so a firewall that refuses to remove its table leaves the managed link intact rather than deleting the link and orphaning a policy whose target no longer exists. Link/address/route removal is driven by the same desired-state request, and is applied by the reconciliation engine after the firewall layer has cleared. Namespace qualification verifies unrelated nftables objects and routes survive policy apply, no-NAT/NAT transition, reapply, netd restart, and disable; a rootful fixture injects a firewall backend failure on the disable path and verifies the blocked teardown and its recovery. The firewall service does not enumerate or rewrite the rest of the host ruleset.
 
 ## Qualification
 

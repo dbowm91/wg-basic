@@ -102,4 +102,4 @@ No receipt ever claims a rollback.
 
 ## Startup reconciliation
 
-M002 provides durable owner identity. **Automatic application of the durable desired state at startup is not implemented yet** — that is Phase 6 M003. Until M003 lands, a netd restart preserves ownership proof but does not itself re-derive kernel state from the database.
+Durable owner identity is stored alongside the desired state, and **automatic application of the durable desired state at startup is implemented**. Every management start opens the store, loads the current desired snapshot and generation, projects it to one installation intent, and applies that generation — unconditionally, because the kernel may have drifted while the service was stopped. Evidence records the attempt; a generation is marked converged only while it is still the current desired generation, so a late completion cannot mark a newer one converged.
