@@ -30,6 +30,24 @@ enum Command {
         #[arg(long, default_value = DEFAULT_SOCKET)]
         socket: PathBuf,
     },
+    /// Unprivileged management runtime: opens the durable store and reconciles
+    /// the current desired generation against the local network service.
+    ///
+    /// This role never escalates privileges and never mutates the kernel
+    /// directly; it reaches the network only through the authorized socket.
+    Reconcile {
+        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        state: PathBuf,
+        #[arg(long, default_value = DEFAULT_SOCKET)]
+        socket: PathBuf,
+    },
+    /// Prints the durable management health projection and exits.
+    Health {
+        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        state: PathBuf,
+        #[arg(long, default_value = DEFAULT_SOCKET)]
+        socket: PathBuf,
+    },
 }
 
 fn main() {
@@ -84,6 +102,40 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
                     return Err("netd returned an unexpected protocol response".into())
                 }
             }
+            Ok(())
+        }
+        Some(Command::Reconcile { state, socket }) => {
+            let runtime = wg_basic::management::ManagementRuntime::open(&state, &socket)
+                .map_err(|error| error.to_string())?;
+            match runtime
+                .reconcile_current()
+                .map_err(|error| error.to_string())?
+            {
+                // An installation with no managed interface is a normal empty
+                // state, not a failure.
+                None => println!("no managed interface; nothing to reconcile"),
+                Some(outcome) => println!(
+                    "generation {} -> {} ({:?})",
+                    outcome.applied_generation,
+                    if outcome.converged {
+                        "converged"
+                    } else {
+                        "not converged"
+                    },
+                    outcome.disposition
+                ),
+            }
+            Ok(())
+        }
+        Some(Command::Health { state, socket }) => {
+            let runtime = wg_basic::management::ManagementRuntime::open(&state, &socket)
+                .map_err(|error| error.to_string())?;
+            // The health projection carries categories only, never receipts.
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&runtime.health())
+                    .map_err(|_| "could not format management health".to_owned())?
+            );
             Ok(())
         }
         Some(Command::Doctor { socket }) => {
