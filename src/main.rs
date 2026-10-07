@@ -26,11 +26,26 @@ enum Command {
         state: PathBuf,
         #[arg(long, default_value = DEFAULT_SOCKET)]
         socket: PathBuf,
-        /// Management listener address. Loopback only by default; a non-loopback
-        /// bind serves unauthenticated liveness to the network and must be an
-        /// explicit operator decision.
+        /// Management listener address. Loopback only by default.
         #[arg(long, default_value = wg_basic::http::config::DEFAULT_BIND)]
         http_bind: String,
+        /// The canonical external origin, as `scheme://host[:port]`.
+        ///
+        /// Required whenever the listener is not loopback, and optional otherwise.
+        /// An `https` origin means a TLS-terminating reverse proxy sits in front
+        /// of this listener: Phase 7 terminates no TLS of its own. The value
+        /// decides the allowed `Host` set, the exact `Origin` an unsafe request
+        /// must carry, and whether the session cookie is `Secure`.
+        #[arg(long)]
+        canonical_origin: Option<String>,
+        /// Acknowledge that `--http-bind` is a routable address.
+        ///
+        /// Binding off-host serves the management surface to the network. Phase 7
+        /// serves no TLS, so this is only acceptable behind a proxy the operator
+        /// has configured — which is why it takes an explicit acknowledgement
+        /// rather than being merely permitted.
+        #[arg(long)]
+        allow_non_loopback: bool,
     },
     /// Privileged local network service; exposes typed WireGuard, network, and firewall operations.
     Netd {
@@ -178,7 +193,15 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
             state,
             socket,
             http_bind,
-        }) => serve(state, socket, http_bind),
+            canonical_origin,
+            allow_non_loopback,
+        }) => serve(
+            state,
+            socket,
+            http_bind,
+            canonical_origin,
+            allow_non_loopback,
+        ),
         Some(Command::Reconcile { state, socket }) => {
             let runtime = wg_basic::management::ManagementRuntime::open(&state, &socket)
                 .map_err(|error| error.to_string())?;
@@ -348,9 +371,49 @@ fn read_password_from_stdin() -> Result<String, String> {
 /// ordering — stop accepting, drain, stop the worker, release the store — lives
 /// in one place instead of being re-implemented here.
 #[cfg(target_os = "linux")]
-fn serve(state: PathBuf, socket: PathBuf, http_bind: String) -> Result<(), String> {
-    let config = wg_basic::http::ServeConfig::new(state, socket, &http_bind)
-        .map_err(|error| error.to_string())?;
+fn serve(
+    state: PathBuf,
+    socket: PathBuf,
+    http_bind: String,
+    canonical_origin: Option<String>,
+    allow_non_loopback: bool,
+) -> Result<(), String> {
+    use wg_basic::http::ServeConfig;
+
+    // Three shapes, and only three. Each is chosen by what the operator stated,
+    // never inferred:
+    //
+    //   * a canonical HTTPS origin → a loopback listener behind a TLS proxy;
+    //   * an acknowledged routable bind → the operator has said the exposure;
+    //   * neither → the default loopback deployment, which is the only shape
+    //     that is correct without anyone having to decide anything.
+    let config = match (canonical_origin.as_deref(), allow_non_loopback) {
+        (Some(origin), false) if origin.starts_with("https://") => {
+            ServeConfig::behind_https_proxy(state, socket, &http_bind, origin)
+                .map_err(|error| error.to_string())?
+        }
+        (Some(origin), true) => {
+            ServeConfig::acknowledged_off_host(state, socket, &http_bind, origin)
+                .map_err(|error| error.to_string())?
+        }
+        (Some(origin), false) => {
+            return Err(format!(
+                "`{origin}` is not an https origin, and the listener is loopback. Either drop \
+                 --canonical-origin to use the loopback origin, or pass \
+                 --allow-non-loopback to say the bind is routable."
+            ));
+        }
+        (None, true) => {
+            return Err(
+                "--allow-non-loopback also needs --canonical-origin, so there is something to \
+                 check Host and Origin against."
+                    .to_owned(),
+            );
+        }
+        (None, false) => {
+            ServeConfig::new(state, socket, &http_bind).map_err(|error| error.to_string())?
+        }
+    };
     let (signal, wait) = tokio::sync::oneshot::channel::<()>();
     // The handler may fire more than once, so the sender lives behind a mutex:
     // the first Ctrl-C consumes it, and later ones find nothing to do.

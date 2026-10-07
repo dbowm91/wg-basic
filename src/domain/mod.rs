@@ -9,10 +9,10 @@ mod secret;
 mod state;
 
 pub use auth::{
-    check_password_policy, AuthError, CsrfToken, PasswordPolicyError, PasswordVerifier,
-    SessionToken, SessionTokenDigest, ARGON2ID_PHC_PREFIX, ARGON2_ITERATIONS, ARGON2_MEMORY_KIB,
-    ARGON2_PARALLELISM, CSRF_TOKEN_BITS, MAX_PASSWORD_BYTES, MIN_PASSWORD_BYTES,
-    SESSION_TOKEN_BITS,
+    argon2_params, check_password_policy, AuthError, CsrfToken, PasswordPolicyError,
+    PasswordVerifier, SessionToken, SessionTokenDigest, ARGON2ID_PHC_PREFIX, ARGON2_ITERATIONS,
+    ARGON2_MEMORY_KIB, ARGON2_PARALLELISM, CSRF_TOKEN_BITS, MAX_PASSWORD_BYTES, MIN_PASSWORD_BYTES,
+    SESSION_TOKEN_BITS, TIMING_EQUALISER_VERIFIER,
 };
 pub use generation::{
     DesiredGeneration, InstallationId, INITIAL_DESIRED_GENERATION, MAX_DESIRED_GENERATION,

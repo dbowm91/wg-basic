@@ -17,6 +17,10 @@ linux-integration = []
 argon2 = "0.6"
 base64 = "0.22"
 clap = { version = "4.5", features = ["derive"] }
+# Session cookie construction and parsing (Phase 7 M003). MSRV 1.56, well under
+# the repository's 1.89. Used for correct Set-Cookie attribute handling rather
+# than for parsing: every cookie this surface accepts is one it wrote itself.
+cookie = "0.18"
 # Session bearer and CSRF token entropy comes from the OS CSPRNG directly, so
 # the randomness source is an explicit, auditable dependency rather than a
 # feature of a transitive crate.

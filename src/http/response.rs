@@ -27,6 +27,43 @@ pub const MAX_MANAGEMENT_BODY_BYTES: usize = 256;
 /// answer at all.
 const NO_STORE: &str = "no-store";
 
+/// The media type for the JSON API responses.
+pub const JSON_CONTENT_TYPE: &str = "application/json";
+
+/// The media type for the bounded literal responses.
+///
+/// `text/plain` is used rather than JSON for the refusals and the liveness probe
+/// because these bodies are not structured documents — they are single tokens or
+/// short phrases that must not invite a parser.
+pub const TEXT_CONTENT_TYPE: &str = "text/plain; charset=utf-8";
+
+/// Builds a response with an explicit media type.
+///
+/// The one construction path. `Response::builder()` is not reachable from
+/// anywhere else in `src/http/`, so the media type and the `no-store` policy
+/// cannot be forgotten by a route that builds its own response.
+///
+/// The body is **not** length-checked here. Every body in this module is a fixed
+/// literal, and the API bodies are bounded by the routes that read them; the
+/// ceiling exists to make that a stated invariant rather than an assumption.
+pub fn build(status: StatusCode, content_type: &'static str, body: ResponseBody) -> Response {
+    debug_assert!(
+        body.len() <= MAX_MANAGEMENT_BODY_BYTES as u64,
+        "management bodies are bounded by construction"
+    );
+    // Both header values are constants chosen to be valid, so the construction
+    // cannot fail. Asserted rather than branched on: there is no error here to
+    // recover to, and a fallback response would be a second code path to audit.
+    Response::builder()
+        .status(status)
+        .header("content-type", content_type)
+        .expect("a constant media type is a valid header")
+        .header("cache-control", NO_STORE)
+        .expect("a constant cache policy is a valid header")
+        .body(body)
+        .expect("a status was set")
+}
+
 /// The two-state liveness answer this surface publishes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Liveness {
@@ -70,21 +107,15 @@ impl Liveness {
 }
 
 /// Builds a `text/plain` response with a fixed literal body.
+///
+/// The signature admits no dynamic string, which is the whole point: there is no
+/// way to format an error, a path, or an internal type into a management body.
 fn literal(status: StatusCode, body: &'static str) -> Response {
-    debug_assert!(
-        body.len() <= MAX_MANAGEMENT_BODY_BYTES,
-        "management bodies are bounded by construction"
-    );
-    Response::builder()
-        .status(status)
-        // Constant, so construction cannot fail; a fixed ASCII name/value pair
-        // is validated once here rather than at every call site.
-        .header("content-type", "text/plain; charset=utf-8")
-        .expect("a constant header is valid")
-        .header("cache-control", NO_STORE)
-        .expect("a constant header is valid")
-        .body(ResponseBody::Bytes(body.as_bytes().to_vec()))
-        .expect("a status was set")
+    build(
+        status,
+        TEXT_CONTENT_TYPE,
+        ResponseBody::Bytes(body.as_bytes().to_vec()),
+    )
 }
 
 /// `200 ok` or `200 degraded` — the entire M001 health answer.
