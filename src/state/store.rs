@@ -44,6 +44,16 @@ impl std::fmt::Debug for StateStore {
     }
 }
 
+impl Drop for StateStore {
+    /// Releases this process's claim on the database path.
+    ///
+    /// Restoring over a path this process still holds open would corrupt the
+    /// live store, so the claim is released exactly when the connection closes.
+    fn drop(&mut self) {
+        super::inuse::unregister(&self.path);
+    }
+}
+
 impl StateStore {
     /// Creates a new store and runs every migration.
     ///
@@ -81,10 +91,22 @@ impl StateStore {
                 INITIAL_DESIRED_GENERATION,
             )?;
         }
+        // Checked after seeding, so "exactly one row" holds for a brand-new
+        // store and a missing installation row fails closed on reopen.
+        schema::enforce_singleton(&connection)?;
+        super::inuse::register(path);
         Ok(Self {
             path: path.to_path_buf(),
             connection: Mutex::new(connection),
         })
+    }
+
+    /// The schema version this database currently declares.
+    pub fn schema_version(&self) -> Result<i64, StateError> {
+        let connection = self.lock()?;
+        connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .map_err(StateError::database)
     }
 
     /// The path this store was opened from.
@@ -92,7 +114,7 @@ impl StateStore {
         &self.path
     }
 
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, StateError> {
+    pub(crate) fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, StateError> {
         self.connection
             .lock()
             .map_err(|_| StateError::Corrupt("state store mutex poisoned"))

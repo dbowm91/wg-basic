@@ -86,6 +86,15 @@ pub enum StateError {
     #[error("a stored constraint rejected the write")]
     ConstraintViolation,
 
+    #[error("backup destination {path} already exists; refusing to overwrite it")]
+    BackupDestinationExists { path: String },
+
+    #[error("the restore target is still open in this process; stop the management service first")]
+    TargetInUse,
+
+    #[error("the restore candidate is still open in this process")]
+    CandidateInUse,
+
     #[error("the database was busy")]
     Busy,
 }

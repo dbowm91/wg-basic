@@ -12,7 +12,7 @@ use std::{
         fs::PermissionsExt,
         fs::{MetadataExt, OpenOptionsExt},
     },
-    path::Path,
+    path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -20,6 +20,7 @@ use std::{
 const SQLITE_SYNCHRONOUS_FULL: i64 = 2;
 
 /// One ordered, immutable schema step.
+#[derive(Clone)]
 pub(crate) struct Migration {
     pub(crate) version: i64,
     pub(crate) name: &'static str,
@@ -75,9 +76,102 @@ pub fn open_connection(
         Connection::open_with_flags(path, flags).map_err(|_| StateError::DatabaseOpenFailed)?;
 
     configure(&connection)?;
+    let starting_version: i64 = connection
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(StateError::database)?;
+    recovery_snapshot(&connection, path, starting_version, supported_version())?;
     run_migrations(&mut connection)?;
-    enforce_singleton(&connection)?;
     Ok(connection)
+}
+
+/// Applies the read side of the connection contract without migrating.
+///
+/// A restore validates a private staging copy that it owns, so it must apply
+/// the hardened pragmas but must not itself run migrations: migration runs once,
+/// later, through the normal store opener after the file is in place.
+pub(crate) fn configure_for_restore(connection: &Connection) -> Result<(), StateError> {
+    configure(connection)
+}
+
+/// Creates a recovery snapshot before a schema-changing migration runs.
+///
+/// A snapshot is taken only when the database is already at a schema version
+/// *and* a newer migration is pending. A brand-new initialization has nothing
+/// to lose, and a database already at the newest version has nothing to migrate.
+///
+/// The versions are parameters rather than read internally so the behavior can
+/// be qualified against a simulated upgrade without shipping a meaningless
+/// production migration. The production call site passes the real ones.
+///
+/// Retention is deliberately bounded: the snapshot name carries the
+/// pre-migration version, and an existing snapshot for that same version is
+/// kept rather than replaced. wg-basic never accumulates automatic backups.
+fn recovery_snapshot(
+    connection: &Connection,
+    path: &Path,
+    from_version: i64,
+    to_version: i64,
+) -> Result<(), StateError> {
+    // A brand-new initialization has nothing to lose, and a database already at
+    // the newest version has nothing to migrate.
+    if from_version <= 0 || from_version >= to_version {
+        return Ok(());
+    }
+    let current = from_version;
+
+    let target = recovery_snapshot_path(path, current);
+    // A snapshot that already exists corresponds to the same pre-migration
+    // schema, so it is kept rather than replaced.
+    if fs::symlink_metadata(&target).is_ok() {
+        return Ok(());
+    }
+
+    let staging = target.with_extension(format!("partial.{}", std::process::id()));
+    let outcome = (|| -> Result<(), StateError> {
+        fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(DATABASE_MODE)
+            .open(&staging)
+            .map_err(|_| StateError::Corrupt("recovery snapshot could not be created"))?;
+        let mut destination = Connection::open_with_flags(
+            &staging,
+            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(StateError::database)?;
+        {
+            let backup = rusqlite::backup::Backup::new(connection, &mut destination)
+                .map_err(StateError::database)?;
+            backup
+                .run_to_completion(64, std::time::Duration::from_millis(0), None)
+                .map_err(StateError::database)?;
+        }
+        destination
+            .close()
+            .map_err(|(_, _)| StateError::Corrupt("recovery snapshot could not be finalized"))?;
+        fs::set_permissions(&staging, fs::Permissions::from_mode(DATABASE_MODE))
+            .map_err(|_| StateError::Corrupt("recovery snapshot permissions are unsafe"))?;
+        fs::rename(&staging, &target)
+            .map_err(|_| StateError::Corrupt("recovery snapshot could not be installed"))
+    })();
+
+    if outcome.is_err() {
+        // Only this operation's own staging artifact is removed. A failure here
+        // must not prevent the migration from running on the original database.
+        let _ = fs::remove_file(&staging);
+    }
+    outcome
+}
+
+/// The deterministic location of the pre-migration recovery snapshot.
+pub(crate) fn recovery_snapshot_path(database: &Path, from_version: i64) -> PathBuf {
+    let parent = database.parent().unwrap_or_else(|| Path::new("."));
+    let name = database
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "state.db".to_owned());
+    parent.join(format!("{name}.pre-migration-v{from_version}"))
 }
 
 /// The restrictive mode a secret-bearing database must carry.
@@ -241,8 +335,20 @@ fn read_pragma<T: rusqlite::types::FromSql>(
         })
 }
 
-/// Applies pending migrations in order inside one IMMEDIATE transaction.
+/// Applies every production migration in order.
 pub(crate) fn run_migrations(connection: &mut Connection) -> Result<(), StateError> {
+    apply_migrations(connection, MIGRATIONS)
+}
+
+/// Applies pending migrations in order inside one IMMEDIATE transaction.
+///
+/// Historical migration SQL is never rewritten to make a test pass: a new
+/// schema change is a new migration. The `available` slice is a parameter only
+/// so the runner mechanics can be qualified against a simulated version history.
+fn apply_migrations(
+    connection: &mut Connection,
+    available: &[Migration],
+) -> Result<(), StateError> {
     let current: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(StateError::database)?;
@@ -250,7 +356,7 @@ pub(crate) fn run_migrations(connection: &mut Connection) -> Result<(), StateErr
     if current < 0 {
         return Err(StateError::SchemaVersionInvalid(current));
     }
-    let supported = supported_version();
+    let supported = available.last().map_or(0, |migration| migration.version);
     if current > supported {
         return Err(StateError::SchemaTooNew {
             found: current,
@@ -258,7 +364,7 @@ pub(crate) fn run_migrations(connection: &mut Connection) -> Result<(), StateErr
         });
     }
 
-    let pending: Vec<&Migration> = MIGRATIONS
+    let pending: Vec<&Migration> = available
         .iter()
         .filter(|migration| migration.version > current)
         .collect();
@@ -305,15 +411,20 @@ fn foreign_key_check(transaction: &rusqlite::Transaction<'_>) -> Result<(), rusq
     Ok(())
 }
 
-/// Confirms the structural singleton invariants after migration.
-fn enforce_singleton(connection: &Connection) -> Result<(), StateError> {
+/// Confirms the structural singleton invariants.
+///
+/// Each of these tables must hold **exactly one** row. More than one means the
+/// database is not the store this binary expects; zero means the installation
+/// identity is missing, which must fail closed rather than produce a store that
+/// opens successfully and is then unusable. Both are treated as corruption.
+pub(crate) fn enforce_singleton(connection: &Connection) -> Result<(), StateError> {
     for table in ["installation", "convergence_state"] {
         let rows: i64 = connection
             .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
                 row.get(0)
             })
             .map_err(StateError::database)?;
-        if rows > 1 {
+        if rows != 1 {
             return Err(StateError::IntegrityCheckFailed);
         }
     }
@@ -356,6 +467,60 @@ pub(crate) fn now_seconds() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs() as i64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+/// A simulated version history used **only** to qualify the migration runner.
+///
+/// Phase 6 shipped exactly one real migration, so there is no genuine 1 -> 2
+/// upgrade to replay. Rather than manufacturing production schema churn to
+/// create one, the tests below drive the real runner over this list. The extra
+/// version adds an unused metadata table: harmless, reversible in the sense that
+/// it is never shipped, and sufficient to prove the runner's ordering,
+/// version-stamping, foreign-key check, and state preservation.
+///
+/// This is a **test-only** harness. It is not migration history, and no closure
+/// record may claim a second schema version exists.
+pub(crate) fn test_only_migrations() -> Vec<Migration> {
+    let mut migrations = MIGRATIONS.to_vec();
+    migrations.push(Migration {
+        version: 2,
+        name: "test_only_marker",
+        sql: "CREATE TABLE test_only_marker (singleton INTEGER PRIMARY KEY CHECK (singleton = 1));\
+              INSERT INTO test_only_marker (singleton) VALUES (1);",
+    });
+    migrations
+}
+
+#[cfg(test)]
+/// Creates a database migrated only as far as `through_version`.
+///
+/// Used to build a historical fixture at a boundary, so a later step can prove
+/// the runner upgrades it.
+pub(crate) fn initialize_at_version(path: &Path, through_version: i64) -> Result<(), StateError> {
+    let connection = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_CREATE
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+    )
+    .map_err(|_| StateError::DatabaseOpenFailed)?;
+    configure(&connection)?;
+    let available: Vec<Migration> = test_only_migrations()
+        .into_iter()
+        .filter(|migration| migration.version <= through_version)
+        .collect();
+    let mut connection = connection;
+    apply_migrations(&mut connection, &available)?;
+    crate::state::schema::seed_installation(
+        &connection,
+        &crate::domain::InstallationId::new(),
+        crate::domain::INITIAL_DESIRED_GENERATION,
+    )?;
+    connection
+        .close()
+        .map_err(|(_, _)| StateError::Corrupt("historical fixture could not be finalized"))
 }
 
 #[cfg(test)]
@@ -675,5 +840,236 @@ mod tests {
             "the reader must not accept generation 0"
         );
         assert!(DesiredGeneration::from_storage(-1).is_none());
+    }
+
+    /// Builds a database at the one real migration boundary.
+    ///
+    /// Phase 6 shipped a single migration, so this is the only genuine "older
+    /// schema" constructible without shipping a meaningless one.
+    fn historical_v1(temp: &TempDir) {
+        initialize_at_version(&temp.db(), 1).expect("historical v1 fixture");
+    }
+
+    /// `PRAGMA user_version` for a raw connection, for the migration fixtures.
+    fn user_version_of(connection: &Connection) -> i64 {
+        connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user_version is readable")
+    }
+
+    /// Commits a real typed snapshot at generation 2 and returns it with the
+    /// installation identity, so a later step can compare against the upgrade.
+    fn commit_snapshot_at_v2(
+        temp: &TempDir,
+    ) -> (
+        crate::domain::InstallationId,
+        crate::state::CommittedDesiredState,
+    ) {
+        let store = StateStore::open(temp.db()).unwrap();
+        let committed = store
+            .mutate(crate::domain::INITIAL_DESIRED_GENERATION, |_| {
+                Ok(populated_state())
+            })
+            .unwrap();
+        assert_eq!(committed.generation, DesiredGeneration::new(2).unwrap());
+        let identity = store.installation_metadata().unwrap().installation_id;
+        drop(store);
+        (identity, committed)
+    }
+
+    /// Applies the simulated upgrade and re-stamps the file to version 1.
+    ///
+    /// The re-stamp exists purely so the *production* reader will open a
+    /// test-only schema version; it changes no rows, so the typed state read
+    /// afterwards is still the state the migration produced.
+    fn apply_simulated_upgrade(temp: &TempDir) {
+        let mut connection = Connection::open(temp.db()).unwrap();
+        apply_migrations(&mut connection, &test_only_migrations()).unwrap();
+        connection.execute("PRAGMA user_version = 1", []).unwrap();
+        connection.close().unwrap();
+    }
+
+    #[test]
+    fn the_runner_upgrades_a_historical_fixture_to_the_latest_version() {
+        let temp = TempDir::new();
+        historical_v1(&temp);
+        let (identity, _) = commit_snapshot_at_v2(&temp);
+
+        let mut connection = Connection::open(temp.db()).expect("open the historical fixture");
+        assert_eq!(
+            user_version_of(&connection),
+            1,
+            "the fixture must start at the historical boundary"
+        );
+
+        apply_migrations(&mut connection, &test_only_migrations()).unwrap();
+        assert_eq!(user_version_of(&connection), 2);
+
+        let marker_exists: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'test_only_marker'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(marker_exists, 1, "the new version must apply its schema");
+
+        let stored_identity: String = connection
+            .query_row(
+                "SELECT installation_id FROM installation WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored_identity, identity.to_string());
+        connection.close().unwrap();
+
+        // The simulated version is genuinely newer than what this binary
+        // ships, so the production opener must refuse it rather than guess.
+        let error = StateStore::open(temp.db()).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                StateError::SchemaTooNew {
+                    found: 2,
+                    supported: 1
+                }
+            ),
+            "a schema newer than the binary must fail closed: {error:?}"
+        );
+    }
+
+    #[test]
+    fn an_upgrade_preserves_installation_identity_and_typed_state() {
+        let temp = TempDir::new();
+        historical_v1(&temp);
+        let (identity, expected) = commit_snapshot_at_v2(&temp);
+
+        apply_simulated_upgrade(&temp);
+
+        let store = StateStore::open(temp.db()).unwrap();
+        let metadata = store.installation_metadata().unwrap();
+        let loaded = store.load().unwrap();
+
+        assert_eq!(
+            metadata.installation_id, identity,
+            "an upgrade must never mint a new installation identity"
+        );
+        assert_eq!(
+            metadata.desired_generation,
+            DesiredGeneration::new(2).unwrap(),
+            "an upgrade must not advance or rewind the desired generation"
+        );
+        assert_eq!(
+            loaded.generation, expected.generation,
+            "the committed generation must survive the upgrade"
+        );
+        assert_eq!(
+            loaded.state, expected.state,
+            "the typed desired state must survive the upgrade unchanged"
+        );
+    }
+
+    #[test]
+    fn a_schema_newer_than_the_binary_is_refused_rather_than_downgraded() {
+        let temp = TempDir::new();
+        historical_v1(&temp);
+
+        // The production list stops at version 1, so a database stamped 2 is
+        // from a future binary.
+        let connection = Connection::open(temp.db()).unwrap();
+        connection.execute("PRAGMA user_version = 2", []).unwrap();
+        drop(connection);
+
+        let mut connection = Connection::open(temp.db()).unwrap();
+        let error = apply_migrations(&mut connection, MIGRATIONS).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                StateError::SchemaTooNew {
+                    found: 2,
+                    supported: 1
+                }
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn foreign_keys_are_checked_after_every_migration_step() {
+        let temp = TempDir::new();
+        initialize_at_version(&temp.db(), 1).unwrap();
+        let mut connection = Connection::open(temp.db()).unwrap();
+
+        // Introduce a dangling client row that violates the declared relation.
+        connection
+            .execute_batch(
+                "PRAGMA foreign_keys = OFF;
+                 INSERT INTO clients
+                     (id, interface_id, peer_id, assigned_address, position)
+                 VALUES ('00000000-0000-4000-8000-000000000001',
+                         '00000000-0000-4000-8000-0000000000aa',
+                         '00000000-0000-4000-8000-0000000000ff',
+                         '10.8.0.9/32', 0);",
+            )
+            .expect("seed a dangling client row");
+
+        let error = apply_migrations(&mut connection, &test_only_migrations()).unwrap_err();
+        assert!(
+            matches!(error, StateError::MigrationFailed { version: 2, .. }),
+            "a foreign-key violation must fail the migration: {error:?}"
+        );
+    }
+
+    #[test]
+    fn a_pre_migration_snapshot_is_taken_before_a_schema_change() {
+        let temp = TempDir::new();
+        initialize_at_version(&temp.db(), 1).unwrap();
+        let connection = Connection::open(temp.db()).unwrap();
+        let expected = recovery_snapshot_path(&temp.db(), 1);
+
+        recovery_snapshot(&connection, &temp.db(), 1, 2).unwrap();
+
+        let metadata = fs::symlink_metadata(&expected).expect("snapshot must exist");
+        assert!(metadata.is_file());
+        assert_eq!(
+            metadata.mode() & 0o777,
+            DATABASE_MODE,
+            "a recovery snapshot holds the same secrets as the database"
+        );
+
+        // The snapshot must correspond to the *pre-migration* schema.
+        let snapshot = Connection::open_with_flags(
+            &expected,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .unwrap();
+        assert_eq!(user_version_of(&snapshot), 1);
+    }
+
+    #[test]
+    fn no_snapshot_is_taken_when_there_is_nothing_to_migrate() {
+        let temp = TempDir::new();
+        let connection = Connection::open({
+            initialize_at_version(&temp.db(), 1).unwrap();
+            temp.db()
+        })
+        .unwrap();
+
+        // Already current: no migration is pending, so no snapshot.
+        recovery_snapshot(&connection, &temp.db(), 1, 1).unwrap();
+        assert!(!recovery_snapshot_path(&temp.db(), 1).exists());
+
+        // Brand-new initialization (version 0) has nothing to lose.
+        recovery_snapshot(&connection, &temp.db(), 0, 2).unwrap();
+        assert!(!recovery_snapshot_path(&temp.db(), 0).exists());
+    }
+
+    #[test]
+    fn a_snapshot_name_is_deterministic_and_documented() {
+        assert_eq!(
+            recovery_snapshot_path(Path::new("/var/lib/wg-basic/state.db"), 1),
+            PathBuf::from("/var/lib/wg-basic/state.db.pre-migration-v1")
+        );
     }
 }
