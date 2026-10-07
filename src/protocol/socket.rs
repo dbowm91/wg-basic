@@ -42,6 +42,7 @@ pub struct SocketServer {
     pub(crate) wireguard: WireGuardBackend,
     pub(crate) reconciliation: ReconciliationService,
     pub(crate) firewall: FirewallService,
+    pub(crate) aggregate: crate::aggregate::AggregateCoordinator,
 }
 
 #[derive(Clone, Copy)]
@@ -108,6 +109,7 @@ impl SocketServer {
             wireguard: WireGuardBackend,
             reconciliation: ReconciliationService::default(),
             firewall: FirewallService::default(),
+            aggregate: crate::aggregate::AggregateCoordinator::default(),
         })
     }
 

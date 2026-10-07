@@ -163,7 +163,7 @@ fn apply(
     patch: WireGuardDevicePatch,
 ) -> wg_basic::wireguard::WireGuardApplyReceipt {
     match request(
-        &netd.socket(),
+        netd.socket(),
         RequestOperation::ApplyWireGuardDevice {
             interface: interface.clone(),
             patch,
@@ -179,7 +179,7 @@ fn apply(
 
 fn observe(netd: &Netd, interface: &InterfaceName) -> wg_basic::wireguard::ObservedWireGuardDevice {
     match request(
-        &netd.socket(),
+        netd.socket(),
         RequestOperation::ObserveWireGuardDevice {
             interface: interface.clone(),
         },

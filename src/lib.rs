@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+#[cfg(target_os = "linux")]
+pub mod aggregate;
 pub mod domain;
 pub mod error;
 #[cfg(target_os = "linux")]

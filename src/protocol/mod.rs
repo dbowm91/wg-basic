@@ -27,6 +27,6 @@ pub use client::request;
 pub use framing::{read_frame, write_frame, MAX_FRAME_SIZE};
 pub use socket::SocketServer;
 pub use wire::{
-    ProtocolError, RequestEnvelope, RequestOperation, ResponseBody, ResponseEnvelope,
-    PROTOCOL_VERSION,
+    InstallationNetworkApplyBody, InstallationNetworkPlanBody, ProtocolError, RequestEnvelope,
+    RequestOperation, ResponseBody, ResponseEnvelope, PROTOCOL_VERSION,
 };

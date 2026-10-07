@@ -138,7 +138,7 @@ fn namespace_reconcile_netd_worker() {
 
 fn apply(netd: &Netd, desired: DesiredManagedInterface) -> wg_basic::reconcile::ApplyReceipt {
     match request(
-        &netd.socket(),
+        netd.socket(),
         RequestOperation::ApplyManagedInterface { desired },
         401,
     )
@@ -233,7 +233,7 @@ fn kernel_reconciliation_manages_link_address_and_route_and_preserves_other_link
     assert_eq!(second.status, ApplyStatus::NoChange);
 
     let wrong_kind_result = request(
-        &netd.socket(),
+        netd.socket(),
         RequestOperation::PlanManagedInterface {
             desired: DesiredManagedInterface {
                 interface: "wg-wrong".parse().unwrap(),

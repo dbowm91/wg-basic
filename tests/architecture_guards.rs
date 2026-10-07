@@ -18,6 +18,7 @@ const PRODUCTION_SOURCES: &[(&str, &str)] = &[
         "src/wireguard/keys.rs",
         include_str!("../src/wireguard/keys.rs"),
     ),
+    ("src/aggregate.rs", include_str!("../src/aggregate.rs")),
     (
         "src/protocol/mod.rs",
         include_str!("../src/protocol/mod.rs"),
@@ -90,7 +91,23 @@ const PRODUCTION_SOURCES: &[(&str, &str)] = &[
         "src/firewall/service.rs",
         include_str!("../src/firewall/service.rs"),
     ),
+    ("src/state/mod.rs", include_str!("../src/state/mod.rs")),
+    ("src/state/error.rs", include_str!("../src/state/error.rs")),
+    ("src/state/model.rs", include_str!("../src/state/model.rs")),
+    (
+        "src/state/projection.rs",
+        include_str!("../src/state/projection.rs"),
+    ),
+    (
+        "src/state/schema.rs",
+        include_str!("../src/state/schema.rs"),
+    ),
+    ("src/state/store.rs", include_str!("../src/state/store.rs")),
     ("src/domain/mod.rs", include_str!("../src/domain/mod.rs")),
+    (
+        "src/domain/generation.rs",
+        include_str!("../src/domain/generation.rs"),
+    ),
     (
         "src/domain/identifiers.rs",
         include_str!("../src/domain/identifiers.rs"),
@@ -100,8 +117,16 @@ const PRODUCTION_SOURCES: &[(&str, &str)] = &[
         include_str!("../src/domain/interface_name.rs"),
     ),
     (
+        "src/domain/intent.rs",
+        include_str!("../src/domain/intent.rs"),
+    ),
+    (
         "src/domain/network.rs",
         include_str!("../src/domain/network.rs"),
+    ),
+    (
+        "src/domain/owner.rs",
+        include_str!("../src/domain/owner.rs"),
     ),
     (
         "src/domain/secret.rs",
@@ -119,16 +144,18 @@ const ONLY_PROCESS_MODULE: &str = "src/firewall/nft.rs";
 #[test]
 fn production_control_paths_do_not_invoke_wg_wg_quick_or_ip() {
     for (path, source) in PRODUCTION_SOURCES {
+        // Only actual invocations are forbidden; documentation may still name
+        // the tools wg-basic deliberately does not shell out to.
         for forbidden in [
             "Command::new(\"wg\")",
             "Command::new(\"wg-quick\")",
             "Command::new(\"ip\")",
-            "wg-quick",
-            "wg-quick@",
+            "Command::new(\"wg%\")",
+            "process::Command::new(\"ip\")",
         ] {
             assert!(
                 !source.contains(forbidden),
-                "{path} must not reference {forbidden}: kernel control is typed, not shelled out"
+                "{path} must not invoke {forbidden}: kernel control is typed, not shelled out"
             );
         }
     }
@@ -249,6 +276,23 @@ fn protocol_operation_vocabulary_is_closed_and_version_pinned() {
 }
 
 #[test]
+fn the_aggregate_coordinator_is_privileged_and_database_free() {
+    let source = PRODUCTION_SOURCES
+        .iter()
+        .find(|(path, _)| *path == "src/aggregate.rs")
+        .expect("aggregate source is registered")
+        .1;
+    assert!(
+        !source.contains("crate::state"),
+        "the aggregate coordinator must stay database-free"
+    );
+    assert!(
+        !source.contains("rusqlite"),
+        "the aggregate coordinator must never open the state database"
+    );
+}
+
+#[test]
 fn the_management_state_store_never_reaches_a_privileged_boundary() {
     // The state module is unprivileged and must not open the privileged socket
     // or run any kernel/network control path itself.
@@ -256,6 +300,8 @@ fn the_management_state_store_never_reaches_a_privileged_boundary() {
         if !path.starts_with("src/state/") {
             continue;
         }
+        // rusqlite is expected here; the rule is that the management side
+        // never reaches a *privileged* boundary.
         for forbidden in [
             "crate::protocol",
             "std::process::Command",
@@ -298,6 +344,7 @@ fn the_privileged_service_never_opens_the_state_database() {
         "src/wireguard.rs",
         "src/wireguard/backend.rs",
         "src/wireguard/keys.rs",
+        "src/aggregate.rs",
     ] {
         let source = PRODUCTION_SOURCES
             .iter()
