@@ -474,7 +474,64 @@ A **restore** is the offline/exclusive replacement of the inactive state store f
 
 Restore changes durable desired state only. Normal startup reconciliation subsequently converges the kernel and still refuses foreign host ownership conflicts.
 
-## 46. Status vocabulary for planning
+## 46. Management worker
+
+The **management worker** is the bounded blocking execution authority owned by the unprivileged management service.
+
+It owns `ManagementRuntime`, the SQLite-backed state store, authentication/session storage operations, and typed netd requests.
+
+Async HTTP request tasks submit typed commands to this worker through a bounded queue. They MUST NOT access rusqlite or privileged network backends directly.
+
+The management worker is an in-process concurrency boundary, not a network protocol.
+
+## 47. Canonical origin
+
+The **canonical origin** is the exact scheme, host, and optional port that browsers are expected to use for the management service.
+
+It is the authority for:
+
+- Host validation;
+- Origin validation on unsafe methods;
+- secure-cookie mode;
+- HSTS eligibility.
+
+Forwarded/X-Forwarded-* headers do not redefine the canonical origin unless a later trusted-proxy contract explicitly says so.
+
+## 48. Session bearer token
+
+A **session bearer token** is the high-entropy secret credential carried by the browser to identify one authenticated management session.
+
+Suggested type: `SessionToken`.
+
+Only a one-way digest of the bearer token is stored durably. The raw bearer token MUST NOT appear in SQLite, logs, errors, URLs, or ordinary diagnostics.
+
+It is distinct from `SessionId`, which is a stable non-secret database identity.
+
+## 49. CSRF token
+
+A **CSRF token** is a session-bound secret used to prove that an authenticated unsafe browser request originated from the wg-basic application context rather than merely carrying a browser-managed session cookie.
+
+Suggested type: `CsrfToken`.
+
+Phase 7 uses the synchronizer-token pattern. SameSite cookies and Origin checks are additional defenses, not synonyms for the CSRF token.
+
+## 50. Local administrator
+
+A **local administrator** is the initially supported concrete `AdminPrincipal`: one enabled account whose password verifier is stored in the local state database.
+
+Its password is established/reset through a local operator path, not through an unauthenticated first-browser bootstrap.
+
+Future OIDC, TOTP, and multi-admin/RBAC work extends the principal model rather than changing this term's Phase 7 meaning.
+
+## 51. Authentication limiter
+
+An **authentication limiter** is the bounded in-memory admission control evaluated before expensive password verification.
+
+It limits interactive login work using global and raw-transport-peer budgets without creating a persistent attacker-controlled account lockout.
+
+It is application security state, not authentication truth, and is lost safely on service restart.
+
+## 52. Status vocabulary for planning
 
 Planning uses:
 
