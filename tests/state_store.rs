@@ -511,19 +511,76 @@ fn an_unchanged_snapshot_still_advances_the_generation() {
 }
 
 #[test]
-fn the_desired_state_module_does_not_depend_on_the_network_backends() {
-    // The state module must remain usable on a non-Linux host, so none of its
-    // files may reach for a Linux-gated module.
-    let schema = include_str!("../src/state/schema.rs");
-    let store_source = include_str!("../src/state/store.rs");
-    for source in [schema, store_source] {
-        assert!(!source.contains("crate::reconcile"));
-        assert!(!source.contains("crate::firewall"));
-        assert!(!source.contains("crate::protocol"));
-        assert!(!source.contains("rusqlite::backup"));
+fn the_state_module_does_not_depend_on_the_network_backends() {
+    // The state module must remain usable on a non-Linux host, so no state file
+    // may reach for a Linux-gated backend or a privileged subsystem.
+    //
+    // `projection.rs` is the one deliberate exception to the reconcile check:
+    // projecting a snapshot into kernel intent is its entire purpose, and it
+    // uses reconcile's typed value types, never its backends.
+    //
+    // SQLite's online backup API *is* allowed here: it is a local file-to-file
+    // snapshot, not a privileged or network operation. M004 enables it
+    // deliberately, and the guards below pin what still must not appear.
+    let storage_modules = [
+        ("schema.rs", include_str!("../src/state/schema.rs")),
+        ("store.rs", include_str!("../src/state/store.rs")),
+        ("backup.rs", include_str!("../src/state/backup.rs")),
+        ("model.rs", include_str!("../src/state/model.rs")),
+    ];
+    for (name, source) in storage_modules {
+        assert!(
+            !source.contains("crate::reconcile"),
+            "{name} reaches reconcile"
+        );
+        assert!(
+            !source.contains("crate::firewall"),
+            "{name} reaches firewall"
+        );
+        assert!(
+            !source.contains("crate::protocol"),
+            "{name} reaches protocol"
+        );
     }
-    assert!(!schema.contains("rtnetlink"));
-    assert!(!schema.contains("nl_wireguard"));
+
+    let every_module = [
+        ("schema.rs", include_str!("../src/state/schema.rs")),
+        ("store.rs", include_str!("../src/state/store.rs")),
+        ("backup.rs", include_str!("../src/state/backup.rs")),
+        ("model.rs", include_str!("../src/state/model.rs")),
+        ("projection.rs", include_str!("../src/state/projection.rs")),
+    ];
+    for (name, source) in every_module {
+        assert!(!source.contains("rtnetlink"), "{name} reaches rtnetlink");
+        assert!(
+            !source.contains("nl_wireguard"),
+            "{name} reaches nl_wireguard"
+        );
+    }
+}
+
+#[test]
+fn backup_and_restore_stay_a_local_file_operation() {
+    // Backup and restore move a database file. They must never execute a
+    // program, reach a socket, or escalate: the module only copies bytes
+    // between validated paths. `std::process::id` is allowed because it names a
+    // temporary artifact; it does not run anything.
+    let source = include_str!("../src/state/backup.rs");
+    for forbidden in [
+        "Command::new",
+        "std::process::Command",
+        "libc::",
+        "sudo",
+        "TcpStream",
+        "UnixStream",
+        "setuid",
+        "CAP_NET_ADMIN",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "backup module must not use {forbidden}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

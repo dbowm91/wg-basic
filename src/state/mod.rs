@@ -9,6 +9,7 @@
 //! - [`store`] is the only place that issues SQL;
 //! - [`schema`] is the only place that opens a connection or runs migrations;
 //! - [`projection`] is pure and performs no I/O;
+//! - [`backup`] owns backup, restore, and candidate validation;
 //! - [`error`] keeps operator diagnostics free of SQL text and secret values.
 //!
 //! The store is synchronous by design and holds one connection behind a single
@@ -21,12 +22,18 @@
 //! preshared keys. It and any backup of it are secret-bearing and must use
 //! restrictive filesystem permissions. This is not a sanitized export.
 
+mod backup;
 mod error;
+mod inuse;
 mod model;
 mod projection;
 mod schema;
 mod store;
 
+pub use backup::{
+    restore, retained_previous_path, validate_candidate, BackupDisposition, BackupReceipt,
+    RestoreReceipt,
+};
 pub use error::StateError;
 // The identifiers themselves live in `crate::domain` so the privileged side can
 // derive an owner tag without depending on the state store. They are re-exported

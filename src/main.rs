@@ -48,6 +48,46 @@ enum Command {
         #[arg(long, default_value = DEFAULT_SOCKET)]
         socket: PathBuf,
     },
+    /// Durable state inspection, backup, and restore.
+    ///
+    /// Every one of these operates on the secret-bearing database directly. None
+    /// of them contacts the kernel: after a restore, ordinary `reconcile` does
+    /// that, under the ordinary owner-tag rules.
+    State {
+        #[command(subcommand)]
+        action: StateCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum StateCommand {
+    /// Prints a safe status projection: identifiers, generations, and integrity.
+    ///
+    /// Never prints private keys, preshared keys, or any row contents.
+    Status {
+        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        state: PathBuf,
+    },
+    /// Writes a consistent snapshot of the database to <destination>.
+    ///
+    /// The destination must not already exist. The snapshot contains VPN
+    /// credentials and is created owner-only.
+    Backup {
+        destination: PathBuf,
+        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        state: PathBuf,
+    },
+    /// Validates <candidate> and installs it as the live database.
+    ///
+    /// The candidate is fully checked before anything is replaced, and the
+    /// previous database is retained as `<state>.pre-restore`. Stop the
+    /// management service first: this refuses to run against a database this
+    /// process still holds open.
+    Restore {
+        candidate: PathBuf,
+        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        state: PathBuf,
+    },
 }
 
 fn main() {
@@ -185,6 +225,88 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
                 .run_until_shutdown(&shutdown)
                 .map_err(|_| "netd listener stopped after a runtime error".to_owned())
         }
+        Some(Command::State { action }) => run_state_action(action),
+    }
+}
+
+/// Runs the state-focused operator surface.
+///
+/// None of these paths ever contacts the kernel, and none of them prints row
+/// contents. A backup is a second copy of the VPN secrets, and the output says
+/// so rather than leaving the operator to guess.
+fn run_state_action(action: StateCommand) -> Result<(), String> {
+    use wg_basic::state::{restore, validate_candidate, StateStore};
+
+    match action {
+        StateCommand::Status { state } => {
+            let store = StateStore::open(&state).map_err(|error| error.to_string())?;
+            let metadata = store
+                .installation_metadata()
+                .map_err(|error| error.to_string())?;
+            let convergence = store.convergence().map_err(|error| error.to_string())?;
+            let schema_version = store.schema_version().map_err(|error| error.to_string())?;
+            println!("database:           {}", store.path().display());
+            println!("schema version:     {schema_version}");
+            println!("installation id:    {}", metadata.installation_id);
+            println!("desired generation: {}", metadata.desired_generation);
+            println!(
+                "last attempted:     {}",
+                convergence
+                    .last_attempted_generation
+                    .map_or_else(|| "none".to_owned(), |g| g.to_string())
+            );
+            println!(
+                "last converged:     {}",
+                convergence
+                    .last_converged_generation
+                    .map_or_else(|| "none".to_owned(), |g| g.to_string())
+            );
+            println!(
+                "last outcome:       {}",
+                convergence.last_outcome.as_deref().unwrap_or("none")
+            );
+            println!("integrity:          ok");
+            println!("\nThis projection never includes private or preshared keys.");
+            Ok(())
+        }
+        StateCommand::Backup { destination, state } => {
+            let store = StateStore::open(&state).map_err(|error| error.to_string())?;
+            let receipt = store
+                .backup(&destination)
+                .map_err(|error| error.to_string())?;
+            println!(
+                "backup complete: {} (generation {}, schema version {})",
+                receipt.destination.display(),
+                receipt.generation,
+                receipt.schema_version
+            );
+            println!("installation id:    {}", receipt.installation_id);
+            println!("\nThis file contains VPN private and preshared keys.");
+            println!("Store it as securely as the live state database and never commit it.");
+            Ok(())
+        }
+        StateCommand::Restore { candidate, state } => {
+            // Validate first and report clearly, then install. The library
+            // repeats the validation internally before replacing anything, so
+            // this early check is a better error message, not the safety net.
+            validate_candidate(&candidate).map_err(|error| error.to_string())?;
+            let receipt = restore(&candidate, &state).map_err(|error| error.to_string())?;
+            println!(
+                "restored: {} (generation {}, schema version {})",
+                receipt.target.display(),
+                receipt.generation,
+                receipt.schema_version
+            );
+            println!("installation id:    {}", receipt.installation_id);
+            if let Some(previous) = &receipt.previous_retained_at {
+                println!("previous database retained at: {}", previous.display());
+            }
+            println!("\nRestore did not touch the kernel. Start the management service to");
+            println!("reconcile the restored desired state.");
+            println!("A restored database is not authority over unrelated host state:");
+            println!("startup still fails closed on foreign or untagged resources.");
+            Ok(())
+        }
     }
 }
 
@@ -199,5 +321,35 @@ mod tests {
         assert!(Cli::try_parse_from(["wg-basic", "serve"]).is_ok());
         assert!(Cli::try_parse_from(["wg-basic", "netd"]).is_ok());
         assert!(Cli::try_parse_from(["wg-basic", "doctor"]).is_ok());
+        assert!(Cli::try_parse_from(["wg-basic", "reconcile"]).is_ok());
+        assert!(Cli::try_parse_from(["wg-basic", "health"]).is_ok());
+    }
+
+    #[test]
+    fn the_state_roles_require_their_paths() {
+        Cli::command().debug_assert();
+        assert!(Cli::try_parse_from(["wg-basic", "state", "status"]).is_ok());
+        assert!(Cli::try_parse_from(["wg-basic", "state", "backup", "/tmp/x.db"]).is_ok());
+        assert!(Cli::try_parse_from(["wg-basic", "state", "restore", "/tmp/x.db"]).is_ok());
+        // Backup and restore name a file; there is no implicit destination.
+        assert!(Cli::try_parse_from(["wg-basic", "state", "backup"]).is_err());
+        assert!(Cli::try_parse_from(["wg-basic", "state", "restore"]).is_err());
+        assert!(Cli::try_parse_from(["wg-basic", "state"]).is_err());
+    }
+
+    /// The state surface must never be a general SQL or shell escape hatch.
+    #[test]
+    fn the_state_cli_offers_no_sql_or_shell_access() {
+        let help = Cli::command().render_long_help().to_string();
+        let state_help = help
+            .split("state")
+            .nth(1)
+            .expect("the state command group is documented");
+        for forbidden in ["sql", "sqlite", "query", "exec", "shell"] {
+            assert!(
+                !state_help.to_lowercase().contains(forbidden),
+                "state CLI must not advertise {forbidden}"
+            );
+        }
     }
 }
