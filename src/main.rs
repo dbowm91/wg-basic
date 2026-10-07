@@ -73,6 +73,9 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
                 ResponseBody::Capabilities(_) => {
                     return Err("netd returned an unexpected protocol response".into())
                 }
+                ResponseBody::WireGuardDevice(_) | ResponseBody::WireGuardApplied(_) => {
+                    return Err("netd returned an unexpected protocol response".into())
+                }
             }
             Ok(())
         }
@@ -86,6 +89,9 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
                         .map_err(|_| "could not format capability snapshot")?
                 ),
                 ResponseBody::Pong { .. } => {
+                    return Err("netd returned an unexpected protocol response".into())
+                }
+                ResponseBody::WireGuardDevice(_) | ResponseBody::WireGuardApplied(_) => {
                     return Err("netd returned an unexpected protocol response".into())
                 }
             }
@@ -106,7 +112,7 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
             })
             .map_err(|_| "could not install graceful shutdown handler".to_owned())?;
             eprintln!(
-                "wg-basic netd listening on {} (read-only protocol)",
+                "wg-basic netd listening on {} (typed local protocol)",
                 server.socket_path().display()
             );
             server

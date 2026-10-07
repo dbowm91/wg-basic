@@ -2,6 +2,7 @@ use super::{
     read_frame, write_frame, NetworkCapabilitySnapshot, ProtocolError, RequestEnvelope,
     RequestOperation, ResponseBody, ResponseEnvelope, PROTOCOL_VERSION,
 };
+use crate::wireguard::{WireGuardBackend, WireGuardValidationError};
 use nix::sys::socket::{getsockopt, listen, sockopt::PeerCredentials, Backlog};
 use std::{
     collections::HashSet,
@@ -51,6 +52,7 @@ pub struct SocketServer {
     identity: SocketIdentity,
     runtime_directory: PathBuf,
     authorization: AuthorizationPolicy,
+    wireguard: WireGuardBackend,
 }
 
 #[derive(Clone, Copy)]
@@ -114,6 +116,7 @@ impl SocketServer {
             identity,
             runtime_directory,
             authorization,
+            wireguard: WireGuardBackend,
         })
     }
 
@@ -183,6 +186,16 @@ impl SocketServer {
             RequestOperation::InspectCapabilities => Ok(ResponseBody::Capabilities(
                 NetworkCapabilitySnapshot::observe(&self.runtime_directory),
             )),
+            RequestOperation::ObserveWireGuardDevice { interface } => self
+                .wireguard
+                .observe_device(&interface)
+                .map(ResponseBody::WireGuardDevice)
+                .map_err(map_wireguard_error),
+            RequestOperation::ApplyWireGuardDevice { interface, patch } => self
+                .wireguard
+                .apply_patch(&interface, patch)
+                .map(ResponseBody::WireGuardApplied)
+                .map_err(map_wireguard_error),
         };
         ResponseEnvelope {
             protocol_version: PROTOCOL_VERSION,
@@ -193,6 +206,24 @@ impl SocketServer {
 
     pub fn socket_path(&self) -> &Path {
         &self.socket_path
+    }
+}
+
+fn map_wireguard_error(error: WireGuardValidationError) -> ProtocolError {
+    match error {
+        WireGuardValidationError::PeerNotFound | WireGuardValidationError::InterfaceUnavailable => {
+            ProtocolError::NotFound
+        }
+        WireGuardValidationError::PeerAlreadyExists
+        | WireGuardValidationError::ConflictingAllowedIps => ProtocolError::Conflict,
+        WireGuardValidationError::PermissionDenied => ProtocolError::PermissionDenied,
+        WireGuardValidationError::UnsupportedBackend => ProtocolError::UnsupportedBackend,
+        WireGuardValidationError::KernelRejected => ProtocolError::KernelRejected,
+        WireGuardValidationError::InvalidKey | WireGuardValidationError::InvalidBackendInput => {
+            ProtocolError::InvalidInput
+        }
+        WireGuardValidationError::BackendFailure => ProtocolError::BackendFailure,
+        _ => ProtocolError::InvalidInput,
     }
 }
 
@@ -276,6 +307,17 @@ pub fn request(
             io::ErrorKind::PermissionDenied,
             "network service rejected caller",
         )),
+        Err(ProtocolError::PermissionDenied) => Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "network service lacks permission for the operation",
+        )),
+        Err(ProtocolError::UnsupportedBackend) => Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "network backend does not support the operation",
+        )),
+        Err(ProtocolError::KernelRejected) => {
+            Err(io::Error::other("kernel rejected the network operation"))
+        }
         Err(ProtocolError::UnsupportedVersion | ProtocolError::MalformedRequest) => {
             Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -284,6 +326,21 @@ pub fn request(
         }
         Err(ProtocolError::InternalFailure) => {
             Err(io::Error::other("network service request failed"))
+        }
+        Err(ProtocolError::NotFound) => Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "network resource was not found",
+        )),
+        Err(ProtocolError::Conflict) => Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "network resource conflicts with current state",
+        )),
+        Err(ProtocolError::InvalidInput) => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "network request validation failed",
+        )),
+        Err(ProtocolError::BackendFailure) => {
+            Err(io::Error::other("network backend rejected the request"))
         }
     }
 }
@@ -405,6 +462,31 @@ mod tests {
             serde_json::from_slice(&read_frame(&mut stream).unwrap()).unwrap();
         assert_eq!(response.request_id, 991);
         assert_eq!(response.result, Err(ProtocolError::UnsupportedVersion));
+        shutdown.store(true, Ordering::Release);
+        handle.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn invalid_wireguard_patch_is_rejected_before_opening_netlink() {
+        let fixture = Fixture::new();
+        let path = fixture.socket();
+        let (shutdown, handle) =
+            start_server(path.clone(), AuthorizationPolicy::current_user_and_root());
+        let patch = crate::wireguard::WireGuardDevicePatch {
+            private_key: crate::wireguard::FieldUpdate::Keep,
+            listen_port: crate::wireguard::FieldUpdate::Set(0),
+            peer: None,
+        };
+        let error = request(
+            &path,
+            RequestOperation::ApplyWireGuardDevice {
+                interface: "wg0".parse().unwrap(),
+                patch,
+            },
+            55,
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
         shutdown.store(true, Ordering::Release);
         handle.join().unwrap().unwrap();
     }

@@ -35,6 +35,9 @@ impl PrivateKey {
     pub fn new(value: String) -> Result<Self, KeyError> {
         validate_key(&value).map(|()| Self(value))
     }
+    pub fn expose_secret(&self) -> &str {
+        &self.0
+    }
 }
 impl Drop for PrivateKey {
     fn drop(&mut self) {
@@ -66,6 +69,9 @@ pub struct PresharedKey(String);
 impl PresharedKey {
     pub fn new(value: String) -> Result<Self, KeyError> {
         validate_key(&value).map(|()| Self(value))
+    }
+    pub fn expose_secret(&self) -> &str {
+        &self.0
     }
 }
 impl Drop for PresharedKey {

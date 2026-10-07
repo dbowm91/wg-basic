@@ -18,3 +18,15 @@ jobs:
       - run: cargo check --all-targets --locked
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
+
+  wireguard-kernel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y iproute2 iputils-ping
+      - name: Qualify kernel WireGuard control in isolated namespaces
+        run: sudo -E env "PATH=$PATH" cargo test --locked --features linux-integration --test wireguard_kernel -- --nocapture

@@ -1,8 +1,12 @@
+use crate::{
+    domain::InterfaceName,
+    wireguard::{ObservedWireGuardDevice, WireGuardApplyReceipt, WireGuardDevicePatch},
+};
 use serde::{Deserialize, Serialize};
 
 pub const PROTOCOL_VERSION: u16 = 1;
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RequestEnvelope {
     pub protocol_version: u16,
@@ -10,7 +14,7 @@ pub struct RequestEnvelope {
     pub operation: RequestOperation,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(
     tag = "operation",
     content = "parameters",
@@ -20,6 +24,13 @@ pub struct RequestEnvelope {
 pub enum RequestOperation {
     Ping,
     InspectCapabilities,
+    ObserveWireGuardDevice {
+        interface: InterfaceName,
+    },
+    ApplyWireGuardDevice {
+        interface: InterfaceName,
+        patch: WireGuardDevicePatch,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -35,6 +46,8 @@ pub struct ResponseEnvelope {
 pub enum ResponseBody {
     Pong { service: String, version: String },
     Capabilities(super::NetworkCapabilitySnapshot),
+    WireGuardDevice(ObservedWireGuardDevice),
+    WireGuardApplied(WireGuardApplyReceipt),
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -44,6 +57,13 @@ pub enum ProtocolError {
     Unauthorized,
     MalformedRequest,
     InternalFailure,
+    InvalidInput,
+    NotFound,
+    Conflict,
+    PermissionDenied,
+    UnsupportedBackend,
+    KernelRejected,
+    BackendFailure,
 }
 
 impl ResponseEnvelope {
@@ -71,10 +91,13 @@ mod tests {
         assert!(std::str::from_utf8(&encoded)
             .unwrap()
             .contains("inspect_capabilities"));
-        assert_eq!(
-            serde_json::from_slice::<RequestEnvelope>(&encoded).unwrap(),
-            request
-        );
+        let decoded: RequestEnvelope = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(decoded.protocol_version, request.protocol_version);
+        assert_eq!(decoded.request_id, request.request_id);
+        assert!(matches!(
+            decoded.operation,
+            RequestOperation::InspectCapabilities
+        ));
 
         let response = ResponseEnvelope {
             protocol_version: PROTOCOL_VERSION,
@@ -84,11 +107,9 @@ mod tests {
                 version: "0.1.0".into(),
             }),
         };
-        assert_eq!(
-            serde_json::from_slice::<ResponseEnvelope>(&serde_json::to_vec(&response).unwrap())
-                .unwrap(),
-            response
-        );
+        let decoded: ResponseEnvelope =
+            serde_json::from_slice(&serde_json::to_vec(&response).unwrap()).unwrap();
+        assert_eq!(decoded, response);
     }
 
     #[test]
@@ -118,5 +139,32 @@ mod tests {
                 "{operation} must remain outside the protocol"
             );
         }
+    }
+
+    #[test]
+    fn wireguard_patch_round_trip_keeps_secret_debug_redacted() {
+        let private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".to_owned();
+        let request = RequestEnvelope {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 8,
+            operation: RequestOperation::ApplyWireGuardDevice {
+                interface: "wg0".parse().unwrap(),
+                patch: WireGuardDevicePatch {
+                    private_key: crate::wireguard::FieldUpdate::Set(
+                        crate::domain::PrivateKey::new(private_key.clone()).unwrap(),
+                    ),
+                    listen_port: crate::wireguard::FieldUpdate::Keep,
+                    peer: None,
+                },
+            },
+        };
+        assert!(!format!("{request:?}").contains(&private_key));
+        let encoded = serde_json::to_vec(&request).unwrap();
+        let decoded: RequestEnvelope = serde_json::from_slice(&encoded).unwrap();
+        assert!(matches!(
+            decoded.operation,
+            RequestOperation::ApplyWireGuardDevice { .. }
+        ));
+        assert!(!format!("{decoded:?}").contains(&private_key));
     }
 }
