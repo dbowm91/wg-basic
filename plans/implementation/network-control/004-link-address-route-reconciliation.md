@@ -1,8 +1,11 @@
 # Network Control M004 — Link, Address, Route, and Reconciliation Engine
 
-Status: active
+Status: closed
 
 Repository planning baseline: `a134b39` (M003 strict implementation head)
+
+Implementation/final head: `5c06062` (M004 accepted after hosted rootful qualification)
+Closure evidence: `plans/closure/network-control/004-status.md`
 
 Source roadmap:
 

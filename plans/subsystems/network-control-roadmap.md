@@ -1,6 +1,6 @@
 # Network Control Foundation Roadmap
 
-Status: active planning; M001–M003 closed, M004 active
+Status: active planning; M001–M004 closed, M005 active
 
 Canonical references:
 
@@ -237,7 +237,7 @@ Exit conditions:
 
 ## 10. Milestone M004 — Link, address, route, and reconciliation engine
 
-Status: active.
+Status: closed.
 
 Primary class: infrastructure / invariant.
 
@@ -268,11 +268,11 @@ Exit conditions:
 - repeated apply remains converged;
 - injected partial failure can be retried safely;
 - unrelated network state survives;
-- namespace fixture can route between tunnel endpoints before firewall/NAT work.
+- production RTNETLINK link/address/main-route operations pass hosted rootful namespace qualification; forwarded tunnel traffic belongs to M005.
 
 ## 11. Milestone M005 — nftables, forwarding, NAT, and end-to-end qualification
 
-Status: blocked on M004.
+Status: active; hard dependency M004 strictly closed.
 
 Primary class: capability / invariant.
 

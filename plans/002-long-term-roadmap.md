@@ -135,7 +135,7 @@ Required outcomes:
 
 ## 6. Phase 4 — Link, address, route, and reconciliation engine
 
-Status: active.
+Status: closed.
 
 Owned by:
 
@@ -158,7 +158,7 @@ Required outcomes:
 
 ## 7. Phase 5 — Firewall, forwarding, NAT, and network-namespace qualification
 
-Status: blocked on Phase 4 closure.
+Status: active; hard dependency Phase 4 strictly closed.
 
 Owned by:
 
@@ -183,7 +183,7 @@ M005 is the first kernel-control foundation closure boundary. Later service/UI w
 
 ## 8. Phase 6 — Durable desired state and migration substrate
 
-Status: blocked on Phase 4; may overlap late Phase 5 testing.
+Status: ready to plan; implementation may overlap late Phase 5 testing.
 
 Owned by:
 
@@ -382,9 +382,9 @@ Before the first public production claim:
 | 1 repository/domain foundation | ready | network-control M001 | — |
 | 2 privileged protocol/capabilities | blocked | network-control M002 | Phase 1 |
 | 3 WireGuard kernel control | closed | network-control M003 | Phase 2 |
-| 4 link/address/route reconciliation | ready | network-control M004 | Phase 3 |
-| 5 firewall/forwarding/E2E | blocked | network-control M005 | Phase 4 |
-| 6 durable state | proposed | future state roadmap | stable Phase 4/5 contracts |
+| 4 link/address/route reconciliation | closed | network-control M004 | Phase 3 |
+| 5 firewall/forwarding/E2E | ready | network-control M005 | Phase 4 |
+| 6 durable state | ready to plan | future state roadmap | stable Phase 4/5 contracts |
 | 7 service/security substrate | proposed | future management roadmap | Phase 2 + stable protocol |
 | 8 management UI/enrollment | proposed | future management roadmap | Phases 5–7 |
 | 9 operational hardening | proposed | future operations roadmap | Phase 8 |
