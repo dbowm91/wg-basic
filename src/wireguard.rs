@@ -3,7 +3,7 @@ mod backend;
 mod keys;
 
 pub use backend::WireGuardBackend;
-pub use keys::{generate_keypair, WireGuardKeyPair};
+pub use keys::{derive_public_key, generate_keypair, WireGuardKeyPair};
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 

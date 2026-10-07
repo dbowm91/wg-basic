@@ -5,6 +5,8 @@ pub mod error;
 #[cfg(target_os = "linux")]
 pub mod protocol;
 #[cfg(target_os = "linux")]
+pub mod reconcile;
+#[cfg(target_os = "linux")]
 pub mod wireguard;
 
 #[cfg(target_os = "linux")]

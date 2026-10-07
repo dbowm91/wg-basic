@@ -1,5 +1,6 @@
 use crate::{
     domain::InterfaceName,
+    reconcile::{ApplyReceipt, DesiredManagedInterface, ReconcilePlanSummary},
     wireguard::{ObservedWireGuardDevice, WireGuardApplyReceipt, WireGuardDevicePatch},
 };
 use serde::{Deserialize, Serialize};
@@ -31,6 +32,12 @@ pub enum RequestOperation {
         interface: InterfaceName,
         patch: WireGuardDevicePatch,
     },
+    PlanManagedInterface {
+        desired: DesiredManagedInterface,
+    },
+    ApplyManagedInterface {
+        desired: DesiredManagedInterface,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -48,6 +55,8 @@ pub enum ResponseBody {
     Capabilities(super::NetworkCapabilitySnapshot),
     WireGuardDevice(ObservedWireGuardDevice),
     WireGuardApplied(WireGuardApplyReceipt),
+    ManagedInterfacePlan(ReconcilePlanSummary),
+    ManagedInterfaceApplied(ApplyReceipt),
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -164,6 +173,39 @@ mod tests {
         assert!(matches!(
             decoded.operation,
             RequestOperation::ApplyWireGuardDevice { .. }
+        ));
+        assert!(!format!("{decoded:?}").contains(&private_key));
+    }
+
+    #[test]
+    fn managed_interface_request_round_trips_with_redacted_private_key() {
+        let private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".to_owned();
+        let request = RequestEnvelope {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 91,
+            operation: RequestOperation::ApplyManagedInterface {
+                desired: DesiredManagedInterface {
+                    interface: "wg0".parse().unwrap(),
+                    ownership: crate::reconcile::OwnershipDeclaration::Managed,
+                    lifecycle: crate::reconcile::LinkLifecycle::Present,
+                    admin_up: Some(true),
+                    wireguard: Some(crate::reconcile::DesiredWireGuardConfiguration {
+                        private_key: crate::domain::PrivateKey::new(private_key.clone()).unwrap(),
+                        listen_port: 51820,
+                        peers: Vec::new(),
+                        manage_all_peers: false,
+                    }),
+                    addresses: Vec::new(),
+                    routes: Vec::new(),
+                },
+            },
+        };
+        assert!(!format!("{request:?}").contains(&private_key));
+        let decoded: RequestEnvelope =
+            serde_json::from_slice(&serde_json::to_vec(&request).unwrap()).unwrap();
+        assert!(matches!(
+            decoded.operation,
+            RequestOperation::ApplyManagedInterface { .. }
         ));
         assert!(!format!("{decoded:?}").contains(&private_key));
     }

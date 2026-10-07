@@ -73,7 +73,10 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
                 ResponseBody::Capabilities(_) => {
                     return Err("netd returned an unexpected protocol response".into())
                 }
-                ResponseBody::WireGuardDevice(_) | ResponseBody::WireGuardApplied(_) => {
+                ResponseBody::WireGuardDevice(_)
+                | ResponseBody::WireGuardApplied(_)
+                | ResponseBody::ManagedInterfacePlan(_)
+                | ResponseBody::ManagedInterfaceApplied(_) => {
                     return Err("netd returned an unexpected protocol response".into())
                 }
             }
@@ -91,7 +94,10 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
                 ResponseBody::Pong { .. } => {
                     return Err("netd returned an unexpected protocol response".into())
                 }
-                ResponseBody::WireGuardDevice(_) | ResponseBody::WireGuardApplied(_) => {
+                ResponseBody::WireGuardDevice(_)
+                | ResponseBody::WireGuardApplied(_)
+                | ResponseBody::ManagedInterfacePlan(_)
+                | ResponseBody::ManagedInterfaceApplied(_) => {
                     return Err("netd returned an unexpected protocol response".into())
                 }
             }
