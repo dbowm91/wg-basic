@@ -409,7 +409,72 @@ An **update transaction** is the staged verification, candidate validation, repl
 
 Eggup may provide the local transaction substrate; release authenticity remains separately owned.
 
-## 38. Status vocabulary for planning
+## 38. State store
+
+The **state store** is the management-service-owned SQLite database and typed access layer holding authoritative durable application state.
+
+The state store is not available to netd and does not contain authoritative live kernel telemetry.
+
+## 39. Desired generation
+
+A **desired generation** is the monotonic revision of one installation's committed desired state.
+
+Suggested type: `DesiredGeneration`.
+
+Every successful desired-state mutation advances the generation exactly once. Callers use an expected generation to prevent stale writes from silently overwriting newer intent.
+
+A desired generation is not a database schema version.
+
+## 40. Committed desired state
+
+A **committed desired state** is the complete validated application configuration stored durably at one desired generation.
+
+Committing desired state means the operator's intent is durable. It does not by itself mean the Linux kernel has converged to that intent.
+
+## 41. Resolved network intent
+
+A **resolved network intent** is the deterministic privileged projection of one committed desired generation.
+
+It contains the installation/interface ownership identity plus the typed managed-interface and firewall/forwarding policy netd needs to reconcile the kernel.
+
+It MUST NOT contain live telemetry or arbitrary command/netlink/nftables payloads.
+
+## 42. Owner tag
+
+An **owner tag** is a versioned, non-secret host-visible provenance marker derived from durable installation and interface identity.
+
+For Linux links, Phase 6 uses the interface alias (`IFLA_IFALIAS`). The nftables table uses an installation-specific ownership marker.
+
+An owner tag is correctness/provenance evidence, not cryptographic authorization.
+
+## 43. Convergence state
+
+**Convergence state** is the small durable record describing the relationship between current desired generation and privileged reconciliation.
+
+It may include:
+
+- last attempted generation;
+- last successfully converged generation;
+- last attempt timestamp;
+- safe high-level disposition/failure category.
+
+Convergence state is evidence. It MUST NOT replace fresh kernel observation on startup.
+
+## 44. State backup
+
+A **state backup** is a consistent SQLite snapshot of the state store.
+
+A state backup contains VPN secret material and MUST be handled with the same confidentiality expectations as the live database.
+
+It is not a sanitized WireGuard configuration export.
+
+## 45. Restore
+
+A **restore** is the offline/exclusive replacement of the inactive state store from a validated backup candidate.
+
+Restore changes durable desired state only. Normal startup reconciliation subsequently converges the kernel and still refuses foreign host ownership conflicts.
+
+## 46. Status vocabulary for planning
 
 Planning uses:
 
