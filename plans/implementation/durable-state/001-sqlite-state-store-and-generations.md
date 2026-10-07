@@ -1,6 +1,12 @@
 # Durable State M001 — SQLite State Store and Desired Generations
 
-Status: active
+Status: closed
+
+Closure record: `plans/closure/durable-state/001-status.md`
+
+Final implementation head: `88f10f9`
+
+Qualification run: GitHub Actions CI run `37619412663` (all four jobs green)
 
 Unblocked by: network-control C001 strictly closed at `0e74a40` (`plans/closure/network-control-post-foundation-reconciliation/c001-status.md`)
 
