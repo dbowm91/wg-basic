@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-07 (Phase 7 M001–M002 closed; M003 ready)
+Last planning reconciliation: 2026-10-07 (**Phase 7 closed** at `d5d5ca9`; Phase 8 unblocked)
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -65,7 +65,7 @@ Runtime dependency adoption remains evidence-driven.
 |---|---|---|---|
 | Linux network-control foundation | closed | `plans/subsystems/network-control-roadmap.md` + `plans/subsystems/network-control-post-foundation-reconciliation-addendum.md` | M001–M005 and C001 closed |
 | Durable state/restart reconciliation | closed | `plans/subsystems/durable-state-restart-reconciliation-roadmap.md` + `plans/subsystems/durable-state-post-phase6-reconciliation-addendum.md` | Phase 6 complete; M001–M004 and post-Phase-6 C001 closed |
-| Management service/auth/security substrate | active / M003 ready | `plans/subsystems/management-service-security-roadmap.md` | M001 EggServe + bounded worker and M002 credentials/sessions closed; M003 ready; M004 blocked in order |
+| Management service/auth/security substrate | **closed** | `plans/subsystems/management-service-security-roadmap.md` | M001–M004 all closed; Phase 7 complete and Phase 8 unblocked |
 | Distribution/install/update | proposed | not yet written | begins after the Phase 7 service layout stabilizes |
 
 Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
@@ -74,15 +74,26 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
-| Management service/security | M004 service lifecycle + Phase 7 qualification | **ready** | `plans/implementation/management-service/004-service-lifecycle-and-phase7-qualification.md` | Phase 7 M003 strict closure satisfied |
+| Management service/security | Phase 8 product CRUD / UI / enrollment | **ready to plan** | — | Phase 7 M001–M004 all strictly closed; see the readiness recommendation in `plans/closure/management-service/004-status.md` |
 
-M004 is the sole implementation-ready plan. It adds the embedded asset shell,
-qualifies the service lifecycle, and performs the Phase 7 end-to-end
-qualification. It adds no Phase 8 configuration-mutating route.
+No implementation plan is currently written. Phase 8's first milestone has no
+plan file yet; writing one is the next action, not implementing one.
+
+Phase 7 contributed no configuration-mutating route, and Phase 8 inherits four
+constraints from its closure rather than from any milestone document:
+
+* the M003 perimeter guards apply unchanged to the first configuration-mutating
+  route — that route is exactly what they were built for;
+* a CRUD route needs a deliberately chosen body bound; `MAX_MANAGEMENT_BODY_BYTES`
+  (16 KiB) and the login route's own bound (4 KiB) were chosen for routes that
+  exist, not inherited;
+* the login limiter's global budget of 20 was sized against the slow Argon2id
+  figure and will need re-sizing against whatever CRUD costs;
+* Phase 7 terminates no TLS, and Phase 8 must not imply otherwise.
 
 ## 6. Blocked implementation plans
 
-None. Phase 8 remains blocked until Phase 7 M004 closes.
+None. Phase 7 is closed and Phase 8 is unblocked.
 
 ## 7. Recently closed work
 
@@ -100,6 +111,7 @@ None. Phase 8 remains blocked until Phase 7 M004 closes.
 - Management-service M001 strict closure: `plans/closure/management-service/001-status.md` (head `5b57d49`).
 - Management-service M002 strict closure: `plans/closure/management-service/002-status.md` (head `60d1482`).
 - Management-service M003 strict closure: `plans/closure/management-service/003-status.md` (head `cfe6860`).
+- Management-service M004 strict closure and **Phase 7 closure**: `plans/closure/management-service/004-status.md` (head `d5d5ca9`).
 
 ## 8. M005 and C001 closure and downstream handoff
 
@@ -186,7 +198,9 @@ If later implementation evidence reveals a material architecture contradiction, 
 
 ## 13. Closure handoff
 
-M001–M005, network-control C001, durable-state M001–M004, and durable-state post-Phase-6 C001 are closed and their strict evidence is recorded. **Phase 6 remains closed.** Phase 7 M001, M002, and M003 are closed and M004 is ready. Phase 8 remains blocked until Phase 7 M004 closes.
+M001–M005, network-control C001, durable-state M001–M004, and durable-state post-Phase-6 C001 are closed and their strict evidence is recorded. **Phase 6 remains closed.** Phase 7 M001, M002, M003, and M004 are all closed; **Phase 7 is closed at `d5d5ca9`** and Phase 8 is unblocked.
+
+Phase 7 M004 closed strictly at `d5d5ca9`. The milestone delivered a self-contained embedded operator shell (12,723 bytes, compiled in, no document root, no external origin, no CSP concession), a deterministic `serve` lifecycle, sessions qualified across a real process restart over real cookies, four-way readiness differentiation, and end-to-end plus abuse/resource qualification against real processes and a real network backend. Two defects were corrected that the code alone would not have shown: `serve` died from `SIGTERM` without draining, because `ctrlc`'s `termination` feature was not enabled and only its handler covers a supervisor's signal; and `ManagementHealth::netd_reachable` could not distinguish a dead backend from an installation that had simply not applied anything yet, so an authenticated live read-only probe was added while the unauthenticated probe was deliberately left unable to dial the privileged backend. The rootful service fixture drives the management HTTP surface against a real `netd` inside a disposable namespace and qualifies real convergence in both directions — `ok` when converged, `degraded` when the backend is gone. Measured footprint is 13.34 MiB combined against the long-term 30 MiB engineering signal, with 0 idle CPU ticks for both roles over a two-second window; nothing was weakened to meet the signal, and the Argon2id parameters remain at the M002 policy, asserted with a latency *floor* so they cannot be traded for speed. No high or medium finding remains open. No historical closure record was edited.
 
 At each future closure, update:
 

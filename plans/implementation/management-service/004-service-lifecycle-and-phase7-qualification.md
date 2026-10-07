@@ -1,6 +1,8 @@
 # Management Service M004 — Service Lifecycle and Phase 7 Qualification
 
-Status: ready. M003 is closed (`plans/closure/management-service/003-status.md`).
+Status: closed at `d5d5ca9`. Closure record:
+`plans/closure/management-service/004-status.md`. **Phase 7 is closed** and
+Phase 8 is unblocked by it.
 
 Source roadmap:
 
@@ -190,3 +192,38 @@ Stop and write a corrective/ADR if Phase 7 needs peer/client CRUD to prove the s
 ## 13. Closure evidence
 
 Record embedded asset inventory, process topology, shutdown trace, real HTTP auth/session restart flow, rootful HTTP→health/netd fixture, saturation results, footprint measurements, static guards, all CI, Phase 7 closed/conditional disposition, and Phase 8 readiness recommendation.
+
+
+---
+
+## Closure note
+
+Closed at `d5d5ca9` with disposition **closed**. All ten acceptance criteria in
+§11 are met and none of §12's stop conditions was reached.
+
+Two defects were found and corrected in work this milestone was meant to
+qualify, both of which the code alone would not have revealed:
+
+* `serve` could not be stopped by a process supervisor. `ctrlc` handles `SIGINT`
+  by default and puts `SIGTERM`/`SIGHUP` behind its `termination` feature, which
+  was not enabled, so the long-running role died *from the signal* and skipped
+  stop-accepts / drain / stop-worker / close-DB entirely. Found by asserting the
+  exit status on the real binary.
+* `ManagementHealth::netd_reachable` is derived from recorded convergence
+  evidence, so a fresh installation reported the backend as unreachable whether it
+  was up or down — §4 requires an operator to be able to tell those apart. A live
+  read-only `Ping` was added on the authenticated route only; an unauthenticated
+  caller must not be able to make the process dial the privileged backend.
+
+Three findings were accepted rather than changed: `/healthz` reports the record
+and can be stale about a backend that died since the last reconcile; a `Shutdown`
+confirmation can miss its reply deadline after a saturated burst although the
+thread is joined unconditionally either way; and the worker queue cannot be
+saturated through HTTP, because the login limiter is always the binding
+constraint. Full evidence, the footprint measurements, and the Phase 8 readiness
+recommendation are in the closure record.
+
+Carry-forward to Phase 8: the perimeter guards apply unchanged to the first
+configuration-mutating route, a CRUD route needs a deliberately chosen body bound
+rather than an inherited one, and the login limiter's global budget will need
+re-sizing against whatever CRUD costs.
