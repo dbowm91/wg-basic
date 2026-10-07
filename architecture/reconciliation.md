@@ -14,7 +14,7 @@ Addresses are additive/exact-match resources. Unlisted secondary addresses survi
 
 ## Ordering and retry
 
-An enable plan orders link creation, WireGuard device/peer configuration, address changes, and route changes. Installing a route through a down link first raises that link because the kernel rejects the route with `ENETUNREACH`; the requested final link state is applied after routes. Link deletion removes explicitly listed routes, then addresses, lowers the link, and deletes it. Stable ordering is independent of hash iteration. Routes in the kernel's local table that are derived from interface addresses are excluded from the managed main-table route scope.
+An enable plan orders link creation, WireGuard device/peer configuration, address changes, and route changes. Installing a route through a down link first raises that link because the kernel rejects the route with `ENETUNREACH`; the requested final link state is applied after routes. Link deletion removes explicitly listed routes, then addresses, lowers the link, and deletes it. Stable ordering is independent of hash iteration. Routes in the kernel's local table and connected main-table routes derived from interface addresses are excluded from the managed route set; removing the address removes its connected route.
 
 Each successful mutation is followed by re-observation. The receipt distinguishes `NoChange`, `Applied`, `AlreadyConverged`, `FailedBeforeMutation`, `PartialFailure`, and `VerificationFailed`. The service does not claim rollback. A partial receipt includes a fresh observation when available; a new apply derives only the remaining operations. An installation-wide in-process mutex prevents concurrent apply sequences from interleaving. Netd also accepts one request at a time.
 
