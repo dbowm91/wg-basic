@@ -1,0 +1,191 @@
+/*
+ * The operator console stylesheet.
+ *
+ * Embedded in the wg-basic binary at compile time. No web font, no imported
+ * stylesheet, no background image: every byte an operator's browser fetches for
+ * this page comes from this file, from the binary that ships it. An appliance
+ * UI that reaches out to a CDN is an appliance UI that reports to the CDN what
+ * an operator of that appliance is doing.
+ *
+ * System fonts only, and system colours only, so the page also renders without
+ * a network round trip for anything at all.
+ */
+
+:root {
+  color-scheme: light dark;
+  --ink: #16191d;
+  --paper: #ffffff;
+  --muted: #5c6570;
+  --line: #d7dce2;
+  --accent: #1f5fa9;
+  --danger: #9b2226;
+  --danger-ink: #ffffff;
+  --ok: #1b5e3f;
+  --warn: #8a5a00;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #e8ebef;
+    --paper: #14171a;
+    --muted: #9aa4b0;
+    --line: #333a42;
+    --accent: #79b0f0;
+    --danger: #e0626a;
+    --danger-ink: #1a1011;
+    --ok: #6fce9f;
+    --warn: #e0b055;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 2rem 1.25rem 4rem;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+main {
+  max-width: 42rem;
+  margin: 0 auto;
+}
+
+header {
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 1.75rem;
+  padding-bottom: 1rem;
+}
+
+h1 {
+  font-size: 1.3rem;
+  font-weight: 600;
+  margin: 0 0 0.25rem;
+  letter-spacing: -0.01em;
+}
+
+.subtitle {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+section {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  margin-bottom: 1.25rem;
+  padding: 1.1rem 1.25rem 1.25rem;
+}
+
+h2 {
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  margin: 0 0 0.9rem;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+label {
+  display: block;
+  font-size: 0.85rem;
+  margin-bottom: 0.3rem;
+  color: var(--muted);
+}
+
+input[type="text"],
+input[type="password"] {
+  width: 100%;
+  padding: 0.55rem 0.65rem;
+  margin-bottom: 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: 1rem;
+}
+
+input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+button {
+  padding: 0.55rem 1.1rem;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--accent);
+  color: var(--paper);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+@media (prefers-color-scheme: dark) {
+  button {
+    color: #10131a;
+  }
+}
+
+button.secondary {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--line);
+  font-weight: 500;
+}
+
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+dl {
+  display: grid;
+  grid-template-columns: minmax(9rem, auto) 1fr;
+  gap: 0.45rem 1rem;
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+dt {
+  color: var(--muted);
+}
+
+dd {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+#banner {
+  background: var(--danger);
+  color: var(--danger-ink);
+  border-radius: 4px;
+  margin-bottom: 1.25rem;
+  padding: 0.7rem 0.9rem;
+  font-size: 0.9rem;
+}
+
+.note {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 1rem 0 0;
+}
+
+.state-ok {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.state-warn {
+  color: var(--warn);
+  font-weight: 600;
+}

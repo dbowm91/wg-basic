@@ -171,6 +171,19 @@ const PRODUCTION_SOURCES: &[(&str, &str)] = &[
     ("src/http/mod.rs", include_str!("../src/http/mod.rs")),
     ("src/http/config.rs", include_str!("../src/http/config.rs")),
     ("src/http/api.rs", include_str!("../src/http/api.rs")),
+    ("src/http/assets.rs", include_str!("../src/http/assets.rs")),
+    (
+        "src/http/assets/index.html",
+        include_str!("../src/http/assets/index.html"),
+    ),
+    (
+        "src/http/assets/app.css",
+        include_str!("../src/http/assets/app.css"),
+    ),
+    (
+        "src/http/assets/app.js",
+        include_str!("../src/http/assets/app.js"),
+    ),
     (
         "src/http/headers.rs",
         include_str!("../src/http/headers.rs"),
@@ -191,6 +204,10 @@ const PRODUCTION_SOURCES: &[(&str, &str)] = &[
     (
         "src/http/service.rs",
         include_str!("../src/http/service.rs"),
+    ),
+    (
+        "src/http/readiness.rs",
+        include_str!("../src/http/readiness.rs"),
     ),
     ("src/http/serve.rs", include_str!("../src/http/serve.rs")),
     ("src/domain/mod.rs", include_str!("../src/domain/mod.rs")),
@@ -1269,4 +1286,390 @@ fn a_failed_login_lookup_always_spends_one_argon2_verification() {
         "the equaliser must be parsed once behind a OnceLock; parsing the PHC string per \
          failed login would be a second, smaller timing signal"
     );
+}
+
+// ---------------------------------------------------------------------------
+// M004: the embedded asset shell
+// ---------------------------------------------------------------------------
+
+#[test]
+fn no_embedded_asset_names_an_external_origin() {
+    // The boundary that matters most for a shipped UI. An asset that fetches
+    // from a CDN tells that CDN when an operator of this appliance signs in, and
+    // the service's own `Host` allowlist cannot see it happen because the
+    // request never reaches the service.
+    //
+    // The asset files are registered as sources so this reads their *contents*
+    // rather than the `include_str!` call that embeds them.
+    for name in [
+        "src/http/assets/index.html",
+        "src/http/assets/app.css",
+        "src/http/assets/app.js",
+    ] {
+        let body = source_of(name);
+        for forbidden in [
+            "http://",
+            "https://",
+            "//cdn",
+            "@import",
+            "url(",
+            "integrity=",
+            "crossorigin",
+        ] {
+            assert!(
+                !body.contains(forbidden),
+                "{name} contains {forbidden}: an embedded asset must reach nothing outside \
+                 this origin"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_asset_shell_needs_no_csp_concession_and_no_build_step() {
+    // `default-src 'self'` with no 'unsafe-inline' and no nonce admits exactly
+    // same-origin scripts and styles by reference. An inline handler or an
+    // inline <style> would force the header to be weakened, and a weakened CSP
+    // is the kind of change that arrives with a commit message nobody reads.
+    for name in ["src/http/assets/index.html", "src/http/assets/app.js"] {
+        let body = source_of(name);
+        for forbidden in [
+            "<script>",
+            "<style>",
+            "onclick=",
+            "onload=",
+            "onerror=",
+            "onsubmit=",
+            "javascript:",
+        ] {
+            assert!(
+                !body.contains(forbidden),
+                "{name} contains {forbidden}, which would require a CSP concession"
+            );
+        }
+    }
+}
+
+#[test]
+fn no_build_toolchain_is_required_to_produce_the_shell() {
+    // What is committed is what is served. A shell that needs a bundler is a
+    // shell that will eventually be built and served out of band, and the
+    // failure is invisible: the binary still starts, and the page is served by
+    // something else, or by an older file.
+    for forbidden in [
+        "package.json",
+        "node_modules",
+        "webpack",
+        "vite",
+        "rollup",
+        "esbuild",
+        "tsconfig.json",
+    ] {
+        let present = std::path::Path::new(forbidden).exists();
+        assert!(
+            !present,
+            "{forbidden} exists at the repository root: the shell must need no build step"
+        );
+    }
+    // And the crate manifest declares no front-end toolchain.
+    let manifest = code_only(include_str!("../Cargo.toml"));
+    assert!(
+        !manifest.contains("build = "),
+        "Cargo.toml must not declare a custom build step for the shell"
+    );
+}
+
+#[test]
+fn the_shell_is_embedded_at_compile_time_and_never_read_from_disk() {
+    // A document root is a filesystem write away from being attacker-controlled.
+    // The assets must therefore be `include_str!`d constants, and nothing in the
+    // HTTP boundary may open a path.
+    let assets = shippable(source_of("src/http/assets.rs"));
+    assert_eq!(
+        assets.matches("include_str!").count(),
+        3,
+        "each embedded asset must be an include_str!, so the binary is the only source"
+    );
+    for forbidden in [
+        "std::fs",
+        "File::open",
+        "read_to_string",
+        "document_root",
+        "static_root",
+    ] {
+        assert!(
+            !shippable(source_of("src/http/assets.rs")).contains(forbidden),
+            "src/http/assets.rs must not read anything: it contains {forbidden}"
+        );
+    }
+    // And the whole HTTP boundary still reaches no filesystem path.
+    assert_code_avoids(
+        "src/http/",
+        &["std::fs", "read_to_string", "File::open"],
+        "the management boundary reads no document root; its assets are in the binary",
+    );
+}
+
+#[test]
+fn the_shell_goes_through_the_same_single_seal_point() {
+    // The carry-forward constraint from M003. The shell is the one response body
+    // that is neither a fixed literal in `response.rs` nor serialised JSON, so
+    // it is exactly the response most likely to be built by a route that forgets
+    // the headers. It is served from `route_request`, which returns into
+    // `dispatch`, which is the only place `seal` is called.
+    let service = shippable(source_of("src/http/service.rs"));
+    assert_eq!(
+        service.matches("headers::seal(").count(),
+        1,
+        "the service must seal in exactly one place"
+    );
+    assert!(
+        service.contains("Route::Shell | Route::Asset"),
+        "the shell must be answered from route_request, not from a second service"
+    );
+    // And it builds through the shared builder rather than its own.
+    assert!(
+        service.contains("response::build(\n                        super::assets::status()")
+            || service.contains("response::build("),
+        "the shell must be assembled by `response::build`, which sets the media type and \
+         `no-store`"
+    );
+}
+
+#[test]
+fn the_shell_offers_no_phase_8_management() {
+    // Peer, client, and interface management are Phase 8. The absence is
+    // asserted rather than left to a reader of three small files, because the
+    // tempting next commit is "add a peer list" and it would be a small one.
+    for name in [
+        "src/http/assets/index.html",
+        "src/http/assets/app.css",
+        "src/http/assets/app.js",
+    ] {
+        let body = source_of(name);
+        for forbidden in [
+            "/api/v1/peers",
+            "/api/v1/clients",
+            "/api/v1/interfaces",
+            "createPeer",
+            "deletePeer",
+            "addClient",
+            "generateKeys",
+        ] {
+            assert!(
+                !body.contains(forbidden),
+                "{name} contains {forbidden}: peer/client/interface management is Phase 8"
+            );
+        }
+    }
+    // The shell's own data comes only from the routes Phase 7 publishes.
+    let js = source_of("src/http/assets/app.js");
+    for allowed in ["/api/v1/login", "/api/v1/logout", "/api/v1/session"] {
+        assert!(js.contains(allowed), "the shell should use {allowed}");
+    }
+}
+
+#[test]
+fn the_login_limiter_stays_in_memory_across_a_restart() {
+    // A persisted lockout would let anyone who can reach the login form
+    // permanently lock the operator out of their own appliance -- a
+    // denial of service with no recovery path. M004 owns the restart
+    // qualification, so the property is pinned here rather than left to the
+    // reader of `ratelimit.rs`.
+    let serve = shippable(source_of("src/http/serve.rs"));
+    assert!(
+        serve.contains("fn limiter(&self) -> Arc<LoginLimiter>"),
+        "the limiter must be constructed fresh per run, not restored from disk"
+    );
+    let limiter = shippable(source_of("src/http/ratelimit.rs"));
+    for forbidden in ["rusqlite", "StateStore", "crate::state", "read_from_disk"] {
+        assert!(
+            !limiter.contains(forbidden),
+            "src/http/ratelimit.rs must not reach durable storage ({forbidden})"
+        );
+    }
+}
+
+/// M004 §4: readiness is the only thing that decides the anonymous answer.
+///
+/// If a future route derived `/healthz`'s body from anything else, an
+/// unauthenticated caller would be able to read a dependency's state off it.
+#[test]
+fn the_anonymous_health_answer_comes_only_from_the_readiness_projection() {
+    let readiness = shippable(source_of("src/http/readiness.rs"));
+    assert!(
+        readiness.contains("pub fn public_token(&self) -> Option<&'static str>"),
+        "the public projection must be one function returning fixed tokens"
+    );
+    // The tokens are literals here and nowhere else, so adding a reason cannot
+    // change what an anonymous caller receives.
+    assert!(
+        readiness.contains("Self::Ready => Some(\"ok\")"),
+        "\"ok\" must be a literal in the readiness projection"
+    );
+    assert!(
+        readiness.contains("Self::Degraded { .. } => Some(\"degraded\")"),
+        "\"degraded\" must be a literal in the readiness projection"
+    );
+
+    // The only anonymous route reads that projection, and nothing else formats a
+    // health word into a body.
+    let service = shippable(source_of("src/http/service.rs"));
+    assert!(
+        service.contains("Liveness::from_readiness("),
+        "/healthz must classify through Readiness before projecting"
+    );
+    let response = shippable(source_of("src/http/response.rs"));
+    assert!(
+        response.contains("from_readiness(readiness: crate::http::Readiness)"),
+        "the liveness projection must take a Readiness, not raw health"
+    );
+    // Two tokens, one status. A third would be a new public contract.
+    assert!(response.contains("Self::Ok => \"ok\""));
+    assert!(response.contains("Self::Degraded => \"degraded\""));
+}
+
+/// M004 §4: only an authenticated route may make the process dial the backend.
+///
+/// A live probe costs a round trip to a privileged socket. If `/healthz` ever
+/// called it, an unauthenticated caller could use the management service as a
+/// relay and read the backend's liveness for free.
+#[test]
+fn the_live_backend_probe_is_reachable_only_from_the_authenticated_route() {
+    let probe_callers: Vec<(&str, String)> = PRODUCTION_SOURCES
+        .iter()
+        .filter(|(name, _)| name.starts_with("src/http/"))
+        .map(|(name, source)| (*name, shippable(source)))
+        .collect();
+
+    let callers: Vec<&str> = probe_callers
+        .iter()
+        .filter(|(_, source)| source.contains("probe_backend("))
+        .map(|(name, _)| *name)
+        .collect();
+    assert_eq!(
+        callers,
+        vec!["src/http/api.rs"],
+        "probe_backend must be called from exactly one place, and that place must \
+         be the authenticated API: {callers:?}"
+    );
+
+    // And the one caller is behind a session, not behind `/healthz`.
+    let api = shippable(source_of("src/http/api.rs"));
+    let probe_site = api
+        .find("probe_backend(")
+        .expect("the authenticated route calls the probe");
+    let context = &api[probe_site.saturating_sub(1200)..probe_site];
+    assert!(
+        context.contains("self.worker_health()"),
+        "the probe must sit beside the authenticated health projection, not the \
+         liveness one"
+    );
+    assert!(
+        !context.contains("worker_health().await"),
+        "the probe must not be on the liveness route's path"
+    );
+
+    // And the runtime's probe is one read-only `Ping`, scoped tightly so a
+    // later edit that widens it is caught here rather than in production.
+    let runtime = shippable(source_of("src/management/runtime.rs"));
+    let probe_start = runtime
+        .find("pub fn probe_backend(&self)")
+        .expect("the runtime exposes a probe");
+    let probe_end = runtime[probe_start..]
+        .find("\n    }\n")
+        .map(|end| probe_start + end)
+        .expect("the probe has a body");
+    let probe_body = &runtime[probe_start..probe_end];
+    assert!(
+        probe_body.contains("RequestOperation::Ping"),
+        "the backend probe must be a read-only Ping: {probe_body}"
+    );
+    for forbidden in ["Apply", "Remove", "Set", "Replace", "Delete", "Commit"] {
+        assert!(
+            !probe_body.contains(forbidden),
+            "the backend probe must not mutate anything, but names {forbidden}: {probe_body}"
+        );
+    }
+    // A probe is not a place a health check can fail: every path returns a value,
+    // so an outage is reported rather than raised.
+    assert!(
+        !probe_body.contains("?;"),
+        "the probe must not propagate an error; \"not answering\" is the answer: {probe_body}"
+    );
+}
+
+/// M004 §3: `serve` owns the lifecycle ordering, and nothing else may.
+///
+/// The plan's ordering is load-bearing (stop accepts → drain → stop worker →
+/// close store). A second place that ordered part of it differently would be a
+/// way to skip a step.
+#[test]
+fn only_the_serve_module_orders_the_service_lifecycle() {
+    let owners: Vec<&str> = PRODUCTION_SOURCES
+        .iter()
+        .filter(|(_, source)| {
+            let code = shippable(source);
+            code.contains("completion.wait()") || code.contains("control.shutdown()")
+        })
+        .map(|(name, _)| *name)
+        .collect();
+    assert_eq!(
+        owners,
+        vec!["src/http/serve.rs"],
+        "only the serve module may drain or stop the server: {owners:?}"
+    );
+
+    // And within it, the order is the documented one.
+    let serve = shippable(source_of("src/http/serve.rs"));
+    let drain = serve
+        .find("control.shutdown()")
+        .expect("serve stops accepting");
+    let complete = serve
+        .find("completion.wait().await")
+        .expect("serve waits for the drain");
+    let worker_stop = serve.find("worker.stop()").expect("serve stops the worker");
+    assert!(
+        drain < complete,
+        "accepts must stop before the drain is awaited"
+    );
+    assert!(
+        complete < worker_stop,
+        "the worker must be stopped after the HTTP surface has drained, or a \
+         request could be admitted to a worker that is already gone"
+    );
+}
+
+/// M004 §3: a long-running role must stop on a supervisor's signal.
+///
+/// Only `SIGINT` is what a terminal sends. A process supervisor sends `SIGTERM`,
+/// so a role that handles only `SIGINT` cannot be stopped by one — it has to be
+/// killed, which skips the drain and the store close entirely. This was a real
+/// defect: `wg-basic serve` exited on the signal, with status -1, and the
+/// lifecycle ordering never ran.
+#[test]
+fn the_long_running_roles_catch_a_supervisors_termination_signal() {
+    let manifest = include_str!("../Cargo.toml");
+    assert!(
+        manifest.contains("ctrlc = { version = \"3.4\", features = [\"termination\"] }"),
+        "ctrlc must enable its `termination` feature, or SIGTERM kills these \
+         roles without a graceful shutdown"
+    );
+
+    let main = shippable(source_of("src/main.rs"));
+    // Exactly the two roles that run forever install the handler: `netd` and
+    // `serve`. A third would mean some one-shot command had started waiting for
+    // a signal it will never receive.
+    assert_eq!(
+        main.matches("ctrlc::set_handler").count(),
+        2,
+        "exactly the netd and serve roles install a shutdown handler; a one-shot \
+         command must not"
+    );
+    for arm in ["Some(Command::Netd {", "Some(Command::Serve"] {
+        assert!(
+            main.contains(arm),
+            "the `{arm}` role should exist and be one of the two that run forever"
+        );
+    }
 }

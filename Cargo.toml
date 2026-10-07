@@ -35,7 +35,12 @@ uuid = { version = "1.18", features = ["v4", "serde"] }
 zeroize = "1.8"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-ctrlc = "3.4"
+# Graceful shutdown for the long-running roles. The `termination` feature is what
+# makes `SIGTERM` and `SIGHUP` reach the same handler as `SIGINT`: without it
+# only Ctrl-C stops these roles, and no process supervisor sends Ctrl-C. A
+# `SIGTERM` that the process did not handle killed `serve` mid-flight, skipping
+# the stop-accepts / drain / stop-worker / close-DB ordering entirely.
+ctrlc = { version = "3.4", features = ["termination"] }
 # Phase 7 (ADR-003): the two direct EggServe crates and nothing above them. The
 # router layer, the static-asset layer, and every framework surface are
 # deliberately absent: the management service owns its own routing and embeds

@@ -25,6 +25,31 @@ principal. Those are deliberately absent: an unauthenticated-adjacent route that
 lists sessions would be a disclosure problem, and a second principal has no
 operator story until Phase 8 defines one.
 
+## Sessions survive a restart, and honour revocation
+
+A session is server-side state, so what a process restart does to one is a
+question about persistence rather than about tokens. The qualified behaviour:
+
+| Event                                   | Result for an existing session |
+| --------------------------------------- | ------------------------------ |
+| `serve` restarts, session not expired   | still valid, same session, same CSRF token |
+| `serve` restarts, session already expired | still invalid |
+| logout, at any time                      | invalid immediately |
+| `serve` restarts after a logout          | still invalid |
+| password reset, at any time              | invalid — every session, including ones minted before a restart |
+| password reset while `serve` is stopped  | invalid on the next start |
+
+All of these are asserted over the **real HTTP cookie** — parsed out of
+`Set-Cookie` and replayed as `Cookie` — across a real stop and start of the whole
+service, not by reading the database. A store-level assertion would prove
+persistence; it would not prove that the cookie profile, the origin policy, the
+worker, and the runtime all rebuild consistently around it.
+
+A password reset revoking *every* session is the load-bearing one. A reset that
+only stopped future logins would leave every outstanding cookie usable — including
+one already copied off the machine — which is the case an operator performs a
+reset *because* of.
+
 ## Schema
 
 Migration 2 (`src/state/migrations/002_auth_sessions.sql`) adds two tables.

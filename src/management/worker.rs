@@ -46,7 +46,7 @@
 use super::{
     auth::{AdminStatus, AuthError, AuthService, IssuedSession},
     error::ManagementError,
-    health::ManagementHealth,
+    health::{BackendProbe, ManagementHealth},
     runtime::ManagementRuntime,
 };
 use crate::{
@@ -75,6 +75,14 @@ pub enum WorkerCommand {
     /// Project the safe management health snapshot.
     Health {
         reply: oneshot::Sender<Result<ManagementHealth, ManagementError>>,
+    },
+    /// Ask the authorized backend whether it is answering right now.
+    ///
+    /// A read-only `Ping`. Separate from `Health` because `Health` must stay
+    /// cheap and socket-free for the unauthenticated liveness route, while this
+    /// one costs a round trip and is therefore only for an authenticated caller.
+    ProbeBackend {
+        reply: oneshot::Sender<BackendProbe>,
     },
     /// Provision or reset the local administrator, revoking every session.
     SetAdminPassword {
@@ -268,6 +276,21 @@ pub struct WorkerClient {
 }
 
 impl WorkerClient {
+    /// Asks the authorized backend whether it is answering right now.
+    ///
+    /// Never reports an error: "the backend did not answer" *is* the answer, and
+    /// turning it into a failure would make an outage indistinguishable from a
+    /// caller mistake.
+    pub async fn probe_backend(&self) -> Result<BackendProbe, WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::ProbeBackend { reply }).await?;
+        // A dropped reply means the worker exited mid-probe, which `await_reply`
+        // already reports as `WorkerError::Stopped`; the caller's problem, not an
+        // outage, so it propagates rather than being flattened into "not
+        // answering".
+        self.await_reply(answer).await
+    }
+
     /// Projects the safe management health snapshot.
     ///
     /// This is the only way a request handler can observe management state, and
@@ -570,6 +593,11 @@ fn serve(runtime: ManagementRuntime, receiver: &mut mpsc::Receiver<WorkerCommand
                 // evidence, and an unreadable store degrades the projection
                 // rather than raising.
                 let _ = reply.send(Ok(runtime.health()));
+            }
+            WorkerCommand::ProbeBackend { reply } => {
+                // Cannot fail by construction: the probe reports non-answer as a
+                // value, so a backend outage is not a worker fault.
+                let _ = reply.send(runtime.probe_backend());
             }
             WorkerCommand::SetAdminPassword {
                 username,

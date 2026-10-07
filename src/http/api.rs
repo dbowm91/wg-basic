@@ -58,7 +58,7 @@ use super::{
     response, session_cookie,
 };
 use crate::management::{
-    IssuedSession, ManagementHealth, StoredSession, WorkerClient, WorkerError,
+    BackendProbe, IssuedSession, ManagementHealth, StoredSession, WorkerClient, WorkerError,
 };
 use eggserve_primitives::{request_head::RequestHead, Response, ResponseBody, StatusCode};
 use std::{net::SocketAddr, sync::Arc, time::Instant};
@@ -443,11 +443,20 @@ impl AuthenticatedApi {
 
     /// Handles `GET /api/v1/health`.
     ///
-    /// Renders exactly the safe [`ManagementHealth`] projection: identifiers,
-    /// generations, and categories. No receipt, no error string, no key material
-    /// — because the projection itself has no field that could hold one.
-    pub fn health(&self, health: &ManagementHealth) -> Response {
-        self.json(StatusCode::OK, health, None)
+    /// Renders exactly the safe [`ManagementHealth`] projection plus one live,
+    /// read-only observation of the backend — identifiers, generations,
+    /// categories, and whether the authorized backend answered a `Ping` just now.
+    /// No receipt, no error string, no key material: both payloads have no field
+    /// that could hold one.
+    ///
+    /// Reached only after a session has been proven, which is what lets it cost a
+    /// socket round trip. The unauthenticated `/healthz` deliberately does not
+    /// probe, so an anonymous caller cannot make this process dial the backend.
+    pub async fn health(&self) -> Result<Response, WorkerError> {
+        let (health, backend) = tokio::join!(self.worker_health(), self.worker.probe_backend());
+        let health = health?;
+        let backend = backend?;
+        Ok(self.json(StatusCode::OK, &DetailedHealth { health, backend }, None))
     }
 
     /// Renders a JSON payload with the API headers.
@@ -475,6 +484,19 @@ impl AuthenticatedApi {
     ) -> Response {
         build_response(status, body, cookie)
     }
+}
+
+/// What `GET /api/v1/health` renders.
+///
+/// Two fields, deliberately: the recorded projection and the live observation
+/// answer different questions, and collapsing them into one "is the backend up"
+/// flag would hide the case that matters most on a fresh install — nothing has
+/// been applied yet, so there is no recorded evidence, but the backend is up and
+/// answering.
+#[derive(serde::Serialize)]
+struct DetailedHealth {
+    health: ManagementHealth,
+    backend: BackendProbe,
 }
 
 /// Builds a JSON response with an optional session cookie.

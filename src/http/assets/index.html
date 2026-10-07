@@ -1,0 +1,110 @@
+<!doctype html>
+<!--
+  The operator shell.
+
+  Embedded in the wg-basic binary at compile time. There is no document root on
+  disk, no template engine, and no build step: `src/http/assets.rs` holds this
+  file with include_str!.
+
+  Two properties of this file are load-bearing rather than stylistic:
+
+  1. There is no inline script and no inline style. The Content-Security-Policy
+     the service sends is `default-src 'self'; object-src 'none'; base-uri
+     'none'; frame-ancestors 'none'; form-action 'self'`, and a page that needs
+     'unsafe-inline' to work is a page whose CSP was negotiated rather than
+     chosen. The script and the stylesheet are separate same-origin routes, so
+     the policy needs no concession.
+
+  2. There is no external origin anywhere: no CDN, no web font, no analytics, no
+     image host. An architecture guard fails if any embedded asset contains a
+     scheme-prefixed URL, because the first asset to reach out is the first asset
+     to report this appliance's operator to a third party.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>wg-basic</title>
+    <link rel="stylesheet" href="/assets/app.css" />
+    <link rel="icon" href="data:," />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>wg-basic</h1>
+        <p class="subtitle">Local appliance management</p>
+      </header>
+
+      <p id="banner" role="alert" hidden></p>
+
+      <section id="login-pane">
+        <h2>Sign in</h2>
+        <form id="login-form" autocomplete="on">
+          <label for="username">Username</label>
+          <input
+            type="text"
+            id="username"
+            name="username"
+            autocomplete="username"
+            autocapitalize="none"
+            autocorrect="off"
+            spellcheck="false"
+            required
+          />
+
+          <label for="password">Password</label>
+          <input
+            type="password"
+            id="password"
+            name="password"
+            autocomplete="current-password"
+            required
+          />
+
+          <button type="submit" id="sign-in">Sign in</button>
+        </form>
+        <p class="note">
+          The administrator password is set from the terminal with
+          <code>wg-basic admin set-password --password-stdin</code>. There is no
+          recovery link here, deliberately: a reachable reset path would be a
+          reachable unauthenticated path to a credential.
+        </p>
+      </section>
+
+      <section id="console-pane" hidden>
+        <h2>Session</h2>
+        <dl>
+          <dt>Principal</dt>
+          <dd id="principal">—</dd>
+          <dt>Session</dt>
+          <dd id="session">—</dd>
+          <dt>Expires</dt>
+          <dd id="expires">—</dd>
+        </dl>
+        <p>
+          <button type="button" class="secondary" id="logout">Sign out</button>
+        </p>
+      </section>
+
+      <section id="health-pane" hidden>
+        <h2>Appliance</h2>
+        <dl>
+          <dt>netd</dt>
+          <dd id="netd-state">—</dd>
+          <dt>Convergence</dt>
+          <dd id="convergence">—</dd>
+          <dt>Desired generation</dt>
+          <dd id="desired-generation">—</dd>
+        </dl>
+        <p class="note">
+          Peer, client, and interface management is not part of this release.
+          Read-only views of them arrive with Phase 8; this surface proves the
+          session, the worker, and the health projection work end to end.
+        </p>
+      </section>
+    </main>
+
+    <script src="/assets/app.js"></script>
+  </body>
+</html>

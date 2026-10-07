@@ -63,15 +63,16 @@ mod worker;
 /// module from a request handler would suggest a path to the database that does
 /// not exist, and would let the architecture guard that forbids one be relaxed
 /// in a later edit.
-pub use crate::state::{SessionRecord, StoredSession};
+pub use crate::state::{AttemptDisposition, SessionRecord, StoredSession};
 pub use auth::{
     set_password_at, status_at, AdminStatus, AuthError, AuthService, IssuedSession,
     VerificationCost,
 };
 pub use coordinator::{CoordinatorAction, ReconcileCoordinator};
 pub use error::{FailureClass, ManagementError, ProjectionFailure};
-pub use health::{ConvergenceState, ManagementHealth};
+pub use health::{BackendProbe, ConvergenceState, ManagementHealth};
 pub use runtime::{ManagementRuntime, ReconcileOutcome};
 pub use worker::{
     spawn, StartupReconcile, WorkerClient, WorkerCommand, WorkerConfig, WorkerError, WorkerStartup,
+    DEFAULT_QUEUE_CAPACITY, DEFAULT_REPLY_DEADLINE,
 };
