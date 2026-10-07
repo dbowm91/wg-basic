@@ -946,6 +946,51 @@ mod tests {
     }
 
     #[test]
+    fn telemetry_only_wireguard_changes_do_not_create_mutations() {
+        let keypair = crate::wireguard::generate_keypair().unwrap();
+        let public_key = derive_public_key(&keypair.private_key).unwrap();
+        let peer_key =
+            PublicKey::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".into()).unwrap();
+        let allowed_ips: Vec<NetworkPrefix> = vec!["10.9.0.2/32".parse().unwrap()];
+        let mut wanted = DesiredManagedInterface {
+            addresses: Vec::new(),
+            routes: Vec::new(),
+            ..desired()
+        };
+        wanted.wireguard = Some(DesiredWireGuardConfiguration {
+            private_key: keypair.private_key,
+            listen_port: 51820,
+            peers: vec![DesiredManagedPeer {
+                public_key: peer_key.clone(),
+                allowed_ips: allowed_ips.clone(),
+                persistent_keepalive_seconds: Some(25),
+                endpoint: Some("198.51.100.8:51820".parse().unwrap()),
+            }],
+            manage_all_peers: true,
+        });
+        let mut state = observed();
+        state.admin_up = Some(true);
+        state.wireguard = Some(ObservedWireGuardDevice {
+            interface: name(),
+            public_key: Some(public_key),
+            listen_port: Some(51820),
+            peers: vec![crate::wireguard::ObservedWireGuardPeer {
+                public_key: peer_key,
+                allowed_ips,
+                persistent_keepalive_seconds: Some(25),
+                endpoint: Some("198.51.100.8:51820".parse().unwrap()),
+                latest_handshake: Some(std::time::Duration::from_secs(123)),
+                rx_bytes: Some(4096),
+                tx_bytes: Some(8192),
+            }],
+        });
+        assert!(plan_managed_interface(&wanted, &state)
+            .unwrap()
+            .actions
+            .is_empty());
+    }
+
+    #[test]
     fn shipped_backend_uses_no_ip_subprocess() {
         let implementation = include_str!("reconcile/linux.rs");
         assert!(!implementation.contains("std::process::Command"));
