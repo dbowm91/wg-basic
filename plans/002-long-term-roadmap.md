@@ -10,6 +10,7 @@ Authoritative companions:
 - `plans/adr/001-linux-native-control-plane.md`
 - `plans/adr/002-durable-state-generations-and-ownership.md`
 - `plans/adr/003-management-http-auth-and-worker-boundary.md`
+- `plans/adr/004-product-management-enrollment-and-api-semantics.md`
 
 This roadmap orders wg-basic from a fresh repository to a small, production-credible Linux-native WireGuard appliance. Milestone-specific execution belongs in subsystem roadmaps and `plans/implementation/`.
 
@@ -225,7 +226,7 @@ Phase 6 implementation is complete. Post-Phase-6 corrective work was tracked in 
 
 ## 9. Phase 7 — Service/security substrate
 
-Status: planned; M001 ready.
+Status: closed at `d5d5ca9`; M001–M004 strictly closed. The separate post-Phase-7 C001 corrective is active only to restore deterministic green current-head CI and does not reopen Phase 7 architecture.
 
 Owned by:
 
@@ -264,25 +265,44 @@ Phase 7 deliberately stops before peer/client CRUD, QR/config export, and the fu
 
 ## 10. Phase 8 — Management API, UI, and enrollment
 
-Status: unblocked for research/planning because Phases 6–7 are closed. Production implementation should begin after the bounded post-Phase-7 C001 corrective restores a green deterministic current-head baseline.
+Status: planned; M001 is blocked on post-Phase-7 C001 strict closure.
+
+Owned by:
+
+- `plans/subsystems/product-management-enrollment-ui-roadmap.md`.
+
+Architecture decision:
+
+- `plans/adr/004-product-management-enrollment-and-api-semantics.md`.
 
 Objective:
 
-Deliver the wg-easy-like user experience.
+Deliver the wg-easy-like user experience on top of the closed Phase 6/7 state, privilege, HTTP, and authentication contracts.
 
 Expected outcomes:
 
-- first-run setup;
-- administrator login;
-- server status;
-- client create/edit/disable/delete;
-- address allocation;
+- authenticated first-server setup after local admin bootstrap;
+- generation-safe server/client product mutations;
+- deterministic IPv4 address allocation;
+- client create/edit/enable/disable/delete;
+- explicit committed-vs-enforced mutation receipts;
+- secret-safe product audit trail;
 - standard WireGuard configuration export;
-- QR generation;
-- one-time enrollment capability;
-- live handshake/traffic presentation;
-- secret-safe audit trail;
-- clear advanced-vs-default settings.
+- locally generated QR enrollment;
+- high-entropy expiring single-use enrollment capability;
+- live handshake/endpoint/RX/TX presentation from kernel observation;
+- fully embedded buildless management UI;
+- real exported-client/rootful product E2E qualification.
+
+Milestones:
+
+- M001 product model + schema v3 + generation-safe mutations;
+- M002 authenticated setup/client CRUD API;
+- M003 standard export + QR + one-time enrollment;
+- M004 live telemetry + audit/status surface;
+- M005 embedded product UI + Phase 8 qualification.
+
+Phase 8 is fully researched/planned. Production implementation begins only after post-Phase-7 C001 restores a green deterministic current-head baseline.
 
 This is the first user-facing product-capability closure boundary.
 
@@ -421,8 +441,8 @@ Before the first public production claim:
 | 4 link/address/route reconciliation | closed | network-control M004 | Phase 3 |
 | 5 firewall/forwarding/E2E | closed | network-control M005 | — |
 | 6 durable state/restart reconciliation | closed | `plans/subsystems/durable-state-restart-reconciliation-roadmap.md` | — |
-| 7 service/security substrate | planned / M001 ready | `plans/subsystems/management-service-security-roadmap.md` | — |
-| 8 management UI/enrollment | blocked | future management roadmap | Phases 6–7 |
+| 7 service/security substrate | closed | `plans/subsystems/management-service-security-roadmap.md` | — |
+| 8 management API/UI/enrollment | planned / M001 blocked | `plans/subsystems/product-management-enrollment-ui-roadmap.md` | post-Phase-7 C001 |
 | 9 operational hardening | proposed | future operations roadmap | Phase 8 |
 | 10 distribution/update | proposed | future distribution roadmap | Phase 9 |
 | 11 IPv6/route-policy qualification | deferred | future roadmap | stable product baseline |
