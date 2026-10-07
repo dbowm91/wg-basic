@@ -2,6 +2,7 @@ use super::{
     read_frame, write_frame, NetworkCapabilitySnapshot, ProtocolError, RequestEnvelope,
     RequestOperation, ResponseBody, ResponseEnvelope, PROTOCOL_VERSION,
 };
+use crate::reconcile::{ReconcileError, ReconciliationService};
 use crate::wireguard::{WireGuardBackend, WireGuardValidationError};
 use nix::sys::socket::{getsockopt, listen, sockopt::PeerCredentials, Backlog};
 use std::{
@@ -53,6 +54,7 @@ pub struct SocketServer {
     runtime_directory: PathBuf,
     authorization: AuthorizationPolicy,
     wireguard: WireGuardBackend,
+    reconciliation: ReconciliationService,
 }
 
 #[derive(Clone, Copy)]
@@ -117,6 +119,7 @@ impl SocketServer {
             runtime_directory,
             authorization,
             wireguard: WireGuardBackend,
+            reconciliation: ReconciliationService::default(),
         })
     }
 
@@ -196,6 +199,16 @@ impl SocketServer {
                 .apply_patch(&interface, patch)
                 .map(ResponseBody::WireGuardApplied)
                 .map_err(map_wireguard_error),
+            RequestOperation::PlanManagedInterface { desired } => self
+                .reconciliation
+                .plan(&desired)
+                .map(ResponseBody::ManagedInterfacePlan)
+                .map_err(map_reconcile_error),
+            RequestOperation::ApplyManagedInterface { desired } => self
+                .reconciliation
+                .apply(&desired)
+                .map(ResponseBody::ManagedInterfaceApplied)
+                .map_err(map_reconcile_error),
         };
         ResponseEnvelope {
             protocol_version: PROTOCOL_VERSION,
@@ -206,6 +219,20 @@ impl SocketServer {
 
     pub fn socket_path(&self) -> &Path {
         &self.socket_path
+    }
+}
+
+fn map_reconcile_error(error: ReconcileError) -> ProtocolError {
+    match error {
+        ReconcileError::InvalidDesiredState
+        | ReconcileError::ResourceLimitExceeded
+        | ReconcileError::DuplicateResource => ProtocolError::InvalidInput,
+        ReconcileError::OwnershipRequired
+        | ReconcileError::WrongLinkKind
+        | ReconcileError::Conflict
+        | ReconcileError::UnlistedResourceOnDelete => ProtocolError::Conflict,
+        ReconcileError::BackendFailure => ProtocolError::BackendFailure,
+        ReconcileError::WireGuard(error) => map_wireguard_error(error),
     }
 }
 

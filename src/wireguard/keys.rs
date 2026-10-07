@@ -31,6 +31,18 @@ pub fn generate_keypair() -> Result<WireGuardKeyPair, KeyError> {
     })
 }
 
+pub fn derive_public_key(private_key: &PrivateKey) -> Result<PublicKey, KeyError> {
+    let mut private_bytes: [u8; 32] = STANDARD
+        .decode(private_key.expose_secret())
+        .map_err(|_| KeyError)?
+        .try_into()
+        .map_err(|_| KeyError)?;
+    let secret = StaticSecret::from(private_bytes);
+    private_bytes.zeroize();
+    let public = X25519PublicKey::from(&secret);
+    PublicKey::new(STANDARD.encode(public.as_bytes()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

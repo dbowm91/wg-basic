@@ -32,6 +32,6 @@ The protocol returns stable categories only; it does not return raw netlink erro
 
 Handshake time is the kernel-reported time since Unix epoch, represented as an optional duration. RX/TX are current kernel counters and may reset when a device is recreated; wg-basic does not synthesize monotonic totals. Preshared keys are never returned by observation.
 
-## Remaining network boundaries
+## Ownership layering after M004
 
-The kernel backend has no rootless network-namespace evidence. M003 closure requires the rootful `wireguard_kernel` integration target to configure two real kernel WireGuard devices, complete a handshake, observe endpoint/handshake/counter changes, and prove an unrelated peer survives a single-peer update. M004 owns link, address, and route mutation; M005 owns firewall, forwarding, and NAT.
+M003 continues to own WireGuard device and peer configuration/telemetry. M004's reconciliation engine composes those typed patches with RTNETLINK link, address, and route operations; it does not absorb WireGuard state into an opaque network configuration call. See [reconciliation and ownership](reconciliation.md) for lifecycle ownership, route limits, ordering, and retry behavior. Firewall, forwarding, and NAT remain M005 work.
