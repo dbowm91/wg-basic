@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-07 (post-Phase-7 C001 registered; Phase 8 research/planning unblocked)
+Last planning reconciliation: 2026-10-07 (post-Phase-7 C001 ready; Phase 8 fully researched/planned under ADR-004)
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -88,8 +88,7 @@ constraints from its closure rather than from any milestone document:
 * a CRUD route needs a deliberately chosen body bound; `MAX_MANAGEMENT_BODY_BYTES`
   (16 KiB) and the login route's own bound (4 KiB) were chosen for routes that
   exist, not inherited;
-* the login limiter's global budget of 20 was sized against the slow Argon2id
-  figure and will need re-sizing against whatever CRUD costs;
+* the login limiter's global budget of 20 remains dedicated to Argon2id login admission; Phase 8 CRUD must use the bounded worker/body limits and only add a separate mutation limiter if measured cost justifies it;
 * Phase 7 terminates no TLS, and Phase 8 must not imply otherwise.
 
 ## 6. Blocked implementation plans
