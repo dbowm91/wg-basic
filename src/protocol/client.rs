@@ -39,46 +39,32 @@ pub fn request(
             "protocol response correlation failed",
         ));
     }
+    // Each wire refusal keeps its `ErrorKind` *and* the original
+    // `ProtocolError` as the error payload, so a caller can classify on what
+    // netd actually said instead of guessing from a lossy transport kind.
     match response.result {
         Ok(body) => Ok(body),
-        Err(ProtocolError::Unauthorized) => Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "network service rejected caller",
-        )),
-        Err(ProtocolError::PermissionDenied) => Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "network service lacks permission for the operation",
-        )),
-        Err(ProtocolError::UnsupportedBackend) => Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "network backend does not support the operation",
-        )),
-        Err(ProtocolError::KernelRejected) => {
-            Err(io::Error::other("kernel rejected the network operation"))
+        Err(error) => Err(io::Error::new(io_error_kind(error), error)),
+    }
+}
+
+/// The transport kind that best summarizes a wire refusal.
+///
+/// `AlreadyExists` for `Conflict` is load-bearing: it is the historical
+/// mapping several callers assert on.
+fn io_error_kind(error: ProtocolError) -> io::ErrorKind {
+    match error {
+        ProtocolError::Unauthorized | ProtocolError::PermissionDenied => {
+            io::ErrorKind::PermissionDenied
         }
-        Err(ProtocolError::UnsupportedVersion | ProtocolError::MalformedRequest) => {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "network service rejected protocol version or request",
-            ))
+        ProtocolError::UnsupportedBackend => io::ErrorKind::Unsupported,
+        ProtocolError::UnsupportedVersion | ProtocolError::MalformedRequest => {
+            io::ErrorKind::InvalidData
         }
-        Err(ProtocolError::InternalFailure) => {
-            Err(io::Error::other("network service request failed"))
-        }
-        Err(ProtocolError::NotFound) => Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            "network resource was not found",
-        )),
-        Err(ProtocolError::Conflict) => Err(io::Error::new(
-            io::ErrorKind::AlreadyExists,
-            "network resource conflicts with current state",
-        )),
-        Err(ProtocolError::InvalidInput) => Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "network request validation failed",
-        )),
-        Err(ProtocolError::BackendFailure) => {
-            Err(io::Error::other("network backend rejected the request"))
-        }
+        ProtocolError::InternalFailure | ProtocolError::KernelRejected => io::ErrorKind::Other,
+        ProtocolError::NotFound => io::ErrorKind::NotFound,
+        ProtocolError::Conflict => io::ErrorKind::AlreadyExists,
+        ProtocolError::InvalidInput => io::ErrorKind::InvalidInput,
+        ProtocolError::BackendFailure => io::ErrorKind::Other,
     }
 }

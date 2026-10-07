@@ -35,7 +35,8 @@ pub use crate::domain::{
     DesiredGeneration, InstallationId, INITIAL_DESIRED_GENERATION, MAX_DESIRED_GENERATION,
 };
 pub use model::{
-    CommittedDesiredState, ConvergenceRecord, InstallationMetadata, PersistedDesiredState,
+    AttemptDisposition, CommittedDesiredState, ConvergenceRecord, InstallationMetadata,
+    PersistedDesiredState,
 };
 pub use projection::{ProjectionError, ResolvedNetworkIntent};
 pub use schema::OpenIntent;

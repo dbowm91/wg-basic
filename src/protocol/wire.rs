@@ -146,6 +146,27 @@ impl ResponseEnvelope {
     }
 }
 
+impl std::fmt::Display for ProtocolError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let category = match self {
+            Self::UnsupportedVersion => "unsupported protocol version",
+            Self::Unauthorized => "caller not authorized",
+            Self::MalformedRequest => "malformed request",
+            Self::InternalFailure => "internal failure",
+            Self::InvalidInput => "invalid input",
+            Self::NotFound => "resource not found",
+            Self::Conflict => "conflict",
+            Self::PermissionDenied => "permission denied",
+            Self::UnsupportedBackend => "unsupported backend",
+            Self::KernelRejected => "kernel rejected the operation",
+            Self::BackendFailure => "backend failure",
+        };
+        f.write_str(category)
+    }
+}
+
+impl std::error::Error for ProtocolError {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

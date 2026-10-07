@@ -19,7 +19,8 @@ use wg_basic::{
         PrivateKey, PublicKey, ResourcePresence,
     },
     state::{
-        DesiredGeneration, ProjectionError, StateError, StateStore, INITIAL_DESIRED_GENERATION,
+        AttemptDisposition, DesiredGeneration, ProjectionError, StateError, StateStore,
+        INITIAL_DESIRED_GENERATION,
     },
 };
 
@@ -648,4 +649,96 @@ fn convergence_evidence_round_trips_and_starts_unset() {
     let temp = TempDir::new();
     let store = StateStore::initialize(temp.db()).unwrap();
     assert_eq!(store.convergence().unwrap(), Default::default());
+}
+
+// ---------------------------------------------------------------------------
+// Convergence evidence
+// ---------------------------------------------------------------------------
+
+#[test]
+fn convergence_evidence_records_attempts_and_categories_only() {
+    let temp = TempDir::new();
+    let store = StateStore::initialize(temp.db()).unwrap();
+    store
+        .mutate(INITIAL_DESIRED_GENERATION, |_| Ok(sample_state()))
+        .unwrap();
+
+    let generation = DesiredGeneration::new(2).unwrap();
+    store.record_attempt_start(generation).unwrap();
+    let record = store.convergence().unwrap();
+    assert_eq!(record.last_attempted_generation, Some(generation));
+    assert_eq!(record.last_converged_generation, None);
+
+    store
+        .record_attempt_result(generation, &AttemptDisposition::PartialFailure)
+        .unwrap();
+    assert_eq!(
+        store.convergence().unwrap().last_outcome.as_deref(),
+        Some("partial_failure"),
+        "evidence is a category, never a message"
+    );
+}
+
+#[test]
+fn a_stale_receipt_cannot_mark_a_newer_generation_converged() {
+    let temp = TempDir::new();
+    let store = StateStore::initialize(temp.db()).unwrap();
+    store
+        .mutate(INITIAL_DESIRED_GENERATION, |_| Ok(sample_state()))
+        .unwrap();
+    let older = DesiredGeneration::new(2).unwrap();
+    let newer = DesiredGeneration::new(3).unwrap();
+    assert_eq!(
+        store.current_generation().unwrap(),
+        older,
+        "generation 2 is current before anything advances it"
+    );
+
+    // Generation 2 converges while it is current.
+    assert!(store.record_converged_if_current(older).unwrap());
+
+    // Desired state advances to 3 before generation 2's late duplicate arrives.
+    store.mutate(older, |state| Ok(state.clone())).unwrap();
+    assert_eq!(store.current_generation().unwrap(), newer);
+
+    // A late receipt for the older generation must not advance convergence.
+    assert!(
+        !store.record_converged_if_current(older).unwrap(),
+        "a stale completion must not mark a newer desired generation converged"
+    );
+    let record = store.convergence().unwrap();
+    assert_eq!(
+        record.last_converged_generation,
+        Some(older),
+        "the already-recorded convergence is preserved"
+    );
+    assert_eq!(
+        record.last_outcome.as_deref(),
+        Some("superseded"),
+        "the stale completion is recorded as superseded attempt evidence"
+    );
+
+    // The current generation converges normally afterwards.
+    assert!(store.record_converged_if_current(newer).unwrap());
+    assert_eq!(
+        store.convergence().unwrap().last_converged_generation,
+        Some(newer)
+    );
+}
+
+#[test]
+fn a_commit_does_not_imply_kernel_convergence() {
+    let temp = TempDir::new();
+    let store = StateStore::initialize(temp.db()).unwrap();
+    let committed = store
+        .mutate(INITIAL_DESIRED_GENERATION, |_| Ok(sample_state()))
+        .unwrap();
+    assert_eq!(committed.generation, DesiredGeneration::new(2).unwrap());
+
+    let record = store.convergence().unwrap();
+    assert_eq!(
+        record.last_converged_generation, None,
+        "a committed transaction says nothing about the kernel"
+    );
+    assert_eq!(store.convergence().unwrap().last_attempted_generation, None);
 }
