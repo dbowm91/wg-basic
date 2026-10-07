@@ -1,17 +1,24 @@
-use super::{
-    read_frame, write_frame, NetworkCapabilitySnapshot, ProtocolError, RequestEnvelope,
-    RequestOperation, ResponseBody, ResponseEnvelope, PROTOCOL_VERSION,
+//! Socket bind, stale-path handling, connection lifecycle, and shutdown.
+//!
+//! The socket parent must already exist, be a real directory owned by the
+//! effective netd UID, and not be group/world writable. The socket is created
+//! with mode `0660`. Existing files, symlinks, active sockets, and foreign-owned
+//! sockets are preserved and treated as conflicts. A stale netd-owned socket may
+//! be removed only after a failed connect plus an inode/owner recheck. Shutdown
+//! removes the socket only if device, inode, and owner still match.
+
+use super::auth::AuthorizationPolicy;
+use super::framing::{read_frame, write_frame};
+use super::wire::RequestEnvelope;
+use crate::{
+    firewall::FirewallService, reconcile::ReconciliationService, wireguard::WireGuardBackend,
 };
-use crate::firewall::{FirewallError, FirewallService};
-use crate::reconcile::{ReconcileError, ReconciliationService};
-use crate::wireguard::{WireGuardBackend, WireGuardValidationError};
 use nix::sys::socket::{getsockopt, listen, sockopt::PeerCredentials, Backlog};
 use std::{
-    collections::HashSet,
     fs, io,
-    os::{
-        unix::fs::{FileTypeExt, MetadataExt, PermissionsExt},
-        unix::net::{UnixListener, UnixStream},
+    os::unix::{
+        fs::{FileTypeExt, MetadataExt, PermissionsExt},
+        net::{UnixListener, UnixStream},
     },
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
@@ -19,51 +26,29 @@ use std::{
     time::Duration,
 };
 
+/// Per-connection read and write bound.
 const IO_TIMEOUT: Duration = Duration::from_secs(2);
+/// Shutdown poll interval while idle.
 const ACCEPT_POLL: Duration = Duration::from_millis(20);
+/// Listener backlog; one connection is served at a time.
 const MAX_QUEUED_CONNECTIONS: i32 = 16;
 
-#[derive(Clone, Debug)]
-pub struct AuthorizationPolicy {
-    allowed_uids: HashSet<u32>,
-}
-
-impl AuthorizationPolicy {
-    pub fn new(allowed_uids: impl IntoIterator<Item = u32>) -> Self {
-        Self {
-            allowed_uids: allowed_uids.into_iter().collect(),
-        }
-    }
-
-    pub fn current_user_and_root() -> Self {
-        Self::new([nix::unistd::geteuid().as_raw(), 0])
-    }
-
-    pub fn extend(&mut self, allowed_uids: impl IntoIterator<Item = u32>) {
-        self.allowed_uids.extend(allowed_uids);
-    }
-
-    fn permits(&self, uid: u32) -> bool {
-        self.allowed_uids.contains(&uid)
-    }
-}
-
 pub struct SocketServer {
-    listener: UnixListener,
-    socket_path: PathBuf,
-    identity: SocketIdentity,
-    runtime_directory: PathBuf,
-    authorization: AuthorizationPolicy,
-    wireguard: WireGuardBackend,
-    reconciliation: ReconciliationService,
-    firewall: FirewallService,
+    pub(crate) listener: UnixListener,
+    pub(crate) socket_path: PathBuf,
+    pub(crate) identity: SocketIdentity,
+    pub(crate) runtime_directory: PathBuf,
+    pub(crate) authorization: AuthorizationPolicy,
+    pub(crate) wireguard: WireGuardBackend,
+    pub(crate) reconciliation: ReconciliationService,
+    pub(crate) firewall: FirewallService,
 }
 
 #[derive(Clone, Copy)]
-struct SocketIdentity {
-    device: u64,
-    inode: u64,
-    uid: u32,
+pub(crate) struct SocketIdentity {
+    pub(crate) device: u64,
+    pub(crate) inode: u64,
+    pub(crate) uid: u32,
 }
 
 impl SocketServer {
@@ -177,111 +162,8 @@ impl SocketServer {
         write_frame(&mut stream, &encoded)
     }
 
-    fn dispatch(&self, request: RequestEnvelope) -> ResponseEnvelope {
-        if request.protocol_version != PROTOCOL_VERSION {
-            return ResponseEnvelope::failure(
-                request.request_id,
-                ProtocolError::UnsupportedVersion,
-            );
-        }
-        let result = match request.operation {
-            RequestOperation::Ping => Ok(ResponseBody::Pong {
-                service: "wg-basic-netd".into(),
-                version: env!("CARGO_PKG_VERSION").into(),
-            }),
-            RequestOperation::InspectCapabilities => Ok(ResponseBody::Capabilities(
-                NetworkCapabilitySnapshot::observe(&self.runtime_directory),
-            )),
-            RequestOperation::ObserveWireGuardDevice { interface } => self
-                .wireguard
-                .observe_device(&interface)
-                .map(ResponseBody::WireGuardDevice)
-                .map_err(map_wireguard_error),
-            RequestOperation::ApplyWireGuardDevice { interface, patch } => self
-                .wireguard
-                .apply_patch(&interface, patch)
-                .map(ResponseBody::WireGuardApplied)
-                .map_err(map_wireguard_error),
-            RequestOperation::PlanManagedInterface { desired } => self
-                .reconciliation
-                .plan(&desired)
-                .map(ResponseBody::ManagedInterfacePlan)
-                .map_err(map_reconcile_error),
-            RequestOperation::ApplyManagedInterface { desired } => self
-                .reconciliation
-                .apply(&desired)
-                .map(ResponseBody::ManagedInterfaceApplied)
-                .map_err(map_reconcile_error),
-            RequestOperation::PlanNetworkPolicy {
-                wireguard_interface,
-                policy,
-            } => self
-                .firewall
-                .plan(&wireguard_interface, policy.as_ref())
-                .map(ResponseBody::NetworkPolicyPlan)
-                .map_err(map_firewall_error),
-            RequestOperation::ApplyNetworkPolicy {
-                wireguard_interface,
-                policy,
-            } => self
-                .firewall
-                .apply(&wireguard_interface, policy.as_ref())
-                .map(ResponseBody::NetworkPolicyApplied)
-                .map_err(map_firewall_error),
-        };
-        ResponseEnvelope {
-            protocol_version: PROTOCOL_VERSION,
-            request_id: request.request_id,
-            result,
-        }
-    }
-
     pub fn socket_path(&self) -> &Path {
         &self.socket_path
-    }
-}
-
-fn map_firewall_error(error: FirewallError) -> ProtocolError {
-    match error {
-        FirewallError::InvalidPolicy | FirewallError::ResourceLimitExceeded => {
-            ProtocolError::InvalidInput
-        }
-        FirewallError::TableOwnershipConflict => ProtocolError::Conflict,
-        FirewallError::PermissionDenied => ProtocolError::PermissionDenied,
-        FirewallError::Unsupported => ProtocolError::UnsupportedBackend,
-        FirewallError::BackendFailure => ProtocolError::BackendFailure,
-    }
-}
-
-fn map_reconcile_error(error: ReconcileError) -> ProtocolError {
-    match error {
-        ReconcileError::InvalidDesiredState
-        | ReconcileError::ResourceLimitExceeded
-        | ReconcileError::DuplicateResource => ProtocolError::InvalidInput,
-        ReconcileError::OwnershipRequired
-        | ReconcileError::WrongLinkKind
-        | ReconcileError::Conflict
-        | ReconcileError::UnlistedResourceOnDelete => ProtocolError::Conflict,
-        ReconcileError::BackendFailure => ProtocolError::BackendFailure,
-        ReconcileError::WireGuard(error) => map_wireguard_error(error),
-    }
-}
-
-fn map_wireguard_error(error: WireGuardValidationError) -> ProtocolError {
-    match error {
-        WireGuardValidationError::PeerNotFound | WireGuardValidationError::InterfaceUnavailable => {
-            ProtocolError::NotFound
-        }
-        WireGuardValidationError::PeerAlreadyExists
-        | WireGuardValidationError::ConflictingAllowedIps => ProtocolError::Conflict,
-        WireGuardValidationError::PermissionDenied => ProtocolError::PermissionDenied,
-        WireGuardValidationError::UnsupportedBackend => ProtocolError::UnsupportedBackend,
-        WireGuardValidationError::KernelRejected => ProtocolError::KernelRejected,
-        WireGuardValidationError::InvalidKey | WireGuardValidationError::InvalidBackendInput => {
-            ProtocolError::InvalidInput
-        }
-        WireGuardValidationError::BackendFailure => ProtocolError::BackendFailure,
-        _ => ProtocolError::InvalidInput,
     }
 }
 
@@ -334,79 +216,13 @@ fn remove_stale_owned_socket(path: &Path, uid: u32) -> io::Result<()> {
     Ok(())
 }
 
-pub fn request(
-    path: impl AsRef<Path>,
-    operation: RequestOperation,
-    request_id: u64,
-) -> io::Result<ResponseBody> {
-    let mut stream = UnixStream::connect(path)?;
-    stream.set_read_timeout(Some(IO_TIMEOUT))?;
-    stream.set_write_timeout(Some(IO_TIMEOUT))?;
-    let request = RequestEnvelope {
-        protocol_version: PROTOCOL_VERSION,
-        request_id,
-        operation,
-    };
-    let payload = serde_json::to_vec(&request)
-        .map_err(|_| io::Error::other("could not encode protocol request"))?;
-    write_frame(&mut stream, &payload)?;
-    let payload = read_frame(&mut stream)?;
-    let response = serde_json::from_slice::<ResponseEnvelope>(&payload)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "malformed protocol response"))?;
-    if response.protocol_version != PROTOCOL_VERSION || response.request_id != request_id {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "protocol response correlation failed",
-        ));
-    }
-    match response.result {
-        Ok(body) => Ok(body),
-        Err(ProtocolError::Unauthorized) => Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "network service rejected caller",
-        )),
-        Err(ProtocolError::PermissionDenied) => Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "network service lacks permission for the operation",
-        )),
-        Err(ProtocolError::UnsupportedBackend) => Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "network backend does not support the operation",
-        )),
-        Err(ProtocolError::KernelRejected) => {
-            Err(io::Error::other("kernel rejected the network operation"))
-        }
-        Err(ProtocolError::UnsupportedVersion | ProtocolError::MalformedRequest) => {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "network service rejected protocol version or request",
-            ))
-        }
-        Err(ProtocolError::InternalFailure) => {
-            Err(io::Error::other("network service request failed"))
-        }
-        Err(ProtocolError::NotFound) => Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            "network resource was not found",
-        )),
-        Err(ProtocolError::Conflict) => Err(io::Error::new(
-            io::ErrorKind::AlreadyExists,
-            "network resource conflicts with current state",
-        )),
-        Err(ProtocolError::InvalidInput) => Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "network request validation failed",
-        )),
-        Err(ProtocolError::BackendFailure) => {
-            Err(io::Error::other("network backend rejected the request"))
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::protocol::CapabilityState;
+    use crate::protocol::{
+        request, ProtocolError, RequestOperation, ResponseBody, ResponseEnvelope, PROTOCOL_VERSION,
+    };
     use std::{
         io::Read,
         os::unix::fs::PermissionsExt,

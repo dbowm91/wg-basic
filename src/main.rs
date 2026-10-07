@@ -17,7 +17,7 @@ enum Command {
         #[arg(long, default_value = DEFAULT_SOCKET)]
         socket: PathBuf,
     },
-    /// Privileged local network service. M002 performs read-only operations only.
+    /// Privileged local network service; exposes typed WireGuard, network, and firewall operations.
     Netd {
         #[arg(long, default_value = DEFAULT_SOCKET)]
         socket: PathBuf,
