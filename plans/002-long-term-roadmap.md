@@ -9,6 +9,7 @@ Authoritative companions:
 - `plans/003-planning-process.md`
 - `plans/adr/001-linux-native-control-plane.md`
 - `plans/adr/002-durable-state-generations-and-ownership.md`
+- `plans/adr/003-management-http-auth-and-worker-boundary.md`
 
 This roadmap orders wg-basic from a fresh repository to a small, production-credible Linux-native WireGuard appliance. Milestone-specific execution belongs in subsystem roadmaps and `plans/implementation/`.
 
@@ -224,11 +225,15 @@ Phase 6 implementation is complete. Post-Phase-6 corrective work was tracked in 
 
 ## 9. Phase 7 — Service/security substrate
 
-Status: unblocked for research, planning, and implementation. Post-Phase-6 durable-state C001 has closed, so this phase consumes a reconciled management/state boundary with no remaining rootful evidence gap against it. The subsystem roadmap is still to be written; write it first.
+Status: planned; M001 ready.
 
 Owned by:
 
-- future `plans/subsystems/management-service-roadmap.md`.
+- `plans/subsystems/management-service-security-roadmap.md`.
+
+Architecture decision:
+
+- `plans/adr/003-management-http-auth-and-worker-boundary.md`.
 
 Objective:
 
@@ -236,14 +241,26 @@ Build a bounded unprivileged application service without yet claiming end-user U
 
 Expected outcomes:
 
-- EggServe adoption decision implemented or explicitly rejected with evidence;
-- application routing;
-- session/authentication foundation;
-- CSRF and request-bound policy;
-- management bind policy;
-- embedded static-asset pipeline;
-- network-service client using only the privileged protocol;
-- process/service supervision and shutdown semantics.
+- direct EggServe H1 application-service runtime;
+- bounded dedicated blocking worker owning `ManagementRuntime`;
+- loopback-first management bind;
+- local Argon2id administrator credentials;
+- revocable opaque server-side sessions;
+- explicit Host/Origin/CSRF browser security;
+- login throttling before password hashing;
+- embedded self-contained static shell;
+- strict security headers and request/resource limits;
+- process supervision and graceful shutdown;
+- real HTTP → worker → SQLite/netd qualification.
+
+Milestones:
+
+- M001 EggServe runtime + bounded management worker;
+- M002 local administrator + session persistence and real schema v2;
+- M003 authenticated HTTP security perimeter;
+- M004 embedded shell + lifecycle + Phase 7 qualification.
+
+Phase 7 deliberately stops before peer/client CRUD, QR/config export, and the full management UI; those remain Phase 8.
 
 ## 10. Phase 8 — Management API, UI, and enrollment
 
@@ -404,7 +421,7 @@ Before the first public production claim:
 | 4 link/address/route reconciliation | closed | network-control M004 | Phase 3 |
 | 5 firewall/forwarding/E2E | closed | network-control M005 | — |
 | 6 durable state/restart reconciliation | closed | `plans/subsystems/durable-state-restart-reconciliation-roadmap.md` | — |
-| 7 service/security substrate | ready to plan | future management roadmap | — |
+| 7 service/security substrate | planned / M001 ready | `plans/subsystems/management-service-security-roadmap.md` | — |
 | 8 management UI/enrollment | blocked | future management roadmap | Phases 6–7 |
 | 9 operational hardening | proposed | future operations roadmap | Phase 8 |
 | 10 distribution/update | proposed | future distribution roadmap | Phase 9 |
