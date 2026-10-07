@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-07 (post-Phase-6 corrective C001 closed; Phase 7 unblocked)
+Last planning reconciliation: 2026-10-07 (Phase 7 researched/planned; M001 ready)
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -16,6 +16,7 @@ This file is the compact control surface for active wg-basic planning. Detailed 
 | `plans/003-planning-process.md` | planning, handoff, corrective, closure rules |
 | `plans/adr/001-linux-native-control-plane.md` | accepted Linux-native/privilege-separated architecture |
 | `plans/adr/002-durable-state-generations-and-ownership.md` | accepted Phase 6 persistence/generation/ownership architecture |
+| `plans/adr/003-management-http-auth-and-worker-boundary.md` | accepted Phase 7 HTTP/auth/worker security architecture |
 
 Authority order for implementation handoff:
 
@@ -46,7 +47,7 @@ Current research and planning disposition:
 
 | Eggstack project | Disposition | Handoff note |
 |---|---|---|
-| EggServe | preferred downstream candidate | use for hardened HTTP/static transport if Phase 7 implementation confirms it remains simpler than introducing a conventional application framework; app routing/auth remains wg-basic |
+| EggServe | selected Phase 7 substrate | direct `eggserve-server` + `eggserve-primitives` H1 service; wg-basic owns routing/auth/CSRF/rate limits and embeds its own assets; no Tower/Axum in the baseline |
 | Eggup | planned downstream reuse | Phase 10 install/update/rollback and service lifecycle; integrity substrate only, release authenticity remains wg-basic/release-policy owned |
 | Eggpack | planned downstream reuse | Phase 10 producer-side deterministic release construction/draft release flow |
 | Eggfetch | no current runtime need | no ordinary outbound HTTP requirement in network control |
@@ -64,7 +65,7 @@ Runtime dependency adoption remains evidence-driven.
 |---|---|---|---|
 | Linux network-control foundation | closed | `plans/subsystems/network-control-roadmap.md` + `plans/subsystems/network-control-post-foundation-reconciliation-addendum.md` | M001–M005 and C001 closed |
 | Durable state/restart reconciliation | closed | `plans/subsystems/durable-state-restart-reconciliation-roadmap.md` + `plans/subsystems/durable-state-post-phase6-reconciliation-addendum.md` | Phase 6 complete; M001–M004 and post-Phase-6 C001 closed |
-| Management service/auth/UI | ready to plan; implementation unblocked | not yet written | Phases 2 and 6 and post-Phase-6 C001 are closed; typed netd protocol, network foundation, and the management/state boundary are stable |
+| Management service/auth/security substrate | planned / M001 ready | `plans/subsystems/management-service-security-roadmap.md` | M001 EggServe + bounded worker ready; M002–M004 blocked in order |
 | Distribution/install/update | proposed | not yet written | begins after the Phase 7 service layout stabilizes |
 
 Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
@@ -73,13 +74,19 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
-No implementation plan is currently open. Durable-state post-Phase-6 C001 closed at `635a130`; its closure record is listed in §7.
+| Management service/security | M001 EggServe runtime + bounded management worker | **ready** | `plans/implementation/management-service/001-eggserve-runtime-and-management-worker.md` | Phase 6 + post-Phase-6 C001 strict closure |
 
-The next implementation plan belongs to Phase 7 (management service/auth/UI), which needs its subsystem roadmap written first. C001's closure record §8 recommends starting that roadmap against `ManagementHealth` as the single non-secret projection, whose derivation rule now lives alone in `src/management/health.rs`.
+M001 is the sole implementation-ready plan. It adds the HTTP transport/worker substrate only: no administrator/session schema, no browser login, and no Phase 8 configuration API.
 
 ## 6. Blocked implementation plans
 
-No Phase 7 implementation plan exists yet, and none can be written until its subsystem roadmap exists. **Phase 7 is no longer blocked**: its research, planning, and implementation are all unblocked now that post-Phase-6 C001 has closed, because it consumes the reconciled management/state boundary and no rootful evidence debt remains against it. Phase 8 remains blocked until Phase 7 closes. Nothing else was gated on C001; Phase 9–12 dependencies are unchanged.
+| Subsystem | Milestone | Status | Implementation plan | Hard blocker |
+|---|---|---|---|---|
+| Management service/security | M002 local administrator + session persistence | blocked | `plans/implementation/management-service/002-local-admin-and-session-persistence.md` | Phase 7 M001 |
+| Management service/security | M003 authenticated HTTP security perimeter | blocked | `plans/implementation/management-service/003-authenticated-http-security-perimeter.md` | Phase 7 M002 |
+| Management service/security | M004 service lifecycle + Phase 7 qualification | blocked | `plans/implementation/management-service/004-service-lifecycle-and-phase7-qualification.md` | Phase 7 M003 |
+
+Phase 8 remains blocked until Phase 7 M004 closes.
 
 ## 7. Recently closed work
 
@@ -166,19 +173,20 @@ Durable-state M004 is closed at `772203d` and **Phase 6 is closed with it**. Onl
 
 Phase 6 is complete under ADR-002 and `plans/subsystems/durable-state-restart-reconciliation-roadmap.md`.
 
-Canonical documents are stable again. The one bounded current-state reconciliation owned by post-Phase-6 C001 is complete, so Phase 7 research, planning, and implementation are all unblocked.
+Phase 7 research/planning is complete under ADR-003 and `plans/subsystems/management-service-security-roadmap.md`. The selected baseline is direct EggServe H1, a bounded dedicated management worker, local Argon2id credentials, opaque revocable sessions, explicit Host/Origin/CSRF enforcement, and loopback-first binding. M001 is ready; later milestones remain blocked in order.
 
 If later implementation evidence reveals a material architecture contradiction, record it and revise the appropriate plan/ADR deliberately rather than silently altering the contract.
 
 ## 13. Closure handoff
 
-M001–M005, network-control C001, durable-state M001–M004, and durable-state post-Phase-6 C001 are closed and their strict evidence is recorded. **Phase 6 remains closed.** No implementation plan is currently open. **Phase 7 is fully unblocked** for research, planning, and implementation; its subsystem roadmap should be written first. Phase 8 remains blocked until Phase 7 closes.
+M001–M005, network-control C001, durable-state M001–M004, and durable-state post-Phase-6 C001 are closed and their strict evidence is recorded. **Phase 6 remains closed.** Phase 7 is now fully researched/planned; M001 is ready and M002–M004 are blocked in order. Phase 8 remains blocked until Phase 7 closes.
 
 At each future closure, update:
 
 - source implementation-plan status;
 - `plans/subsystems/network-control-roadmap.md` milestone table;
 - `plans/subsystems/durable-state-restart-reconciliation-roadmap.md` milestone table;
+- `plans/subsystems/management-service-security-roadmap.md` milestone table;
 - this registry;
 - current architecture/operator docs.
 
