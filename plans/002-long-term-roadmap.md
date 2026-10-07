@@ -184,7 +184,7 @@ M005 is the first kernel-control foundation closure boundary. Later service/UI w
 
 ## 8. Phase 6 — Durable desired state and restart reconciliation
 
-Status: closed. Durable-state M001–M004 are strictly closed. A bounded post-Phase-6 corrective (durable-state C001) is ready to reconcile stale current-state documentation, retire the remaining disable-path rootful evidence debt, and clean the management/state boundary before Phase 7 implementation.
+Status: closed. Durable-state M001–M004 are strictly closed. The bounded post-Phase-6 corrective (durable-state C001) also closed at `635a130`, retiring the remaining disable-path rootful evidence debt and reconciling the management/state boundary before Phase 7.
 
 Owned by:
 
