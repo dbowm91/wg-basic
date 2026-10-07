@@ -1,5 +1,6 @@
 use crate::{
     domain::InterfaceName,
+    firewall::{DesiredNetworkPolicy, FirewallApplyReceipt, FirewallPlanSummary},
     reconcile::{ApplyReceipt, DesiredManagedInterface, ReconcilePlanSummary},
     wireguard::{ObservedWireGuardDevice, WireGuardApplyReceipt, WireGuardDevicePatch},
 };
@@ -38,6 +39,14 @@ pub enum RequestOperation {
     ApplyManagedInterface {
         desired: DesiredManagedInterface,
     },
+    PlanNetworkPolicy {
+        wireguard_interface: InterfaceName,
+        policy: Option<DesiredNetworkPolicy>,
+    },
+    ApplyNetworkPolicy {
+        wireguard_interface: InterfaceName,
+        policy: Option<DesiredNetworkPolicy>,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -57,6 +66,8 @@ pub enum ResponseBody {
     WireGuardApplied(WireGuardApplyReceipt),
     ManagedInterfacePlan(ReconcilePlanSummary),
     ManagedInterfaceApplied(ApplyReceipt),
+    NetworkPolicyPlan(FirewallPlanSummary),
+    NetworkPolicyApplied(FirewallApplyReceipt),
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -208,5 +219,31 @@ mod tests {
             RequestOperation::ApplyManagedInterface { .. }
         ));
         assert!(!format!("{decoded:?}").contains(&private_key));
+    }
+
+    #[test]
+    fn network_policy_request_round_trips_as_typed_data() {
+        let request = RequestEnvelope {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 92,
+            operation: RequestOperation::ApplyNetworkPolicy {
+                wireguard_interface: "wg0".parse().unwrap(),
+                policy: Some(DesiredNetworkPolicy {
+                    ipv4_forwarding: crate::firewall::Ipv4Forwarding::Required,
+                    egress_interface: "eth0".parse().unwrap(),
+                    source_prefixes: vec!["10.8.0.0/24".parse().unwrap()],
+                    nat: crate::firewall::NatMode::Masquerade,
+                }),
+            },
+        };
+        let encoded = serde_json::to_vec(&request).unwrap();
+        let decoded: RequestEnvelope = serde_json::from_slice(&encoded).unwrap();
+        assert!(matches!(
+            decoded.operation,
+            RequestOperation::ApplyNetworkPolicy { .. }
+        ));
+        let raw = std::str::from_utf8(&encoded).unwrap();
+        assert!(!raw.contains("nft -f"));
+        assert!(!raw.contains("sysctl_path"));
     }
 }
