@@ -8,6 +8,7 @@ Authoritative companions:
 - `plans/001-terminology-and-domain-model.md`
 - `plans/003-planning-process.md`
 - `plans/adr/001-linux-native-control-plane.md`
+- `plans/adr/002-durable-state-generations-and-ownership.md`
 
 This roadmap orders wg-basic from a fresh repository to a small, production-credible Linux-native WireGuard appliance. Milestone-specific execution belongs in subsystem roadmaps and `plans/implementation/`.
 
@@ -181,27 +182,45 @@ Required outcomes:
 
 M005 is the first kernel-control foundation closure boundary. Later service/UI work MUST NOT weaken its ownership model.
 
-## 8. Phase 6 — Durable desired state and migration substrate
+## 8. Phase 6 — Durable desired state and restart reconciliation
 
-Status: ready to plan; Phases 4 and 5 contracts are stable.
+Status: planned; implementation M001 is blocked on the contract-preserving network-control C001 cleanup.
 
 Owned by:
 
-- future `plans/subsystems/state-reconciliation-roadmap.md`.
+- `plans/subsystems/durable-state-restart-reconciliation-roadmap.md`.
+
+Architecture decision:
+
+- `plans/adr/002-durable-state-generations-and-ownership.md`.
 
 Objective:
 
-Make desired state durable and restart-reconstructable.
+Make desired state durable, generation-safe, ownership-provable, and restart-reconstructable.
 
 Expected outcomes:
 
-- SQLite schema/migration framework;
-- interface/peer/client/network policy persistence;
-- secret-reference boundary;
-- transactional mutations from management intent;
-- startup reconciliation;
-- backup/restore format and schema identity;
+- hardened bundled SQLite state store compatible with Rust 1.89;
+- project-owned ordered schema migrations;
+- stable InstallationId and monotonic DesiredGeneration;
+- generation-CAS desired-state mutations;
+- interface/peer/client/network-policy persistence;
+- deterministic projection from application state to privileged network intent;
+- durable link ownership through Linux interface aliases;
+- installation-specific nftables ownership;
+- aggregate generation-aware netd reconciliation;
+- startup crash/restart recovery;
+- backup/restore and migration qualification;
 - clear separation of live telemetry from durable state.
+
+Milestones:
+
+- M001 SQLite state store + desired generations;
+- M002 durable owner tags + aggregate netd reconciliation;
+- M003 startup reconciliation + crash/restart recovery;
+- M004 backup/restore + migration qualification.
+
+Phase 6 implementation begins after network-control C001 closes so persistence is built against the reconciled module boundaries.
 
 ## 9. Phase 7 — Service/security substrate
 
@@ -257,7 +276,7 @@ Status: blocked on Phase 8.
 Expected outcomes:
 
 - `doctor` with actionable diagnostics;
-- database backup/restore;
+- backup/restore operational drills and recovery UX over the Phase 6 substrate;
 - explicit network disable vs state purge;
 - service restart/crash recovery;
 - log retention/configuration;
@@ -384,7 +403,7 @@ Before the first public production claim:
 | 3 WireGuard kernel control | closed | network-control M003 | Phase 2 |
 | 4 link/address/route reconciliation | closed | network-control M004 | Phase 3 |
 | 5 firewall/forwarding/E2E | closed | network-control M005 | — |
-| 6 durable state | ready to plan | future state roadmap | — |
+| 6 durable state/restart reconciliation | planned / M001 blocked | `plans/subsystems/durable-state-restart-reconciliation-roadmap.md` | network-control C001 |
 | 7 service/security substrate | ready to plan | future management roadmap | — |
 | 8 management UI/enrollment | blocked | future management roadmap | Phases 6–7 |
 | 9 operational hardening | proposed | future operations roadmap | Phase 8 |
