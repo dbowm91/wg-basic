@@ -1,6 +1,6 @@
 # Durable State M004 — Backup, Restore, Migration, and Phase 6 Qualification
 
-Status: blocked on Durable State M003 closure
+Status: active; unblocked by Durable State M003 strict closure
 
 Source roadmap:
 

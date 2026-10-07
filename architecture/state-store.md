@@ -100,6 +100,20 @@ Every open goes through one canonical initializer:
 
 Projection errors are state validation errors and must be raised before any privileged call.
 
+## Convergence evidence
+
+The store also records what happened when a generation was applied. Three methods are conditioned on the generation they describe:
+
+- `record_attempt_start(generation)` marks that an apply began;
+- `record_attempt_result(generation, disposition)` records how it ended;
+- `record_converged_if_current(generation)` advances `last_converged_generation` **only if the store still holds that generation**.
+
+The third is the important one. An apply can still be in flight when a newer generation commits. If its receipt advanced convergence unconditionally, an older generation would claim convergence on behalf of a newer one. Instead the generation is re-checked inside the same write transaction; when the store has moved on, the receipt is kept with the outcome `superseded` and convergence is left alone.
+
+Outcomes are stored as **categories**, never messages. A reconcile error string can carry kernel detail, so persisting it would risk accumulating sensitive text in the database. The categories are `converged`, `partial_failure`, `verification_failed`, `failed_before_mutation`, `superseded`, `state_conflict`, `backend_unavailable`, `unauthorized`, and `rejected`.
+
+The evidence is a record of a past apply, not a claim about the present kernel: the network may have drifted while the product was stopped. Startup therefore reconciles unconditionally rather than skipping work when the evidence looks complete. See [startup reconciliation and crash/restart recovery](startup-recovery.md).
+
 ## Concurrency and the sync API
 
 The store is synchronous by design. It owns exactly one `rusqlite::Connection` behind a single `Mutex`; `Connection` is never part of the public API and there are no async traits.
@@ -108,8 +122,5 @@ The store is synchronous by design. It owns exactly one `rusqlite::Connection` b
 
 ## Deferred to later milestones
 
-- durable interface owner tags and generation-aware protocol fields (M002);
-- aggregate generation-aware reconcile (M002);
-- startup reconciliation and crash/restart recovery (M003);
 - backup, restore, and migration qualification (M004);
 - encrypted-at-rest key management, which stays deferred until an independent key-protection domain exists.

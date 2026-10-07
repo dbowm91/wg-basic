@@ -1,6 +1,6 @@
 # Durable State M003 — Startup Reconciliation and Crash/Restart Recovery
 
-Status: blocked on Durable State M002 closure
+Status: closed at `6a9cbc7`. Closure record: `plans/closure/durable-state/003-status.md`.
 
 Source roadmap:
 
