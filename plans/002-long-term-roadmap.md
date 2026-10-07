@@ -403,7 +403,7 @@ Before the first public production claim:
 | 3 WireGuard kernel control | closed | network-control M003 | Phase 2 |
 | 4 link/address/route reconciliation | closed | network-control M004 | Phase 3 |
 | 5 firewall/forwarding/E2E | closed | network-control M005 | — |
-| 6 durable state/restart reconciliation | planned / M001 blocked | `plans/subsystems/durable-state-restart-reconciliation-roadmap.md` | network-control C001 |
+| 6 durable state/restart reconciliation | closed | `plans/subsystems/durable-state-restart-reconciliation-roadmap.md` | — |
 | 7 service/security substrate | ready to plan | future management roadmap | — |
 | 8 management UI/enrollment | blocked | future management roadmap | Phases 6–7 |
 | 9 operational hardening | proposed | future operations roadmap | Phase 8 |

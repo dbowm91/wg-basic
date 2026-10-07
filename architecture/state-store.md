@@ -4,7 +4,23 @@
 
 The state store is the authoritative unprivileged application state for wg-basic. SQLite desired state is authoritative; kernel state is derivative and is only ever observed.
 
-This document describes the store created by Phase 6 milestone M001. M001 provides storage, migrations, installation identity, the monotonic desired generation, and deterministic projection. It does **not** yet reconcile the kernel on startup — durable owner tags and generation-aware protocol fields belong to M002, and startup reconciliation/recovery belongs to M003.
+This document describes the store as it stands. It provides storage, migrations, installation identity, the monotonic desired generation, deterministic projection, durable owner tags, generation-aware protocol fields, and startup reconciliation that re-derives kernel state from the durable desired state and records convergence evidence.
+
+## Module layout
+
+The store is a façade over focused submodules rather than one file:
+
+| Module | Owns |
+| --- | --- |
+| `src/state/store/mod.rs` | the store handle, its ownership lifecycle, and how a database is opened |
+| `src/state/store/desired.rs` | reading the desired snapshot and committing a new one as one atomic generation advance |
+| `src/state/store/convergence.rs` | reconciliation evidence: attempt start, attempt result, and the converged guard |
+| `src/state/store/sql.rs` | row decoding shared by the two subject modules |
+| `src/state/schema/mod.rs` | the one canonical connection initializer and the structural singleton invariants |
+| `src/state/schema/validation.rs` | database ownership/permission checks and the hardened pragma contract |
+| `src/state/schema/migrations.rs` | the ordered migration runner and the pre-migration recovery snapshot |
+
+The store layering is one-directional (`sql` → `desired`/`convergence` → `mod`), so a change to the stored representation has exactly one owner and cannot introduce a cycle. `tests/architecture_guards.rs` asserts that layering.
 
 ## Privilege boundary
 
@@ -49,7 +65,7 @@ Validation runs inside the same `IMMEDIATE` write transaction that advances the 
 
 ## Schema and migrations
 
-Migrations live in `src/state/migrations/` as embedded SQL, are applied in exact version order, and are immutable once shipped. Each step carries an integer version and a stable name. The runner:
+Migration SQL lives in `src/state/migrations/` and is embedded by the runner in `src/state/schema/migrations.rs`. Migrations are applied in exact version order, and are immutable once shipped. Each step carries an integer version and a stable name. The runner:
 
 1. reads `PRAGMA user_version`;
 2. rejects a negative or newer-than-binary version;
@@ -76,7 +92,7 @@ The initial schema is created entirely by migration 1. Singleton rows are enforc
 | `client_global_route_prefixes` | client routes not attached to a single client |
 | `network_policy` | singleton IPv4 forwarding/NAT/egress intent |
 | `network_policy_source_prefixes` | explicit policy prefixes |
-| `convergence_state` | reconciliation evidence, not yet driven by M001 |
+| `convergence_state` | reconciliation evidence: attempted generation, converged generation, attempt timestamp, and a disposition category |
 
 DNS server storage is deferred until a consumer exists. It must never be overloaded into a route table.
 

@@ -94,7 +94,7 @@ The objective is durable intent, not write benchmark performance.
 
 Linux exposes a persistent interface alias through `IFLA_IFALIAS`. This provides a kernel-visible owner tag for wg-basic links.
 
-The current nftables table marker is product-specific only and will become installation-specific in M002.
+The nftables table marker is installation-specific: it carries `wg-basic:v1:<installation id>`, so ownership of the table is provable and a table belonging to another installation is refused rather than adopted.
 
 ## 4. Target architecture
 
@@ -153,9 +153,9 @@ M003 — startup reconciliation + crash/restart recovery
 M004 — backup/restore + migration/recovery qualification
 ```
 
-C001 was a hard implementation dependency for Phase 6 M001 so the state layer would be built against final post-foundation module boundaries rather than creating avoidable merge/refactor conflict. C001 closed at `0e74a40`, so M001 is unblocked and the state module follows the settled `reconcile/`, `firewall/`, and `protocol/` boundaries.
+C001 was a hard implementation dependency for Phase 6 M001 so the state layer would be built against final post-foundation module boundaries rather than creating avoidable merge/refactor conflict. C001 closed at `0e74a40`, M001 was unblocked at that point, and the state module follows the settled `reconcile/`, `firewall/`, and `protocol/` boundaries.
 
-Research/planning is not blocked by C001.
+All four milestones are now closed and Phase 6 is complete; see §22 and the closure records under `plans/closure/durable-state/`.
 
 ## 6. Milestone M001 — SQLite state store and desired-generation contract
 

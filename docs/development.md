@@ -41,7 +41,7 @@ The test starts its netd workers inside the two temporary network namespaces so 
 
 ## Durable ownership and restart fixtures
 
-Two rootful suites qualify the durable-state milestones against the real kernel. Both need root, `iproute2`, `nftables`, and kernel WireGuard support, and both serialize with `--test-threads=1` because each creates disposable network namespaces with fixed names.
+Three rootful suites qualify the durable-state milestones against the real kernel. All need root, `iproute2`, `nftables`, and kernel WireGuard support, and all serialize with `--test-threads=1` because each creates disposable network namespaces with fixed names.
 
 Owner tags and the generation-aware aggregate reconcile:
 
