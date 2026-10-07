@@ -184,7 +184,7 @@ M005 is the first kernel-control foundation closure boundary. Later service/UI w
 
 ## 8. Phase 6 — Durable desired state and restart reconciliation
 
-Status: planned; implementation M001 is blocked on the contract-preserving network-control C001 cleanup.
+Status: closed. Durable-state M001–M004 are strictly closed. A bounded post-Phase-6 corrective (durable-state C001) is ready to reconcile stale current-state documentation, retire the remaining disable-path rootful evidence debt, and clean the management/state boundary before Phase 7 implementation.
 
 Owned by:
 
@@ -220,11 +220,11 @@ Milestones:
 - M003 startup reconciliation + crash/restart recovery;
 - M004 backup/restore + migration qualification.
 
-Phase 6 implementation begins after network-control C001 closes so persistence is built against the reconciled module boundaries.
+Phase 6 implementation is complete. Post-Phase-6 corrective work is tracked in `plans/subsystems/durable-state-post-phase6-reconciliation-addendum.md` and does not reopen Phase 6 architecture or closure.
 
 ## 9. Phase 7 — Service/security substrate
 
-Status: ready to plan; Phase 2 is closed and the typed privileged protocol is stable.
+Status: ready to research/plan. Production implementation should wait for post-Phase-6 durable-state C001 closure so it consumes the reconciled management/state boundary and the remaining rootful evidence gap is closed.
 
 Owned by:
 
