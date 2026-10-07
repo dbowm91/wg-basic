@@ -410,7 +410,11 @@ fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
         desired
     };
     let first_server = apply_interface(&server_netd, server_state(), 501);
-    assert_eq!(first_server.status, ApplyStatus::Applied);
+    assert_eq!(
+        first_server.status,
+        ApplyStatus::Applied,
+        "server reconciliation receipt: {first_server:?}"
+    );
     assert_eq!(
         apply_interface(&client_netd, client_state(), 502).status,
         ApplyStatus::Applied
