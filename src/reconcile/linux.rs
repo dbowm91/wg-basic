@@ -204,7 +204,10 @@ impl ReconcileBackend for LinuxNetworkBackend {
                     .add(route_message(&route, index)?)
                     .execute()
                     .await
-                    .map_err(|_| ReconcileError::BackendFailure)
+                    .map_err(|error| {
+                        eprintln!("add route failed: {error:?}");
+                        ReconcileError::BackendFailure
+                    })
             }),
             Mutation::RemoveRoute(route) => self.with_handle(|handle| async move {
                 let index = lookup_link_index(&handle, interface).await?;
