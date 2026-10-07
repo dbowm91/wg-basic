@@ -133,6 +133,7 @@ CI runs this as the `durable-restart` job.
 
 ## Out of scope here
 
-- **HTTP / EggServe.** No web surface is added in this milestone; `ManagementHealth` is shaped so one can be added later without exposing internals.
+- **HTTP / EggServe.** No web surface is added; `ManagementHealth` is shaped so one can be added later without exposing internals.
+- **Service installation.** `wg-basic state backup|restore` assumes the operator stopped the management service; a systemd unit is Phase 10 work.
 - **Service installation.** No systemd unit, packaging, or install command is introduced. "Restart the process" remains the operator or service manager's action.
-- **Backup, restore, and multi-version migration qualification.** Those belong to the next durable-state milestone; see [the durable-state roadmap](../plans/subsystems/durable-state-restart-reconciliation-roadmap.md).
+- **Package rollback.** Restore is implemented, but only for the database. Phase 10 owns install/update lifecycle and general package rollback; a restored database is validated and installed, but wg-basic does not roll back the binary or the host.

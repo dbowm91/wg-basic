@@ -120,7 +120,14 @@ The store is synchronous by design. It owns exactly one `rusqlite::Connection` b
 
 > Phase 7 must cross into this blocking store through a bounded blocking-worker adapter. It must not make this API async and must not block HTTP executor threads on rusqlite.
 
+## Backup, restore, and migration
+
+Backup uses SQLite's online backup API, never a file copy of a live WAL database, and holds the store's mutation lock so the receipt's generation is exactly the generation the file contains. Restore is offline and exclusive: it proves the candidate readable, integrity-clean, not-newer-than-this-binary, migratable, and fully loadable into typed state *before* anything is replaced, and it retains the previous database.
+
+A schema-changing migration first writes a deterministic `<state>.pre-migration-v<N>` snapshot beside the database. Retention is bounded: the name carries the version, and wg-basic never accumulates automatic backups.
+
+Backups contain the VPN secrets and are created `0600`. Neither operation contacts the kernel. See [state backup, restore, and migration](../docs/state-backup-restore.md) for the operator contract.
+
 ## Deferred to later milestones
 
-- backup, restore, and migration qualification (M004);
 - encrypted-at-rest key management, which stays deferred until an independent key-protection domain exists.
