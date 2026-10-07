@@ -1,6 +1,6 @@
 # Management Service and Security Substrate Roadmap
 
-Status: planned; M001 ready
+Status: active; M001 closed, M002 ready
 
 Canonical references:
 
@@ -118,7 +118,7 @@ All dependencies are hard.
 
 ## 5. M001 — EggServe runtime and bounded management worker
 
-Status: ready.
+Status: closed at `5b57d49`; see `plans/closure/management-service/001-status.md`.
 
 Plan:
 
@@ -144,7 +144,13 @@ Expected outcomes:
 
 ## 6. M002 — Local administrator and session persistence
 
-Status: blocked on M001.
+Status: ready. M001 closed strictly.
+
+Carry-forward from the M001 closure: `src/state/schema/mod.rs` currently
+exercises the migration runner through a `#[cfg(test)]`-only step stamped at
+version 2. A genuine migration 2 collides with it, so M002 must **replace** that
+harness with fixtures built from the production v1 schema rather than extend it.
+The Phase 6 closure record already anticipated this.
 
 Plan:
 
@@ -360,7 +366,7 @@ unit routing/security primitives
 
 | Milestone | Status | Plan | Blocker |
 |---|---|---|---|
-| M001 EggServe + management worker | ready | `plans/implementation/management-service/001-eggserve-runtime-and-management-worker.md` | — |
-| M002 admin/session persistence | blocked | `plans/implementation/management-service/002-local-admin-and-session-persistence.md` | M001 |
+| M001 EggServe + management worker | closed | `plans/implementation/management-service/001-eggserve-runtime-and-management-worker.md` | — |
+| M002 admin/session persistence | ready | `plans/implementation/management-service/002-local-admin-and-session-persistence.md` | M001 closed |
 | M003 authenticated HTTP perimeter | blocked | `plans/implementation/management-service/003-authenticated-http-security-perimeter.md` | M002 |
 | M004 lifecycle + Phase 7 qualification | blocked | `plans/implementation/management-service/004-service-lifecycle-and-phase7-qualification.md` | M003 |
