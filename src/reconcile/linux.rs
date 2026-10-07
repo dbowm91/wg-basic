@@ -95,7 +95,12 @@ impl ReconcileBackend for LinuxNetworkBackend {
                 if route_output_interface(&message) != Some(ifindex) {
                     continue;
                 }
-                if message.header.kind != RouteType::Unicast || route_table(&message) != 254 {
+                if route_table(&message) != 254 {
+                    // The kernel creates local-table routes for assigned addresses;
+                    // those are address-derived, not independently managed routes.
+                    continue;
+                }
+                if message.header.kind != RouteType::Unicast {
                     unsupported_route_count += 1;
                     continue;
                 }
@@ -204,10 +209,7 @@ impl ReconcileBackend for LinuxNetworkBackend {
                     .add(route_message(&route, index)?)
                     .execute()
                     .await
-                    .map_err(|error| {
-                        eprintln!("add route failed: {error:?}");
-                        ReconcileError::BackendFailure
-                    })
+                    .map_err(|_| ReconcileError::BackendFailure)
             }),
             Mutation::RemoveRoute(route) => self.with_handle(|handle| async move {
                 let index = lookup_link_index(&handle, interface).await?;
