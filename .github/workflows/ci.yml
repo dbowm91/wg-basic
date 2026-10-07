@@ -66,3 +66,15 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y iproute2 nftables
       - name: Qualify durable owner tags and generation-aware aggregate reconcile
         run: sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo cargo test --locked --features linux-integration --test durable_owner -- --test-threads=1
+
+  durable-restart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y iproute2 nftables
+      - name: Qualify startup recovery against real processes, SQLite, and the kernel
+        run: sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo cargo test --locked --features linux-integration --test durable_restart -- --test-threads=1 --nocapture

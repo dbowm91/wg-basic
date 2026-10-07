@@ -38,3 +38,25 @@ sudo -E cargo test --locked --features linux-integration --test wireguard_kernel
 ```
 
 The test starts its netd workers inside the two temporary network namespaces so each typed request controls the device in that namespace. CI runs this target on a rootful Linux runner; when `CI` is set, unavailable namespace/kernel prerequisites fail the test instead of silently skipping kernel evidence.
+
+## Durable ownership and restart fixtures
+
+Two rootful suites qualify the durable-state milestones against the real kernel. Both need root, `iproute2`, `nftables`, and kernel WireGuard support, and both serialize with `--test-threads=1` because each creates disposable network namespaces with fixed names.
+
+Owner tags and the generation-aware aggregate reconcile:
+
+```sh
+sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo \
+  cargo test --locked --features linux-integration --test durable_owner -- --test-threads=1
+```
+
+Startup reconciliation and crash/restart recovery:
+
+```sh
+sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo \
+  cargo test --locked --features linux-integration --test durable_restart -- --test-threads=1
+```
+
+`durable_restart` is a process-level fixture: it runs the real `wg-basic netd` binary and the real `wg-basic reconcile` management role as separate child processes against a temporary on-disk SQLite file, disposable namespaces, real RTNETLINK, and real nftables. It proves restart recovery rather than in-process reconstruction, so it depends on a built `wg-basic` executable and leaves its `netd` children to be reaped by the harness. CI runs these as the `durable-owner` and `durable-restart` jobs.
+
+The `-E env ... CARGO_HOME=...` form exists because `sudo` resets `HOME`, and Cargo needs a writable home to resolve the toolchain and registry cache when the tests are run as root.
