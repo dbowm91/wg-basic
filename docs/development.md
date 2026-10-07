@@ -57,6 +57,13 @@ sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo \
   cargo test --locked --features linux-integration --test durable_restart -- --test-threads=1
 ```
 
-`durable_restart` is a process-level fixture: it runs the real `wg-basic netd` binary and the real `wg-basic reconcile` management role as separate child processes against a temporary on-disk SQLite file, disposable namespaces, real RTNETLINK, and real nftables. It proves restart recovery rather than in-process reconstruction, so it depends on a built `wg-basic` executable and leaves its `netd` children to be reaped by the harness. CI runs these as the `durable-owner` and `durable-restart` jobs.
+Restored-state qualification (three namespaces, real handshake, forwarding, and NAT from a restored database):
+
+```sh
+sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo \
+  cargo test --locked --features linux-integration --test durable_backup -- --test-threads=1
+```
+
+`durable_restart` is a process-level fixture: it runs the real `wg-basic netd` binary and the real `wg-basic reconcile` management role as separate child processes against a temporary on-disk SQLite file, disposable namespaces, real RTNETLINK, and real nftables. It proves restart recovery rather than in-process reconstruction, so it depends on a built `wg-basic` executable and leaves its `netd` children to be reaped by the harness. CI runs these as the `durable-owner`, `durable-restart`, and `durable-backup` jobs.
 
 The `-E env ... CARGO_HOME=...` form exists because `sudo` resets `HOME`, and Cargo needs a writable home to resolve the toolchain and registry cache when the tests are run as root.

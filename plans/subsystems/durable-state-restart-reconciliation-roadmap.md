@@ -1,6 +1,6 @@
 # Durable State and Restart Reconciliation Roadmap
 
-Status: active; M001-M003 closed, M004 ready
+Status: closed. Phase 6 is complete; M001-M004 are all closed.
 
 Canonical references:
 
@@ -268,7 +268,7 @@ Exit conditions:
 
 ## 9. Milestone M004 — Backup, restore, migration, and Phase 6 qualification
 
-Status: ready. Unblocked by durable-state M003 strict closure at `6a9cbc7`.
+Status: closed at `772203d`. Unblocked by durable-state M003 strict closure at `6a9cbc7`. Closure record: `plans/closure/durable-state/004-status.md`. Phase 6 closes with this milestone.
 
 Primary class: capability / operational invariant.
 
@@ -475,4 +475,4 @@ Phase 6 closure requires re-running the existing M003–M005 kernel/network suit
 | M001 SQLite store + generations | closed | `plans/implementation/durable-state/001-sqlite-state-store-and-generations.md` | — |
 | M002 durable ownership + aggregate reconcile | closed | `plans/implementation/durable-state/002-durable-ownership-and-generation-reconcile.md` | — |
 | M003 startup reconciliation + recovery | closed | `plans/implementation/durable-state/003-startup-reconciliation-and-recovery.md` | — |
-| M004 backup/restore + migration qualification | ready | `plans/implementation/durable-state/004-backup-restore-and-migration-qualification.md` | — |
+| M004 backup/restore + migration qualification | closed | `plans/implementation/durable-state/004-backup-restore-and-migration-qualification.md` | — |
