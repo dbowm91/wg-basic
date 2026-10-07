@@ -222,7 +222,7 @@ fn kernel_reconciliation_manages_link_address_and_route_and_preserves_other_link
     };
 
     let first = apply(&netd, managed_state());
-    assert_eq!(first.status, ApplyStatus::Applied);
+    assert_eq!(first.status, ApplyStatus::Applied, "receipt: {first:?}");
     assert!(first.completed_actions >= 4);
     let second = apply(&netd, managed_state());
     assert_eq!(second.status, ApplyStatus::NoChange);
