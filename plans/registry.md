@@ -61,20 +61,20 @@ Runtime dependency adoption remains evidence-driven.
 
 | Subsystem | Status | Roadmap | Current milestone |
 |---|---|---|---|
-| Linux network-control foundation | active planning | `plans/subsystems/network-control-roadmap.md` | M001 closed; M002 ready |
+| Linux network-control foundation | active planning | `plans/subsystems/network-control-roadmap.md` | M001 closed; M002 active |
 | Durable state/restart reconciliation | proposed | not yet written | begins after stable M004/M005 contracts |
 | Management service/auth/UI | proposed | not yet written | begins after privilege protocol + stable network foundation |
 | Distribution/install/update | proposed | not yet written | begins after service/state layout stabilizes |
 
 Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
 
-## 5. Dependency-ready implementation plans
+## 5. Ready and active implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
-| Network control | M002 privileged protocol/capability boundary | **ready** | `plans/implementation/network-control/002-privileged-protocol-and-capability-boundary.md` | M001 strict closure recorded; baseline revalidated at `e27034e` |
+| Network control | M002 privileged protocol/capability boundary | **active** | `plans/implementation/network-control/002-privileged-protocol-and-capability-boundary.md` | M001 strict closure recorded; baseline revalidated at `2796220` |
 
-M002 is the only implementation-ready plan.
+M002 is the only active/eligible implementation plan.
 
 ## 6. Blocked implementation plans
 
@@ -90,9 +90,9 @@ The blocked plans are pre-researched handoffs. Before implementation, revalidate
 
 - M001 strict closure: `plans/closure/network-control/001-status.md`.
 
-## 8. Immediate M002 handoff summary
+## 8. Active M002 implementation summary
 
-The next implementation agent should implement only M002.
+M002 is active against the closed M001 baseline.
 
 Core constraints:
 
@@ -164,7 +164,7 @@ If later implementation evidence reveals a material architecture contradiction, 
 Expected transition:
 
 ```text
-M002 ready
+M002 active
   -> implementation
   -> closing
   -> closure record

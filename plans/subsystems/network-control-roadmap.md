@@ -1,6 +1,6 @@
 # Network Control Foundation Roadmap
 
-Status: active planning; M001 closed, M002 ready
+Status: active planning; M001 closed, M002 active
 
 Canonical references:
 
@@ -167,7 +167,7 @@ Exit conditions:
 
 ## 8. Milestone M002 — Privileged protocol and host capability boundary
 
-Status: ready.
+Status: active.
 
 Primary class: invariant / infrastructure.
 
