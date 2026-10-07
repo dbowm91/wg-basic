@@ -1,6 +1,7 @@
 # Management Service M003 — Authenticated HTTP Security Perimeter
 
-Status: ready. M002 is closed (`plans/closure/management-service/002-status.md`).
+Status: closed. Closure record: `plans/closure/management-service/003-status.md`.
+Final implementation head: `cfe6860`. Disposition: **closed**.
 
 Source roadmap:
 
@@ -13,6 +14,9 @@ Canonical requirement:
 Primary class: security / capability
 
 Hard dependency: M002 strict closure — **satisfied** at `60d1482`, closed 2026-10-07.
+M002's two defects found during M003 (`admin set-password` on a fresh path, and
+the username-miss timing oracle) are recorded in the M003 closure record and
+corrected there; this record is the historical plan and is not rewritten.
 
 Carry-forward from the M002 closure: measured Argon2id cost is ~300 ms per
 verification at m=19 MiB, t=2, p=1. With one worker thread and a 5-second reply

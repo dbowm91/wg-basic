@@ -1,6 +1,6 @@
 # Management Service M004 — Service Lifecycle and Phase 7 Qualification
 
-Status: blocked on M003 closure
+Status: ready. M003 is closed (`plans/closure/management-service/003-status.md`).
 
 Source roadmap:
 
@@ -8,7 +8,16 @@ Source roadmap:
 
 Primary class: operational invariant / qualification
 
-Hard dependency: M003 strict closure.
+Hard dependency: M003 strict closure — **satisfied** at `cfe6860`.
+
+Carry-forward from the M003 closure: the security headers are applied in exactly
+one place (`headers::seal`, wrapping the completed answer in
+`ManagementService::dispatch`), and architecture guards fail if that moves, or if
+`Response::builder()` or a `ResponseBody` appears outside `response.rs`/`api.rs`.
+The embedded asset shell must go through that same path. `/healthz` stays
+unauthenticated with a body of exactly `ok` or `degraded`; readiness
+differentiation must not widen it. The login limiter is in-memory by design and
+resets on restart, and M004 must not add persistence for it.
 
 ## 1. Objective
 
