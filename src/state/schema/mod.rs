@@ -76,6 +76,30 @@ pub fn open_connection(
     Ok(connection)
 }
 
+/// Applies the hardened connection contract without running any migration.
+///
+/// Exists only so a test can populate a genuine historical database *before*
+/// something upgrades it. Every production path migrates on open, which is what
+/// `open_connection` does.
+#[cfg(test)]
+pub(crate) fn open_connection_without_migrating(
+    path: &Path,
+    expected_uid: u32,
+) -> Result<Connection, StateError> {
+    // Every check `open_connection` performs is still performed here; only the
+    // snapshot-and-migrate tail is skipped.
+    validation::verify_path(path, OpenIntent::Reopen, expected_uid)?;
+    let connection = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+    )
+    .map_err(|_| StateError::DatabaseOpenFailed)?;
+    validation::configure(&connection)?;
+    Ok(connection)
+}
+
 /// Applies the read side of the connection contract without migrating.
 ///
 /// A restore validates a private staging copy that it owns, so it must apply
@@ -147,7 +171,7 @@ pub(crate) fn now_seconds() -> i64 {
 mod tests {
     use super::migrations::{
         apply_migrations, initialize_at_version, recovery_snapshot, recovery_snapshot_path,
-        test_only_migrations, MIGRATIONS,
+        MIGRATIONS,
     };
     use super::validation::DATABASE_MODE;
     use super::*;
@@ -299,7 +323,7 @@ mod tests {
     }
 
     #[test]
-    fn migration_zero_to_one_creates_the_initial_schema() {
+    fn migration_zero_to_head_creates_every_schema() {
         let temp = TempDir::new();
         let store = StateStore::initialize(temp.db()).unwrap();
         drop(store);
@@ -308,7 +332,11 @@ mod tests {
         let user_version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(user_version, 1);
+        assert_eq!(user_version, migrations::supported_version());
+        assert_eq!(
+            user_version, 2,
+            "a fresh database is created at the current head, never behind it"
+        );
 
         for table in [
             "installation",
@@ -351,7 +379,7 @@ mod tests {
             StateStore::open(temp.db()),
             Err(StateError::SchemaTooNew {
                 found: 9999,
-                supported: 1
+                supported: 2
             })
         ));
     }
@@ -468,10 +496,11 @@ mod tests {
         assert!(DesiredGeneration::from_storage(-1).is_none());
     }
 
-    /// Builds a database at the one real migration boundary.
+    /// Builds a genuine version-1 database from the production migration list.
     ///
-    /// Phase 6 shipped a single migration, so this is the only genuine "older
-    /// schema" constructible without shipping a meaningless one.
+    /// Since Phase 7 M002 added migration 2, this is a real historical schema:
+    /// exactly what a user who installed wg-basic during Phase 6 would still have
+    /// on disk. It is no longer a simulation.
     fn historical_v1(temp: &TempDir) {
         migrations::initialize_at_version(&temp.db(), 1).expect("historical v1 fixture");
     }
@@ -483,15 +512,19 @@ mod tests {
             .expect("user_version is readable")
     }
 
-    /// Commits a real typed snapshot at generation 2 and returns it with the
-    /// installation identity, so a later step can compare against the upgrade.
+    /// Commits a real typed snapshot at generation 2 into the historical file and
+    /// returns it with the installation identity, so a later step can compare it
+    /// against the upgrade. The store is opened without migrating, so the rows
+    /// really do exist at schema version 1.
     fn commit_snapshot_at_v2(
         temp: &TempDir,
     ) -> (
         crate::domain::InstallationId,
         crate::state::CommittedDesiredState,
     ) {
-        let store = StateStore::open(temp.db()).unwrap();
+        // Opened *without* migrating, so the committed rows are written into a
+        // genuine version-1 file and the later upgrade has real data to preserve.
+        let store = StateStore::open_without_migrating(temp.db()).unwrap();
         let committed = store
             .mutate(crate::domain::INITIAL_DESIRED_GENERATION, |_| {
                 Ok(populated_state())
@@ -503,15 +536,18 @@ mod tests {
         (identity, committed)
     }
 
-    /// Applies the simulated upgrade and re-stamps the file to version 1.
+    /// Applies the real production upgrade from version 1 to the current head.
     ///
-    /// The re-stamp exists purely so the *production* reader will open a
-    /// test-only schema version; it changes no rows, so the typed state read
-    /// afterwards is still the state the migration produced.
-    fn apply_simulated_upgrade(temp: &TempDir) {
+    /// This is no longer simulated: it runs `MIGRATIONS`, the same list the
+    /// production opener runs, against a genuine version-1 file. No re-stamping
+    /// is needed because the resulting version is one this binary supports.
+    fn apply_production_upgrade(temp: &TempDir) {
         let mut connection = Connection::open(temp.db()).unwrap();
-        migrations::apply_migrations(&mut connection, &migrations::test_only_migrations()).unwrap();
-        connection.execute("PRAGMA user_version = 1", []).unwrap();
+        migrations::apply_migrations(&mut connection, MIGRATIONS).unwrap();
+        assert_eq!(
+            user_version_of(&connection),
+            migrations::supported_version()
+        );
         connection.close().unwrap();
     }
 
@@ -528,17 +564,20 @@ mod tests {
             "the fixture must start at the historical boundary"
         );
 
-        migrations::apply_migrations(&mut connection, &migrations::test_only_migrations()).unwrap();
+        migrations::apply_migrations(&mut connection, MIGRATIONS).unwrap();
         assert_eq!(user_version_of(&connection), 2);
 
-        let marker_exists: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'test_only_marker'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(marker_exists, 1, "the new version must apply its schema");
+        // The new version must actually have created its schema.
+        for table in ["admin_principals", "admin_sessions"] {
+            let exists: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(exists, 1, "{table} must exist after the upgrade");
+        }
 
         let stored_identity: String = connection
             .query_row(
@@ -550,19 +589,10 @@ mod tests {
         assert_eq!(stored_identity, identity.to_string());
         connection.close().unwrap();
 
-        // The simulated version is genuinely newer than what this binary
-        // ships, so the production opener must refuse it rather than guess.
-        let error = StateStore::open(temp.db()).unwrap_err();
-        assert!(
-            matches!(
-                error,
-                StateError::SchemaTooNew {
-                    found: 2,
-                    supported: 1
-                }
-            ),
-            "a schema newer than the binary must fail closed: {error:?}"
-        );
+        // The production opener must accept the migrated file: version 2 is one
+        // this binary actually supports, so refusing it would be a false alarm.
+        StateStore::open(temp.db())
+            .expect("a migrated database must open through the production path");
     }
 
     #[test]
@@ -571,7 +601,7 @@ mod tests {
         historical_v1(&temp);
         let (identity, expected) = commit_snapshot_at_v2(&temp);
 
-        apply_simulated_upgrade(&temp);
+        apply_production_upgrade(&temp);
 
         let store = StateStore::open(temp.db()).unwrap();
         let metadata = store.installation_metadata().unwrap();
@@ -601,10 +631,10 @@ mod tests {
         let temp = TempDir::new();
         historical_v1(&temp);
 
-        // The production list stops at version 1, so a database stamped 2 is
+        // The production list stops at version 2, so a database stamped 3 comes
         // from a future binary.
         let connection = Connection::open(temp.db()).unwrap();
-        connection.execute("PRAGMA user_version = 2", []).unwrap();
+        connection.execute("PRAGMA user_version = 3", []).unwrap();
         drop(connection);
 
         let mut connection = Connection::open(temp.db()).unwrap();
@@ -613,8 +643,8 @@ mod tests {
             matches!(
                 error,
                 StateError::SchemaTooNew {
-                    found: 2,
-                    supported: 1
+                    found: 3,
+                    supported: 2
                 }
             ),
             "{error:?}"
@@ -640,7 +670,7 @@ mod tests {
             )
             .expect("seed a dangling client row");
 
-        let error = apply_migrations(&mut connection, &test_only_migrations()).unwrap_err();
+        let error = apply_migrations(&mut connection, MIGRATIONS).unwrap_err();
         assert!(
             matches!(error, StateError::MigrationFailed { version: 2, .. }),
             "a foreign-key violation must fail the migration: {error:?}"

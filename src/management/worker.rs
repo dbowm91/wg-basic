@@ -26,13 +26,33 @@
 //!
 //! # Command vocabulary
 //!
-//! M001 ships exactly two commands, [`WorkerCommand::Health`] and
-//! [`WorkerCommand::Shutdown`]. Both the command set and the reply types are
-//! closed enums, so adding an operation is a visible, deliberate change rather
-//! than a new stringly-typed channel message.
+//! # Why authentication belongs behind this queue
+//!
+//! Argon2id at the management policy costs tens of milliseconds and 19 MiB per
+//! verification. That is the work factor that makes an offline attack on a
+//! stolen verifier expensive, and it is far too expensive to run on a Tokio
+//! worker thread. Worse, unbounded concurrent verification is exactly the CPU
+//! denial of service the management roadmap warns about. Routing authentication
+//! through the same bounded queue as everything else is what makes both
+//! properties true rather than aspirational.
+//!
+//! # Closed vocabulary
+//!
+//! The command set and every reply type are closed enums, so adding an
+//! operation is a visible, deliberate change rather than a new stringly-typed
+//! channel message. Credentials cross the queue as owned `String`s, never as
+//! references into a caller's frame.
 
-use super::{error::ManagementError, health::ManagementHealth, runtime::ManagementRuntime};
-use crate::{domain::DesiredGeneration, state::AttemptDisposition};
+use super::{
+    auth::{AdminStatus, AuthError, AuthService, IssuedSession},
+    error::ManagementError,
+    health::ManagementHealth,
+    runtime::ManagementRuntime,
+};
+use crate::{
+    domain::{DesiredGeneration, PrincipalId},
+    state::{AttemptDisposition, StoredSession},
+};
 use std::{
     path::{Path, PathBuf},
     sync::mpsc as std_mpsc,
@@ -56,8 +76,82 @@ pub enum WorkerCommand {
     Health {
         reply: oneshot::Sender<Result<ManagementHealth, ManagementError>>,
     },
+    /// Provision or reset the local administrator, revoking every session.
+    SetAdminPassword {
+        username: String,
+        password: String,
+        reply: oneshot::Sender<Result<AdminStatus, AuthFailure>>,
+    },
+    /// Verify credentials and issue a session.
+    ///
+    /// The only command whose reply ever carries a raw session token, and it
+    /// carries it exactly once.
+    Authenticate {
+        username: String,
+        password: String,
+        reply: oneshot::Sender<Result<IssuedSession, AuthFailure>>,
+    },
+    /// Resolve a presented bearer token to a live session.
+    ResolveSession {
+        presented: String,
+        reply: oneshot::Sender<Result<StoredSession, AuthFailure>>,
+    },
+    /// Revoke one session (logout).
+    RevokeSession {
+        presented: String,
+        reply: oneshot::Sender<Result<(), AuthFailure>>,
+    },
+    /// Revoke every session belonging to one principal.
+    RevokeAllSessions {
+        principal_id: PrincipalId,
+        reply: oneshot::Sender<Result<usize, AuthFailure>>,
+    },
+    /// Delete expired sessions, reporting how many went.
+    PurgeExpiredSessions {
+        reply: oneshot::Sender<Result<usize, AuthFailure>>,
+    },
+    /// The safe operator-facing projection of the local administrator.
+    AdminStatus {
+        reply: oneshot::Sender<Result<Option<AdminStatus>, AuthFailure>>,
+    },
     /// Stop the worker; the reply confirms the stop was observed.
     Shutdown { reply: oneshot::Sender<()> },
+}
+
+/// Why a command was refused.
+///
+/// A separate type from [`ManagementError`] on purpose: an authentication
+/// failure is an answer about a credential, and a management failure is an
+/// answer about the appliance. Collapsing them would make every route handler
+/// decide which of the two it is looking at before it can pick a status.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum AuthFailure {
+    /// The credentials were not accepted, or the session was not valid.
+    #[error("the credentials were not accepted")]
+    Rejected,
+    /// The credentials were accepted but the session could not be issued.
+    #[error("a session could not be issued")]
+    Unavailable,
+    /// An administrative credential operation failed.
+    #[error("the credential store is unavailable")]
+    Storage,
+}
+
+impl From<AuthError> for AuthFailure {
+    fn from(error: AuthError) -> Self {
+        use AuthError as Error;
+        match error {
+            Error::CredentialsRejected | Error::SessionInvalid | Error::UsernameInvalid => {
+                Self::Rejected
+            }
+            Error::SessionUnavailable | Error::RandomUnavailable | Error::MalformedVerifier => {
+                Self::Unavailable
+            }
+            Error::PrincipalExists | Error::NoPrincipal | Error::StorageUnavailable => {
+                Self::Storage
+            }
+        }
+    }
 }
 
 /// Why a command did not produce its reply.
@@ -79,6 +173,18 @@ pub enum WorkerError {
     /// The worker answered, and the operation itself failed.
     #[error(transparent)]
     Failed(#[from] ManagementError),
+    /// The credentials were not accepted, or the session was not valid.
+    ///
+    /// A refusal, not a fault. It arrives as an error only because the caller has
+    /// to do something with it; a retry will not help.
+    #[error("the credentials were not accepted")]
+    Rejected,
+    /// The credentials were accepted but the session could not be issued.
+    #[error("a session could not be issued")]
+    Unavailable,
+    /// An administrative credential operation failed.
+    #[error("the credential store is unavailable")]
+    Storage,
 }
 
 impl WorkerError {
@@ -88,6 +194,13 @@ impl WorkerError {
     /// product failures, so an HTTP surface maps them to 503.
     pub fn is_overload(&self) -> bool {
         matches!(self, Self::Saturated | Self::TimedOut | Self::Stopped)
+    }
+
+    /// Whether this failure is a refusal rather than a fault.
+    ///
+    /// A caller must not retry a refusal, and must not present it as an outage.
+    pub fn is_refusal(&self) -> bool {
+        matches!(self, Self::Rejected)
     }
 }
 
@@ -166,6 +279,109 @@ impl WorkerClient {
         match self.await_reply(answer).await? {
             Ok(health) => Ok(health),
             Err(failed) => Err(WorkerError::Failed(failed)),
+        }
+    }
+
+    /// Provisions or resets the local administrator, revoking every session.
+    ///
+    /// Takes owned `String`s so no borrow of a request frame outlives the await.
+    pub async fn set_admin_password(
+        &self,
+        username: String,
+        password: String,
+    ) -> Result<AdminStatus, WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::SetAdminPassword {
+            username,
+            password,
+            reply,
+        })
+        .await?;
+        self.auth_reply(answer).await
+    }
+
+    /// Verifies credentials and issues a session.
+    ///
+    /// This is the only call that ever returns a raw session token, and it
+    /// returns it exactly once. A caller that drops the reply without reading it
+    /// has minted a session nobody can use, which is the correct failure mode:
+    /// the alternative -- handing back the token on a retry -- would make a lost
+    /// reply into a credential leak.
+    pub async fn authenticate(
+        &self,
+        username: String,
+        password: String,
+    ) -> Result<IssuedSession, WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::Authenticate {
+            username,
+            password,
+            reply,
+        })
+        .await?;
+        self.auth_reply(answer).await
+    }
+
+    /// Resolves a presented bearer token to a live session.
+    pub async fn resolve_session(&self, presented: String) -> Result<StoredSession, WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::ResolveSession { presented, reply })
+            .await?;
+        self.auth_reply(answer).await
+    }
+
+    /// Revokes one session (logout).
+    pub async fn revoke_session(&self, presented: String) -> Result<(), WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::RevokeSession { presented, reply })
+            .await?;
+        self.auth_reply(answer).await
+    }
+
+    /// Revokes every session belonging to one principal.
+    pub async fn revoke_all_sessions(
+        &self,
+        principal_id: PrincipalId,
+    ) -> Result<usize, WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::RevokeAllSessions {
+            principal_id,
+            reply,
+        })
+        .await?;
+        self.auth_reply(answer).await
+    }
+
+    /// Deletes expired sessions, reporting how many went.
+    pub async fn purge_expired_sessions(&self) -> Result<usize, WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::PurgeExpiredSessions { reply })
+            .await?;
+        self.auth_reply(answer).await
+    }
+
+    /// The safe operator-facing projection of the local administrator.
+    pub async fn admin_status(&self) -> Result<Option<AdminStatus>, WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::AdminStatus { reply }).await?;
+        self.auth_reply(answer).await
+    }
+
+    /// Awaits an authentication reply under the configured deadline.
+    ///
+    /// `WorkerError::Failed` is deliberately never produced here: an
+    /// authentication refusal is a successful round trip carrying a refusal, not
+    /// a transport failure. Collapsing the two would make a caller retry a
+    /// rejected password.
+    async fn auth_reply<T>(
+        &self,
+        answer: oneshot::Receiver<Result<T, AuthFailure>>,
+    ) -> Result<T, WorkerError> {
+        match self.await_reply(answer).await? {
+            Ok(value) => Ok(value),
+            Err(AuthFailure::Rejected) => Err(WorkerError::Rejected),
+            Err(AuthFailure::Unavailable) => Err(WorkerError::Unavailable),
+            Err(AuthFailure::Storage) => Err(WorkerError::Storage),
         }
     }
 
@@ -342,6 +558,10 @@ fn run(
 }
 
 /// The command loop. The runtime is the only thing this thread owns.
+///
+/// The loop is exhaustive over [`WorkerCommand`] on purpose: adding a command
+/// without deciding how it is served is a compile error, so the bounded queue
+/// can never grow a path that quietly does something else.
 fn serve(runtime: ManagementRuntime, receiver: &mut mpsc::Receiver<WorkerCommand>) {
     while let Some(command) = receiver.blocking_recv() {
         match command {
@@ -351,6 +571,60 @@ fn serve(runtime: ManagementRuntime, receiver: &mut mpsc::Receiver<WorkerCommand
                 // rather than raising.
                 let _ = reply.send(Ok(runtime.health()));
             }
+            WorkerCommand::SetAdminPassword {
+                username,
+                password,
+                reply,
+            } => {
+                let auth = AuthService::new(runtime.store());
+                let _ = reply.send(
+                    auth.set_password(&username, &password)
+                        .map(|principal| {
+                            auth.status()
+                                .ok()
+                                .flatten()
+                                .unwrap_or_else(|| status_from(&principal))
+                        })
+                        .map_err(AuthFailure::from),
+                );
+            }
+            WorkerCommand::Authenticate {
+                username,
+                password,
+                reply,
+            } => {
+                let auth = AuthService::new(runtime.store());
+                let _ = reply.send(
+                    auth.authenticate(&username, &password)
+                        .map_err(AuthFailure::from),
+                );
+            }
+            WorkerCommand::ResolveSession { presented, reply } => {
+                let auth = AuthService::new(runtime.store());
+                let _ = reply.send(auth.resolve_session(&presented).map_err(AuthFailure::from));
+            }
+            WorkerCommand::RevokeSession { presented, reply } => {
+                let auth = AuthService::new(runtime.store());
+                let _ = reply.send(auth.revoke_session(&presented).map_err(AuthFailure::from));
+            }
+            WorkerCommand::RevokeAllSessions {
+                principal_id,
+                reply,
+            } => {
+                let auth = AuthService::new(runtime.store());
+                let _ = reply.send(
+                    auth.revoke_all_sessions(principal_id)
+                        .map_err(AuthFailure::from),
+                );
+            }
+            WorkerCommand::PurgeExpiredSessions { reply } => {
+                let auth = AuthService::new(runtime.store());
+                let _ = reply.send(auth.purge_expired_sessions().map_err(AuthFailure::from));
+            }
+            WorkerCommand::AdminStatus { reply } => {
+                let auth = AuthService::new(runtime.store());
+                let _ = reply.send(auth.status().map_err(AuthFailure::from));
+            }
             WorkerCommand::Shutdown { reply } => {
                 let _ = reply.send(());
                 break;
@@ -358,6 +632,22 @@ fn serve(runtime: ManagementRuntime, receiver: &mut mpsc::Receiver<WorkerCommand
         }
     }
     // Falling out of the loop drops `runtime`, which closes the state store.
+}
+
+/// Projects a principal that was just written into an [`AdminStatus`].
+///
+/// Used only when the re-read after a write is somehow unavailable, so the
+/// caller still gets the identity and username it just stored rather than
+/// nothing at all.
+fn status_from(principal: &crate::state::PrincipalRecord) -> AdminStatus {
+    AdminStatus {
+        principal_id: principal.id,
+        username: principal.username.clone(),
+        enabled: principal.enabled,
+        live_sessions: 0,
+        created_at: principal.created_at,
+        updated_at: principal.updated_at,
+    }
 }
 
 #[cfg(test)]

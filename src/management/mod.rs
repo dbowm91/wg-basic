@@ -49,12 +49,17 @@
 //! It reaches the network only through the authorized netd socket, and it never
 //! spawns netd itself.
 
+mod auth;
 mod coordinator;
 mod error;
 mod health;
 mod runtime;
 mod worker;
 
+pub use auth::{
+    set_password_at, status_at, AdminStatus, AuthError, AuthService, IssuedSession,
+    VerificationCost,
+};
 pub use coordinator::{CoordinatorAction, ReconcileCoordinator};
 pub use error::{FailureClass, ManagementError, ProjectionFailure};
 pub use health::{ConvergenceState, ManagementHealth};

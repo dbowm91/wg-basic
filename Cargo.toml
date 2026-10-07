@@ -10,11 +10,22 @@ description = "A small Linux-native WireGuard management appliance"
 linux-integration = []
 
 [dependencies]
+# Argon2id credential hashing (Phase 7 M002). Default features give the PHC
+# self-describing verifier and the OS-CSRNG salt source; `argon2::Params`
+# defaults are exactly the policy the management roadmap requires
+# (19 MiB, t=2, p=1) and are asserted in `domain::auth`.
+argon2 = "0.6"
 base64 = "0.22"
 clap = { version = "4.5", features = ["derive"] }
+# Session bearer and CSRF token entropy comes from the OS CSPRNG directly, so
+# the randomness source is an explicit, auditable dependency rather than a
+# feature of a transitive crate.
+getrandom = "0.3"
 ipnet = { version = "2.11", features = ["serde"] }
 rusqlite = { version = "0.40", default-features = false, features = ["bundled", "backup"] }
+# SHA-256 session-token digests. The raw token never reaches SQLite.
 serde = { version = "1.0", features = ["derive"] }
+sha2 = "0.11"
 thiserror = "2.0"
 uuid = { version = "1.18", features = ["v4", "serde"] }
 zeroize = "1.8"

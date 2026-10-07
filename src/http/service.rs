@@ -119,6 +119,13 @@ impl ManagementService {
 }
 
 /// Maps a worker failure onto the bounded HTTP vocabulary.
+///
+/// Only `/healthz` exists in M002, and it calls `health()`, so the authentication
+/// variants below are unreachable on this route. They are mapped to the same
+/// bounded 503 rather than to a guessed status, because guessing here would be
+/// worse than one honest answer: M003 introduces the login and session routes and
+/// replaces this function with the real status mapping, at which point an
+/// unreachable arm here would be removed rather than reinterpreted.
 fn response_for_worker_error(error: WorkerError) -> Response {
     match error {
         // Overload: the listener is fine, the operator's appliance is busy or
@@ -129,6 +136,10 @@ fn response_for_worker_error(error: WorkerError) -> Response {
         // A worker-reported product failure is a server fault, not an overload
         // answer, and still carries no detail.
         WorkerError::Failed(_) => response::internal_error(),
+        // Unreachable from `/healthz` in M002; see the note above.
+        WorkerError::Rejected | WorkerError::Unavailable | WorkerError::Storage => {
+            response::unavailable()
+        }
     }
 }
 
