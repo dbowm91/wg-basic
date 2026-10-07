@@ -1,6 +1,6 @@
 # Management Service M002 — Local Administrator and Session Persistence
 
-Status: blocked on M001 closure
+Status: ready. M001 is closed (`plans/closure/management-service/001-status.md`).
 
 Source roadmap:
 
@@ -12,7 +12,7 @@ Canonical requirement:
 
 Primary class: security / persistence
 
-Hard dependency: M001 strict closure.
+Hard dependency: M001 strict closure — **satisfied** at `5b57d49`, closed 2026-10-07.
 
 ## 1. Objective
 

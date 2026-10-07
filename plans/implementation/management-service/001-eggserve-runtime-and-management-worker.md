@@ -1,6 +1,6 @@
 # Management Service M001 — EggServe Runtime and Bounded Management Worker
 
-Status: ready
+Status: closed. See `plans/closure/management-service/001-status.md`.
 
 Repository baseline: `c49c2eb3ec85b671849be4f8aa9ab2d622d9764e`
 
