@@ -1,300 +1,26 @@
-//! Typed desired/observed reconciliation for one explicitly managed Linux interface.
+//! Pure desired-versus-observed planning for one explicitly managed interface.
+//!
+//! Planning is deterministic and side-effect free: it never touches a backend and
+//! never observes the kernel. The resulting mutation order is the contract the
+//! application service executes.
 
-mod linux;
-
-pub use linux::LinuxNetworkBackend;
-
+use super::model::{
+    DesiredManagedInterface, LinkLifecycle, MutationKind, ObservedLinkKind,
+    ObservedManagedInterface, ObservedRoute, OwnershipDeclaration, PlannedAction, ReconcileError,
+    ReconcilePlanSummary, ResourcePresence,
+};
 use crate::{
-    domain::{InterfaceName, NetworkPrefix, PrivateKey, PublicKey},
+    domain::{NetworkPrefix, PrivateKey},
     wireguard::{
-        derive_public_key, prefixes_overlap, validate_allowed_ips, DesiredWireGuardPeer,
-        FieldUpdate, ObservedWireGuardDevice, PeerMutation, WireGuardDevicePatch,
-        WireGuardPeerPatch, WireGuardValidationError,
+        derive_public_key, prefixes_overlap, DesiredWireGuardPeer, FieldUpdate, PeerMutation,
+        WireGuardDevicePatch, WireGuardPeerPatch, WireGuardValidationError,
     },
 };
 use ipnet::IpNet;
-use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr};
-use std::sync::Mutex;
-
-const MAX_MANAGED_ADDRESSES: usize = 256;
-const MAX_MANAGED_ROUTES: usize = 256;
-const MAX_MANAGED_PEERS: usize = 256;
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OwnershipDeclaration {
-    Managed,
-    ObserveOnly,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LinkLifecycle {
-    Present,
-    Absent,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ResourcePresence {
-    Present,
-    Absent,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct DesiredAddress {
-    pub address: IpNet,
-    pub presence: ResourcePresence,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ManagedRoute {
-    pub destination: NetworkPrefix,
-    pub gateway: Option<IpAddr>,
-    pub presence: ResourcePresence,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct DesiredWireGuardConfiguration {
-    pub private_key: PrivateKey,
-    pub listen_port: u16,
-    pub peers: Vec<DesiredManagedPeer>,
-    /// True authorizes removal of peers absent from this desired collection.
-    pub manage_all_peers: bool,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct DesiredManagedPeer {
-    pub public_key: PublicKey,
-    pub allowed_ips: Vec<NetworkPrefix>,
-    pub persistent_keepalive_seconds: Option<u16>,
-    pub endpoint: Option<std::net::SocketAddr>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct DesiredManagedInterface {
-    pub interface: InterfaceName,
-    pub ownership: OwnershipDeclaration,
-    pub lifecycle: LinkLifecycle,
-    /// Required for a present link and omitted for an absent link.
-    pub admin_up: Option<bool>,
-    pub wireguard: Option<DesiredWireGuardConfiguration>,
-    /// Only these exact addresses/routes are managed. Unlisted resources survive.
-    pub addresses: Vec<DesiredAddress>,
-    pub routes: Vec<ManagedRoute>,
-}
-
-impl DesiredManagedInterface {
-    pub fn validate(&self) -> Result<(), ReconcileError> {
-        match self.lifecycle {
-            LinkLifecycle::Present if self.admin_up.is_none() => {
-                return Err(ReconcileError::InvalidDesiredState)
-            }
-            LinkLifecycle::Absent
-                if self.admin_up.is_some()
-                    || self.wireguard.is_some()
-                    || self
-                        .addresses
-                        .iter()
-                        .any(|address| address.presence != ResourcePresence::Absent)
-                    || self
-                        .routes
-                        .iter()
-                        .any(|route| route.presence != ResourcePresence::Absent) =>
-            {
-                return Err(ReconcileError::InvalidDesiredState)
-            }
-            _ => {}
-        }
-        if self.ownership == OwnershipDeclaration::ObserveOnly
-            && (self.lifecycle == LinkLifecycle::Absent
-                || self.wireguard.is_some()
-                || self
-                    .addresses
-                    .iter()
-                    .any(|address| address.presence == ResourcePresence::Present)
-                || self
-                    .routes
-                    .iter()
-                    .any(|route| route.presence == ResourcePresence::Present))
-        {
-            return Err(ReconcileError::OwnershipRequired);
-        }
-        if self.addresses.len() > MAX_MANAGED_ADDRESSES || self.routes.len() > MAX_MANAGED_ROUTES {
-            return Err(ReconcileError::ResourceLimitExceeded);
-        }
-        let mut addresses = std::collections::HashSet::new();
-        for address in &self.addresses {
-            if !addresses.insert(address.address) {
-                return Err(ReconcileError::DuplicateResource);
-            }
-        }
-        let mut routes = std::collections::HashSet::new();
-        for route in &self.routes {
-            if route
-                .gateway
-                .is_some_and(|gateway| !route.destination.family_matches(gateway))
-            {
-                return Err(ReconcileError::InvalidDesiredState);
-            }
-            if !routes.insert((route.destination.clone(), route.gateway)) {
-                return Err(ReconcileError::DuplicateResource);
-            }
-        }
-        if let Some(wireguard) = &self.wireguard {
-            if wireguard.listen_port == 0 || wireguard.peers.len() > MAX_MANAGED_PEERS {
-                return Err(ReconcileError::InvalidDesiredState);
-            }
-            let mut public_keys = std::collections::HashSet::new();
-            for peer in &wireguard.peers {
-                if peer.persistent_keepalive_seconds == Some(0)
-                    || peer.endpoint.is_some_and(|endpoint| endpoint.port() == 0)
-                    || !public_keys.insert(peer.public_key.expose())
-                {
-                    return Err(ReconcileError::InvalidDesiredState);
-                }
-                validate_allowed_ips(&peer.allowed_ips).map_err(ReconcileError::WireGuard)?;
-            }
-            for (index, peer) in wireguard.peers.iter().enumerate() {
-                for other in &wireguard.peers[index + 1..] {
-                    if peer.allowed_ips.iter().any(|prefix| {
-                        other
-                            .allowed_ips
-                            .iter()
-                            .any(|other| prefixes_overlap(prefix, other))
-                    }) {
-                        return Err(ReconcileError::WireGuard(
-                            WireGuardValidationError::ConflictingAllowedIps,
-                        ));
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ObservedLinkKind {
-    WireGuard,
-    Other,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ObservedRoute {
-    pub destination: NetworkPrefix,
-    pub gateway: Option<IpAddr>,
-    pub output_interface: Option<u32>,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ObservedManagedInterface {
-    pub interface: InterfaceName,
-    pub ifindex: Option<u32>,
-    pub link_kind: Option<ObservedLinkKind>,
-    pub admin_up: Option<bool>,
-    pub addresses: Vec<IpNet>,
-    /// Main-table unicast routes that use this interface.
-    pub routes: Vec<ObservedRoute>,
-    /// Routes using this interface that are outside the supported ownership shape.
-    pub unsupported_route_count: usize,
-    pub wireguard: Option<ObservedWireGuardDevice>,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MutationKind {
-    CreateWireGuardLink,
-    ConfigureWireGuard,
-    AddAddress,
-    RemoveAddress,
-    AddRoute,
-    RemoveRoute,
-    SetLinkUp,
-    SetLinkDown,
-    DeleteLink,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct PlannedAction {
-    pub kind: MutationKind,
-    pub target: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReconcilePlanSummary {
-    pub interface: InterfaceName,
-    pub actions: Vec<PlannedAction>,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ApplyStatus {
-    NoChange,
-    Applied,
-    AlreadyConverged,
-    FailedBeforeMutation,
-    PartialFailure,
-    VerificationFailed,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SafeFailureCategory {
-    PermissionDenied,
-    Unsupported,
-    Conflict,
-    KernelRejected,
-    BackendFailure,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ApplyReceipt {
-    pub interface: InterfaceName,
-    pub status: ApplyStatus,
-    pub planned_actions: Vec<PlannedAction>,
-    pub completed_actions: usize,
-    pub failed_action: Option<PlannedAction>,
-    pub failure: Option<SafeFailureCategory>,
-    pub observed_after: Option<ObservedManagedInterface>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-pub enum ReconcileError {
-    #[error("desired network state is invalid")]
-    InvalidDesiredState,
-    #[error("the requested network resource is not declared as managed")]
-    OwnershipRequired,
-    #[error("desired network state exceeds a resource bound")]
-    ResourceLimitExceeded,
-    #[error("desired network state contains a duplicate resource")]
-    DuplicateResource,
-    #[error("interface exists with a non-WireGuard link kind")]
-    WrongLinkKind,
-    #[error("interface or route conflicts with existing host state")]
-    Conflict,
-    #[error("deleting the interface would remove an unlisted address or route")]
-    UnlistedResourceOnDelete,
-    #[error("network kernel observation or mutation failed")]
-    BackendFailure,
-    #[error("wireguard configuration is invalid")]
-    WireGuard(#[from] WireGuardValidationError),
-}
 
 #[derive(Debug)]
-enum Mutation {
+pub(crate) enum Mutation {
     CreateWireGuardLink,
     ConfigureWireGuard(WireGuardDevicePatch),
     AddAddress(IpNet),
@@ -330,151 +56,9 @@ fn route_target(route: &ObservedRoute) -> String {
 }
 
 #[derive(Debug)]
-struct ExecutionPlan {
-    mutations: Vec<Mutation>,
-    summary: ReconcilePlanSummary,
-}
-
-/// One installation-wide lock serializes observe/plan/apply/verify sequences.
-/// The socket service also handles requests sequentially, so this lock makes
-/// the invariant hold for in-process callers that use this controller directly.
-pub struct ReconciliationService {
-    backend: LinuxNetworkBackend,
-    mutation_lock: Mutex<()>,
-}
-
-impl Default for ReconciliationService {
-    fn default() -> Self {
-        Self::new(LinuxNetworkBackend::default())
-    }
-}
-
-impl ReconciliationService {
-    pub fn new(backend: LinuxNetworkBackend) -> Self {
-        Self {
-            backend,
-            mutation_lock: Mutex::new(()),
-        }
-    }
-
-    pub fn plan(
-        &self,
-        desired: &DesiredManagedInterface,
-    ) -> Result<ReconcilePlanSummary, ReconcileError> {
-        desired.validate()?;
-        let observed = self.backend.observe(&desired.interface)?;
-        plan_managed_interface(desired, &observed)
-    }
-
-    pub fn apply(&self, desired: &DesiredManagedInterface) -> Result<ApplyReceipt, ReconcileError> {
-        desired.validate()?;
-        let _guard = self
-            .mutation_lock
-            .lock()
-            .map_err(|_| ReconcileError::BackendFailure)?;
-        apply_with_backend(desired, &self.backend)
-    }
-}
-
-trait ReconcileBackend {
-    fn observe(
-        &self,
-        interface: &InterfaceName,
-    ) -> Result<ObservedManagedInterface, ReconcileError>;
-    fn apply(&self, interface: &InterfaceName, mutation: Mutation) -> Result<(), ReconcileError>;
-}
-
-fn apply_with_backend(
-    desired: &DesiredManagedInterface,
-    backend: &impl ReconcileBackend,
-) -> Result<ApplyReceipt, ReconcileError> {
-    let before = backend.observe(&desired.interface)?;
-    let plan = plan_execution(desired, &before)?;
-    if plan.mutations.is_empty() {
-        return Ok(ApplyReceipt {
-            interface: desired.interface.clone(),
-            status: ApplyStatus::NoChange,
-            planned_actions: Vec::new(),
-            completed_actions: 0,
-            failed_action: None,
-            failure: None,
-            observed_after: Some(before),
-        });
-    }
-    let planned_actions = plan.summary.actions;
-    let mut completed_actions = 0;
-    for (index, mutation) in plan.mutations.into_iter().enumerate() {
-        if let Err(error) = backend.apply(&desired.interface, mutation) {
-            let observed_after = backend.observe(&desired.interface).ok();
-            let raced_to_desired = observed_after.as_ref().is_some_and(|observed| {
-                plan_execution(desired, observed)
-                    .is_ok_and(|remaining| remaining.mutations.is_empty())
-            });
-            return Ok(ApplyReceipt {
-                interface: desired.interface.clone(),
-                status: if raced_to_desired {
-                    ApplyStatus::AlreadyConverged
-                } else if completed_actions == 0 {
-                    ApplyStatus::FailedBeforeMutation
-                } else {
-                    ApplyStatus::PartialFailure
-                },
-                failed_action: Some(planned_actions[index].clone()),
-                failure: (!raced_to_desired).then_some(failure_category(&error)),
-                planned_actions,
-                completed_actions,
-                observed_after,
-            });
-        }
-        completed_actions += 1;
-    }
-    let observed_after = match backend.observe(&desired.interface) {
-        Ok(observed) => observed,
-        Err(error) => {
-            return Ok(ApplyReceipt {
-                interface: desired.interface.clone(),
-                status: ApplyStatus::VerificationFailed,
-                planned_actions,
-                completed_actions,
-                failed_action: None,
-                failure: Some(failure_category(&error)),
-                observed_after: None,
-            })
-        }
-    };
-    let converged = plan_execution(desired, &observed_after)
-        .is_ok_and(|remaining| remaining.mutations.is_empty());
-    Ok(ApplyReceipt {
-        interface: desired.interface.clone(),
-        status: if converged {
-            ApplyStatus::Applied
-        } else {
-            ApplyStatus::VerificationFailed
-        },
-        planned_actions,
-        completed_actions,
-        failed_action: None,
-        failure: (!converged).then_some(SafeFailureCategory::KernelRejected),
-        observed_after: Some(observed_after),
-    })
-}
-
-fn failure_category(error: &ReconcileError) -> SafeFailureCategory {
-    match error {
-        ReconcileError::OwnershipRequired
-        | ReconcileError::Conflict
-        | ReconcileError::WrongLinkKind => SafeFailureCategory::Conflict,
-        ReconcileError::WireGuard(WireGuardValidationError::PermissionDenied) => {
-            SafeFailureCategory::PermissionDenied
-        }
-        ReconcileError::WireGuard(WireGuardValidationError::UnsupportedBackend) => {
-            SafeFailureCategory::Unsupported
-        }
-        ReconcileError::WireGuard(WireGuardValidationError::KernelRejected) => {
-            SafeFailureCategory::KernelRejected
-        }
-        _ => SafeFailureCategory::BackendFailure,
-    }
+pub(crate) struct ExecutionPlan {
+    pub(crate) mutations: Vec<Mutation>,
+    pub(crate) summary: ReconcilePlanSummary,
 }
 
 pub fn plan_managed_interface(
@@ -484,7 +68,7 @@ pub fn plan_managed_interface(
     Ok(plan_execution(desired, observed)?.summary)
 }
 
-fn plan_execution(
+pub(crate) fn plan_execution(
     desired: &DesiredManagedInterface,
     observed: &ObservedManagedInterface,
 ) -> Result<ExecutionPlan, ReconcileError> {
@@ -836,8 +420,12 @@ fn execution_plan(desired: &DesiredManagedInterface, mutations: Vec<Mutation>) -
 
 #[cfg(test)]
 mod tests {
+    use super::super::model::{
+        DesiredAddress, DesiredManagedPeer, DesiredWireGuardConfiguration, ManagedRoute,
+    };
     use super::*;
-    use std::sync::Mutex as StdMutex;
+    use crate::domain::{InterfaceName, PublicKey};
+    use crate::wireguard::ObservedWireGuardDevice;
 
     fn name() -> InterfaceName {
         "wg-test".parse().unwrap()
@@ -988,72 +576,5 @@ mod tests {
             .unwrap()
             .actions
             .is_empty());
-    }
-
-    #[test]
-    fn shipped_backend_uses_no_ip_subprocess() {
-        let implementation = include_str!("reconcile/linux.rs");
-        assert!(!implementation.contains("std::process::Command"));
-        assert!(!implementation.contains("Command::new(\"ip\")"));
-    }
-
-    #[derive(Debug)]
-    struct FakeBackend {
-        state: StdMutex<ObservedManagedInterface>,
-        fail_once_at: usize,
-        applied: StdMutex<usize>,
-    }
-
-    impl ReconcileBackend for FakeBackend {
-        fn observe(&self, _: &InterfaceName) -> Result<ObservedManagedInterface, ReconcileError> {
-            self.state
-                .lock()
-                .map(|state| state.clone())
-                .map_err(|_| ReconcileError::BackendFailure)
-        }
-
-        fn apply(&self, _: &InterfaceName, mutation: Mutation) -> Result<(), ReconcileError> {
-            let mut applied = self
-                .applied
-                .lock()
-                .map_err(|_| ReconcileError::BackendFailure)?;
-            *applied += 1;
-            if *applied == self.fail_once_at {
-                return Err(ReconcileError::BackendFailure);
-            }
-            let mut state = self
-                .state
-                .lock()
-                .map_err(|_| ReconcileError::BackendFailure)?;
-            match mutation {
-                Mutation::AddAddress(address) => state.addresses.push(address),
-                Mutation::SetLinkUp(up) => state.admin_up = Some(up),
-                _ => return Err(ReconcileError::BackendFailure),
-            }
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn partial_apply_is_observed_and_retry_converges() {
-        let wanted = DesiredManagedInterface {
-            routes: Vec::new(),
-            ..desired()
-        };
-        let backend = FakeBackend {
-            state: StdMutex::new(observed()),
-            fail_once_at: 2,
-            applied: StdMutex::new(0),
-        };
-        let first = apply_with_backend(&wanted, &backend).unwrap();
-        assert_eq!(first.status, ApplyStatus::PartialFailure);
-        assert_eq!(first.completed_actions, 1);
-        assert_eq!(first.observed_after.as_ref().unwrap().addresses.len(), 1);
-
-        let retry = apply_with_backend(&wanted, &backend).unwrap();
-        assert_eq!(retry.status, ApplyStatus::Applied);
-        assert_eq!(retry.completed_actions, 1);
-        let no_op = apply_with_backend(&wanted, &backend).unwrap();
-        assert_eq!(no_op.status, ApplyStatus::NoChange);
     }
 }
