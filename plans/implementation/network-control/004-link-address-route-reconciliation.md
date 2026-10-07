@@ -1,8 +1,8 @@
 # Network Control M004 — Link, Address, Route, and Reconciliation Engine
 
-Status: blocked on M003 closure
+Status: active
 
-Repository planning baseline: `6716169b4c8b65c041a8cc9b0b3e20af01fd2dbd`
+Repository planning baseline: `a134b39` (M003 strict implementation head)
 
 Source roadmap:
 
