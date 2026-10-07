@@ -1,43 +1,35 @@
-//! Schema definition, migration runner, and the single canonical connection
-//! initializer.
+//! Schema contract: the single canonical connection initializer and the
+//! structural singleton invariants.
 //!
 //! Every path that opens the state database goes through [`open_connection`] so
-//! the file ownership checks, open flags, and pragmas cannot drift apart.
+//! the file ownership checks, open flags, and pragmas cannot drift apart. The
+//! concerns that initializer depends on are split by subject rather than
+//! duplicated:
+//!
+//! - [`validation`] owns the ownership/permission checks and the hardened
+//!   pragma contract, and reads each pragma back rather than assuming it.
+//! - [`migrations`] owns the ordered migration runner and the pre-migration
+//!   recovery snapshot.
+//!
+//! What stays here is the opener itself plus the structural invariants only this
+//! module can enforce: that `installation` and `convergence_state` each hold
+//! exactly one row.
+
+mod migrations;
+mod validation;
 
 use super::error::StateError;
-use rusqlite::{Connection, OpenFlags, TransactionBehavior};
+use rusqlite::{Connection, OpenFlags};
 use std::{
-    fs,
-    os::unix::{
-        fs::PermissionsExt,
-        fs::{MetadataExt, OpenOptionsExt},
-    },
-    path::{Path, PathBuf},
+    path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-/// `PRAGMA synchronous` value for `FULL`.
-const SQLITE_SYNCHRONOUS_FULL: i64 = 2;
-
-/// One ordered, immutable schema step.
-#[derive(Clone)]
-pub(crate) struct Migration {
-    pub(crate) version: i64,
-    pub(crate) name: &'static str,
-    pub(crate) sql: &'static str,
-}
-
-/// Every migration in exact application order.
-pub(crate) const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "initial",
-    sql: include_str!("migrations/001_initial.sql"),
-}];
-
 /// The highest schema version this binary understands.
-pub(crate) fn supported_version() -> i64 {
-    MIGRATIONS.last().map_or(0, |m| m.version)
-}
+///
+/// Re-exported so a caller outside this module reads the version through the
+/// schema contract rather than reaching into the migration runner.
+pub(crate) use migrations::supported_version;
 
 /// How the caller intends to open a database.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -64,7 +56,7 @@ pub fn open_connection(
     intent: OpenIntent,
     expected_uid: u32,
 ) -> Result<Connection, StateError> {
-    verify_path(path, intent, expected_uid)?;
+    validation::verify_path(path, intent, expected_uid)?;
 
     let mut flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
     flags |= OpenFlags::SQLITE_OPEN_NOFOLLOW;
@@ -75,12 +67,12 @@ pub fn open_connection(
     let mut connection =
         Connection::open_with_flags(path, flags).map_err(|_| StateError::DatabaseOpenFailed)?;
 
-    configure(&connection)?;
+    validation::configure(&connection)?;
     let starting_version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(StateError::database)?;
-    recovery_snapshot(&connection, path, starting_version, supported_version())?;
-    run_migrations(&mut connection)?;
+    migrations::recovery_snapshot(&connection, path, starting_version, supported_version())?;
+    migrations::run_migrations(&mut connection)?;
     Ok(connection)
 }
 
@@ -90,325 +82,7 @@ pub fn open_connection(
 /// the hardened pragmas but must not itself run migrations: migration runs once,
 /// later, through the normal store opener after the file is in place.
 pub(crate) fn configure_for_restore(connection: &Connection) -> Result<(), StateError> {
-    configure(connection)
-}
-
-/// Creates a recovery snapshot before a schema-changing migration runs.
-///
-/// A snapshot is taken only when the database is already at a schema version
-/// *and* a newer migration is pending. A brand-new initialization has nothing
-/// to lose, and a database already at the newest version has nothing to migrate.
-///
-/// The versions are parameters rather than read internally so the behavior can
-/// be qualified against a simulated upgrade without shipping a meaningless
-/// production migration. The production call site passes the real ones.
-///
-/// Retention is deliberately bounded: the snapshot name carries the
-/// pre-migration version, and an existing snapshot for that same version is
-/// kept rather than replaced. wg-basic never accumulates automatic backups.
-fn recovery_snapshot(
-    connection: &Connection,
-    path: &Path,
-    from_version: i64,
-    to_version: i64,
-) -> Result<(), StateError> {
-    // A brand-new initialization has nothing to lose, and a database already at
-    // the newest version has nothing to migrate.
-    if from_version <= 0 || from_version >= to_version {
-        return Ok(());
-    }
-    let current = from_version;
-
-    let target = recovery_snapshot_path(path, current);
-    // A snapshot that already exists corresponds to the same pre-migration
-    // schema, so it is kept rather than replaced.
-    if fs::symlink_metadata(&target).is_ok() {
-        return Ok(());
-    }
-
-    let staging = target.with_extension(format!("partial.{}", std::process::id()));
-    let outcome = (|| -> Result<(), StateError> {
-        fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(DATABASE_MODE)
-            .open(&staging)
-            .map_err(|_| StateError::Corrupt("recovery snapshot could not be created"))?;
-        let mut destination = Connection::open_with_flags(
-            &staging,
-            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )
-        .map_err(StateError::database)?;
-        {
-            let backup = rusqlite::backup::Backup::new(connection, &mut destination)
-                .map_err(StateError::database)?;
-            backup
-                .run_to_completion(64, std::time::Duration::from_millis(0), None)
-                .map_err(StateError::database)?;
-        }
-        destination
-            .close()
-            .map_err(|(_, _)| StateError::Corrupt("recovery snapshot could not be finalized"))?;
-        fs::set_permissions(&staging, fs::Permissions::from_mode(DATABASE_MODE))
-            .map_err(|_| StateError::Corrupt("recovery snapshot permissions are unsafe"))?;
-        fs::rename(&staging, &target)
-            .map_err(|_| StateError::Corrupt("recovery snapshot could not be installed"))
-    })();
-
-    if outcome.is_err() {
-        // Only this operation's own staging artifact is removed. A failure here
-        // must not prevent the migration from running on the original database.
-        let _ = fs::remove_file(&staging);
-    }
-    outcome
-}
-
-/// The deterministic location of the pre-migration recovery snapshot.
-pub(crate) fn recovery_snapshot_path(database: &Path, from_version: i64) -> PathBuf {
-    let parent = database.parent().unwrap_or_else(|| Path::new("."));
-    let name = database
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "state.db".to_owned());
-    parent.join(format!("{name}.pre-migration-v{from_version}"))
-}
-
-/// The restrictive mode a secret-bearing database must carry.
-const DATABASE_MODE: u32 = 0o600;
-
-fn verify_path(path: &Path, intent: OpenIntent, expected_uid: u32) -> Result<(), StateError> {
-    let parent = path.parent().ok_or(StateError::MissingPath)?;
-    let parent_metadata = fs::symlink_metadata(parent).map_err(|_| StateError::MissingParent {
-        path: parent.display().to_string(),
-    })?;
-    if !parent_metadata.is_dir() {
-        return Err(StateError::ParentNotDirectory {
-            path: parent.display().to_string(),
-        });
-    }
-    if parent_metadata.uid() != expected_uid {
-        return Err(StateError::ParentWrongOwner {
-            path: parent.display().to_string(),
-            owner: parent_metadata.uid(),
-            expected: expected_uid,
-        });
-    }
-    if parent_metadata.mode() & 0o022 != 0 {
-        return Err(StateError::ParentTooPermissive {
-            path: parent.display().to_string(),
-        });
-    }
-
-    match fs::symlink_metadata(path) {
-        Ok(metadata) => {
-            if metadata.file_type().is_symlink() {
-                return Err(StateError::DatabaseIsSymlink {
-                    path: path.display().to_string(),
-                });
-            }
-            if !metadata.is_file() {
-                return Err(StateError::DatabaseNotRegularFile {
-                    path: path.display().to_string(),
-                });
-            }
-            if metadata.uid() != expected_uid {
-                return Err(StateError::DatabaseWrongOwner {
-                    path: path.display().to_string(),
-                    owner: metadata.uid(),
-                    expected: expected_uid,
-                });
-            }
-            // Ownership is already proven above, so group/world access can be
-            // safely narrowed rather than merely refused. The file holds server
-            // and client private keys and preshared keys.
-            if metadata.mode() & 0o077 != 0 {
-                fs::set_permissions(path, fs::Permissions::from_mode(DATABASE_MODE)).map_err(
-                    |_| StateError::DatabaseTooPermissive {
-                        path: path.display().to_string(),
-                    },
-                )?;
-                let narrowed =
-                    fs::symlink_metadata(path).map_err(|_| StateError::DatabaseTooPermissive {
-                        path: path.display().to_string(),
-                    })?;
-                if narrowed.mode() & 0o077 != 0 {
-                    return Err(StateError::DatabaseTooPermissive {
-                        path: path.display().to_string(),
-                    });
-                }
-            }
-            if intent == OpenIntent::Initialize {
-                return Err(StateError::DatabaseAlreadyExists {
-                    path: path.display().to_string(),
-                });
-            }
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            if intent == OpenIntent::Reopen {
-                return Err(StateError::MissingParent {
-                    path: path.display().to_string(),
-                });
-            }
-        }
-        Err(_) => {
-            return Err(StateError::DatabaseNotRegularFile {
-                path: path.display().to_string(),
-            })
-        }
-    }
-
-    if intent == OpenIntent::Initialize {
-        // Create the file with the restrictive mode up front. Letting SQLite
-        // create it would briefly expose a world-readable file (and its WAL
-        // sidecars inherit the database mode) before any check could run.
-        fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(DATABASE_MODE)
-            .open(path)
-            .map_err(|_| StateError::DatabaseOpenFailed)?;
-    }
-    Ok(())
-}
-
-/// Applies the hardened connection contract and reads it back.
-///
-/// Every pragma is read back so a typo or an unsupported setting fails loudly
-/// instead of silently leaving the database weaker than intended.
-fn configure(connection: &Connection) -> Result<(), StateError> {
-    connection
-        .pragma_update(None, "foreign_keys", true)
-        .and_then(|_| connection.pragma_update(None, "trusted_schema", false))
-        .and_then(|_| connection.pragma_update(None, "journal_mode", "WAL"))
-        .and_then(|_| connection.pragma_update(None, "synchronous", "FULL"))
-        .and_then(|_| connection.pragma_update(None, "mmap_size", 0i64))
-        .map_err(StateError::database)?;
-
-    connection
-        .busy_timeout(std::time::Duration::from_secs(5))
-        .map_err(StateError::database)?;
-
-    // Read back the settings that change correctness or durability.
-    let foreign_keys: i64 = read_pragma(connection, "foreign_keys")?;
-    if foreign_keys != 1 {
-        return Err(StateError::ForeignKeysDisabled);
-    }
-    let journal_mode: String = read_pragma(connection, "journal_mode")?;
-    if !journal_mode.eq_ignore_ascii_case("wal") {
-        return Err(StateError::PragmaNotApplied {
-            pragma: "journal_mode",
-        });
-    }
-    // `PRAGMA synchronous` reports a numeric code: 0=OFF, 1=NORMAL, 2=FULL.
-    let synchronous: i64 = read_pragma(connection, "synchronous")?;
-    if synchronous != SQLITE_SYNCHRONOUS_FULL {
-        return Err(StateError::PragmaNotApplied {
-            pragma: "synchronous",
-        });
-    }
-    let mmap_size: i64 = read_pragma(connection, "mmap_size")?;
-    if mmap_size != 0 {
-        return Err(StateError::PragmaNotApplied {
-            pragma: "mmap_size",
-        });
-    }
-    // `trusted_schema` reports 0 when disabled. A connection that cannot express
-    // the setting is rejected rather than accepted with unknown behavior.
-    let trusted_schema: i64 = read_pragma(connection, "trusted_schema")?;
-    if trusted_schema != 0 {
-        return Err(StateError::PragmaNotApplied {
-            pragma: "trusted_schema",
-        });
-    }
-    Ok(())
-}
-
-fn read_pragma<T: rusqlite::types::FromSql>(
-    connection: &Connection,
-    name: &str,
-) -> Result<T, StateError> {
-    connection
-        .query_row(&format!("PRAGMA {name}"), [], |row| row.get(0))
-        .map_err(|_| StateError::PragmaNotApplied {
-            pragma: "unreadable",
-        })
-}
-
-/// Applies every production migration in order.
-pub(crate) fn run_migrations(connection: &mut Connection) -> Result<(), StateError> {
-    apply_migrations(connection, MIGRATIONS)
-}
-
-/// Applies pending migrations in order inside one IMMEDIATE transaction.
-///
-/// Historical migration SQL is never rewritten to make a test pass: a new
-/// schema change is a new migration. The `available` slice is a parameter only
-/// so the runner mechanics can be qualified against a simulated version history.
-fn apply_migrations(
-    connection: &mut Connection,
-    available: &[Migration],
-) -> Result<(), StateError> {
-    let current: i64 = connection
-        .query_row("PRAGMA user_version", [], |row| row.get(0))
-        .map_err(StateError::database)?;
-
-    if current < 0 {
-        return Err(StateError::SchemaVersionInvalid(current));
-    }
-    let supported = available.last().map_or(0, |migration| migration.version);
-    if current > supported {
-        return Err(StateError::SchemaTooNew {
-            found: current,
-            supported,
-        });
-    }
-
-    let pending: Vec<&Migration> = available
-        .iter()
-        .filter(|migration| migration.version > current)
-        .collect();
-    if pending.is_empty() {
-        return Ok(());
-    }
-
-    // IMMEDIATE avoids a read-then-write snapshot upgrade race for the
-    // read-validate-write sequence below.
-    let transaction = connection
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(StateError::database)?;
-
-    for migration in pending {
-        transaction
-            .execute_batch(migration.sql)
-            .map_err(|_| StateError::MigrationFailed {
-                version: migration.version,
-                name: migration.name,
-            })?;
-        transaction
-            .pragma_update(None, "user_version", migration.version)
-            .map_err(StateError::database)?;
-        foreign_key_check(&transaction).map_err(|_| StateError::MigrationFailed {
-            version: migration.version,
-            name: migration.name,
-        })?;
-    }
-
-    transaction.commit().map_err(StateError::database)
-}
-
-/// Fails when any row violates a declared foreign key.
-///
-/// `PRAGMA foreign_key_check` returns one row per violation and no rows at all
-/// when the schema is consistent, so it is inspected as a row stream rather
-/// than with `query_row`.
-fn foreign_key_check(transaction: &rusqlite::Transaction<'_>) -> Result<(), rusqlite::Error> {
-    let mut statement = transaction.prepare("PRAGMA foreign_key_check")?;
-    let mut rows = statement.query([])?;
-    if rows.next()?.is_some() {
-        return Err(rusqlite::Error::InvalidQuery);
-    }
-    Ok(())
+    validation::configure(connection)
 }
 
 /// Confirms the structural singleton invariants.
@@ -470,64 +144,16 @@ pub(crate) fn now_seconds() -> i64 {
 }
 
 #[cfg(test)]
-/// A simulated version history used **only** to qualify the migration runner.
-///
-/// Phase 6 shipped exactly one real migration, so there is no genuine 1 -> 2
-/// upgrade to replay. Rather than manufacturing production schema churn to
-/// create one, the tests below drive the real runner over this list. The extra
-/// version adds an unused metadata table: harmless, reversible in the sense that
-/// it is never shipped, and sufficient to prove the runner's ordering,
-/// version-stamping, foreign-key check, and state preservation.
-///
-/// This is a **test-only** harness. It is not migration history, and no closure
-/// record may claim a second schema version exists.
-pub(crate) fn test_only_migrations() -> Vec<Migration> {
-    let mut migrations = MIGRATIONS.to_vec();
-    migrations.push(Migration {
-        version: 2,
-        name: "test_only_marker",
-        sql: "CREATE TABLE test_only_marker (singleton INTEGER PRIMARY KEY CHECK (singleton = 1));\
-              INSERT INTO test_only_marker (singleton) VALUES (1);",
-    });
-    migrations
-}
-
-#[cfg(test)]
-/// Creates a database migrated only as far as `through_version`.
-///
-/// Used to build a historical fixture at a boundary, so a later step can prove
-/// the runner upgrades it.
-pub(crate) fn initialize_at_version(path: &Path, through_version: i64) -> Result<(), StateError> {
-    let connection = Connection::open_with_flags(
-        path,
-        OpenFlags::SQLITE_OPEN_READ_WRITE
-            | OpenFlags::SQLITE_OPEN_CREATE
-            | OpenFlags::SQLITE_OPEN_NO_MUTEX
-            | OpenFlags::SQLITE_OPEN_NOFOLLOW,
-    )
-    .map_err(|_| StateError::DatabaseOpenFailed)?;
-    configure(&connection)?;
-    let available: Vec<Migration> = test_only_migrations()
-        .into_iter()
-        .filter(|migration| migration.version <= through_version)
-        .collect();
-    let mut connection = connection;
-    apply_migrations(&mut connection, &available)?;
-    crate::state::schema::seed_installation(
-        &connection,
-        &crate::domain::InstallationId::new(),
-        crate::domain::INITIAL_DESIRED_GENERATION,
-    )?;
-    connection
-        .close()
-        .map_err(|(_, _)| StateError::Corrupt("historical fixture could not be finalized"))
-}
-
-#[cfg(test)]
 mod tests {
+    use super::migrations::{
+        apply_migrations, initialize_at_version, recovery_snapshot, recovery_snapshot_path,
+        test_only_migrations, MIGRATIONS,
+    };
+    use super::validation::DATABASE_MODE;
     use super::*;
     use crate::domain::DesiredGeneration;
     use crate::state::store::StateStore;
+    use std::{fs, os::unix::fs::MetadataExt};
     use std::{
         os::unix::fs::PermissionsExt,
         path::{Path, PathBuf},
@@ -660,7 +286,7 @@ mod tests {
         // rusqlite's `load_extension` feature is deliberately not enabled, so the
         // C extension entry points are not linked at all. This is a build-time
         // guarantee rather than a runtime one.
-        let manifest = include_str!("../../Cargo.toml");
+        let manifest = include_str!("../../../Cargo.toml");
         let rusqlite_line = manifest
             .lines()
             .find(|line| line.starts_with("rusqlite"))
@@ -847,7 +473,7 @@ mod tests {
     /// Phase 6 shipped a single migration, so this is the only genuine "older
     /// schema" constructible without shipping a meaningless one.
     fn historical_v1(temp: &TempDir) {
-        initialize_at_version(&temp.db(), 1).expect("historical v1 fixture");
+        migrations::initialize_at_version(&temp.db(), 1).expect("historical v1 fixture");
     }
 
     /// `PRAGMA user_version` for a raw connection, for the migration fixtures.
@@ -884,7 +510,7 @@ mod tests {
     /// afterwards is still the state the migration produced.
     fn apply_simulated_upgrade(temp: &TempDir) {
         let mut connection = Connection::open(temp.db()).unwrap();
-        apply_migrations(&mut connection, &test_only_migrations()).unwrap();
+        migrations::apply_migrations(&mut connection, &migrations::test_only_migrations()).unwrap();
         connection.execute("PRAGMA user_version = 1", []).unwrap();
         connection.close().unwrap();
     }
@@ -902,7 +528,7 @@ mod tests {
             "the fixture must start at the historical boundary"
         );
 
-        apply_migrations(&mut connection, &test_only_migrations()).unwrap();
+        migrations::apply_migrations(&mut connection, &migrations::test_only_migrations()).unwrap();
         assert_eq!(user_version_of(&connection), 2);
 
         let marker_exists: i64 = connection
@@ -998,7 +624,7 @@ mod tests {
     #[test]
     fn foreign_keys_are_checked_after_every_migration_step() {
         let temp = TempDir::new();
-        initialize_at_version(&temp.db(), 1).unwrap();
+        migrations::initialize_at_version(&temp.db(), 1).unwrap();
         let mut connection = Connection::open(temp.db()).unwrap();
 
         // Introduce a dangling client row that violates the declared relation.
@@ -1024,7 +650,7 @@ mod tests {
     #[test]
     fn a_pre_migration_snapshot_is_taken_before_a_schema_change() {
         let temp = TempDir::new();
-        initialize_at_version(&temp.db(), 1).unwrap();
+        migrations::initialize_at_version(&temp.db(), 1).unwrap();
         let connection = Connection::open(temp.db()).unwrap();
         let expected = recovery_snapshot_path(&temp.db(), 1);
 

@@ -99,10 +99,58 @@ const PRODUCTION_SOURCES: &[(&str, &str)] = &[
         include_str!("../src/state/projection.rs"),
     ),
     (
-        "src/state/schema.rs",
-        include_str!("../src/state/schema.rs"),
+        "src/state/schema/mod.rs",
+        include_str!("../src/state/schema/mod.rs"),
     ),
-    ("src/state/store.rs", include_str!("../src/state/store.rs")),
+    (
+        "src/state/schema/validation.rs",
+        include_str!("../src/state/schema/validation.rs"),
+    ),
+    (
+        "src/state/schema/migrations.rs",
+        include_str!("../src/state/schema/migrations.rs"),
+    ),
+    (
+        "src/state/store/mod.rs",
+        include_str!("../src/state/store/mod.rs"),
+    ),
+    (
+        "src/state/store/desired.rs",
+        include_str!("../src/state/store/desired.rs"),
+    ),
+    (
+        "src/state/store/convergence.rs",
+        include_str!("../src/state/store/convergence.rs"),
+    ),
+    (
+        "src/state/store/sql.rs",
+        include_str!("../src/state/store/sql.rs"),
+    ),
+    (
+        "src/state/backup.rs",
+        include_str!("../src/state/backup.rs"),
+    ),
+    ("src/state/inuse.rs", include_str!("../src/state/inuse.rs")),
+    (
+        "src/management/mod.rs",
+        include_str!("../src/management/mod.rs"),
+    ),
+    (
+        "src/management/health.rs",
+        include_str!("../src/management/health.rs"),
+    ),
+    (
+        "src/management/error.rs",
+        include_str!("../src/management/error.rs"),
+    ),
+    (
+        "src/management/coordinator.rs",
+        include_str!("../src/management/coordinator.rs"),
+    ),
+    (
+        "src/management/runtime.rs",
+        include_str!("../src/management/runtime.rs"),
+    ),
     ("src/domain/mod.rs", include_str!("../src/domain/mod.rs")),
     (
         "src/domain/generation.rs",
@@ -358,6 +406,116 @@ fn the_privileged_service_never_opens_the_state_database() {
         assert!(
             !source.contains("rusqlite"),
             "{path} must not open the state database"
+        );
+    }
+}
+
+#[test]
+fn the_management_role_never_becomes_an_http_surface() {
+    // Phase 7 adds a surface. Until it does, management is a reconcile role, and
+    // the one thing it must not quietly grow is a web stack: an HTTP dependency
+    // here would put a request-driven, potentially remote-triggered path in the
+    // process that owns the durable store and the retry policy.
+    for (path, source) in PRODUCTION_SOURCES {
+        if !path.starts_with("src/management/") {
+            continue;
+        }
+        for forbidden in [
+            "egg::",
+            "EggServe",
+            "hyper",
+            "axum",
+            "actix",
+            "warp::",
+            "reqwest",
+            "tokio::",
+            "TcpListener",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{path} must not import an HTTP or async server surface ({forbidden})"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_state_backup_and_restore_path_stays_local_to_the_database() {
+    // Backup and restore copy a file. They must never become a way to move data
+    // across a boundary: no privileged socket, no netlink, and no spawned
+    // process. SQLite's own online backup API is a local file-to-file copy and is
+    // the only mechanism these modules are allowed to use.
+    for name in ["src/state/backup.rs", "src/state/store/mod.rs"] {
+        let source = PRODUCTION_SOURCES
+            .iter()
+            .find(|(registered, _)| *registered == name)
+            .unwrap_or_else(|| panic!("{name} must be a registered guard source"))
+            .1;
+        for forbidden in [
+            "crate::protocol",
+            "crate::reconcile",
+            "crate::firewall",
+            "std::process::Command",
+            "Command::new",
+            "rtnetlink",
+            "nl_wireguard",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{name} must stay a local database operation ({forbidden})"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_state_store_submodules_stay_a_one_directed_layering() {
+    // `sql` owns row decoding, `desired` and `convergence` own their subjects,
+    // and `mod` owns the façade. The layering is one-directional so a change to
+    // the stored representation has exactly one owner and cannot introduce a
+    // cycle. These assertions are what keep a later split from quietly
+    // reintroducing the monolith this layering replaced.
+    let source_of = |name: &str| -> &str {
+        PRODUCTION_SOURCES
+            .iter()
+            .find(|(registered, _)| *registered == name)
+            .unwrap_or_else(|| panic!("{name} must be a registered guard source"))
+            .1
+    };
+
+    // The decoder knows nothing about the handle it serves.
+    let sql = source_of("src/state/store/sql.rs");
+    assert!(
+        !sql.contains("StateStore"),
+        "row decoding must not depend on the store façade"
+    );
+    assert!(
+        !sql.contains("execute_batch") && !sql.contains("prepare("),
+        "row decoding must not issue SQL of its own"
+    );
+
+    // The two subject modules are peers: neither may reach the other.
+    let desired = source_of("src/state/store/desired.rs");
+    let convergence = source_of("src/state/store/convergence.rs");
+    assert!(
+        !desired.contains("convergence::"),
+        "the desired snapshot must not depend on convergence evidence"
+    );
+    assert!(
+        !convergence.contains("desired::"),
+        "convergence evidence must not depend on the desired snapshot"
+    );
+
+    // SQL helpers stay private to the store module.
+    for name in [
+        "src/state/store/sql.rs",
+        "src/state/schema/validation.rs",
+        "src/state/schema/migrations.rs",
+    ] {
+        let source = source_of(name);
+        assert!(
+            !source.contains("pub fn parse_") && !source.contains("pub fn ownership_label"),
+            "{name} must not widen row-decoding helpers into the public API"
         );
     }
 }
