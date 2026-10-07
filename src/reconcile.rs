@@ -565,10 +565,6 @@ fn plan_execution(
                 }
                 mutations.push(Mutation::CreateWireGuardLink);
             } else if observed.link_kind != Some(ObservedLinkKind::WireGuard) {
-                eprintln!(
-                    "reconcile conflict: existing interface has kind {:?}",
-                    observed.link_kind
-                );
                 return Err(ReconcileError::WrongLinkKind);
             }
             plan_wireguard(desired, observed, created, &mut mutations)?;
@@ -620,7 +616,6 @@ fn plan_addresses(
         match address.presence {
             ResourcePresence::Present if exact => {}
             ResourcePresence::Present if same_ip => {
-                eprintln!("reconcile conflict: same IP has a different prefix length");
                 return Err(ReconcileError::Conflict);
             }
             ResourcePresence::Present => mutations.push(Mutation::AddAddress(address.address)),
@@ -656,7 +651,6 @@ fn plan_routes(
         match route.presence {
             ResourcePresence::Present if exact => {}
             ResourcePresence::Present if !same_destination.is_empty() => {
-                eprintln!("reconcile conflict: route destination exists with a different output or gateway: {same_destination:?}");
                 return Err(ReconcileError::Conflict);
             }
             ResourcePresence::Present => mutations.push(Mutation::AddRoute(ObservedRoute {

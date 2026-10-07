@@ -120,6 +120,13 @@ impl ReconcileBackend for LinuxNetworkBackend {
                     route.gateway,
                 )
             });
+            routes.retain(|route| {
+                !(route.output_interface == Some(ifindex)
+                    && route.gateway.is_none()
+                    && addresses
+                        .iter()
+                        .any(|address| address.trunc() == route.destination.network()))
+            });
 
             Ok(ObservedManagedInterface {
                 interface: interface.clone(),
