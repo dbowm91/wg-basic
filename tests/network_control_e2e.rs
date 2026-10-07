@@ -485,9 +485,11 @@ fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
 
     drop(server_netd);
     server_netd = Netd::start(&server.0);
+    let restarted_server = apply_interface(&server_netd, server_state(), 506);
     assert_eq!(
-        apply_interface(&server_netd, server_state(), 506).status,
-        ApplyStatus::NoChange
+        restarted_server.status,
+        ApplyStatus::NoChange,
+        "server restart reconciliation receipt: {restarted_server:?}"
     );
     assert_eq!(
         apply_policy(
