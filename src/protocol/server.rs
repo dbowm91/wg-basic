@@ -492,7 +492,9 @@ mod tests {
             operation: RequestOperation::Ping,
         })
         .unwrap();
-        write_frame(&mut stream, &payload).unwrap();
+        // The peer may close after checking credentials before this small frame
+        // reaches the socket; either outcome is consistent with early rejection.
+        let _ = write_frame(&mut stream, &payload);
         let mut response = [0_u8; 1];
         match stream.read(&mut response) {
             Ok(0) => {}

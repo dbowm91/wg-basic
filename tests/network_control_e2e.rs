@@ -451,7 +451,12 @@ fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
         Some(policy(NatMode::Masquerade)),
         504,
     );
-    assert_eq!(with_nat.status, ApplyStatus::Applied);
+    assert_eq!(
+        with_nat.status,
+        ApplyStatus::Applied,
+        "NAT apply receipt: {with_nat:?}; owned table: {}",
+        String::from_utf8_lossy(&nft(&server, &["-j", "list", "table", "inet", "wg_basic"]).stdout)
+    );
     assert!(
         ping(&client).status.success(),
         "masqueraded client traffic did not reach internet namespace"
