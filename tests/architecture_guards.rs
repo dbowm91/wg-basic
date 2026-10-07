@@ -151,6 +151,21 @@ const PRODUCTION_SOURCES: &[(&str, &str)] = &[
         "src/management/runtime.rs",
         include_str!("../src/management/runtime.rs"),
     ),
+    (
+        "src/management/worker.rs",
+        include_str!("../src/management/worker.rs"),
+    ),
+    ("src/http/mod.rs", include_str!("../src/http/mod.rs")),
+    ("src/http/config.rs", include_str!("../src/http/config.rs")),
+    (
+        "src/http/response.rs",
+        include_str!("../src/http/response.rs"),
+    ),
+    (
+        "src/http/service.rs",
+        include_str!("../src/http/service.rs"),
+    ),
+    ("src/http/serve.rs", include_str!("../src/http/serve.rs")),
     ("src/domain/mod.rs", include_str!("../src/domain/mod.rs")),
     (
         "src/domain/generation.rs",
@@ -188,6 +203,77 @@ const PRODUCTION_SOURCES: &[(&str, &str)] = &[
 
 /// The only production module permitted to spawn a process.
 const ONLY_PROCESS_MODULE: &str = "src/firewall/nft.rs";
+
+/// Looks up one registered guard source by path.
+///
+/// A miss is a panic rather than a silent skip: a guard that quietly stops
+/// checking a file because the file was renamed is worse than no guard.
+fn source_of(name: &str) -> &'static str {
+    PRODUCTION_SOURCES
+        .iter()
+        .find(|(registered, _)| *registered == name)
+        .unwrap_or_else(|| panic!("{name} must be a registered guard source"))
+        .1
+}
+
+/// Strips comments so a forbidden-token guard tests code, not prose.
+///
+/// Without this, documentation that *names* a forbidden dependency — which this
+/// codebase deliberately does, to explain what it is not doing — would fail its
+/// own guard. That trains readers to ignore the guard, so the guards below
+/// inspect `code_only` instead. Line comments and block comments are removed;
+/// a trailing comment on a code line is kept, so nothing hides behind one.
+fn code_only(source: &str) -> String {
+    let mut kept = String::with_capacity(source.len());
+    let mut in_block_comment = false;
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        if in_block_comment {
+            match trimmed.find("*/") {
+                Some(end) => {
+                    in_block_comment = false;
+                    let rest = &trimmed[end + 2..];
+                    if !rest.trim_start().starts_with("//") && !rest.trim().is_empty() {
+                        kept.push_str(rest);
+                        kept.push('\n');
+                    }
+                }
+                None => continue,
+            }
+            continue;
+        }
+        if trimmed.starts_with("//") {
+            continue;
+        }
+        if let Some(start) = line.find("/*") {
+            in_block_comment = !line[start + 2..].contains("*/");
+            // Keep the code that precedes the block comment on this line.
+            kept.push_str(&line[..start]);
+            kept.push('\n');
+            continue;
+        }
+        kept.push_str(line);
+        kept.push('\n');
+    }
+    kept
+}
+
+/// Asserts that none of the registered sources under `prefix` contains any of
+/// the `forbidden` tokens in executable code.
+fn assert_code_avoids(prefix: &str, forbidden: &[&str], why: &str) {
+    for (path, source) in PRODUCTION_SOURCES {
+        if !path.starts_with(prefix) {
+            continue;
+        }
+        let code = code_only(source);
+        for token in forbidden {
+            assert!(
+                !code.contains(token),
+                "{path} must not reference {token}: {why}"
+            );
+        }
+    }
+}
 
 #[test]
 fn production_control_paths_do_not_invoke_wg_wg_quick_or_ip() {
@@ -412,31 +498,119 @@ fn the_privileged_service_never_opens_the_state_database() {
 
 #[test]
 fn the_management_role_never_becomes_an_http_surface() {
-    // Phase 7 adds a surface. Until it does, management is a reconcile role, and
-    // the one thing it must not quietly grow is a web stack: an HTTP dependency
-    // here would put a request-driven, potentially remote-triggered path in the
-    // process that owns the durable store and the retry policy.
-    for (path, source) in PRODUCTION_SOURCES {
-        if !path.starts_with("src/management/") {
-            continue;
-        }
-        for forbidden in [
+    // Phase 7 gives the product a surface, and it lives in `src/http/`. The
+    // management role must stay the reconcile role: an HTTP dependency here would
+    // put a request-driven, potentially remote-triggered path in the process that
+    // owns the durable store and the retry policy.
+    //
+    // The guard is now narrower *and* stricter than the pre-Phase 7 wording. It
+    // used to forbid the bare token `tokio::`, which read as "no async at all".
+    // Phase 7 legitimately needs one async primitive here — the bounded command
+    // queue in `worker.rs` that is the ADR-003 boundary. So the rule is now
+    // "no web stack anywhere in management, and `tokio::` only in the worker",
+    // which is the property that actually matters and cannot be satisfied by a
+    // module quietly growing its own listener.
+    assert_code_avoids(
+        "src/management/",
+        &[
             "egg::",
             "EggServe",
+            "eggserve",
             "hyper",
             "axum",
             "actix",
             "warp::",
             "reqwest",
-            "tokio::",
             "TcpListener",
-        ] {
+            "crate::http",
+        ],
+        "management is the reconcile role, never the HTTP surface",
+    );
+    // The one async primitive management may use is the worker's bounded queue.
+    for (path, source) in PRODUCTION_SOURCES {
+        if path.starts_with("src/management/") && *path != "src/management/worker.rs" {
             assert!(
-                !source.contains(forbidden),
-                "{path} must not import an HTTP or async server surface ({forbidden})"
+                !code_only(source).contains("tokio::"),
+                "{path} must not use an async runtime; only the bounded worker queue \
+                 in src/management/worker.rs may"
             );
         }
     }
+}
+
+#[test]
+fn the_http_boundary_never_reaches_the_durable_store_or_the_kernel() {
+    // `src/http/` is a request-handling boundary. It may use EggServe primitives,
+    // the worker client, and safe config values — and nothing else. Reaching
+    // `rusqlite`, the netd client, projection, or the wire protocol directly would
+    // bypass the bounded worker: a request handler would then block a Tokio worker
+    // thread on synchronous disk I/O, and would be able to observe state the
+    // health projection deliberately withholds.
+    assert_code_avoids(
+        "src/http/",
+        &[
+            "rusqlite",
+            "crate::protocol",
+            "crate::aggregate",
+            "crate::reconcile",
+            "crate::wireguard",
+            "crate::state",
+            "crate::firewall",
+            "netlink",
+            "rtnetlink",
+        ],
+        "the HTTP boundary reaches management only through the bounded worker",
+    );
+}
+
+#[test]
+fn the_management_http_surface_ships_no_router_or_client_crate() {
+    // ADR-003: the service embeds `eggserve-server` and `eggserve-primitives`
+    // directly. A router framework or an HTTP client dependency would reintroduce
+    // exactly the transitive surface ADR-003 was written to avoid.
+    let manifest = code_only(include_str!("../Cargo.toml"));
+    for forbidden in [
+        "eggserve-core",
+        "eggserve-static",
+        "axum",
+        "actix-web",
+        "actix-rt",
+        "warp",
+        "tower-http",
+        "reqwest",
+        "ureq",
+        "hyper-tls",
+        "rustls",
+    ] {
+        assert!(
+            !manifest.contains(forbidden),
+            "Cargo.toml must not depend on {forbidden}: ADR-003 embeds EggServe directly"
+        );
+    }
+}
+
+#[test]
+fn the_management_worker_queue_is_bounded() {
+    // The bounded queue is the whole reason a request flood cannot become a
+    // backlog. An unbounded channel anywhere in the worker would silently undo the
+    // backpressure the HTTP surface reports as a 503.
+    let worker = &code_only(source_of("src/management/worker.rs"));
+    assert!(
+        worker.contains("mpsc::channel(capacity)"),
+        "the worker must admit through an explicitly sized channel"
+    );
+    for forbidden in ["mpsc::unbounded", "spawn_blocking"] {
+        assert!(
+            !worker.contains(forbidden),
+            "the management worker must not use {forbidden}: it would defeat the bound"
+        );
+    }
+    // Every admission is a non-blocking send, so saturation is refused rather
+    // than awaited.
+    assert!(
+        worker.contains("try_send"),
+        "admission must be a non-blocking send so overload is refused, not queued"
+    );
 }
 
 #[test]
@@ -475,13 +649,6 @@ fn the_state_store_submodules_stay_a_one_directed_layering() {
     // the stored representation has exactly one owner and cannot introduce a
     // cycle. These assertions are what keep a later split from quietly
     // reintroducing the monolith this layering replaced.
-    let source_of = |name: &str| -> &str {
-        PRODUCTION_SOURCES
-            .iter()
-            .find(|(registered, _)| *registered == name)
-            .unwrap_or_else(|| panic!("{name} must be a registered guard source"))
-            .1
-    };
 
     // The decoder knows nothing about the handle it serves.
     let sql = source_of("src/state/store/sql.rs");
@@ -549,4 +716,32 @@ fn secret_wrappers_redact_ordinary_debug_and_display() {
     // Public keys are not secret and stay debuggable for operator diagnostics.
     let public = PublicKey::new(KEY.to_owned()).expect("valid base64 32-byte key");
     assert!(format!("{public:?}").contains(KEY));
+}
+
+#[test]
+fn the_comment_stripper_actually_strips_and_preserves() {
+    // The guards are only as trustworthy as this helper. A stripper that removed
+    // real code would turn every token guard above into a no-op.
+    let source = "//! module doc\n\
+                  use crate::ok::Thing;\n\
+                  // a full-line comment mentioning crate::forbidden\n\
+                  /// a doc comment mentioning crate::forbidden\n\
+                  let x = 1; // trailing comment\n\
+                  /* block mentioning crate::forbidden */\n\
+                  let y = 2;\n\
+                  /* unterminated\n\
+                     crate::forbidden\n\
+                  */\n\
+                  let z = 3;\n";
+    let code = code_only(source);
+    assert!(code.contains("use crate::ok::Thing;"));
+    assert!(code.contains("let x = 1;"));
+    assert!(code.contains("let y = 2;"));
+    assert!(code.contains("let z = 3;"));
+    // The block comment opened and closed on one line keeps the code after it.
+    assert!(code.contains("let y = 2;"), "code after */ is kept");
+    assert!(
+        !code.contains("crate::forbidden"),
+        "no commented-out token may survive: {code}"
+    );
 }

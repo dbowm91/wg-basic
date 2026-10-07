@@ -8,7 +8,7 @@
 use super::{
     coordinator::ReconcileCoordinator,
     error::{classify_io, ManagementError, ProjectionFailure},
-    health::{convergence_state, ConvergenceState, ManagementHealth},
+    health::{convergence_state, netd_reachability, ManagementHealth},
 };
 use crate::{
     aggregate::{AggregateStatus, InstallationNetworkIntent},
@@ -227,8 +227,7 @@ impl ManagementRuntime {
         let (state, category) = convergence_state(&convergence, metadata.as_ref());
         ManagementHealth {
             database_healthy: metadata.is_some(),
-            netd_reachable: matches!(state, ConvergenceState::Converged)
-                || matches!(state, ConvergenceState::Retryable),
+            netd_reachable: netd_reachability(&convergence, metadata.as_ref()),
             installation_id: metadata.map(|m| m.installation_id),
             current_desired_generation: metadata.map(|m| m.desired_generation),
             last_converged_generation: convergence.last_converged_generation,
