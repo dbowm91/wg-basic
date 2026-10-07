@@ -12,9 +12,9 @@ cargo test --locked
 cargo +1.89.0 check --all-targets --locked
 ```
 
-The current implementation is non-mutating. No root privileges or network namespace setup are needed for the unit suite.
+The default unit/protocol suite does not require root or network namespace setup. The Linux WireGuard backend mutates only through typed requests to an existing device; the real-kernel integration test creates temporary namespaces and fixture links and requires root, `CAP_NET_ADMIN`, `iproute2`, `iputils-ping`, and kernel WireGuard support.
 
-## Local read-only netd
+## Local netd
 
 Create a private runtime directory owned by the user running `netd`, then start:
 
@@ -30,3 +30,11 @@ Run Linux IPC integration coverage with:
 ```sh
 cargo test --locked --test privileged_protocol -- --nocapture
 ```
+
+Run the real kernel WireGuard handshake, telemetry, peer update, and preservation fixture with:
+
+```sh
+sudo -E cargo test --locked --features linux-integration --test wireguard_kernel -- --nocapture
+```
+
+The test starts its netd workers inside the two temporary network namespaces so each typed request controls the device in that namespace. CI runs this target on a rootful Linux runner; when `CI` is set, unavailable namespace/kernel prerequisites fail the test instead of silently skipping kernel evidence.

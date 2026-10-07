@@ -4,6 +4,8 @@ pub mod domain;
 pub mod error;
 #[cfg(target_os = "linux")]
 pub mod protocol;
+#[cfg(target_os = "linux")]
+pub mod wireguard;
 
 #[cfg(target_os = "linux")]
 pub mod platform {

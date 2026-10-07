@@ -37,7 +37,7 @@ The architecture separates:
 
 The privileged service does not expose arbitrary shell, command, file-write, sysctl-path, nft-script, or raw-netlink execution.
 
-Current production code state: **M001 domain/runtime foundation and M002 read-only local privileged protocol implemented; no WireGuard or host-network mutation yet**.
+Current production code state: **M001/M002 are closed; M003 WireGuard kernel control is in progress. M004 link/address/routes and M005 firewall/forwarding remain blocked.**
 
 ## 3. Eggstack reuse disposition
 
