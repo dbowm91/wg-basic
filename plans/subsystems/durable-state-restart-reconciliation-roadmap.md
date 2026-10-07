@@ -490,3 +490,5 @@ A bounded corrective/polish/evidence pass is registered separately:
 Its scope is limited to current-state documentation reconciliation, the one remaining real-kernel disable-path fault-injection qualification gap carried from M002/M003, and contract-preserving management/state module cleanup before Phase 7 consumes those APIs.
 
 The corrective MUST NOT change ADR-002, desired-generation semantics, durable ownership, aggregate reconciliation ordering, or backup/restore contracts.
+
+It is closed. Closure record: `plans/closure/durable-state-post-phase6-reconciliation/c001-status.md` (head `635a130`, CI run `37638334930`). All three obligations are discharged: the current-state docs now agree Phase 6 is closed, the disable path is qualified against a real netd process and a real kernel interface when the firewall layer refuses, and management/state are split by subject with the public surface unchanged. The M002/M003 evidence debt is retired, so **Phase 7 planning and implementation are both unblocked**.

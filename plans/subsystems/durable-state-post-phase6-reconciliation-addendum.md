@@ -115,11 +115,15 @@ C001 MUST NOT:
 
 ### C001 — Post-Phase-6 reconciliation, missing fault evidence, and pre-Phase-7 boundary cleanup
 
-Status: ready.
+Status: closed.
 
 Implementation plan:
 
 - `plans/implementation/durable-state/c001-post-phase6-reconciliation-and-pre-phase7-hardening.md`
+
+Closure record:
+
+- `plans/closure/durable-state-post-phase6-reconciliation/c001-status.md` (head `635a130`, CI run `37638334930`)
 
 Primary class:
 

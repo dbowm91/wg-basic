@@ -220,11 +220,11 @@ Milestones:
 - M003 startup reconciliation + crash/restart recovery;
 - M004 backup/restore + migration qualification.
 
-Phase 6 implementation is complete. Post-Phase-6 corrective work is tracked in `plans/subsystems/durable-state-post-phase6-reconciliation-addendum.md` and does not reopen Phase 6 architecture or closure.
+Phase 6 implementation is complete. Post-Phase-6 corrective work was tracked in `plans/subsystems/durable-state-post-phase6-reconciliation-addendum.md`; it closed at `635a130` and did not reopen Phase 6 architecture or closure.
 
 ## 9. Phase 7 — Service/security substrate
 
-Status: ready to research/plan. Production implementation should wait for post-Phase-6 durable-state C001 closure so it consumes the reconciled management/state boundary and the remaining rootful evidence gap is closed.
+Status: unblocked for research, planning, and implementation. Post-Phase-6 durable-state C001 has closed, so this phase consumes a reconciled management/state boundary with no remaining rootful evidence gap against it. The subsystem roadmap is still to be written; write it first.
 
 Owned by:
 

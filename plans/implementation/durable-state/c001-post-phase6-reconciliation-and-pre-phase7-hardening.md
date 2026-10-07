@@ -1,6 +1,10 @@
 # Durable State C001 — Post-Phase-6 Reconciliation and Pre-Phase-7 Hardening
 
-Status: ready
+Status: closed
+
+Closure record: `plans/closure/durable-state-post-phase6-reconciliation/c001-status.md`
+
+Closure head: `635a130` (CI run `37638334930`, seven jobs green)
 
 Repository baseline: `53d24756c55a090d2ee4d2e8845498f6cd822447`
 
