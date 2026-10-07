@@ -374,3 +374,4 @@ No plan should introduce a large CI matrix before a concrete qualification need 
 | M003 WireGuard control/telemetry | closed | `plans/implementation/network-control/003-wireguard-kernel-control-and-telemetry.md` | `plans/closure/network-control/003-status.md` | — |
 | M004 link/address/route reconciliation | closed | `plans/implementation/network-control/004-link-address-route-reconciliation.md` | `plans/closure/network-control/004-status.md` | — |
 | M005 firewall/forwarding/E2E | closed | `plans/implementation/network-control/005-firewall-forwarding-end-to-end.md` | `plans/closure/network-control/005-status.md` | — |
+| C001 post-foundation reconciliation/module decomposition | closed | `plans/implementation/network-control/c001-post-foundation-reconciliation-and-module-decomposition.md` | `plans/closure/network-control-post-foundation-reconciliation/c001-status.md` | — |

@@ -1,6 +1,6 @@
 # Network Control Post-Foundation Reconciliation and Refactor Addendum
 
-Status: active; C001 ready
+Status: closed; C001 strictly closed
 
 Canonical references:
 
@@ -124,7 +124,9 @@ Phase 6 research/planning may proceed while C001 is implemented, because C001 is
 
 ## 7. Milestone C001 — Documentation reconciliation and module decomposition
 
-Status: ready.
+Status: closed.
+
+Closure record: `plans/closure/network-control-post-foundation-reconciliation/c001-status.md`.
 
 Implementation plan:
 
@@ -143,6 +145,8 @@ Exit conditions:
 ## 8. Closure policy
 
 The existing M001–M005 closure records are not edited to imply this cleanup existed earlier.
+
+C001 closed at `0e74a40`; hosted CI run `37617879237` passed all four jobs.
 
 C001 receives its own closure record under:
 

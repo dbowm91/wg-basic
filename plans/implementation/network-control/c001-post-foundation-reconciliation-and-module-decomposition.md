@@ -1,6 +1,12 @@
 # Network Control C001 — Post-Foundation Reconciliation and Module Decomposition
 
-Status: ready
+Status: closed
+
+Closure record: `plans/closure/network-control-post-foundation-reconciliation/c001-status.md`
+
+Final implementation head: `0e74a40`
+
+Qualification run: GitHub Actions CI run `37617879237` (all four jobs green)
 
 Repository baseline: `1b17d49bf208a7ef3b72f0028241ae77299fe207`
 

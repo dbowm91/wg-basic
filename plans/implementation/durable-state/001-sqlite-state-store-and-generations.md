@@ -1,6 +1,8 @@
 # Durable State M001 — SQLite State Store and Desired Generations
 
-Status: blocked on network-control C001 closure
+Status: active
+
+Unblocked by: network-control C001 strictly closed at `0e74a40` (`plans/closure/network-control-post-foundation-reconciliation/c001-status.md`)
 
 Production-code baseline: `1b17d49bf208a7ef3b72f0028241ae77299fe207`
 
@@ -8,7 +10,7 @@ Planning baseline:
 
 - ADR-002 accepted;
 - durable-state roadmap registered;
-- network-control C001 is the sole ready implementation plan.
+- network-control C001 is closed; durable-state M001 is now the sole ready implementation plan.
 
 Source roadmap:
 
@@ -24,7 +26,7 @@ Primary class: infrastructure / invariant
 
 Hard dependency:
 
-- network-control C001 strictly closed.
+- network-control C001 strictly closed — satisfied at `0e74a40`.
 
 ## 1. Objective
 
@@ -69,7 +71,7 @@ Record exact bundled SQLite version in closure evidence.
 
 ## 3. Storage module boundary
 
-After C001's module layout settles, introduce a management-side state module approximately:
+The C001 module layout has settled. Introduce the management-side state module as:
 
 ```text
 state/
