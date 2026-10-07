@@ -74,6 +74,34 @@ fn nft(namespace: &Namespace, args: &[&str]) -> Output {
     run("ip", &full_args)
 }
 
+fn nft_table_snapshot(namespace: &Namespace, table: &str) -> serde_json::Value {
+    fn remove_dynamic_fields(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Array(values) => {
+                for value in values {
+                    remove_dynamic_fields(value);
+                }
+            }
+            serde_json::Value::Object(object) => {
+                object.remove("handle");
+                if let Some(serde_json::Value::Object(counter)) = object.get_mut("counter") {
+                    counter.remove("packets");
+                    counter.remove("bytes");
+                }
+                for value in object.values_mut() {
+                    remove_dynamic_fields(value);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let output = nft(namespace, &["-j", "list", "table", "inet", table]);
+    let mut value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    remove_dynamic_fields(&mut value);
+    value
+}
+
 struct Namespace(String);
 
 impl Namespace {
@@ -374,7 +402,7 @@ fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
     );
 
     nft_input(&server, "add table inet fixture_keep\nadd chain inet fixture_keep forward { type filter hook forward priority 20; policy accept; }\nadd rule inet fixture_keep forward counter accept comment \"fixture-preserve\"\n");
-    let firewall_before = nft(&server, &["-j", "list", "table", "inet", "fixture_keep"]).stdout;
+    let firewall_before = nft_table_snapshot(&server, "fixture_keep");
 
     let client_netd = Netd::start(&client.0);
     let mut server_netd = Netd::start(&server.0);
@@ -547,7 +575,7 @@ fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
         "host forwarding was incorrectly reverted"
     );
 
-    let firewall_after = nft(&server, &["-j", "list", "table", "inet", "fixture_keep"]).stdout;
+    let firewall_after = nft_table_snapshot(&server, "fixture_keep");
     assert_eq!(
         firewall_after, firewall_before,
         "unrelated nftables table changed"
