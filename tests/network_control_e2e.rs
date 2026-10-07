@@ -212,7 +212,7 @@ fn apply_interface(
     request_id: u64,
 ) -> wg_basic::reconcile::ApplyReceipt {
     match request(
-        &netd.socket(),
+        netd.socket(),
         RequestOperation::ApplyManagedInterface { desired },
         request_id,
     )
@@ -238,7 +238,7 @@ fn apply_policy(
     request_id: u64,
 ) -> FirewallApplyReceipt {
     match request(
-        &netd.socket(),
+        netd.socket(),
         RequestOperation::ApplyNetworkPolicy {
             installation_id: installation(),
             wireguard_interface,
@@ -604,7 +604,7 @@ fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
 
     nft_input(&server, "add table inet wg_basic\n");
     let collision = request(
-        &server_netd.socket(),
+        server_netd.socket(),
         RequestOperation::PlanNetworkPolicy {
             installation_id: installation(),
             wireguard_interface: server_interface.clone(),

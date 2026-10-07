@@ -1,5 +1,6 @@
 use crate::{
-    domain::{InstallationId, InterfaceName},
+    aggregate::{AggregateLayer, AggregateStatus, InstallationNetworkIntent},
+    domain::{DesiredGeneration, InstallationId, InterfaceName},
     firewall::{DesiredNetworkPolicy, FirewallApplyReceipt, FirewallPlanSummary},
     reconcile::{ApplyReceipt, DesiredManagedInterface, ReconcilePlanSummary},
     wireguard::{ObservedWireGuardDevice, WireGuardApplyReceipt, WireGuardDevicePatch},
@@ -49,6 +50,14 @@ pub enum RequestOperation {
         wireguard_interface: InterfaceName,
         policy: Option<DesiredNetworkPolicy>,
     },
+    /// Generation-aware aggregate plan. This is the canonical Phase 6 path.
+    PlanInstallationNetworkIntent {
+        intent: InstallationNetworkIntent,
+    },
+    /// Generation-aware aggregate apply. This is the canonical Phase 6 path.
+    ApplyInstallationNetworkIntent {
+        intent: InstallationNetworkIntent,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -66,7 +75,10 @@ pub struct ResponseEnvelope {
 // every caller pattern-matches on, for a few bytes once per request.
 #[allow(clippy::large_enum_variant)]
 pub enum ResponseBody {
-    Pong { service: String, version: String },
+    Pong {
+        service: String,
+        version: String,
+    },
     Capabilities(super::NetworkCapabilitySnapshot),
     WireGuardDevice(ObservedWireGuardDevice),
     WireGuardApplied(WireGuardApplyReceipt),
@@ -74,6 +86,38 @@ pub enum ResponseBody {
     ManagedInterfaceApplied(ApplyReceipt),
     NetworkPolicyPlan(FirewallPlanSummary),
     NetworkPolicyApplied(FirewallApplyReceipt),
+    /// The aggregate plan is reported per layer. It never carries raw nft
+    /// source or private keys.
+    InstallationNetworkPlanned(InstallationNetworkPlanBody),
+    InstallationNetworkApplied(InstallationNetworkApplyBody),
+}
+
+/// Per-layer plan carried over the wire.
+///
+/// Deliberately a subset of the internal plan: interface and firewall layer
+/// summaries plus the ordering hint, and nothing that would expose rendered
+/// nftables source or key material.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct InstallationNetworkPlanBody {
+    pub installation_id: InstallationId,
+    pub generation: DesiredGeneration,
+    pub enabling: bool,
+    pub interface_plan: ReconcilePlanSummary,
+    pub firewall_plan: FirewallPlanSummary,
+}
+
+/// Generation-tagged aggregate receipt.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct InstallationNetworkApplyBody {
+    pub installation_id: InstallationId,
+    pub generation: DesiredGeneration,
+    pub status: AggregateStatus,
+    pub interface: ApplyReceipt,
+    pub firewall: FirewallApplyReceipt,
+    pub failed_layer: Option<AggregateLayer>,
+    pub observed_after: bool,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

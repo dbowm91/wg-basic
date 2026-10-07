@@ -78,7 +78,9 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
                 | ResponseBody::ManagedInterfacePlan(_)
                 | ResponseBody::ManagedInterfaceApplied(_)
                 | ResponseBody::NetworkPolicyPlan(_)
-                | ResponseBody::NetworkPolicyApplied(_) => {
+                | ResponseBody::NetworkPolicyApplied(_)
+                | ResponseBody::InstallationNetworkPlanned(_)
+                | ResponseBody::InstallationNetworkApplied(_) => {
                     return Err("netd returned an unexpected protocol response".into())
                 }
             }
@@ -101,7 +103,9 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
                 | ResponseBody::ManagedInterfacePlan(_)
                 | ResponseBody::ManagedInterfaceApplied(_)
                 | ResponseBody::NetworkPolicyPlan(_)
-                | ResponseBody::NetworkPolicyApplied(_) => {
+                | ResponseBody::NetworkPolicyApplied(_)
+                | ResponseBody::InstallationNetworkPlanned(_)
+                | ResponseBody::InstallationNetworkApplied(_) => {
                     return Err("netd returned an unexpected protocol response".into())
                 }
             }

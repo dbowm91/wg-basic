@@ -9,6 +9,7 @@ use super::wire::{
     ProtocolError, RequestEnvelope, RequestOperation, ResponseBody, ResponseEnvelope,
     PROTOCOL_VERSION,
 };
+use crate::aggregate::{ApplyRejection, GenerationRejection, IntentError, PlanRejection};
 use crate::firewall::FirewallError;
 use crate::protocol::capability::NetworkCapabilitySnapshot;
 use crate::reconcile::ReconcileError;
@@ -68,6 +69,43 @@ impl SocketServer {
                 .apply(installation_id, &wireguard_interface, policy.as_ref())
                 .map(ResponseBody::NetworkPolicyApplied)
                 .map_err(map_firewall_error),
+            RequestOperation::PlanInstallationNetworkIntent { intent } => self
+                .aggregate
+                .plan(&intent)
+                .map(|plan| {
+                    ResponseBody::InstallationNetworkPlanned(
+                        crate::protocol::wire::InstallationNetworkPlanBody {
+                            installation_id: plan.installation_id,
+                            generation: plan.generation,
+                            enabling: plan.enabling,
+                            interface_plan: plan.interface_plan,
+                            firewall_plan: plan.firewall_plan,
+                        },
+                    )
+                })
+                .map_err(|rejection| match rejection {
+                    PlanRejection::Interface(inner) => map_reconcile_error(inner),
+                    PlanRejection::Firewall(inner) => map_firewall_error(inner),
+                    PlanRejection::InvalidIntent(inner) => map_intent_error(inner),
+                    PlanRejection::GenerationRejected(inner) => map_generation_rejection(inner),
+                }),
+            RequestOperation::ApplyInstallationNetworkIntent { intent } => self
+                .aggregate
+                .apply(&intent)
+                .map(|receipt| {
+                    ResponseBody::InstallationNetworkApplied(
+                        crate::protocol::wire::InstallationNetworkApplyBody {
+                            installation_id: receipt.installation_id,
+                            generation: receipt.generation,
+                            status: receipt.status,
+                            interface: receipt.interface,
+                            firewall: receipt.firewall,
+                            failed_layer: receipt.failed_layer,
+                            observed_after: receipt.observed_after,
+                        },
+                    )
+                })
+                .map_err(map_aggregate_error),
         };
         ResponseEnvelope {
             protocol_version: PROTOCOL_VERSION,
@@ -88,6 +126,51 @@ fn map_firewall_error(error: FirewallError) -> ProtocolError {
         FirewallError::PermissionDenied => ProtocolError::PermissionDenied,
         FirewallError::Unsupported => ProtocolError::UnsupportedBackend,
         FirewallError::BackendFailure => ProtocolError::BackendFailure,
+    }
+}
+
+fn map_intent_error(error: IntentError) -> ProtocolError {
+    match error {
+        IntentError::GenerationOutOfRange => ProtocolError::InvalidInput,
+        IntentError::InvalidInterface(inner) => map_reconcile_error(inner),
+        _ => ProtocolError::InvalidInput,
+    }
+}
+
+fn map_generation_rejection(error: GenerationRejection) -> ProtocolError {
+    // A stale generation and a foreign installation identity are both stable
+    // conflict categories, so no new protocol error variant is needed.
+    match error {
+        GenerationRejection::InstallationMismatch | GenerationRejection::Stale { .. } => {
+            ProtocolError::Conflict
+        }
+    }
+}
+
+fn map_aggregate_error(error: ApplyRejection) -> ProtocolError {
+    match error {
+        ApplyRejection::InvalidIntent(intent) => match intent {
+            IntentError::GenerationOutOfRange => ProtocolError::InvalidInput,
+            IntentError::InvalidInterface(inner) => map_reconcile_error(inner),
+            _ => ProtocolError::InvalidInput,
+        },
+        ApplyRejection::GenerationRejected(rejection) => match rejection {
+            GenerationRejection::InstallationMismatch => ProtocolError::Conflict,
+            GenerationRejection::Stale { .. } => ProtocolError::Conflict,
+        },
+        ApplyRejection::Interface(inner) => map_reconcile_error(inner),
+        ApplyRejection::InterfaceLayerIncomplete { .. } => ProtocolError::InternalFailure,
+        ApplyRejection::Firewall(inner) => map_firewall_error(inner),
+        ApplyRejection::FirewallDuringApply { interface, error } => {
+            // An earlier layer already changed state, so this is a partial
+            // failure rather than a clean rejection.
+            if interface.completed_actions > 0 {
+                ProtocolError::BackendFailure
+            } else {
+                map_firewall_error(error)
+            }
+        }
+        ApplyRejection::FirewallLayerIncomplete { .. } => ProtocolError::InternalFailure,
     }
 }
 
