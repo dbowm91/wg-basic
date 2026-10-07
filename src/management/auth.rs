@@ -27,10 +27,14 @@ pub use crate::domain::AuthError;
 use crate::{
     domain::{
         check_password_policy, CsrfToken, PasswordVerifier, PrincipalId, SessionId, SessionToken,
+        TIMING_EQUALISER_VERIFIER,
     },
     state::{PrincipalRecord, SessionRecord, StateError, StateStore, StoredSession},
 };
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{
+    sync::OnceLock,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 /// Longest a session may live, in seconds.
 ///
@@ -109,7 +113,7 @@ pub fn set_password_at(
     username: &str,
     password: &str,
 ) -> Result<AdminStatus, AuthError> {
-    let store = StateStore::open(path).map_err(|_| AuthError::StorageUnavailable)?;
+    let store = open_or_initialize(path).map_err(|_| AuthError::StorageUnavailable)?;
     let auth = AuthService::new(&store);
     auth.set_password(username, password)?;
     // Re-read through the same safe projection the HTTP surface will use, so
@@ -119,8 +123,32 @@ pub fn set_password_at(
 
 /// The safe administrator projection for a one-shot operator command.
 pub fn status_at(path: impl AsRef<std::path::Path>) -> Result<Option<AdminStatus>, AuthError> {
-    let store = StateStore::open(path).map_err(|_| AuthError::StorageUnavailable)?;
+    let store = open_or_initialize(path).map_err(|_| AuthError::StorageUnavailable)?;
     AuthService::new(&store).status()
+}
+
+/// Opens the store, initializing it when it does not exist yet.
+///
+/// The same rule the service applies on startup, for the same reason: the
+/// documented order is to provision the administrator *before* first start, so
+/// this command has to work on a path nothing has ever opened. Without the
+/// initialize arm, `wg-basic admin set-password` failed on exactly the fresh
+/// install it exists to set up.
+///
+/// Reporting a storage failure as `StorageUnavailable` rather than surfacing the
+/// underlying `StateError` is deliberate: this is a one-shot operator command
+/// and the underlying error already names the database path, while this string
+/// reaches a terminal on a machine the operator is sitting at.
+fn open_or_initialize(
+    path: impl AsRef<std::path::Path>,
+) -> Result<StateStore, crate::state::StateError> {
+    let path = path.as_ref();
+    match StateStore::open(path) {
+        Ok(store) => Ok(store),
+        Err(crate::state::StateError::MissingParent { .. }) => StateStore::initialize(path),
+        Err(crate::state::StateError::DatabaseAlreadyExists { .. }) => StateStore::open(path),
+        Err(other) => Err(other),
+    }
 }
 
 /// The measured Argon2id cost, for M003 throttling and CI evidence.
@@ -222,18 +250,33 @@ impl<'a> AuthService<'a> {
         // work.
         check_password_policy(password.as_bytes()).map_err(|_| AuthError::CredentialsRejected)?;
 
-        let principal = self
-            .store
-            .principal_by_username(username)
-            .map_err(map_store_error)?
-            .ok_or(AuthError::CredentialsRejected)?;
+        // Every refusal below costs one Argon2 verification, even the ones that
+        // find no principal at all. Without that, "no such username" answers in
+        // microseconds while "wrong password" answers in ~300 ms, and the gap
+        // itself is the username oracle -- a larger, more reliable one than
+        // anything a response body could accidentally reveal.
+        let principal = match self.store.principal_by_username(username) {
+            Ok(Some(principal)) => principal,
+            Ok(None) | Err(_) => return Err(self.reject_without_principal(password)),
+        };
         if !principal.enabled {
-            return Err(AuthError::CredentialsRejected);
+            return Err(self.reject_without_principal(password));
         }
         if !principal.verifier.verify(password) {
             return Err(AuthError::CredentialsRejected);
         }
         self.issue_session(principal.id)
+    }
+
+    /// Spends an Argon2 verification against the fixed dummy verifier, then
+    /// refuses.
+    ///
+    /// The result is discarded. The point is the work it does, not the answer it
+    /// produces: by the time this returns, the caller has paid the same cost as
+    /// a real verification and so has any observer timing the request.
+    fn reject_without_principal(&self, password: &str) -> AuthError {
+        equaliser().verify(password);
+        AuthError::CredentialsRejected
     }
 
     /// Issues a session for an already-authenticated principal.
@@ -379,10 +422,26 @@ fn map_store_error(_error: StateError) -> AuthError {
     AuthError::CredentialsRejected
 }
 
+/// The fixed dummy verifier, parsed once.
+///
+/// Parsing a PHC string is cheap but doing it per failed login would be a
+/// second, smaller timing signal, so the parse is hoisted out of the request
+/// path entirely. `OnceLock` rather than `LazyLock` because the value cannot be
+/// built at compile time.
+fn equaliser() -> &'static PasswordVerifier {
+    static EQUALISER: OnceLock<PasswordVerifier> = OnceLock::new();
+    EQUALISER.get_or_init(|| {
+        PasswordVerifier::parse(TIMING_EQUALISER_VERIFIER)
+            .expect("the timing equaliser is a constant of this crate")
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::ARGON2ID_PHC_PREFIX;
+    use crate::domain::{
+        ARGON2ID_PHC_PREFIX, ARGON2_ITERATIONS, ARGON2_MEMORY_KIB, ARGON2_PARALLELISM,
+    };
 
     fn store() -> (tempdir::TempDir, StateStore) {
         let dir = tempdir::TempDir::new();
@@ -752,5 +811,203 @@ mod tests {
             0
         );
         assert!(auth.resolve_session(issued.token.expose_once()).is_ok());
+    }
+
+    #[test]
+    fn the_one_shot_commands_work_on_a_path_nothing_has_opened() {
+        // The documented order is to provision the administrator *before* first
+        // start, so `wg-basic admin set-password` has to initialise the store
+        // itself. It did not: both one-shot commands used `StateStore::open`,
+        // which refuses a file that does not exist, so the command failed with
+        // `the credential store is unavailable` on exactly the fresh install it
+        // exists to set up.
+        let dir = tempdir::TempDir::new();
+        let path = dir.db();
+
+        let provisioned = set_password_at(&path, "admin", PASSWORD)
+            .expect("set-password must initialise a fresh store");
+        assert_eq!(provisioned.username, "admin");
+        assert!(provisioned.enabled);
+        assert!(path.exists(), "the store must exist afterwards");
+
+        let status = status_at(&path)
+            .expect("status must open a store it did not create")
+            .expect("an administrator is provisioned");
+        assert_eq!(status.principal_id, provisioned.principal_id);
+
+        // And running it again is a reset, not an initialise error.
+        let reset = set_password_at(&path, "admin", "a different password").expect("reset");
+        assert_eq!(reset.principal_id, provisioned.principal_id);
+        assert!(
+            AuthService::new(&StateStore::open(&path).unwrap())
+                .authenticate("admin", PASSWORD)
+                .is_err(),
+            "the old password must stop working"
+        );
+    }
+
+    #[test]
+    fn an_unknown_username_costs_a_verification_rather_than_being_free() {
+        // Without the dummy verifier a username miss returned in microseconds
+        // while a wrong password took ~300 ms. That gap *is* the username oracle,
+        // and it is larger than anything a response body could leak. The
+        // assertion is that the two refusals are within the same order of
+        // magnitude, not that they are bit-identical: the plan explicitly does
+        // not claim constant-time HTTP behaviour.
+        let (_dir, store) = store();
+        let auth = AuthService::new(&store);
+        auth.set_password("admin", PASSWORD).unwrap();
+
+        // Sampling both ends is what makes this stable. On a loaded machine every
+        // call is slower, so comparing two single measurements would compare two
+        // different amounts of load and the ratio would describe the scheduler
+        // rather than the code. The real separation is a factor of two, so the
+        // window below is deliberately wide -- wide enough to absorb scheduling
+        // noise, tight enough that a skipped hash (three orders of magnitude)
+        // cannot hide inside it.
+        const SAMPLES: u32 = 5;
+        let slowest = |username: &str, password: &str| {
+            (0..SAMPLES)
+                .map(|_| {
+                    let started = std::time::Instant::now();
+                    assert!(auth.authenticate(username, password).is_err());
+                    started.elapsed()
+                })
+                .max()
+                .expect("SAMPLES is non-zero")
+        };
+
+        let unknown_username = slowest("definitely-not-admin", PASSWORD);
+        let wrong_password = slowest("admin", "definitely not the password");
+
+        assert!(
+            unknown_username > wrong_password / 8,
+            "an unknown username took {unknown_username:?} against {wrong_password:?} for a \
+             wrong password; the timing equaliser is not being used"
+        );
+        assert!(
+            unknown_username < wrong_password * 8,
+            "an unknown username took {unknown_username:?} against {wrong_password:?}; the \
+             equaliser should be in the same order of magnitude, not merely slower"
+        );
+    }
+
+    #[test]
+    fn the_timing_equaliser_is_never_any_principals_verifier() {
+        // It is a cost, not a credential. The plaintext behind it is discarded
+        // and unrecoverable, so what this pins is that the constant never becomes
+        // one: a provisioned administrator must never carry it, and no password
+        // an operator could plausibly choose may verify against it.
+        let equaliser = equaliser();
+        for candidate in [
+            "",
+            "admin",
+            PASSWORD,
+            "password",
+            "an administrator password",
+        ] {
+            assert!(
+                !equaliser.verify(candidate),
+                "the timing equaliser must not accept {candidate:?}"
+            );
+        }
+
+        let (_dir, store) = store();
+        let auth = AuthService::new(&store);
+        auth.set_password("admin", PASSWORD).unwrap();
+        let principal = store
+            .principal_by_username("admin")
+            .unwrap()
+            .expect("provisioned");
+        assert_ne!(
+            principal.verifier.expose_for_storage(),
+            equaliser.expose_for_storage(),
+            "a provisioned administrator must never hold the timing equaliser"
+        );
+    }
+
+    #[test]
+    fn the_timing_equaliser_carries_the_current_argon2_policy() {
+        // If the policy is raised and the constant is not regenerated, a failed
+        // lookup becomes measurably cheaper than a real verification -- which is
+        // the exact defect the constant exists to prevent, introduced by the fix.
+        let equaliser = equaliser();
+        assert!(
+            equaliser
+                .expose_for_storage()
+                .contains(&format!("m={}", ARGON2_MEMORY_KIB)),
+            "the equaliser must use the same memory cost as the policy"
+        );
+        assert!(
+            equaliser
+                .expose_for_storage()
+                .contains(&format!("t={}", ARGON2_ITERATIONS)),
+            "the equaliser must use the same iteration count as the policy"
+        );
+        assert!(
+            equaliser
+                .expose_for_storage()
+                .contains(&format!("p={}", ARGON2_PARALLELISM)),
+            "the equaliser must use the same parallelism as the policy"
+        );
+    }
+
+    #[test]
+    fn a_disabled_principal_costs_a_verification_too() {
+        // A disabled account is a different branch from a missing one, and it
+        // would be the same leak if that branch skipped the hash.
+        let (_dir, store) = store();
+        let auth = AuthService::new(&store);
+        auth.set_password("admin", PASSWORD).unwrap();
+        let principal = store
+            .principal_by_username("admin")
+            .unwrap()
+            .expect("provisioned");
+        store
+            .upsert_principal(principal.id, "admin", principal.verifier.clone(), false, 0)
+            .unwrap();
+
+        // Compared against a real wrong-password refusal in the same process,
+        // not against an absolute duration: Argon2 is three times faster in a
+        // release build, so any fixed millisecond bar is either flaky in debug
+        // or meaningless in release. The claim is that a disabled account costs
+        // the same *kind* of work as a wrong password, and that is a ratio.
+        let slowest = |auth: &AuthService, password: &str| {
+            (0..3)
+                .map(|_| {
+                    let started = std::time::Instant::now();
+                    assert!(auth.authenticate("admin", password).is_err());
+                    started.elapsed()
+                })
+                .max()
+                .expect("three samples")
+        };
+        let disabled = slowest(&auth, PASSWORD);
+        let wrong_password = slowest(&auth, "definitely not the password");
+
+        assert!(
+            disabled > wrong_password / 8,
+            "a disabled principal refused in {disabled:?} against {wrong_password:?} for a \
+             wrong password, which is far too cheap: a disabled account must not be a \
+             faster answer, or disabling an account becomes a username oracle"
+        );
+        assert!(
+            disabled < wrong_password * 8,
+            "a disabled principal refused in {disabled:?} against {wrong_password:?}; the \
+             equaliser should be in the same order of magnitude, not merely slower"
+        );
+    }
+
+    #[test]
+    fn status_on_a_fresh_path_reports_no_administrator_rather_than_failing() {
+        // `status` is the command an operator runs to find out what is
+        // provisioned. On a machine where nothing has been provisioned it must
+        // say so, not report a storage failure.
+        let dir = tempdir::TempDir::new();
+        let status = status_at(dir.db()).expect("status must work on a fresh store");
+        assert!(
+            status.is_none(),
+            "nothing is provisioned yet, got {status:?}"
+        );
     }
 }

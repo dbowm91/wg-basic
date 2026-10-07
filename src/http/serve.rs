@@ -29,9 +29,37 @@
 //! worker thread, on behalf of a request.
 
 use super::config::{HttpError, ManagementHttpConfig};
+use super::origin::{OriginConfigError, OriginPolicy};
+use super::ratelimit::{Bucket, LoginLimiter};
 use crate::management::{spawn, StartupReconcile, WorkerConfig, WorkerError};
 use eggserve_server::Server;
-use std::{future::Future, net::SocketAddr, path::PathBuf};
+use std::{future::Future, net::SocketAddr, path::PathBuf, sync::Arc};
+
+/// The global login budget: a burst of 20 verifications.
+///
+/// Sized from M002's measurement rather than picked. One verification costs
+/// ~300 ms of the appliance's CPU, so 20 in flight is ~6 s of work — already past
+/// the worker's five-second reply deadline, so the surplus must be refused
+/// rather than queued. See [`Bucket`] and `tests/authenticated_api.rs`.
+const DEFAULT_LOGIN_GLOBAL_BUCKET: Bucket = Bucket {
+    capacity: 20,
+    refill_per_second: 2.0,
+};
+
+/// The per-peer login budget: a burst of 8.
+///
+/// Comfortably more than a human typist manages and comfortably less than the
+/// global budget, so one host cannot consume the whole appliance.
+const DEFAULT_LOGIN_PEER_BUCKET: Bucket = Bucket {
+    capacity: 8,
+    refill_per_second: 1.0,
+};
+
+/// How many distinct peers the limiter remembers.
+///
+/// A memory bound, not a tuning knob: an unbounded map keyed by client address
+/// is itself a denial-of-service vector.
+const DEFAULT_TRACKED_PEERS: usize = 1024;
 
 /// Everything `wg-basic serve` was asked to do.
 #[derive(Clone, Debug)]
@@ -42,29 +70,102 @@ pub struct ServeConfig {
     pub netd_socket: PathBuf,
     /// The management listener and its limits.
     pub http: ManagementHttpConfig,
+    /// The canonical external origin and the allowed `Host` set.
+    pub origin: OriginPolicy,
 }
 
 impl ServeConfig {
-    /// Assembles a configuration from operator-supplied paths.
+    /// Assembles the default configuration: loopback listener, loopback origin.
+    ///
+    /// The default is the only configuration that is correct without an operator
+    /// saying anything, because it is the only one where the listener is not
+    /// reachable from the network.
     pub fn new(
         state_path: impl Into<PathBuf>,
         netd_socket: impl Into<PathBuf>,
         http_bind: &str,
     ) -> Result<Self, HttpError> {
+        let http = ManagementHttpConfig::new(http_bind)?;
+        let origin = if http.bind().ip().is_loopback() {
+            OriginPolicy::loopback_only(http.bind())
+        } else {
+            // A routable bind with no canonical origin to check `Host` against
+            // would accept any `Host`, which is the rebinding hole M003 exists to
+            // close. So the default refuses rather than defaults to permissive.
+            return Err(HttpError::OffHostNeedsAcknowledgement);
+        };
         Ok(Self {
             state_path: state_path.into(),
             netd_socket: netd_socket.into(),
-            http: ManagementHttpConfig::new(http_bind)?,
+            http,
+            origin,
         })
+    }
+
+    /// Assembles the configuration for an explicitly acknowledged routable bind.
+    ///
+    /// `canonical_origin` must be plain HTTP: this service terminates no TLS, so
+    /// an HTTPS claim on a routable listener would be false. The operator is
+    /// expected to have put a TLS-terminating reverse proxy in front, in which
+    /// case they should have used [`ServeConfig::new`] with a loopback bind and
+    /// [`OriginPolicy::behind_https_proxy`] instead.
+    pub fn acknowledged_off_host(
+        state_path: impl Into<PathBuf>,
+        netd_socket: impl Into<PathBuf>,
+        http_bind: &str,
+        canonical_origin: &str,
+    ) -> Result<Self, OriginConfigError> {
+        let http = ManagementHttpConfig::new(http_bind).map_err(|_| {
+            // The bind was already parsed by the caller in every real path; this
+            // arm exists so the error type stays the origin one.
+            OriginConfigError::NotAnAuthority(http_bind.to_owned())
+        })?;
+        let origin = OriginPolicy::acknowledged_off_host(http.bind(), canonical_origin)?;
+        Ok(Self {
+            state_path: state_path.into(),
+            netd_socket: netd_socket.into(),
+            http,
+            origin,
+        })
+    }
+
+    /// Assembles the configuration for a reverse proxy in front of a loopback
+    /// listener.
+    pub fn behind_https_proxy(
+        state_path: impl Into<PathBuf>,
+        netd_socket: impl Into<PathBuf>,
+        http_bind: &str,
+        canonical_origin: &str,
+    ) -> Result<Self, OriginConfigError> {
+        let http = ManagementHttpConfig::new(http_bind)
+            .map_err(|_| OriginConfigError::NotAnAuthority(http_bind.to_owned()))?;
+        let origin = OriginPolicy::behind_https_proxy(http.bind(), canonical_origin)?;
+        Ok(Self {
+            state_path: state_path.into(),
+            netd_socket: netd_socket.into(),
+            http,
+            origin,
+        })
+    }
+
+    /// The limiter this deployment runs with.
+    ///
+    /// Built fresh per run: the counters are in-memory by design, so sharing
+    /// them across runs would only carry state a restart is supposed to clear.
+    pub fn limiter(&self) -> Arc<LoginLimiter> {
+        Arc::new(LoginLimiter::new(
+            DEFAULT_LOGIN_GLOBAL_BUCKET,
+            DEFAULT_LOGIN_PEER_BUCKET,
+            DEFAULT_TRACKED_PEERS,
+        ))
     }
 
     /// Whether the listener would be reachable off-host.
     ///
-    /// Reported, never prevented: refusing to start would make an operator who
-    /// genuinely needs a proxied listener unable to proceed, and silently
-    /// allowing it would be worse. The warning names the risk.
+    /// Reflects the origin policy rather than re-deriving it from the socket, so
+    /// startup output and enforcement cannot disagree.
     pub fn is_off_host_bind(&self) -> bool {
-        !self.http.bind().ip().is_loopback()
+        self.origin.exposure.is_off_host()
     }
 }
 
@@ -122,14 +223,20 @@ pub async fn run(
     let server = Server::builder().runtime(runtime_config).build()?;
     let handle = server
         .start_with_service(super::service::ManagementService::new(
-            worker.client().clone(),
+            super::AuthenticatedApi::new(
+                worker.client().clone(),
+                Arc::new(config.origin.clone()),
+                config.limiter(),
+            ),
         ))
         .await?;
     let bound = handle.local_addr();
     let (control, mut completion) = handle.into_parts();
 
-    // 4. Report readiness.
+    // 4. Report readiness, including the exposure mode an operator must be able
+    //    to see from the log of a headless install.
     eprintln!("wg-basic serve listening on http://{bound}");
+    eprintln!("wg-basic serve {}", config.origin.describe());
     eprintln!(
         "wg-basic serve startup reconciliation: {}",
         reconcile.as_str()
@@ -143,8 +250,9 @@ pub async fn run(
     if off_host {
         eprintln!(
             "wg-basic serve: warning: bound to {bound}, which is reachable off-host. \
-             Phase 7 serves no TLS and no authentication on unauthenticated routes; \
-             put a TLS-terminating reverse proxy in front of this."
+             Phase 7 terminates no TLS; put a TLS-terminating reverse proxy in front \
+             of this, or the session cookie and every credential cross the network \
+             in the clear."
         );
     }
 
@@ -249,17 +357,110 @@ mod tests {
     }
 
     #[test]
-    fn a_non_loopback_bind_is_reported_but_not_refused() {
+    fn a_routable_bind_is_refused_without_the_acknowledgement() {
+        // The M003 position: a routable listener has no `Host` to check against
+        // unless the operator states a canonical origin, so the default refuses.
+        // Silently accepting any `Host` would reintroduce DNS rebinding.
         let scratch = Scratch::new();
-        let config = ServeConfig::new(
+        let error = ServeConfig::new(
             scratch.0.join("state.db"),
             scratch.0.join("netd.sock"),
             "0.0.0.0:8000",
         )
-        .expect("an operator may deliberately expose the listener");
-        // Refusing would block a legitimately proxied deployment; staying silent
-        // would hide that Phase 7 serves no TLS.
+        .expect_err("an operator must say so before exposing the surface");
+        assert!(
+            matches!(error, HttpError::OffHostNeedsAcknowledgement),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn an_acknowledged_routable_bind_is_built_with_a_restrictive_host_set() {
+        let scratch = Scratch::new();
+        let config = ServeConfig::acknowledged_off_host(
+            scratch.0.join("state.db"),
+            scratch.0.join("netd.sock"),
+            "0.0.0.0:8000",
+            "http://vpn.example.com",
+        )
+        .expect("an explicit origin makes this a real configuration");
         assert!(config.is_off_host_bind());
+        assert!(config.origin.accepts_host("vpn.example.com"));
+        // Not wildcarded: an arbitrary `Host` is still refused, and so is a
+        // port the operator did not state — `vpn.example.com:8000` is a
+        // different origin from the `http://vpn.example.com` that was declared.
+        assert!(!config.origin.accepts_host("evil.example.com"));
+        assert!(!config.origin.accepts_host("vpn.example.com:8000"));
+        assert!(config.origin.accepts_origin("http://vpn.example.com"));
+        assert!(!config.origin.accepts_origin("http://vpn.example.com:8000"));
+        assert!(!config.origin.accepts_origin("http://evil.example.com"));
+    }
+
+    #[test]
+    fn a_routable_listener_may_not_claim_an_https_origin() {
+        // It terminates no TLS, so the claim would be false. The operator has to
+        // keep the listener on loopback and use a proxy instead.
+        let scratch = Scratch::new();
+        let error = ServeConfig::acknowledged_off_host(
+            scratch.0.join("state.db"),
+            scratch.0.join("netd.sock"),
+            "0.0.0.0:8000",
+            "https://vpn.example.com",
+        )
+        .expect_err("a false transport claim must be refused");
+        assert!(
+            matches!(error, OriginConfigError::HttpsClaimWithoutProxy),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_reverse_proxy_origin_gives_the_secure_cookie_profile() {
+        let scratch = Scratch::new();
+        let config = ServeConfig::behind_https_proxy(
+            scratch.0.join("state.db"),
+            scratch.0.join("netd.sock"),
+            "127.0.0.1:8000",
+            "https://vpn.example.com",
+        )
+        .expect("a proxied loopback listener is the documented HTTPS shape");
+        assert!(
+            !config.is_off_host_bind(),
+            "the listener itself stays on loopback"
+        );
+        assert!(config.origin.is_secure());
+        assert_eq!(
+            config.origin.session_cookie_name(),
+            crate::http::origin::SESSION_COOKIE_SECURE_NAME
+        );
+        // The `Host` the browser sends is the external name, not the socket.
+        assert!(config.origin.accepts_host("vpn.example.com"));
+        assert!(!config.origin.accepts_host("127.0.0.1:8000"));
+    }
+
+    #[test]
+    fn each_run_gets_its_own_limiter() {
+        let scratch = Scratch::new();
+        let config = scratch.config();
+        let first = config.limiter();
+        let second = config.limiter();
+        assert_eq!(first.max_peers(), second.max_peers());
+        assert_eq!(first.global_bucket().capacity, 20);
+        assert_eq!(first.per_peer_bucket().capacity, 8);
+        assert_eq!(first.tracked_peers(), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_default_policy_refuses_a_foreign_host_at_runtime() {
+        // The rebinding refusal needs a live socket, so it lives in
+        // `tests/management_http.rs` where a real request can be sent. What is
+        // asserted here is the configuration half: the default run resolves an
+        // origin policy that accepts loopback and nothing else.
+        let scratch = Scratch::new();
+        let config = scratch.config();
+        assert_eq!(config.origin.allowed_hosts.len(), 4, "{:?}", config.origin);
+        assert!(config.origin.accepts_host("127.0.0.1:0"));
+        assert!(!config.origin.accepts_host("evil.example.com"));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

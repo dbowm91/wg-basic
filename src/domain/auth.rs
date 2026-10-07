@@ -190,6 +190,26 @@ impl PasswordVerifier {
 /// would reject every correctly-produced verifier.
 pub const ARGON2ID_PHC_PREFIX: &str = "$argon2id$";
 
+/// A fixed Argon2id verifier used only to equalise the cost of a failed lookup.
+///
+/// Verifying against this costs the same ~19 MiB and ~300 ms as verifying a real
+/// credential. That is its whole purpose: it stops "no such username" from being
+/// a measurably faster answer than "wrong password", which would otherwise be a
+/// username oracle far larger than anything a response body could leak.
+///
+/// The plaintext behind it was 48 bytes from the OS CSPRNG at the moment it was
+/// generated, and was discarded. It is deliberately **not** recorded anywhere --
+/// in a comment, a test, or this file -- so that no future edit can promote
+/// this constant into a credential somebody could present. It must never be
+/// stored as a principal's verifier and must never be returned to a caller.
+///
+/// Parameters are `m=19456, t=2, p=1` -- the same policy [`PasswordVerifier::hash`]
+/// produces. A future policy change **must** regenerate this, which is why the
+/// policy constants are asserted against it in a test rather than left as a
+/// comment.
+pub const TIMING_EQUALISER_VERIFIER: &str =
+    "$argon2id$v=19$m=19456,t=2,p=1$3FvQ5XAP1RQdd2/OxUXpNg$ZCEI8424WRPOAFPyg6WGF/2RtjVWs62LcehDEYf98eE";
+
 impl fmt::Debug for PasswordVerifier {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("PasswordVerifier(REDACTED)")

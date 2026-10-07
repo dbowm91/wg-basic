@@ -56,6 +56,14 @@ mod health;
 mod runtime;
 mod worker;
 
+/// A session as the worker hands it out.
+///
+/// Re-exported here so `src/http/` never names `crate::state`. The value is a
+/// read-only projection produced *on the worker thread*; naming its storage
+/// module from a request handler would suggest a path to the database that does
+/// not exist, and would let the architecture guard that forbids one be relaxed
+/// in a later edit.
+pub use crate::state::{SessionRecord, StoredSession};
 pub use auth::{
     set_password_at, status_at, AdminStatus, AuthError, AuthService, IssuedSession,
     VerificationCost,

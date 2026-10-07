@@ -170,9 +170,23 @@ const PRODUCTION_SOURCES: &[(&str, &str)] = &[
     ),
     ("src/http/mod.rs", include_str!("../src/http/mod.rs")),
     ("src/http/config.rs", include_str!("../src/http/config.rs")),
+    ("src/http/api.rs", include_str!("../src/http/api.rs")),
+    (
+        "src/http/headers.rs",
+        include_str!("../src/http/headers.rs"),
+    ),
+    ("src/http/origin.rs", include_str!("../src/http/origin.rs")),
+    (
+        "src/http/ratelimit.rs",
+        include_str!("../src/http/ratelimit.rs"),
+    ),
     (
         "src/http/response.rs",
         include_str!("../src/http/response.rs"),
+    ),
+    (
+        "src/http/session_cookie.rs",
+        include_str!("../src/http/session_cookie.rs"),
     ),
     (
         "src/http/service.rs",
@@ -271,6 +285,20 @@ fn code_only(source: &str) -> String {
     kept
 }
 
+/// Strips comments *and* everything from the first `#[cfg(test)]` onward.
+///
+/// A guard that inspects a test module is testing the guard's own fixtures: a
+/// test that enumerates `"access-control-allow-origin"` to assert it is absent
+/// would otherwise fail its own guard. Test code never ships, so it is not part
+/// of the claim — and excluding it keeps the guard honest about what it covers.
+fn shippable(source: &str) -> String {
+    let without_tests = match source.find("#[cfg(test)]") {
+        Some(index) => &source[..index],
+        None => source,
+    };
+    code_only(without_tests)
+}
+
 /// Asserts that none of the registered sources under `prefix` contains any of
 /// the `forbidden` tokens in executable code.
 fn assert_code_avoids(prefix: &str, forbidden: &[&str], why: &str) {
@@ -279,6 +307,26 @@ fn assert_code_avoids(prefix: &str, forbidden: &[&str], why: &str) {
             continue;
         }
         let code = code_only(source);
+        for token in forbidden {
+            assert!(
+                !code.contains(token),
+                "{path} must not reference {token}: {why}"
+            );
+        }
+    }
+}
+
+/// Asserts that no shipped source under `prefix` contains a forbidden token.
+///
+/// The [`shippable`] counterpart of [`assert_code_avoids`], for the M003 guards:
+/// each of those names the very strings it forbids while proving it, so the
+/// fixtures must be excluded or the guard would audit itself.
+fn assert_shippable_avoids(prefix: &str, forbidden: &[&str], why: &str) {
+    for (path, source) in PRODUCTION_SOURCES {
+        if !path.starts_with(prefix) {
+            continue;
+        }
+        let code = shippable(source);
         for token in forbidden {
             assert!(
                 !code.contains(token),
@@ -941,5 +989,284 @@ fn the_admin_cli_offers_no_argv_or_environment_secret_path() {
     assert!(
         main.contains("read_password_from_stdin"),
         "the password must arrive on stdin"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// M003: the authenticated perimeter
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_management_surface_emits_no_cors_header_at_all() {
+    // Not a narrow allowlist: none. A browser therefore cannot read any response
+    // cross-origin, which is a stronger position than any allowlist and costs
+    // nothing to maintain. The corollary is that a future "just for the asset
+    // shell" exception has to be argued for explicitly, so it cannot be added by
+    // accident.
+    assert_shippable_avoids(
+        "src/http/",
+        &[
+            "access-control-allow-origin",
+            "access-control-allow-credentials",
+            "access-control-allow-methods",
+            "access-control-allow-headers",
+            "access-control-expose-headers",
+            "access-control-max-age",
+        ],
+        "this surface ships no CORS, in any form, on any route",
+    );
+}
+
+#[test]
+fn the_management_surface_ships_no_token_or_oauth_dependency() {
+    // The session bearer is a random token stored as a digest and looked up in
+    // the database. A JWT library would mean a second, self-validating
+    // credential system with its own key management — strictly more attack
+    // surface for no property this appliance needs, and revocation would become
+    // impossible without a denylist.
+    let manifest = code_only(include_str!("../Cargo.toml"));
+    for forbidden in [
+        "jsonwebtoken",
+        "jwt",
+        "oauth",
+        "openid",
+        "paseto",
+        "iron-session",
+        "tower-sessions",
+        "tower-cookie",
+        "cookie-session",
+    ] {
+        assert!(
+            !manifest.contains(forbidden),
+            "Cargo.toml must not depend on {forbidden}: sessions are opaque server-side tokens"
+        );
+    }
+}
+
+#[test]
+fn the_session_cookie_cannot_lose_its_defining_attributes() {
+    // Every attribute here is load-bearing: `HttpOnly` keeps page JavaScript out
+    // of the bearer, `SameSite=Strict` stops a cross-site request carrying it,
+    // `Path=/` and the absence of `Domain` are what the `__Host-` prefix
+    // requires, and `Max-Age` ties the browser's copy to the row's lifetime.
+    // Losing any of them is a silent downgrade, so they are pinned in one place.
+    let cookie = shippable(source_of("src/http/session_cookie.rs"));
+    for required in [
+        ".http_only(true)",
+        ".path(\"/\")",
+        "SameSite::Strict",
+        ".max_age(",
+    ] {
+        assert!(
+            cookie.contains(required),
+            "src/http/session_cookie.rs must set {required} on every session cookie"
+        );
+    }
+    // No `Domain` is ever set: a host-only cookie is what stops a sibling
+    // subdomain receiving it, and what `__Host-` requires.
+    assert!(
+        !cookie.contains(".domain("),
+        "src/http/session_cookie.rs must never set a cookie Domain"
+    );
+    // `Secure` is conditional on the canonical origin, never on the request.
+    assert!(
+        cookie.contains("CookieProfile::HttpsOrigin"),
+        "the Secure attribute must follow the configured origin profile"
+    );
+}
+
+#[test]
+fn the_management_surface_never_trusts_a_forwarded_header() {
+    // `Host` is checked against an explicit configured set; `Origin` against the
+    // canonical origin. If either could be taken from `X-Forwarded-*`, an
+    // attacker who can set a request header — which is what a rebinding page
+    // can — would be choosing what "this origin" means.
+    // Note what is *not* forbidden: `RuntimeConfig::builder().forwarded_standard(false)`
+    // in `src/http/config.rs`. Turning the proxy trust off is the correct move
+    // and must stay possible; what is forbidden is *reading* a forwarded value.
+    assert_shippable_avoids(
+        "src/http/",
+        &[
+            "\"x-forwarded-host\"",
+            "\"x-forwarded-proto\"",
+            "\"x-forwarded-for\"",
+            "\"forwarded\"",
+            "effective_authority",
+            "effective_client",
+            "effective_scheme",
+        ],
+        "forwarded headers stay untrusted; Host and Origin come from configuration only",
+    );
+}
+
+#[test]
+fn every_security_header_is_applied_from_one_place() {
+    // The headers are applied by `headers::seal` on the way out, once, on every
+    // path. A per-route header is a header one route will eventually forget, so
+    // the guard is structural: `Response::builder()` may only appear in the
+    // response module and the API module, and `seal` must be called from the
+    // service's single dispatch path.
+    for (path, source) in PRODUCTION_SOURCES
+        .iter()
+        .filter(|(path, _)| path.starts_with("src/http/"))
+    {
+        if path.ends_with("response.rs") || path.ends_with("api.rs") {
+            continue;
+        }
+        assert!(
+            !shippable(source).contains("Response::builder()"),
+            "{path} must not build a response directly; use `response::build` so the \
+             media type and `no-store` policy cannot be forgotten"
+        );
+    }
+    let service = shippable(source_of("src/http/service.rs"));
+    assert_eq!(
+        service.matches("headers::seal(").count(),
+        1,
+        "the service must seal in exactly one place, or the guarantee is only as good \
+         as the smallest count"
+    );
+    assert!(
+        service.contains("headers::seal(answer"),
+        "sealing must wrap the completed answer, not a branch inside it"
+    );
+}
+
+#[test]
+fn the_login_limiter_is_consulted_before_the_worker_admits_the_command() {
+    // Argon2id costs ~300 ms and 19 MiB per verification. A limiter applied
+    // after the hash would be a denial of service wearing a rate limit's
+    // clothes, so the ordering is the claim — and a guard, because a future
+    // refactor moving the call one statement up would be invisible otherwise.
+    let api = shippable(source_of("src/http/api.rs"));
+    let limiter_call = api
+        .find("self.limiter.check(")
+        .expect("the login path must consult the limiter");
+    let authenticate_call = api
+        .find(".worker\n            .authenticate(")
+        .or_else(|| api.find(".authenticate(credentials"))
+        .expect("the login path must verify credentials through the worker");
+    assert!(
+        limiter_call < authenticate_call,
+        "the limiter must be consulted before the password is verified; otherwise every \
+         attempt costs ~300 ms of the appliance's CPU before anything refuses it"
+    );
+}
+
+#[test]
+fn the_limiter_peer_map_is_bounded() {
+    // An unbounded map keyed by client address is a memory-exhaustion vector by
+    // itself: enough distinct source addresses fills it until the process is
+    // killed. The bound is a constructor parameter and the map is shrunk when it
+    // is over, which is what this pins.
+    let limiter = shippable(source_of("src/http/ratelimit.rs"));
+    assert!(
+        limiter.contains("max_peers"),
+        "the limiter must take an explicit peer-map bound"
+    );
+    assert!(
+        limiter.contains("HashMap"),
+        "the peer map is expected to be a map; a different structure needs re-justifying"
+    );
+    assert!(
+        !limiter.contains("unbounded"),
+        "src/http/ratelimit.rs must not describe an unbounded map as the shape"
+    );
+}
+
+#[test]
+fn a_non_loopback_bind_is_never_permitted_without_acknowledgement() {
+    // Binding off-host with no canonical origin leaves nothing to check `Host`
+    // against, and accepting any `Host` is the rebinding hole M003 exists to
+    // close. So the default path refuses rather than degrading to permissive.
+    let serve = shippable(source_of("src/http/serve.rs"));
+    assert!(
+        serve.contains("OffHostNeedsAcknowledgement"),
+        "src/http/serve.rs must refuse an unacknowledged routable bind"
+    );
+    assert!(
+        !serve.contains("ExposureMode::AcknowledgedOffHost {")
+            && !serve.contains("AcknowledgedOffHost,"),
+        "src/http/serve.rs must not construct an off-host policy without routing through \
+         OriginPolicy::acknowledged_off_host, which is where the checks live"
+    );
+
+    // The two refusals that make the acknowledgement meaningful.
+    let origin = shippable(source_of("src/http/origin.rs"));
+    assert!(
+        origin.contains("HttpsClaimWithoutProxy"),
+        "a listener that terminates no TLS must not be allowed to claim an https origin"
+    );
+    assert!(
+        origin.contains("UnacknowledgedOffHost"),
+        "the off-host constructor must refuse a loopback bind, which needs no acknowledgement"
+    );
+}
+
+#[test]
+fn no_module_outside_the_response_module_builds_a_management_response() {
+    // The narrower companion to the sealing guard: every byte on the wire comes
+    // from `response.rs` (fixed literals) or `api.rs` (serialised JSON). A new
+    // module that formats a `Response` from an internal value would be an
+    // information-disclosure bug by construction.
+    for (path, source) in PRODUCTION_SOURCES
+        .iter()
+        .filter(|(path, _)| path.starts_with("src/http/"))
+    {
+        if path.ends_with("response.rs") || path.ends_with("api.rs") {
+            continue;
+        }
+        assert!(
+            !shippable(source).contains(".body(ResponseBody::"),
+            "{path} must not assemble a response body; use `response::build`, whose bodies \
+             are bounded literals"
+        );
+    }
+}
+
+#[test]
+fn a_failed_login_lookup_always_spends_one_argon2_verification() {
+    // The M003 §10 requirement. A username miss that returns before hashing is a
+    // username oracle far larger than any response body: "no such user" answers
+    // in microseconds while "wrong password" answers in ~300 ms, and the gap
+    // itself is the disclosure. The constant's plaintext is discarded and
+    // unrecoverable, so the guard also pins that the constant is never anything
+    // but a cost.
+    let service = shippable(source_of("src/management/auth.rs"));
+    assert!(
+        service.contains("reject_without_principal"),
+        "src/management/auth.rs must spend a verification on a lookup that found nothing"
+    );
+    assert!(
+        service.contains("TIMING_EQUALISER_VERIFIER"),
+        "the equalising verifier must be referenced from the authenticate path"
+    );
+    // Every early return from `authenticate` has to route through it. Enumerated
+    // rather than sampled so widening the path has to delete a line.
+    for branch in [
+        "Ok(None) | Err(_) => return Err(self.reject_without_principal(password))",
+        "if !principal.enabled {\n            return Err(self.reject_without_principal(password));",
+    ] {
+        assert!(
+            service.contains(branch),
+            "src/management/auth.rs must spend a verification here: {branch}"
+        );
+    }
+
+    // The constant itself must carry the current policy, or raising the policy
+    // silently reintroduces the oracle.
+    let domain = shippable(source_of("src/domain/auth.rs"));
+    assert!(
+        domain.contains("pub const TIMING_EQUALISER_VERIFIER"),
+        "src/domain/auth.rs must define the equalising verifier"
+    );
+    assert!(
+        !domain.contains("wg-basic-equaliser-"),
+        "the equaliser's plaintext must never appear in the repository"
+    );
+    assert!(
+        service.contains("OnceLock<PasswordVerifier>") && service.contains("get_or_init"),
+        "the equaliser must be parsed once behind a OnceLock; parsing the PHC string per \
+         failed login would be a second, smaller timing signal"
     );
 }

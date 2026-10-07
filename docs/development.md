@@ -23,13 +23,12 @@ install -d -m 700 /tmp/wg-basic-runtime
 cargo run --locked -- netd --socket /tmp/wg-basic-runtime/netd.sock
 ```
 
-In another terminal, use `cargo run --locked -- doctor --socket ...` or `cargo run --locked -- serve --socket ...`. `serve` is the unprivileged management service: it opens the durable state store on a dedicated bounded worker thread, attempts startup reconciliation, and serves a loopback-only HTTP surface (`--http-bind`, default `127.0.0.1:8000`) exposing `GET /healthz`. Phase 7 serves no TLS and no authentication; put a TLS-terminating reverse proxy in front of any non-loopback bind. For a separate management UID, start netd with `--allow-uid UID` and arrange socket group access. Both `netd` and `serve` exit on Ctrl-C; `netd` removes only the socket inode it created.
+In another terminal, use `cargo run --locked -- doctor --socket ...` or `cargo run --locked -- serve --socket ...`. `serve` is the unprivileged management service: it opens the durable state store on a dedicated bounded worker thread, attempts startup reconciliation, and serves an authenticated HTTP surface (`--http-bind`, default `127.0.0.1:8000`) exposing `POST /api/v1/login`, `POST /api/v1/logout`, `GET /api/v1/session`, `GET /api/v1/health`, and the unauthenticated `GET /healthz`. For a separate management UID, start netd with `--allow-uid UID` and arrange socket group access. Both `netd` and `serve` exit on Ctrl-C; `netd` removes only the socket inode it created.
 
 ## Local administrator credentials
 
-Phase 7 keeps credential and session primitives in the management role but
-publishes no HTTP route for them yet. Provision or reset the local administrator
-from the terminal:
+Provision or reset the local administrator from the terminal. The same
+credentials are what `POST /api/v1/login` exchanges for a session cookie:
 
 ```sh
 install -d -m 700 /tmp/wg-basic-runtime
@@ -44,6 +43,60 @@ It is never accepted as an argument or from the environment: an `argv` credentia
 is readable by every process on the host through `/proc`, and an environment one
 is inherited by every child. `admin status` prints identity, enabled state, and
 the live session count, and never a verifier, token, or password.
+
+## Serving the management surface
+
+The default is the only deployment that is correct without a decision being made:
+a loopback listener whose allowed host set is loopback and whose canonical origin
+is the loopback listener itself.
+
+```sh
+cargo run --locked -- serve \
+  --state /tmp/wg-basic-runtime/state.db \
+  --socket /tmp/wg-basic-runtime/netd.sock
+```
+
+Logging in is a JSON `POST` from the canonical origin with a correct `Host`. A
+request without one is refused before routing — that is the DNS-rebinding
+defence, and it applies to every route without exception:
+
+```sh
+curl -i http://127.0.0.1:8000/api/v1/login \
+  -H 'Host: 127.0.0.1:8000' \
+  -H 'Origin: http://127.0.0.1:8000' \
+  -H 'Content-Type: application/json' \
+  --data '{"username":"admin","password":"an administrator password"}'
+```
+
+The reply carries the session in an `HttpOnly`, `SameSite=Strict`,
+`Path=/` cookie. `GET /api/v1/session` returns that session's identity, expiry,
+and CSRF token; the token must be echoed in `x-wg-basic-csrf` on every unsafe
+method, and `POST /api/v1/logout` without it revokes nothing.
+
+### Behind a TLS-terminating reverse proxy
+
+Phase 7 serves no TLS. When a proxy terminates it, keep the listener on loopback
+and declare the *external* origin:
+
+```sh
+cargo run --locked -- serve --http-bind 127.0.0.1:8000 \
+  --canonical-origin https://vpn.example.com
+```
+
+An `https` origin switches the session cookie to the `__Host-` prefixed, `Secure`
+form and enables HSTS. Two refusals are deliberate: a routable listener may not
+claim an `https` origin, because it terminates no TLS and the claim would be
+false; and a routable bind is refused outright without both `--allow-non-loopback`
+and `--canonical-origin`, because accepting an arbitrary `Host` is the rebinding
+hole the policy exists to close.
+
+```sh
+cargo run --locked -- serve --http-bind 0.0.0.0:8000 \
+  --allow-non-loopback --canonical-origin http://vpn.example.com:8000
+```
+
+Startup prints the effective exposure mode to the service log, which is how a
+headless operator confirms which origin the surface believes it has.
 
 Run Linux IPC integration coverage with:
 

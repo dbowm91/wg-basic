@@ -20,12 +20,24 @@
 //! no router framework: assets are embedded by this crate, and routing is a
 //! closed match over the routes M001–M004 define.
 
+pub mod api;
 pub mod config;
+pub mod headers;
+pub mod origin;
+pub mod ratelimit;
 pub mod response;
 pub mod serve;
 pub mod service;
+pub mod session_cookie;
 
+pub use api::{AuthenticatedApi, RequestGuard, RequestRejection, LOGIN_BODY_LIMIT};
 pub use config::{HttpError, HttpLimits, ManagementHttpConfig};
+pub use origin::{
+    CanonicalOrigin, ExposureMode, OriginConfigError, OriginPolicy, CSRF_HEADER,
+    SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE_NAME,
+};
+pub use ratelimit::{Admission, Bucket, LoginLimiter};
 pub use response::{Liveness, MAX_MANAGEMENT_BODY_BYTES};
 pub use serve::{run, run_blocking, ServeConfig, ServeError, ServeReport};
 pub use service::ManagementService;
+pub use session_cookie::{CookieProfile, SessionCookieError};

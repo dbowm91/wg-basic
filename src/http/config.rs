@@ -156,6 +156,18 @@ pub enum HttpError {
     /// EggServe rejected the assembled configuration.
     #[error("the HTTP runtime configuration is invalid: {0}")]
     Runtime(#[from] ServerError),
+    /// A routable bind was requested without the acknowledgement that says the
+    /// operator meant it.
+    ///
+    /// A routable listener with no canonical origin leaves nothing to check
+    /// `Host` against, and accepting any `Host` is precisely the DNS-rebinding
+    /// hole the origin policy exists to close. So the default refuses rather
+    /// than falling back to a permissive policy.
+    #[error(
+        "a routable bind serves the management surface to the network; \
+             pass --allow-non-loopback together with --canonical-origin to say so"
+    )]
+    OffHostNeedsAcknowledgement,
 }
 
 impl HttpLimits {

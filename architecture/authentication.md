@@ -1,9 +1,10 @@
 # Local administrator credentials and sessions
 
-This document describes **current implemented behaviour**. Phase 7 is in
-progress: M002 has the credential and session primitives, and the authenticated
-HTTP perimeter that consumes them is a later milestone. There is **no login route
-yet** — see [the management HTTP boundary](management-http.md).
+This document describes **current implemented behaviour**: the credential and
+session primitives, and the browser-facing session machinery — the cookie
+profile, the CSRF token, and the login/logout/session routes. The routing
+pipeline, the origin policy, and the security headers are in
+[the management HTTP boundary](management-http.md).
 
 Architecture decisions behind this design are recorded in
 [ADR-003](../plans/adr/003-management-http-auth-and-worker-boundary.md); the
@@ -15,10 +16,14 @@ stored-state rules are in [the state store](state-store.md).
 |---|---|
 | `wg-basic admin set-password --password-stdin` | Creates the local administrator, or resets its password and revokes every session |
 | `wg-basic admin status` | Prints identity, enabled state, and live session count. Never a credential |
-| HTTP | **Nothing.** `/healthz` only; no login, no session cookie, no authenticated route |
+| `POST /api/v1/login` | Exchanges a username and password for a session cookie |
+| `POST /api/v1/logout` | Revokes the presented session and expires its cookie |
+| `GET  /api/v1/session` | Returns the session's identity, expiry, and CSRF token |
 
-The primitives exist and are fully qualified behind the worker; M003 adds the
-routes that use them.
+There is no password reset over HTTP, no session listing, and no second
+principal. Those are deliberately absent: an unauthenticated-adjacent route that
+lists sessions would be a disclosure problem, and a second principal has no
+operator story until Phase 8 defines one.
 
 ## Schema
 
@@ -126,6 +131,73 @@ A refused login is not an overload: `WorkerError::Rejected.is_refusal()` is true
 and `is_overload()` is false, so a caller cannot accidentally retry it — which
 would turn a wrong password into unbounded Argon2 work.
 
+## The session cookie
+
+The session bearer reaches the browser in exactly one `Set-Cookie`, and its
+attribute set is chosen by the **configured canonical origin**, never by the
+incoming request.
+
+| Attribute   | Value                | Reason |
+| ----------- | -------------------- | ------ |
+| `HttpOnly`  | always               | Page JavaScript must not be able to read the bearer |
+| `SameSite`  | `Strict`             | A cross-site request must not carry it at all |
+| `Path`      | `/`                  | Required by the `__Host-` prefix |
+| `Domain`    | **never set**        | Host-only; keeps a sibling subdomain from seeing it |
+| `Max-Age`   | the session's own remaining lifetime | The browser's copy cannot outlive the row it names |
+| `Secure`    | HTTPS origins only   | See below |
+| `__Host-`   | HTTPS origins only   | See below |
+
+An HTTPS canonical origin yields `__Host-wg_basic_session` with `Secure`. The
+prefix makes the **browser** enforce `Secure`, no `Domain`, and `Path=/` itself,
+turning three server-side promises into something the client checks.
+
+A plain-HTTP loopback origin yields `wg_basic_session` with no `Secure` and no
+prefix. A `Secure` cookie sent over plain loopback HTTP is **never stored** by a
+browser, so setting it unconditionally would produce a service that appears to
+authenticate and then silently fails — the worst failure mode available, because
+it looks like a credential problem.
+
+There is no third option and no per-request negotiation: a request cannot
+negotiate itself into a secure profile it does not belong to. Equally, only the
+cookie this deployment would have *written* is read back, so correcting an
+origin actually invalidates cookies minted under the old profile rather than
+letting a misconfiguration persist.
+
+## The CSRF token
+
+On every unsafe method the session must also carry its CSRF token in the
+`x-wg-basic-csrf` header. `SameSite=Strict` is **not** the defence: it is
+weakened by any same-site context an attacker can influence — a sibling
+subdomain, a user-content page on the same registrable domain — and it is no
+defence at all against a token the attacker can already read.
+
+So the requirement is layered:
+
+* an unsafe method with a missing or foreign `Origin` is refused outright;
+* an authenticated unsafe method additionally needs the session's CSRF token
+  echoed in the header;
+* a cross-site `Sec-Fetch-Site` is refused, because a browser sets it and page
+  JavaScript cannot forge it.
+
+The comparison accumulates every difference instead of returning on the first
+mismatched byte, so the time taken does not reveal the position of the first
+difference. The CSRF token is per session, so a token stolen from one session is
+useless against another and useless without that session's bearer.
+
+A logout whose CSRF check fails revokes **nothing** — the token is checked before
+the revoke is submitted. Otherwise a cross-site request could turn the CSRF
+defence into a working denial of service against the operator's own session.
+
+## The login limiter runs before the hash
+
+Argon2id's cost is the reason the limiter sits where it does. At ~300 ms and
+19 MiB per verification, a limiter applied *after* the hash would let an
+attacker spend the appliance's CPU on every request before anything refused it.
+The limiter is therefore the first thing a login does — before the body is
+parsed and before the command reaches the bounded worker queue. See
+[the management HTTP boundary](management-http.md) for the bucket sizes and the
+measurement that proves the ordering.
+
 ## Authentication runs only on the bounded worker
 
 Argon2id at this policy costs ~19 MiB and tens of milliseconds per verification.
@@ -166,6 +238,34 @@ must not be separable.
 
 Provisioning and reset are deliberately the same operation: both set a new
 verifier for a username, and both must leave no usable prior session.
+
+## A login body is JSON, never a form
+
+`POST /api/v1/login` requires `Content-Type: application/json` with a
+`username` and a `password`. `multipart/form-data` and
+`application/x-www-form-urlencoded` are refused.
+
+A form post is exactly the cross-site request shape a CSRF token exists to stop,
+and a simple form cannot carry a custom header at all — so accepting one would
+mean accepting a request shape the origin check cannot fully constrain. Extra
+JSON fields are tolerated rather than refused: rejecting unknown fields would
+make this wire format a compatibility contract for a future client, which is a
+worse trade than ignoring them.
+
+The body is bounded at 4 KiB, well below the transport's own 16 KiB ceiling, so
+the route's bound is the one that actually bites.
+
+## A successful login publishes exactly one secret
+
+`POST /api/v1/login` returns the session's identity, its expiry, and its CSRF
+token in JSON, and the bearer in a `Set-Cookie`. It never returns a password
+hash, a verifier, or any receipt from the store. `/api/v1/session` returns the
+same shape for an already-established session.
+
+The bearer crosses to the browser exactly once, in an `HttpOnly` cookie the page
+cannot read. `GET /api/v1/health` renders the safe health projection to an
+authenticated caller; the projection has no receipt, error-string, or key-material
+field, so it cannot carry one.
 
 ## What authentication must never do
 
