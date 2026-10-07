@@ -1,6 +1,6 @@
 # Network Control M002 — Privileged Protocol and Host Capability Boundary
 
-Status: active
+Status: closed
 
 Repository planning baseline: `2796220` (M001 strict closure recorded)
 

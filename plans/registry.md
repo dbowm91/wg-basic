@@ -37,7 +37,7 @@ The architecture separates:
 
 The privileged service does not expose arbitrary shell, command, file-write, sysctl-path, nft-script, or raw-netlink execution.
 
-Current production code state: **M001 Rust domain/runtime foundation implemented; no network mutation, IPC, or service behavior yet**.
+Current production code state: **M001 domain/runtime foundation and M002 read-only local privileged protocol implemented; no WireGuard or host-network mutation yet**.
 
 ## 3. Eggstack reuse disposition
 
@@ -61,7 +61,7 @@ Runtime dependency adoption remains evidence-driven.
 
 | Subsystem | Status | Roadmap | Current milestone |
 |---|---|---|---|
-| Linux network-control foundation | active planning | `plans/subsystems/network-control-roadmap.md` | M001 closed; M002 active |
+| Linux network-control foundation | active planning | `plans/subsystems/network-control-roadmap.md` | M001–M002 closed; M003 active |
 | Durable state/restart reconciliation | proposed | not yet written | begins after stable M004/M005 contracts |
 | Management service/auth/UI | proposed | not yet written | begins after privilege protocol + stable network foundation |
 | Distribution/install/update | proposed | not yet written | begins after service/state layout stabilizes |
@@ -72,15 +72,14 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
-| Network control | M002 privileged protocol/capability boundary | **active** | `plans/implementation/network-control/002-privileged-protocol-and-capability-boundary.md` | M001 strict closure recorded; baseline revalidated at `2796220` |
+| Network control | M003 WireGuard kernel control/telemetry | **active** | `plans/implementation/network-control/003-wireguard-kernel-control-and-telemetry.md` | M002 strict closure recorded; baseline revalidated at `f888e35` |
 
-M002 is the only active/eligible implementation plan.
+M003 is the only active/eligible implementation plan.
 
 ## 6. Blocked implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Hard blocker |
 |---|---|---|---|---|
-| Network control | M003 WireGuard kernel control/telemetry | blocked | `plans/implementation/network-control/003-wireguard-kernel-control-and-telemetry.md` | M002 strict closure |
 | Network control | M004 link/address/route reconciliation | blocked | `plans/implementation/network-control/004-link-address-route-reconciliation.md` | M003 strict closure |
 | Network control | M005 nftables/forwarding/NAT/E2E | blocked | `plans/implementation/network-control/005-firewall-forwarding-end-to-end.md` | M004 strict closure |
 
@@ -89,20 +88,21 @@ The blocked plans are pre-researched handoffs. Before implementation, revalidate
 ## 7. Recently closed work
 
 - M001 strict closure: `plans/closure/network-control/001-status.md`.
+- M002 strict closure: `plans/closure/network-control/002-status.md`.
 
-## 8. Active M002 implementation summary
+## 8. Active M003 implementation summary
 
-M002 is active against the closed M001 baseline.
+M003 is active using the closed M001/M002 contracts.
 
 Core constraints:
 
-- reuse M001 domain/error types and the single executable;
-- keep M002 read-only: no WireGuard, link, route, firewall, or forwarding mutation;
-- implement bounded typed UDS framing, peer authorization, capability snapshot, and lifecycle handling;
-- do not add generic privileged execution or raw kernel-operation surfaces;
+- recheck current WireGuard Rust backend options and record the decision matrix;
+- use typed M002 protocol operations; preserve bounded framing and SO_PEERCRED authorization;
+- prove real kernel handshake, telemetry, and preservation in a qualifying Linux namespace runner;
+- keep production free of `wg`, `wg-quick`, and `ip` invocations;
 - preserve the Rust 1.89, locked dependency, formatting, Clippy, and test gates.
 
-The current execution environment does not permit creating network namespaces. M002 does not require kernel mutation, but credential-separation qualification must use a suitable Linux runner if local UID switching is unavailable.
+The current execution environment does not permit creating network namespaces. M003 strict closure therefore requires a separate qualifying Linux runner with real WireGuard kernel support; hosted routine CI alone is insufficient.
 
 ## 9. Kernel/network research handoff
 
@@ -151,11 +151,11 @@ No network milestone may substitute mocked kernel behavior for its required real
 
 ## 12. Planning hygiene
 
-M001 has a strict closure record. Later milestones remain blocked on their hard dependencies.
+M001 and M002 have strict closure records. M004/M005 remain blocked on their hard dependencies.
 
 There are no active corrective plans.
 
-Canonical documents should remain stable during ordinary M002 work.
+Canonical documents should remain stable during ordinary M003 work.
 
 If later implementation evidence reveals a material architecture contradiction, record it and revise the appropriate plan/ADR deliberately rather than silently altering the contract.
 
@@ -164,12 +164,12 @@ If later implementation evidence reveals a material architecture contradiction, 
 Expected transition:
 
 ```text
-M002 active
+M003 active
   -> implementation
   -> closing
   -> closure record
   -> closed
-  -> M003 promoted to ready
+  -> M004 promoted to ready
 ```
 
 At each closure, update:
