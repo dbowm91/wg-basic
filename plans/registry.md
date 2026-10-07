@@ -37,7 +37,7 @@ The architecture separates:
 
 The privileged service does not expose arbitrary shell, command, file-write, sysctl-path, nft-script, or raw-netlink execution.
 
-Current production code state: **M001–M003 are strictly closed, including real kernel WireGuard control; M004 link/address/route reconciliation is active; M005 firewall/forwarding remains blocked on M004.**
+Current production code state: **M001–M004 are strictly closed, including rootful link/address/route reconciliation; M005 firewall/forwarding/NAT is active.**
 
 ## 3. Eggstack reuse disposition
 
@@ -61,8 +61,8 @@ Runtime dependency adoption remains evidence-driven.
 
 | Subsystem | Status | Roadmap | Current milestone |
 |---|---|---|---|
-| Linux network-control foundation | active planning | `plans/subsystems/network-control-roadmap.md` | M001–M003 closed; M004 active |
-| Durable state/restart reconciliation | proposed | not yet written | begins after stable M004/M005 contracts |
+| Linux network-control foundation | active planning | `plans/subsystems/network-control-roadmap.md` | M001–M004 closed; M005 active |
+| Durable state/restart reconciliation | ready to plan | not yet written | M004 ownership contract is stable; broad product integration waits for M005 |
 | Management service/auth/UI | proposed | not yet written | begins after privilege protocol + stable network foundation |
 | Distribution/install/update | proposed | not yet written | begins after service/state layout stabilizes |
 
@@ -72,41 +72,32 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
-| Network control | M004 link/address/route reconciliation | **active** | `plans/implementation/network-control/004-link-address-route-reconciliation.md` | M003 strict closure recorded; baseline revalidated at `a134b39` |
+| Network control | M005 nftables/forwarding/NAT/E2E | **active** | `plans/implementation/network-control/005-firewall-forwarding-end-to-end.md` | M004 strictly closed; baseline revalidated at `e01f35b` |
 
-M004 is the only active implementation plan.
+M005 is the only active implementation plan.
 
 ## 6. Blocked implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Hard blocker |
 |---|---|---|---|---|
-| Network control | M005 nftables/forwarding/NAT/E2E | blocked | `plans/implementation/network-control/005-firewall-forwarding-end-to-end.md` | M004 strict closure |
+| — | — | — | — | — |
 
-The blocked plans are pre-researched handoffs. Before implementation, revalidate their repository baseline and current dependency/API assumptions.
+No implementation plans are currently blocked. Revalidate dependency/API assumptions when a future plan becomes ready.
 
 ## 7. Recently closed work
 
 - M001 strict closure: `plans/closure/network-control/001-status.md`.
 - M002 strict closure: `plans/closure/network-control/002-status.md`.
 - M003 strict closure: `plans/closure/network-control/003-status.md`.
+- M004 strict closure: `plans/closure/network-control/004-status.md`.
 
-## 8. M003 closure and M004 handoff
+## 8. M004 closure and M005 handoff
 
-M003 is strictly closed using the closed M001/M002 contracts. Its dependency/backend research is recorded in `architecture/wireguard-control.md` and its evidence is in `plans/closure/network-control/003-status.md`.
-
-Closed evidence:
-
-- selected `nl-wireguard` 0.3.0 for existing-device Generic Netlink control, with per-peer AllowedIPs replacement and no `ReplacePeers`;
-- typed M002 operations preserve bounded framing and SO_PEERCRED authorization;
-- hosted rootful Linux CI proved a real namespace handshake, telemetry, and unrelated-peer preservation;
-- production source has no `wg`, `wg-quick`, or `ip` command execution;
-- Rust 1.89, locked dependency, formatting, Clippy, and default test gates pass.
-
-The local execution environment cannot create network namespaces; the hosted `wireguard-kernel` job supplies required real-kernel evidence.
+M004 is strictly closed using the M001–M003 contracts. Its RTNETLINK choice and ownership/retry semantics are recorded in `architecture/reconciliation.md`; the full requirement-to-evidence matrix is in `plans/closure/network-control/004-status.md`. Rootful hosted CI supplies real link/address/route evidence.
 
 ## 9. Kernel/network research handoff
 
-M003 selected and qualified `nl-wireguard` 0.3.0. M004 must recheck current RTNETLINK support and compatibility without rewriting the working WireGuard backend solely for dependency uniformity.
+M003 selected and qualified `nl-wireguard` 0.3.0. M004 selected and qualified `rtnetlink` 0.23.0 without rewriting the working WireGuard backend solely for dependency uniformity. M005 is revalidating nftables library/process choices in its active plan.
 
 Candidate families include:
 
@@ -149,7 +140,7 @@ No network milestone may substitute mocked kernel behavior for its required real
 
 ## 12. Planning hygiene
 
-M001–M003 have strict closure records. M004 is ready; M005 remains blocked on M004 strict closure.
+M001–M004 have strict closure records. M005 is active against the M004 final implementation head `e01f35b`.
 
 There are no active corrective plans.
 
@@ -159,7 +150,7 @@ If later implementation evidence reveals a material architecture contradiction, 
 
 ## 13. Closure handoff
 
-M003 is closed and its strict evidence is recorded. M004 is active against the `a134b39` implementation baseline. M005 remains blocked until M004 closes.
+M003 and M004 are closed and their strict evidence is recorded. M005 is active against `e01f35b`.
 
 At each future closure, update:
 
