@@ -6,6 +6,7 @@
 //! process restart rather than in-process reconstruction.
 
 use std::{
+    ffi::OsString,
     fs,
     io::Write,
     os::unix::fs::PermissionsExt,
@@ -216,6 +217,16 @@ struct Netd {
 
 impl Netd {
     fn start(namespace: &str) -> Self {
+        Self::start_with_path(namespace, None)
+    }
+
+    /// Starts netd with an optional fixture-private `PATH` prepended.
+    ///
+    /// The override exists so a case can put a fault-injecting `nft` in front of
+    /// the real one for this process only. Nothing in production reads `PATH`
+    /// for anything but `nft`, so this changes no wg-basic behaviour other than
+    /// which binary that one call reaches.
+    fn start_with_path(namespace: &str, path_override: Option<&OsString>) -> Self {
         let suffix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -224,10 +235,15 @@ impl Netd {
         fs::create_dir(&runtime).unwrap();
         fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
         let socket = runtime.join("netd.sock");
-        let child = Command::new("ip")
+        let mut command = Command::new("ip");
+        command
             .args(["netns", "exec", namespace])
             .arg(executable())
-            .args(["netd", "--socket", socket.to_str().unwrap()])
+            .args(["netd", "--socket", socket.to_str().unwrap()]);
+        if let Some(path) = path_override {
+            command.env("PATH", path);
+        }
+        let child = command
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())
             .spawn()
@@ -294,6 +310,107 @@ fn eventually(mut predicate: impl FnMut() -> bool) -> bool {
     false
 }
 
+/// A fixture-private `nft` that fails mutations while armed.
+///
+/// The shim exists so a case can inject a *firewall backend* failure — the class
+/// of failure an operator hits when nftables refuses a rule — without teaching
+/// production code a fault-injection hook or touching the host's nftables state.
+/// It forwards every read-only probe to the real binary, so the firewall layer
+/// still observes the owned table and genuinely reaches its mutation; only that
+/// mutation fails, deterministically.
+///
+/// It installs transparent and is switched on with [`Self::arm`], so the same
+/// live netd can converge, fail, and recover without a restart. That is what
+/// makes the recovery run an **equal-generation retry** rather than a fresh
+/// apply against a netd that has forgotten the generation.
+struct NftFailureShim {
+    directory: PathBuf,
+    kill_switch: PathBuf,
+}
+
+impl NftFailureShim {
+    fn install(prefix: &str) -> Self {
+        let inherited = std::env::var_os("PATH").unwrap_or_default();
+        let real = std::env::split_paths(&inherited)
+            .map(|directory| directory.join("nft"))
+            .find(|candidate| candidate.is_file())
+            .expect("nft must be on PATH for this suite to mean anything");
+
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!("{prefix}nft-{suffix:x}"));
+        fs::create_dir(&directory).unwrap();
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+        let kill_switch = directory.join("recovered");
+
+        let script = format!(
+            "#!/bin/sh\n\
+             # Fixture-private nft shim. Read-only probes are forwarded to the real\n\
+             # binary so the firewall layer still observes state and reaches its\n\
+             # mutation; the mutation itself is refused until the kill switch exists.\n\
+             real_nft={}\n\
+             kill_switch={}\n\
+             if [ -e \"$kill_switch\" ]; then\n\
+             \texec \"$real_nft\" \"$@\"\n\
+             fi\n\
+             case \"$1\" in\n\
+             \tdelete|add|flush|insert|replace|rename|-f)\n\
+             \techo \"wg-basic fixture: injected nft mutation failure\" >&2\n\
+             \texit 1\n\
+             \t\t;;\n\
+             esac\n\
+             exec \"$real_nft\" \"$@\"\n",
+            shell_quote(&real),
+            shell_quote(&kill_switch),
+        );
+        let shim = directory.join("nft");
+        fs::write(&shim, script).unwrap();
+        fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let this = Self {
+            directory,
+            kill_switch,
+        };
+        // Installs transparent: a case arms the failure only for the step it is
+        // qualifying, so the setup around it exercises the real backend.
+        fs::write(&this.kill_switch, "recovered").unwrap();
+        this
+    }
+
+    /// Begins refusing mutations for every later invocation, including from
+    /// processes that are already running.
+    fn arm(&self) {
+        let _ = fs::remove_file(&self.kill_switch);
+    }
+
+    /// Restores real behavior for every later invocation.
+    fn disarm(&self) {
+        fs::write(&self.kill_switch, "recovered").unwrap();
+    }
+
+    /// The `PATH` to hand to the process under test.
+    fn path(&self) -> OsString {
+        let inherited = std::env::var_os("PATH").unwrap_or_default();
+        let mut entries = vec![self.directory.clone()];
+        entries.extend(std::env::split_paths(&inherited));
+        std::env::join_paths(entries).expect("fixture PATH is constructible")
+    }
+}
+
+impl Drop for NftFailureShim {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.directory);
+    }
+}
+
+/// Single-quotes a path for `/bin/sh`.
+fn shell_quote(value: &Path) -> String {
+    let text = value.to_string_lossy();
+    format!("'{}'", text.replace('\'', r"'\''"))
+}
+
 // ---------------------------------------------------------------------------
 // Durable state fixtures
 // ---------------------------------------------------------------------------
@@ -352,6 +469,25 @@ fn desired_state_with_policy(interface_id: InterfaceId) -> DesiredState {
         source_prefixes: vec![NetworkPrefix::new("10.55.0.0/24".parse().unwrap())],
         masquerade: true,
     });
+    state
+}
+
+/// [`desired_state`] with the managed interface declared absent.
+///
+/// Every managed address is listed as `Absent`, because teardown refuses to
+/// delete a link that still carries an address the desired state does not
+/// mention. Dropping the network policy is what makes this the disable path:
+/// the aggregate coordinator removes the owned firewall table before tearing the
+/// interface down.
+fn disabled_state(interface_id: InterfaceId) -> DesiredState {
+    let mut state = desired_state(interface_id);
+    let interface = &mut state.interfaces[0];
+    interface.lifecycle = LinkLifecycle::Absent;
+    interface.admin_up = None;
+    for address in &mut interface.addresses {
+        address.presence = ResourcePresence::Absent;
+    }
+    state.network_policy = None;
     state
 }
 
@@ -642,6 +778,156 @@ fn a_partially_applied_generation_recovers_after_a_restart() {
         "the recovered generation is recorded as converged"
     );
     drop(store);
+}
+
+/// Disable-path fault injection: the firewall layer refuses to remove the owned
+/// policy, so the interface teardown that follows it must not happen.
+///
+/// The failure is injected into netd's `nft` through a fixture-private `PATH`,
+/// so this qualifies the *shipped* disable ordering — firewall removal first,
+/// interface second — rather than a test-only branch. The recovery run reuses
+/// the same live netd, which is what makes it an equal-generation retry.
+#[test]
+fn a_failing_firewall_blocks_the_disable_and_recovers_on_equal_generation_retry() {
+    let namespace = Namespace::new("wgm3h");
+    let temp = TempDir::new("wgb-m003-h");
+    let shim = NftFailureShim::install("wgb-m003-h");
+
+    // Generation 2 converges first, so there really is owned firewall state and
+    // an owned link for the failed disable to have to protect.
+    let interface_id = seed_store_with_policy(&temp.db(), 2);
+    let expected_tag = owner_tag_for(&temp.db(), interface_id);
+    let installation = installation_of(&temp.db());
+    let expected_marker = format!("wg-basic:v1:{installation}");
+
+    let netd = Netd::start_with_path(namespace.name(), Some(&shim.path()));
+    let converged = run_management(namespace.name(), &temp.db(), &netd.socket());
+    assert!(
+        converged.status.success(),
+        "initial convergence failed: {}",
+        String::from_utf8_lossy(&converged.stderr)
+    );
+    assert!(eventually(|| namespace.link_exists("wg-restart")));
+    assert_eq!(
+        namespace.table_comment().as_deref(),
+        Some(expected_marker.as_str()),
+        "the owned table must exist before the disable is attempted"
+    );
+
+    // Arm the fault: from here on the firewall layer's mutation fails.
+    shim.arm();
+
+    // Generation 3 disables the interface and drops the policy.
+    let store = StateStore::open(temp.db()).unwrap();
+    let committed = store
+        .mutate(wg_basic::domain::DesiredGeneration::new(2).unwrap(), |_| {
+            Ok(disabled_state(interface_id))
+        })
+        .expect("commit the disable generation");
+    assert_eq!(
+        committed.generation,
+        wg_basic::domain::DesiredGeneration::new(3).unwrap(),
+        "the disable must commit as exactly one new generation"
+    );
+    drop(store);
+
+    let blocked = run_management(namespace.name(), &temp.db(), &netd.socket());
+    assert!(
+        !blocked.status.success(),
+        "a disable whose firewall removal failed must not report success"
+    );
+
+    // The firewall layer runs first and failed, so nothing else may have run.
+    assert!(
+        namespace.owned_table_present(),
+        "a failed removal leaves the owned table in place, not half-removed"
+    );
+    assert_eq!(
+        namespace.table_comment().as_deref(),
+        Some(expected_marker.as_str()),
+        "the still-owned table keeps this installation's marker"
+    );
+    assert!(
+        namespace.link_exists("wg-restart"),
+        "the interface teardown must not run after the firewall layer failed"
+    );
+    assert_eq!(
+        namespace.link_alias("wg-restart").as_deref(),
+        Some(expected_tag.as_str()),
+        "the blocked teardown leaves the link owned, not unowned"
+    );
+
+    let store = StateStore::open(temp.db()).unwrap();
+    assert_eq!(
+        store.convergence().unwrap().last_outcome.as_deref(),
+        Some(AttemptDisposition::Rejected.as_str()),
+        "a firewall backend failure is refused, not retried forever: {}",
+        String::from_utf8_lossy(&blocked.stderr)
+    );
+    assert_eq!(
+        store.convergence().unwrap().last_converged_generation,
+        Some(wg_basic::domain::DesiredGeneration::new(2).unwrap()),
+        "a blocked disable must not be recorded as converged"
+    );
+    assert_eq!(
+        store.current_generation().unwrap(),
+        wg_basic::domain::DesiredGeneration::new(3).unwrap(),
+        "the committed disable generation survives the failure for the retry"
+    );
+    drop(store);
+
+    // The firewall backend recovers. Generation 3 has not changed, so this is an
+    // equal-generation retry against the same live netd, which must be accepted
+    // and must now run to completion.
+    shim.disarm();
+    let recovered = run_management(namespace.name(), &temp.db(), &netd.socket());
+    assert!(
+        recovered.status.success(),
+        "the equal-generation retry must converge once the firewall layer works: {}",
+        String::from_utf8_lossy(&recovered.stderr)
+    );
+
+    assert!(
+        !namespace.owned_table_present(),
+        "the retry removes the owned firewall table"
+    );
+    assert!(
+        !namespace.link_exists("wg-restart"),
+        "the retry then tears the managed interface down"
+    );
+    assert_eq!(
+        namespace.table_comment(),
+        None,
+        "no table of the owned name may survive the completed disable"
+    );
+    // A stale or duplicated firewall object would show up as any other inet
+    // table, set, or chain the firewall layer could have left behind.
+    let listing = Command::new("ip")
+        .args(["netns", "exec", namespace.name(), "nft", "list", "tables"])
+        .output()
+        .expect("could not list tables");
+    assert!(
+        listing.status.success(),
+        "the final listing must succeed: {}",
+        String::from_utf8_lossy(&listing.stderr)
+    );
+    let tables = String::from_utf8_lossy(&listing.stdout);
+    assert!(
+        !tables.contains("wg_basic"),
+        "the completed disable leaves no wg-basic firewall object behind:\n{tables}"
+    );
+
+    let store = StateStore::open(temp.db()).unwrap();
+    let convergence = store.convergence().unwrap();
+    assert_eq!(
+        convergence.last_converged_generation,
+        Some(wg_basic::domain::DesiredGeneration::new(3).unwrap()),
+        "the disable generation is recorded as converged"
+    );
+    assert_eq!(
+        convergence.last_outcome.as_deref(),
+        Some(AttemptDisposition::Converged.as_str())
+    );
 }
 
 /// Ownership loss fails closed: the owner tag is changed to something else and
