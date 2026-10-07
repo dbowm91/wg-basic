@@ -228,7 +228,7 @@ sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo \
 
 ### Hosted CI
 
-Run `37638334930` on head `635a130`: seven jobs, all green — `rust`, `wireguard-kernel`, `network-reconcile-kernel`, `network-control-e2e`, `durable-owner`, `durable-restart`, `durable-backup`.
+Run `37638334930` on the implementation head `635a130` and run `37638675412` on the closure head `89d6268`: both seven jobs, all green — `rust`, `wireguard-kernel`, `network-reconcile-kernel`, `network-control-e2e`, `durable-owner`, `durable-restart`, `durable-backup`.
 
 `durable-restart` on the hosted runner therefore executes the new disable-path case as real process and kernel evidence under `linux-integration`, as the plan requires.
 
