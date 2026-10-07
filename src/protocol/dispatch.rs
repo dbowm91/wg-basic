@@ -51,19 +51,21 @@ impl SocketServer {
                 .map(ResponseBody::ManagedInterfaceApplied)
                 .map_err(map_reconcile_error),
             RequestOperation::PlanNetworkPolicy {
+                installation_id,
                 wireguard_interface,
                 policy,
             } => self
                 .firewall
-                .plan(&wireguard_interface, policy.as_ref())
+                .plan(installation_id, &wireguard_interface, policy.as_ref())
                 .map(ResponseBody::NetworkPolicyPlan)
                 .map_err(map_firewall_error),
             RequestOperation::ApplyNetworkPolicy {
+                installation_id,
                 wireguard_interface,
                 policy,
             } => self
                 .firewall
-                .apply(&wireguard_interface, policy.as_ref())
+                .apply(installation_id, &wireguard_interface, policy.as_ref())
                 .map(ResponseBody::NetworkPolicyApplied)
                 .map_err(map_firewall_error),
         };
@@ -80,7 +82,9 @@ fn map_firewall_error(error: FirewallError) -> ProtocolError {
         FirewallError::InvalidPolicy | FirewallError::ResourceLimitExceeded => {
             ProtocolError::InvalidInput
         }
-        FirewallError::TableOwnershipConflict => ProtocolError::Conflict,
+        FirewallError::TableOwnershipConflict | FirewallError::LegacyTableOwnership => {
+            ProtocolError::Conflict
+        }
         FirewallError::PermissionDenied => ProtocolError::PermissionDenied,
         FirewallError::Unsupported => ProtocolError::UnsupportedBackend,
         FirewallError::BackendFailure => ProtocolError::BackendFailure,

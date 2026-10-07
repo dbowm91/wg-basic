@@ -14,8 +14,41 @@ use std::collections::BTreeSet;
 pub(crate) const MAX_PREFIXES: usize = 64;
 /// The single nftables table this subsystem is allowed to own.
 pub(crate) const TABLE_NAME: &str = "wg_basic";
-/// Ownership marker embedded in the owned table and its objects.
-pub(crate) const TABLE_OWNER: &str = "wg-basic:m005:v1";
+/// The historical pre-Phase-6 product-only marker.
+///
+/// It is deliberately *not* recognized as ownership: an M005-era table must be
+/// reported as a conflict rather than silently adopted by a durable
+/// installation identity.
+pub(crate) const LEGACY_TABLE_OWNER: &str = "wg-basic:m005:v1";
+
+/// Installation-scoped ownership marker for the single owned table.
+///
+/// The table comment binds to the `InstallationId`, so two installations on one
+/// host cannot both believe they own `inet wg_basic`. Chain and rule markers
+/// build on this value and additionally bind to the exact desired policy.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct FirewallOwner {
+    marker: String,
+}
+
+impl FirewallOwner {
+    pub(crate) fn new(installation_id: crate::domain::InstallationId) -> Self {
+        Self {
+            marker: format!("wg-basic:v1:{installation_id}"),
+        }
+    }
+
+    /// Whether an observed table comment proves ownership by this installation.
+    pub(crate) fn owns_table(&self, comment: Option<&str>) -> bool {
+        comment == Some(self.marker.as_str())
+    }
+}
+
+impl std::fmt::Display for FirewallOwner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.marker)
+    }
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -70,20 +103,21 @@ impl DesiredNetworkPolicy {
 
     pub(crate) fn rule_markers(
         &self,
+        owner: &FirewallOwner,
         hash: &str,
         wireguard_interface: &InterfaceName,
     ) -> BTreeSet<String> {
         let mut markers = BTreeSet::new();
-        markers.insert(format!("{TABLE_OWNER}:chain:forward:{hash}"));
-        markers.insert(format!("{TABLE_OWNER}:rule:return:{hash}"));
+        markers.insert(format!("{owner}:chain:forward:{hash}"));
+        markers.insert(format!("{owner}:rule:return:{hash}"));
         for (index, _) in self.sorted_prefixes().iter().enumerate() {
-            markers.insert(format!("{TABLE_OWNER}:rule:allow:{index}:{hash}"));
+            markers.insert(format!("{owner}:rule:allow:{index}:{hash}"));
         }
-        markers.insert(format!("{TABLE_OWNER}:rule:drop:{hash}"));
+        markers.insert(format!("{owner}:rule:drop:{hash}"));
         if self.nat == NatMode::Masquerade {
-            markers.insert(format!("{TABLE_OWNER}:chain:postrouting:{hash}"));
+            markers.insert(format!("{owner}:chain:postrouting:{hash}"));
             for (index, _) in self.sorted_prefixes().iter().enumerate() {
-                markers.insert(format!("{TABLE_OWNER}:rule:nat:{index}:{hash}"));
+                markers.insert(format!("{owner}:rule:nat:{index}:{hash}"));
             }
         }
         let _ = wireguard_interface;
@@ -140,6 +174,8 @@ pub enum FirewallError {
     InvalidPolicy,
     #[error("an nftables table with the wg-basic name has unrecognized ownership")]
     TableOwnershipConflict,
+    #[error("the owned nftables table carries the pre-Phase-6 product-only marker")]
+    LegacyTableOwnership,
     #[error("nftables or forwarding backend failed")]
     BackendFailure,
     #[error("nftables or forwarding backend is unavailable")]
@@ -153,6 +189,7 @@ pub enum FirewallError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::InstallationId;
 
     fn fixture() -> (InterfaceName, DesiredNetworkPolicy) {
         (
@@ -164,6 +201,31 @@ mod tests {
                 nat: NatMode::Masquerade,
             },
         )
+    }
+
+    #[test]
+    fn the_historical_product_only_marker_is_never_treated_as_ownership() {
+        // M005 wrote a product-only marker. Phase 6 binds ownership to an
+        // installation identity, and an M005-era table must be reported as a
+        // conflict for operator cleanup rather than silently adopted.
+        let owner = FirewallOwner::new(InstallationId::new());
+        assert!(!owner.owns_table(Some(LEGACY_TABLE_OWNER)));
+        assert!(owner.owns_table(Some(&owner.to_string())));
+
+        let other = FirewallOwner::new(InstallationId::new());
+        assert!(!owner.owns_table(Some(&other.to_string())));
+    }
+
+    #[test]
+    fn the_installation_marker_is_bounded_and_ascii() {
+        let owner = FirewallOwner::new(InstallationId::new());
+        let marker = owner.to_string();
+        assert!(marker.starts_with("wg-basic:v1:"));
+        assert!(marker.is_ascii());
+        assert!(
+            marker.len() <= 48,
+            "marker must stay well bounded: {marker}"
+        );
     }
 
     #[test]

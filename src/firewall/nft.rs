@@ -5,7 +5,9 @@
 //! caller-authored nft source is accepted.
 
 use super::planner::{FirewallObservation, TableObservation};
-use super::policy::{DesiredNetworkPolicy, FirewallError, NatMode, TABLE_NAME, TABLE_OWNER};
+use super::policy::{
+    DesiredNetworkPolicy, FirewallError, FirewallOwner, NatMode, LEGACY_TABLE_OWNER, TABLE_NAME,
+};
 use crate::domain::InterfaceName;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -25,7 +27,9 @@ pub(crate) const NFT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Minimum supported nft userspace version.
 pub(crate) const MIN_NFT_VERSION: (u32, u32, u32) = (0, 9, 0);
 
-pub(crate) fn observe_firewall() -> Result<FirewallObservation, FirewallError> {
+pub(crate) fn observe_firewall(
+    owner: &FirewallOwner,
+) -> Result<FirewallObservation, FirewallError> {
     let forwarding = fs::read_to_string("/proc/sys/net/ipv4/ip_forward").map_err(map_io_error)?;
     let forwarding_enabled = match forwarding.trim() {
         "0" => false,
@@ -50,6 +54,7 @@ pub(crate) fn observe_firewall() -> Result<FirewallObservation, FirewallError> {
             table: TableObservation {
                 present: false,
                 owned: false,
+                legacy_marker: false,
                 rule_markers: BTreeSet::new(),
                 chain_count: 0,
                 rule_count: 0,
@@ -59,13 +64,17 @@ pub(crate) fn observe_firewall() -> Result<FirewallObservation, FirewallError> {
             },
         });
     };
-    let owned = table.get("comment").and_then(serde_json::Value::as_str) == Some(TABLE_OWNER);
+    let comment = table.get("comment").and_then(serde_json::Value::as_str);
+    let owned = owner.owns_table(comment);
     if !owned {
         return Ok(FirewallObservation {
             forwarding_enabled,
             table: TableObservation {
                 present: true,
                 owned: false,
+                // Recognized so the planner can explain the refusal precisely.
+                // The legacy marker is never adopted.
+                legacy_marker: comment == Some(LEGACY_TABLE_OWNER),
                 rule_markers: BTreeSet::new(),
                 chain_count: 0,
                 rule_count: 0,
@@ -128,6 +137,7 @@ pub(crate) fn observe_firewall() -> Result<FirewallObservation, FirewallError> {
         table: TableObservation {
             present: true,
             owned: true,
+            legacy_marker: false,
             rule_markers: markers,
             chain_count,
             rule_count,
@@ -147,6 +157,7 @@ pub(crate) fn set_ipv4_forwarding(enabled: bool) -> Result<(), FirewallError> {
 }
 
 pub(crate) fn replace_table(
+    owner: &FirewallOwner,
     wireguard_interface: &InterfaceName,
     policy: &DesiredNetworkPolicy,
     hash: &str,
@@ -166,25 +177,25 @@ pub(crate) fn replace_table(
         }
     } else {
         script.push_str(&format!(
-            r#"add table inet {TABLE_NAME} {{ comment "{TABLE_OWNER}"; }}"#
+            r#"add table inet {TABLE_NAME} {{ comment "{owner}"; }}"#
         ));
         script.push('\n');
     }
-    script.push_str(&format!(r#"add chain inet {TABLE_NAME} forward {{ type filter hook forward priority filter; policy accept; comment "{TABLE_OWNER}:chain:forward:{hash}"; }}"#));
+    script.push_str(&format!(r#"add chain inet {TABLE_NAME} forward {{ type filter hook forward priority filter; policy accept; comment "{owner}:chain:forward:{hash}"; }}"#));
     script.push('\n');
-    script.push_str(&format!(r#"add rule inet {TABLE_NAME} forward oifname "{wireguard_interface}" ct state established,related accept comment "{TABLE_OWNER}:rule:return:{hash}""#));
+    script.push_str(&format!(r#"add rule inet {TABLE_NAME} forward oifname "{wireguard_interface}" ct state established,related accept comment "{owner}:rule:return:{hash}""#));
     script.push('\n');
     for (index, prefix) in policy.sorted_prefixes().iter().enumerate() {
-        script.push_str(&format!(r#"add rule inet {TABLE_NAME} forward iifname "{wireguard_interface}" oifname "{egress_interface}" ip saddr {} accept comment "{TABLE_OWNER}:rule:allow:{index}:{hash}""#, prefix));
+        script.push_str(&format!(r#"add rule inet {TABLE_NAME} forward iifname "{wireguard_interface}" oifname "{egress_interface}" ip saddr {} accept comment "{owner}:rule:allow:{index}:{hash}""#, prefix));
         script.push('\n');
     }
-    script.push_str(&format!(r#"add rule inet {TABLE_NAME} forward iifname "{wireguard_interface}" drop comment "{TABLE_OWNER}:rule:drop:{hash}""#));
+    script.push_str(&format!(r#"add rule inet {TABLE_NAME} forward iifname "{wireguard_interface}" drop comment "{owner}:rule:drop:{hash}""#));
     script.push('\n');
     if policy.nat == NatMode::Masquerade {
-        script.push_str(&format!(r#"add chain inet {TABLE_NAME} postrouting {{ type nat hook postrouting priority srcnat; comment "{TABLE_OWNER}:chain:postrouting:{hash}"; }}"#));
+        script.push_str(&format!(r#"add chain inet {TABLE_NAME} postrouting {{ type nat hook postrouting priority srcnat; comment "{owner}:chain:postrouting:{hash}"; }}"#));
         script.push('\n');
         for (index, prefix) in policy.sorted_prefixes().iter().enumerate() {
-            script.push_str(&format!(r#"add rule inet {TABLE_NAME} postrouting oifname "{egress_interface}" ip saddr {} masquerade comment "{TABLE_OWNER}:rule:nat:{index}:{hash}""#, prefix));
+            script.push_str(&format!(r#"add rule inet {TABLE_NAME} postrouting oifname "{egress_interface}" ip saddr {} masquerade comment "{owner}:rule:nat:{index}:{hash}""#, prefix));
             script.push('\n');
         }
     }

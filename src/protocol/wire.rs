@@ -1,5 +1,5 @@
 use crate::{
-    domain::InterfaceName,
+    domain::{InstallationId, InterfaceName},
     firewall::{DesiredNetworkPolicy, FirewallApplyReceipt, FirewallPlanSummary},
     reconcile::{ApplyReceipt, DesiredManagedInterface, ReconcilePlanSummary},
     wireguard::{ObservedWireGuardDevice, WireGuardApplyReceipt, WireGuardDevicePatch},
@@ -40,10 +40,12 @@ pub enum RequestOperation {
         desired: DesiredManagedInterface,
     },
     PlanNetworkPolicy {
+        installation_id: InstallationId,
         wireguard_interface: InterfaceName,
         policy: Option<DesiredNetworkPolicy>,
     },
     ApplyNetworkPolicy {
+        installation_id: InstallationId,
         wireguard_interface: InterfaceName,
         policy: Option<DesiredNetworkPolicy>,
     },
@@ -235,6 +237,7 @@ mod tests {
             protocol_version: PROTOCOL_VERSION,
             request_id: 92,
             operation: RequestOperation::ApplyNetworkPolicy {
+                installation_id: InstallationId::new(),
                 wireguard_interface: "wg0".parse().unwrap(),
                 policy: Some(DesiredNetworkPolicy {
                     ipv4_forwarding: crate::firewall::Ipv4Forwarding::Required,
