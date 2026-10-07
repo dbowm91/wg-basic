@@ -112,7 +112,7 @@ Required outcomes:
 
 ## 5. Phase 3 — Direct WireGuard control and live telemetry
 
-Status: blocked on Phase 2 closure.
+Status: closed.
 
 Owned by:
 
@@ -135,7 +135,7 @@ Required outcomes:
 
 ## 6. Phase 4 — Link, address, route, and reconciliation engine
 
-Status: blocked on Phase 3 closure.
+Status: active.
 
 Owned by:
 
@@ -381,8 +381,8 @@ Before the first public production claim:
 |---|---|---|---|
 | 1 repository/domain foundation | ready | network-control M001 | — |
 | 2 privileged protocol/capabilities | blocked | network-control M002 | Phase 1 |
-| 3 WireGuard kernel control | blocked | network-control M003 | Phase 2 |
-| 4 link/address/route reconciliation | blocked | network-control M004 | Phase 3 |
+| 3 WireGuard kernel control | closed | network-control M003 | Phase 2 |
+| 4 link/address/route reconciliation | ready | network-control M004 | Phase 3 |
 | 5 firewall/forwarding/E2E | blocked | network-control M005 | Phase 4 |
 | 6 durable state | proposed | future state roadmap | stable Phase 4/5 contracts |
 | 7 service/security substrate | proposed | future management roadmap | Phase 2 + stable protocol |

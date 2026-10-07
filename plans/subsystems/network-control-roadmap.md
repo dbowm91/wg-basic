@@ -1,6 +1,6 @@
 # Network Control Foundation Roadmap
 
-Status: active planning; M001–M002 closed, M003 ready
+Status: active planning; M001–M003 closed, M004 active
 
 Canonical references:
 
@@ -70,7 +70,7 @@ At the planning baseline, wg-basic is a fresh repository with planning documents
 
 There is therefore no compatibility obligation to existing code.
 
-Current ecosystem research shows several viable Rust approaches to Linux WireGuard control, including high-level WireGuard control crates and lower-level Generic Netlink packet APIs. Selection is intentionally deferred to M003 so the repository foundation and privileged boundary do not prematurely inherit one networking crate's API.
+M003 evaluated current Rust WireGuard control options and selected `nl-wireguard` for narrow Generic Netlink device/peer control. The dependency and ownership rationale is recorded in `architecture/wireguard-control.md`.
 
 Eggstack research establishes:
 
@@ -202,7 +202,7 @@ Exit conditions:
 
 ## 9. Milestone M003 — WireGuard kernel control and live telemetry
 
-Status: active.
+Status: closed.
 
 Primary class: capability / invariant.
 
@@ -219,7 +219,7 @@ Expected outcomes:
 - dependency/backend selection documented from current crate/API evidence;
 - WireGuard interface observation;
 - key/listen-port configuration;
-- peer set/replace/update/remove;
+- peer add/update/remove with explicit per-peer AllowedIPs replacement; no device-wide peer replacement;
 - AllowedIPs and keepalive;
 - endpoint/latest-handshake/RX/TX observation;
 - conflict validation;
@@ -237,7 +237,7 @@ Exit conditions:
 
 ## 10. Milestone M004 — Link, address, route, and reconciliation engine
 
-Status: blocked on M003.
+Status: active.
 
 Primary class: infrastructure / invariant.
 
@@ -371,6 +371,6 @@ No plan should introduce a large CI matrix before a concrete qualification need 
 |---|---|---|---|---|
 | M001 repository/domain/runtime foundation | closed | `plans/implementation/network-control/001-repository-domain-runtime-foundation.md` | `plans/closure/network-control/001-status.md` | — |
 | M002 privileged protocol/capabilities | closed | `plans/implementation/network-control/002-privileged-protocol-and-capability-boundary.md` | `plans/closure/network-control/002-status.md` | — |
-| M003 WireGuard control/telemetry | active | `plans/implementation/network-control/003-wireguard-kernel-control-and-telemetry.md` | — | — |
-| M004 link/address/route reconciliation | blocked | `plans/implementation/network-control/004-link-address-route-reconciliation.md` | — | M003 |
+| M003 WireGuard control/telemetry | closed | `plans/implementation/network-control/003-wireguard-kernel-control-and-telemetry.md` | `plans/closure/network-control/003-status.md` | — |
+| M004 link/address/route reconciliation | active | `plans/implementation/network-control/004-link-address-route-reconciliation.md` | — | — |
 | M005 firewall/forwarding/E2E | blocked | `plans/implementation/network-control/005-firewall-forwarding-end-to-end.md` | — | M004 |
