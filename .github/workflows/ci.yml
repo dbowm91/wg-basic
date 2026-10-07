@@ -29,4 +29,4 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get update && sudo apt-get install -y iproute2 iputils-ping
       - name: Qualify kernel WireGuard control in isolated namespaces
-        run: sudo -E env "PATH=$PATH" cargo test --locked --features linux-integration --test wireguard_kernel -- --nocapture
+        run: sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo cargo test --locked --features linux-integration --test wireguard_kernel -- --nocapture
