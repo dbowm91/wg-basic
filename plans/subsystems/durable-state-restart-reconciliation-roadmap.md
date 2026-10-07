@@ -1,6 +1,6 @@
 # Durable State and Restart Reconciliation Roadmap
 
-Status: closed. Phase 6 is complete; M001-M004 are all closed.
+Status: closed. Phase 6 is complete; M001-M004 are all closed. A separate post-Phase-6 corrective line is active under `plans/subsystems/durable-state-post-phase6-reconciliation-addendum.md` and does not reopen this roadmap.
 
 Canonical references:
 
@@ -476,3 +476,17 @@ Phase 6 closure requires re-running the existing M003–M005 kernel/network suit
 | M002 durable ownership + aggregate reconcile | closed | `plans/implementation/durable-state/002-durable-ownership-and-generation-reconcile.md` | — |
 | M003 startup reconciliation + recovery | closed | `plans/implementation/durable-state/003-startup-reconciliation-and-recovery.md` | — |
 | M004 backup/restore + migration qualification | closed | `plans/implementation/durable-state/004-backup-restore-and-migration-qualification.md` | — |
+
+
+## 22. Post-Phase-6 corrective handoff
+
+Phase 6 remains closed.
+
+A bounded corrective/polish/evidence pass is registered separately:
+
+- `plans/subsystems/durable-state-post-phase6-reconciliation-addendum.md`;
+- `plans/implementation/durable-state/c001-post-phase6-reconciliation-and-pre-phase7-hardening.md`.
+
+Its scope is limited to current-state documentation reconciliation, the one remaining real-kernel disable-path fault-injection qualification gap carried from M002/M003, and contract-preserving management/state module cleanup before Phase 7 consumes those APIs.
+
+The corrective MUST NOT change ADR-002, desired-generation semantics, durable ownership, aggregate reconciliation ordering, or backup/restore contracts.
