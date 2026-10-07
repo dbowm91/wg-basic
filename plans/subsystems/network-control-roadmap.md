@@ -1,6 +1,6 @@
 # Network Control Foundation Roadmap
 
-Status: active planning; M001–M004 closed, M005 active
+Status: active planning; M001–M005 closed
 
 Canonical references:
 
@@ -272,7 +272,7 @@ Exit conditions:
 
 ## 11. Milestone M005 — nftables, forwarding, NAT, and end-to-end qualification
 
-Status: active; hard dependency M004 strictly closed.
+Status: closed; hard dependency M004 strictly closed.
 
 Primary class: capability / invariant.
 
@@ -372,5 +372,5 @@ No plan should introduce a large CI matrix before a concrete qualification need 
 | M001 repository/domain/runtime foundation | closed | `plans/implementation/network-control/001-repository-domain-runtime-foundation.md` | `plans/closure/network-control/001-status.md` | — |
 | M002 privileged protocol/capabilities | closed | `plans/implementation/network-control/002-privileged-protocol-and-capability-boundary.md` | `plans/closure/network-control/002-status.md` | — |
 | M003 WireGuard control/telemetry | closed | `plans/implementation/network-control/003-wireguard-kernel-control-and-telemetry.md` | `plans/closure/network-control/003-status.md` | — |
-| M004 link/address/route reconciliation | active | `plans/implementation/network-control/004-link-address-route-reconciliation.md` | — | — |
-| M005 firewall/forwarding/E2E | blocked | `plans/implementation/network-control/005-firewall-forwarding-end-to-end.md` | — | M004 |
+| M004 link/address/route reconciliation | closed | `plans/implementation/network-control/004-link-address-route-reconciliation.md` | `plans/closure/network-control/004-status.md` | — |
+| M005 firewall/forwarding/E2E | closed | `plans/implementation/network-control/005-firewall-forwarding-end-to-end.md` | `plans/closure/network-control/005-status.md` | — |

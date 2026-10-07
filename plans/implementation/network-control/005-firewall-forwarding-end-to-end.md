@@ -1,6 +1,6 @@
 # Network Control M005 — Firewall, Forwarding, NAT, and End-to-End Qualification
 
-Status: active
+Status: closed
 
 Repository planning baseline: `e01f35b` (M004 strict implementation head)
 
