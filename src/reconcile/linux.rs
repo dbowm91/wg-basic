@@ -2,6 +2,7 @@ use super::{
     Mutation, ObservedLinkKind, ObservedManagedInterface, ObservedRoute, ReconcileBackend,
     ReconcileError,
 };
+use crate::domain::OwnerTag;
 use crate::{domain::InterfaceName, wireguard::WireGuardBackend};
 use futures_util::TryStreamExt;
 use ipnet::IpNet;
@@ -19,6 +20,8 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 const MAX_OBSERVED_ADDRESSES: usize = 4096;
 const MAX_OBSERVED_ROUTES: usize = 65_536;
+/// Bound on the link enumeration used to prove owner-tag uniqueness.
+const MAX_OBSERVED_LINKS: usize = 4_096;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LinuxNetworkBackend {
@@ -29,6 +32,7 @@ impl ReconcileBackend for LinuxNetworkBackend {
     fn observe(
         &self,
         interface: &InterfaceName,
+        owner_tag: &OwnerTag,
     ) -> Result<ObservedManagedInterface, ReconcileError> {
         let runtime = backend_runtime()?;
         let mut observed = runtime.block_on(async {
@@ -51,11 +55,22 @@ impl ReconcileBackend for LinuxNetworkBackend {
                     addresses: Vec::new(),
                     routes: Vec::new(),
                     unsupported_route_count: 0,
+                    interface_alias: None,
+                    duplicate_owner_tag: false,
                     wireguard: None,
                 });
             };
 
             let ifindex = link.header.index;
+            let duplicate_owner_tag =
+                duplicate_owner_tag_elsewhere(&handle, owner_tag, ifindex).await?;
+            let interface_alias = link
+                .attributes
+                .iter()
+                .find_map(|attribute| match attribute {
+                    LinkAttribute::IfAlias(alias) => Some(alias.clone()),
+                    _ => None,
+                });
             let is_wireguard = link.attributes.iter().any(|attribute| match attribute {
                 LinkAttribute::LinkInfo(infos) => infos
                     .iter()
@@ -140,6 +155,8 @@ impl ReconcileBackend for LinuxNetworkBackend {
                 addresses,
                 routes,
                 unsupported_route_count,
+                interface_alias,
+                duplicate_owner_tag,
                 wireguard: None,
             })
         })?;
@@ -160,14 +177,37 @@ impl ReconcileBackend for LinuxNetworkBackend {
                 .apply_patch(interface, patch)
                 .map(|_| ())
                 .map_err(ReconcileError::WireGuard),
-            Mutation::CreateWireGuardLink => self.with_handle(|handle| async move {
-                handle
-                    .link()
-                    .add(LinkWireguard::new(interface.as_str()).build())
-                    .execute()
-                    .await
-                    .map_err(|_| ReconcileError::BackendFailure)
-            }),
+            Mutation::CreateWireGuardLink { owner_tag } => {
+                self.with_handle(|handle| async move {
+                    // The kernel accepts IFLA_IFALIAS in RTM_NEWLINK but
+                    // silently discards it, so a created link is tagged with an
+                    // immediate follow-up RTM_SETLINK. Both calls belong to this
+                    // one logical mutation.
+                    //
+                    // A crash between the two leaves an untagged link. That is
+                    // deliberate: the planner treats an untagged same-name
+                    // WireGuard link as a conflict rather than adopting it, so a
+                    // partially created link requires operator cleanup instead
+                    // of silent adoption.
+                    handle
+                        .link()
+                        .add(LinkWireguard::new(interface.as_str()).build())
+                        .execute()
+                        .await
+                        .map_err(|_| ReconcileError::BackendFailure)?;
+
+                    let index = lookup_link_index(&handle, interface).await?;
+                    let message = LinkUnspec::new_with_index(index)
+                        .append_extra_attribute(LinkAttribute::IfAlias(owner_tag.as_str()))
+                        .build();
+                    handle
+                        .link()
+                        .set(message)
+                        .execute()
+                        .await
+                        .map_err(|_| ReconcileError::BackendFailure)
+                })
+            }
             Mutation::DeleteLink => self.with_handle(|handle| async move {
                 let index = lookup_link_index(&handle, interface).await?;
                 handle
@@ -247,6 +287,41 @@ impl LinuxNetworkBackend {
             operation(handle).await
         })
     }
+}
+
+/// Reports whether another link on this host carries the same owner tag.
+///
+/// Owner-tag uniqueness must be proven, but a duplicate is an operator problem
+/// rather than something to resolve by guessing which interface is canonical.
+/// The enumeration is bounded so a pathological host cannot make one apply
+/// unbounded.
+async fn duplicate_owner_tag_elsewhere(
+    handle: &rtnetlink::Handle,
+    owner_tag: &OwnerTag,
+    exclude_index: u32,
+) -> Result<bool, ReconcileError> {
+    let expected = owner_tag.as_str();
+    let mut links = handle.link().get().execute();
+    let mut examined = 0usize;
+    while let Some(link) = links
+        .try_next()
+        .await
+        .map_err(|_| ReconcileError::BackendFailure)?
+    {
+        examined += 1;
+        if examined > MAX_OBSERVED_LINKS {
+            return Err(ReconcileError::ResourceLimitExceeded);
+        }
+        if link.header.index == exclude_index {
+            continue;
+        }
+        if link.attributes.iter().any(
+            |attribute| matches!(attribute, LinkAttribute::IfAlias(alias) if *alias == expected),
+        ) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn backend_runtime() -> Result<tokio::runtime::Runtime, ReconcileError> {

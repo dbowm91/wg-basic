@@ -55,13 +55,16 @@ pub struct ResolvedNetworkIntent {
 /// Determinism: interface, address, route, and peer order follow the snapshot
 /// order exactly, and no map iteration or clock read affects the result.
 #[cfg(target_os = "linux")]
-pub fn project(state: &DesiredState) -> Result<ResolvedNetworkIntent, ProjectionError> {
+pub fn project(
+    state: &DesiredState,
+    installation_id: crate::domain::InstallationId,
+) -> Result<ResolvedNetworkIntent, ProjectionError> {
     let mut interfaces = Vec::with_capacity(state.interfaces.len());
     let mut interface_names = Vec::with_capacity(state.interfaces.len());
 
     for interface in &state.interfaces {
         interface_names.push(interface.name.clone());
-        interfaces.push(project_interface(interface)?);
+        interfaces.push(project_interface(interface, installation_id)?);
     }
 
     let network_policy = match &state.network_policy {
@@ -79,6 +82,7 @@ pub fn project(state: &DesiredState) -> Result<ResolvedNetworkIntent, Projection
 #[cfg(target_os = "linux")]
 fn project_interface(
     interface: &crate::domain::DesiredInterface,
+    installation_id: crate::domain::InstallationId,
 ) -> Result<DesiredManagedInterface, ProjectionError> {
     let present = interface.lifecycle == LinkLifecycle::Present;
     let listen_port = match interface.listen_port {
@@ -134,6 +138,7 @@ fn project_interface(
 
     Ok(DesiredManagedInterface {
         interface: interface.name.clone(),
+        owner_tag: crate::domain::OwnerTag::new(installation_id, interface.id),
         ownership: match interface.ownership {
             crate::domain::OwnershipDeclaration::Managed => OwnershipDeclaration::Managed,
             crate::domain::OwnershipDeclaration::ObserveOnly => OwnershipDeclaration::ObserveOnly,
@@ -254,8 +259,9 @@ mod tests {
     #[test]
     fn projection_is_deterministic_across_repeated_calls() {
         let state = state();
-        let first = project(&state).unwrap();
-        let second = project(&state).unwrap();
+        let installation = crate::domain::InstallationId::new();
+        let first = project(&state, installation).unwrap();
+        let second = project(&state, installation).unwrap();
         assert_eq!(first, second);
         assert_eq!(first.interfaces.len(), 1);
         assert_eq!(first.interface_names.len(), 1);
@@ -263,7 +269,7 @@ mod tests {
 
     #[test]
     fn projected_interface_carries_exactly_the_kernel_shaped_intent() {
-        let intent = project(&state()).unwrap();
+        let intent = project(&state(), crate::domain::InstallationId::new()).unwrap();
         let interface = &intent.interfaces[0];
         assert_eq!(interface.interface, "wg0".parse().unwrap());
         assert_eq!(interface.admin_up, Some(true));
@@ -289,7 +295,7 @@ mod tests {
         state.interfaces[0].lifecycle = LinkLifecycle::Absent;
         state.interfaces[0].admin_up = None;
         state.network_policy = None;
-        let intent = project(&state).unwrap();
+        let intent = project(&state, crate::domain::InstallationId::new()).unwrap();
         assert!(intent.interfaces[0].wireguard.is_none());
         assert!(intent.network_policy.is_none());
     }
@@ -300,7 +306,7 @@ mod tests {
         state.network_policy.as_mut().unwrap().source_prefixes =
             vec![NetworkPrefix::new("2001:db8::/64".parse().unwrap())];
         assert!(matches!(
-            project(&state),
+            project(&state, crate::domain::InstallationId::new()),
             Err(ProjectionError::NonIpv4PolicyPrefix(_))
         ));
     }

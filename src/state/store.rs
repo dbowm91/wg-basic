@@ -9,17 +9,16 @@
 
 use super::{
     error::StateError,
-    identifiers::{DesiredGeneration, InstallationId, INITIAL_DESIRED_GENERATION},
     model::{
         CommittedDesiredState, ConvergenceRecord, InstallationMetadata, PersistedDesiredState,
     },
     schema::{self, OpenIntent},
 };
 use crate::domain::{
-    validate_desired_state, ClientRoutePolicy, DesiredAddress, DesiredClient, DesiredInterface,
-    DesiredNetworkPolicy, DesiredPeer, DesiredState, InterfaceId, InterfaceName, LinkLifecycle,
-    ManagedRoute, NetworkPrefix, OwnershipDeclaration, PresharedKey, PrivateKey, PublicKey,
-    ResourcePresence,
+    validate_desired_state, ClientRoutePolicy, DesiredAddress, DesiredClient, DesiredGeneration,
+    DesiredInterface, DesiredNetworkPolicy, DesiredPeer, DesiredState, InstallationId, InterfaceId,
+    InterfaceName, LinkLifecycle, ManagedRoute, NetworkPrefix, OwnershipDeclaration, PresharedKey,
+    PrivateKey, PublicKey, ResourcePresence, INITIAL_DESIRED_GENERATION,
 };
 use ipnet::IpNet;
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};

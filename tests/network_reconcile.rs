@@ -13,7 +13,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use wg_basic::{
-    domain::{InterfaceName, NetworkPrefix, PrivateKey},
+    domain::{InstallationId, InterfaceId, InterfaceName, NetworkPrefix, OwnerTag, PrivateKey},
     protocol::{request, AuthorizationPolicy, RequestOperation, ResponseBody, SocketServer},
     reconcile::{
         ApplyStatus, DesiredAddress, DesiredManagedInterface, DesiredWireGuardConfiguration,
@@ -199,11 +199,16 @@ fn kernel_reconciliation_manages_link_address_and_route_and_preserves_other_link
     let interface: InterfaceName = "wg-managed".parse().unwrap();
     let keypair = generate_keypair().unwrap();
     let private_key = keypair.private_key.expose_secret().to_owned();
+    // One tag is used for both the create and the remove intent, because
+    // deletion is ownership-gated exactly like mutation.
+    let installation = InstallationId::new();
+    let owner = InterfaceId::new();
     let managed_state = || DesiredManagedInterface {
         interface: interface.clone(),
         ownership: OwnershipDeclaration::Managed,
         lifecycle: LinkLifecycle::Present,
         admin_up: Some(true),
+        owner_tag: OwnerTag::new(installation, owner),
         wireguard: Some(DesiredWireGuardConfiguration {
             private_key: PrivateKey::new(private_key.clone()).unwrap(),
             listen_port: 51873,
@@ -235,6 +240,7 @@ fn kernel_reconciliation_manages_link_address_and_route_and_preserves_other_link
                 ownership: OwnershipDeclaration::Managed,
                 lifecycle: LinkLifecycle::Present,
                 admin_up: Some(true),
+                owner_tag: OwnerTag::new(InstallationId::new(), InterfaceId::new()),
                 wireguard: None,
                 addresses: Vec::new(),
                 routes: Vec::new(),
@@ -256,6 +262,9 @@ fn kernel_reconciliation_manages_link_address_and_route_and_preserves_other_link
         ownership: OwnershipDeclaration::Managed,
         lifecycle: LinkLifecycle::Absent,
         admin_up: None,
+        // Deletion is ownership-gated, so the remove intent must carry the same
+        // durable tag that was stamped when the link was created.
+        owner_tag: OwnerTag::new(installation, owner),
         wireguard: None,
         addresses: vec![DesiredAddress {
             address: "10.77.0.1/24".parse().unwrap(),

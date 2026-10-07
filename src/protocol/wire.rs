@@ -59,6 +59,10 @@ pub struct ResponseEnvelope {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "result", content = "value", rename_all = "snake_case")]
+// The observation-bearing variants are inherently larger than the rest. Boxing
+// them would add an allocation and would leak into the public wire API that
+// every caller pattern-matches on, for a few bytes once per request.
+#[allow(clippy::large_enum_variant)]
 pub enum ResponseBody {
     Pong { service: String, version: String },
     Capabilities(super::NetworkCapabilitySnapshot),
@@ -200,6 +204,10 @@ mod tests {
                     ownership: crate::reconcile::OwnershipDeclaration::Managed,
                     lifecycle: crate::reconcile::LinkLifecycle::Present,
                     admin_up: Some(true),
+                    owner_tag: crate::domain::OwnerTag::new(
+                        crate::domain::InstallationId::new(),
+                        crate::domain::InterfaceId::new(),
+                    ),
                     wireguard: Some(crate::reconcile::DesiredWireGuardConfiguration {
                         private_key: crate::domain::PrivateKey::new(private_key.clone()).unwrap(),
                         listen_port: 51820,
