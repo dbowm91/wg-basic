@@ -8,7 +8,7 @@ pub use crate::domain::{
 };
 
 use crate::{
-    domain::{InterfaceName, NetworkPrefix, PrivateKey, PublicKey},
+    domain::{InterfaceName, NetworkPrefix, OwnerTag, PrivateKey, PublicKey},
     wireguard::{
         prefixes_overlap, validate_allowed_ips, ObservedWireGuardDevice, WireGuardValidationError,
     },
@@ -48,6 +48,11 @@ pub struct DesiredManagedInterface {
     pub lifecycle: LinkLifecycle,
     /// Required for a present link and omitted for an absent link.
     pub admin_up: Option<bool>,
+    /// The durable ownership proof written as the link's kernel alias.
+    ///
+    /// This is derived by the management side from the installation and
+    /// interface identity; callers must not construct it from a user label.
+    pub owner_tag: OwnerTag,
     pub wireguard: Option<DesiredWireGuardConfiguration>,
     /// Only these exact addresses/routes are managed. Unlisted resources survive.
     pub addresses: Vec<DesiredAddress>,
@@ -171,6 +176,12 @@ pub struct ObservedManagedInterface {
     pub routes: Vec<ObservedRoute>,
     /// Routes using this interface that are outside the supported ownership shape.
     pub unsupported_route_count: usize,
+    /// The kernel interface alias (`IFLA_IFALIAS`), which carries the durable
+    /// owner tag when this link is owned by wg-basic.
+    pub interface_alias: Option<String>,
+    /// Whether another link on this host carries the same owner tag. Duplicates
+    /// are a conflict requiring operator intervention.
+    pub duplicate_owner_tag: bool,
     pub wireguard: Option<ObservedWireGuardDevice>,
 }
 
@@ -249,6 +260,12 @@ pub enum ReconcileError {
     WrongLinkKind,
     #[error("interface or route conflicts with existing host state")]
     Conflict,
+    #[error("interface exists without the expected durable owner tag")]
+    OwnerTagMissing,
+    #[error("interface carries a durable owner tag from another installation or interface")]
+    OwnerTagForeign,
+    #[error("another interface on this host already carries the expected durable owner tag")]
+    OwnerTagDuplicated,
     #[error("deleting the interface would remove an unlisted address or route")]
     UnlistedResourceOnDelete,
     #[error("network kernel observation or mutation failed")]

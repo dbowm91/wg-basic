@@ -92,9 +92,14 @@ fn map_reconcile_error(error: ReconcileError) -> ProtocolError {
         ReconcileError::InvalidDesiredState
         | ReconcileError::ResourceLimitExceeded
         | ReconcileError::DuplicateResource => ProtocolError::InvalidInput,
+        // An absent, foreign, or duplicated durable owner tag is a conflict:
+        // wg-basic cannot prove it owns the link, so it refuses authoritatively.
         ReconcileError::OwnershipRequired
         | ReconcileError::WrongLinkKind
         | ReconcileError::Conflict
+        | ReconcileError::OwnerTagMissing
+        | ReconcileError::OwnerTagForeign
+        | ReconcileError::OwnerTagDuplicated
         | ReconcileError::UnlistedResourceOnDelete => ProtocolError::Conflict,
         ReconcileError::BackendFailure => ProtocolError::BackendFailure,
         ReconcileError::WireGuard(error) => map_wireguard_error(error),

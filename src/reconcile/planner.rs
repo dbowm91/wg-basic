@@ -10,7 +10,7 @@ use super::model::{
     ReconcilePlanSummary, ResourcePresence,
 };
 use crate::{
-    domain::{NetworkPrefix, PrivateKey},
+    domain::{AliasMatch, NetworkPrefix, OwnerTag, PrivateKey},
     wireguard::{
         derive_public_key, prefixes_overlap, DesiredWireGuardPeer, FieldUpdate, PeerMutation,
         WireGuardDevicePatch, WireGuardPeerPatch, WireGuardValidationError,
@@ -21,7 +21,7 @@ use std::net::{IpAddr, Ipv4Addr};
 
 #[derive(Debug)]
 pub(crate) enum Mutation {
-    CreateWireGuardLink,
+    CreateWireGuardLink { owner_tag: OwnerTag },
     ConfigureWireGuard(WireGuardDevicePatch),
     AddAddress(IpNet),
     RemoveAddress(IpNet),
@@ -34,7 +34,9 @@ pub(crate) enum Mutation {
 impl Mutation {
     fn summary(&self) -> PlannedAction {
         let (kind, target) = match self {
-            Self::CreateWireGuardLink => (MutationKind::CreateWireGuardLink, "wireguard".into()),
+            Self::CreateWireGuardLink { .. } => {
+                (MutationKind::CreateWireGuardLink, "wireguard".into())
+            }
             Self::ConfigureWireGuard(_) => (MutationKind::ConfigureWireGuard, "wireguard".into()),
             Self::AddAddress(address) => (MutationKind::AddAddress, address.to_string()),
             Self::RemoveAddress(address) => (MutationKind::RemoveAddress, address.to_string()),
@@ -45,6 +47,29 @@ impl Mutation {
             Self::DeleteLink => (MutationKind::DeleteLink, "wireguard".into()),
         };
         PlannedAction { kind, target }
+    }
+}
+
+/// Proves durable ownership of an existing link.
+///
+/// An existing link is eligible for authoritative mutation or destruction only
+/// when its alias is exactly the expected owner tag. A missing tag, a tag from
+/// another installation or interface, an unrelated alias, or a duplicate tag on
+/// another link all fail closed: interface name and public key are not proof.
+fn require_owned(
+    observed: &ObservedManagedInterface,
+    owner_tag: &OwnerTag,
+) -> Result<(), ReconcileError> {
+    if observed.duplicate_owner_tag {
+        return Err(ReconcileError::OwnerTagDuplicated);
+    }
+    match owner_tag.classify(observed.interface_alias.as_deref()) {
+        AliasMatch::Owned => Ok(()),
+        AliasMatch::Absent => Err(ReconcileError::OwnerTagMissing),
+        AliasMatch::ForeignInterface | AliasMatch::ForeignInstallation => {
+            Err(ReconcileError::OwnerTagForeign)
+        }
+        AliasMatch::Unrelated => Err(ReconcileError::OwnerTagMissing),
     }
 }
 
@@ -73,6 +98,7 @@ pub(crate) fn plan_execution(
     observed: &ObservedManagedInterface,
 ) -> Result<ExecutionPlan, ReconcileError> {
     desired.validate()?;
+    let owner_tag = &desired.owner_tag;
     if desired.interface != observed.interface {
         return Err(ReconcileError::InvalidDesiredState);
     }
@@ -88,6 +114,7 @@ pub(crate) fn plan_execution(
             if observed.link_kind != Some(ObservedLinkKind::WireGuard) {
                 return Err(ReconcileError::WrongLinkKind);
             }
+            require_owned(observed, owner_tag)?;
             let listed_addresses = desired
                 .addresses
                 .iter()
@@ -147,9 +174,16 @@ pub(crate) fn plan_execution(
                 if desired.ownership != OwnershipDeclaration::Managed {
                     return Err(ReconcileError::OwnershipRequired);
                 }
-                mutations.push(Mutation::CreateWireGuardLink);
-            } else if observed.link_kind != Some(ObservedLinkKind::WireGuard) {
-                return Err(ReconcileError::WrongLinkKind);
+                mutations.push(Mutation::CreateWireGuardLink {
+                    owner_tag: owner_tag.clone(),
+                });
+            } else {
+                if observed.link_kind != Some(ObservedLinkKind::WireGuard) {
+                    return Err(ReconcileError::WrongLinkKind);
+                }
+                // Ownership is proven, so external drift in WireGuard config,
+                // addresses, routes, or admin state is repaired back to desired.
+                require_owned(observed, owner_tag)?;
             }
             plan_wireguard(desired, observed, created, &mut mutations)?;
             plan_addresses(desired, observed, &mut mutations)?;
@@ -424,8 +458,22 @@ mod tests {
         DesiredAddress, DesiredManagedPeer, DesiredWireGuardConfiguration, ManagedRoute,
     };
     use super::*;
-    use crate::domain::{InterfaceName, PublicKey};
+    use crate::domain::{InstallationId, InterfaceId, InterfaceName, PublicKey};
     use crate::wireguard::ObservedWireGuardDevice;
+
+    /// A single stable tag shared by every fixture in this module, because
+    /// ownership is proven by an exact match between the desired tag and the
+    /// alias observed on the link.
+    fn owner_tag() -> OwnerTag {
+        OwnerTag::new(
+            "00000000-0000-4000-8000-0000000000a1"
+                .parse::<InstallationId>()
+                .unwrap(),
+            "00000000-0000-4000-8000-0000000000b2"
+                .parse::<InterfaceId>()
+                .unwrap(),
+        )
+    }
 
     fn name() -> InterfaceName {
         "wg-test".parse().unwrap()
@@ -440,6 +488,8 @@ mod tests {
             addresses: Vec::new(),
             routes: Vec::new(),
             unsupported_route_count: 0,
+            interface_alias: Some(owner_tag().as_str()),
+            duplicate_owner_tag: false,
             wireguard: None,
         }
     }
@@ -450,6 +500,7 @@ mod tests {
             ownership: OwnershipDeclaration::Managed,
             lifecycle: LinkLifecycle::Present,
             admin_up: Some(true),
+            owner_tag: owner_tag(),
             wireguard: None,
             addresses: vec![DesiredAddress {
                 address: "10.0.0.1/24".parse().unwrap(),
@@ -509,6 +560,8 @@ mod tests {
         );
         let with_unsupported_route = ObservedManagedInterface {
             unsupported_route_count: 1,
+            interface_alias: Some(owner_tag().as_str()),
+            duplicate_owner_tag: false,
             ..observed()
         };
         assert_eq!(
@@ -576,5 +629,145 @@ mod tests {
             .unwrap()
             .actions
             .is_empty());
+    }
+
+    fn owned(desired: &DesiredManagedInterface) -> ObservedManagedInterface {
+        let mut observed = observed();
+        observed.ifindex = Some(7);
+        observed.interface_alias = Some(desired.owner_tag.as_str());
+        observed
+    }
+
+    fn with_alias(
+        desired: &DesiredManagedInterface,
+        alias: Option<&str>,
+    ) -> ObservedManagedInterface {
+        let mut observed = owned(desired);
+        observed.interface_alias = alias.map(str::to_owned);
+        observed
+    }
+
+    #[test]
+    fn a_missing_link_is_created_and_tagged() {
+        let desired = desired();
+        let observed = ObservedManagedInterface {
+            interface: name(),
+            ifindex: None,
+            link_kind: None,
+            admin_up: None,
+            addresses: Vec::new(),
+            routes: Vec::new(),
+            unsupported_route_count: 0,
+            interface_alias: None,
+            duplicate_owner_tag: false,
+            wireguard: None,
+        };
+        let plan = plan_execution(&desired, &observed).unwrap();
+        assert!(
+            plan.mutations
+                .iter()
+                .any(|mutation| matches!(mutation, Mutation::CreateWireGuardLink { owner_tag } if *owner_tag == desired.owner_tag)),
+            "a new link must be created carrying its durable owner tag"
+        );
+    }
+
+    #[test]
+    fn a_matching_owner_tag_permits_full_owned_reconciliation() {
+        let desired = desired();
+        let observed = owned(&desired);
+        // External drift in admin state is repaired because ownership is proven.
+        let mut drifted = observed.clone();
+        drifted.admin_up = Some(false);
+        let plan = plan_execution(&desired, &drifted).expect("a matching tag proves ownership");
+        assert!(!plan.mutations.is_empty());
+    }
+
+    #[test]
+    fn an_absent_alias_is_a_conflict_for_an_existing_link() {
+        let desired = desired();
+        let observed = with_alias(&desired, None);
+        assert!(matches!(
+            plan_execution(&desired, &observed),
+            Err(ReconcileError::OwnerTagMissing)
+        ));
+    }
+
+    #[test]
+    fn an_unrelated_alias_is_never_treated_as_ownership() {
+        let desired = desired();
+        for alias in ["", "my laptop uplink", "wg0"] {
+            let observed = with_alias(&desired, Some(alias));
+            assert!(
+                matches!(
+                    plan_execution(&desired, &observed),
+                    Err(ReconcileError::OwnerTagMissing)
+                ),
+                "alias {alias:?} must not prove ownership"
+            );
+        }
+    }
+
+    #[test]
+    fn a_foreign_installation_or_interface_tag_is_a_conflict() {
+        let desired = desired();
+
+        let other_installation =
+            OwnerTag::new(InstallationId::new(), desired.owner_tag.interface_id());
+        let observed = with_alias(&desired, Some(&other_installation.as_str()));
+        assert!(matches!(
+            plan_execution(&desired, &observed),
+            Err(ReconcileError::OwnerTagForeign)
+        ));
+
+        let other_interface =
+            OwnerTag::new(desired.owner_tag.installation_id(), InterfaceId::new());
+        let observed = with_alias(&desired, Some(&other_interface.as_str()));
+        assert!(matches!(
+            plan_execution(&desired, &observed),
+            Err(ReconcileError::OwnerTagForeign)
+        ));
+    }
+
+    #[test]
+    fn a_duplicate_owner_tag_elsewhere_is_a_conflict_and_survives() {
+        let desired = desired();
+        let mut observed = owned(&desired);
+        observed.duplicate_owner_tag = true;
+        assert!(matches!(
+            plan_execution(&desired, &observed),
+            Err(ReconcileError::OwnerTagDuplicated)
+        ));
+        assert!(
+            observed.interface_alias.is_some(),
+            "the conflicting link is observed, never modified"
+        );
+    }
+
+    #[test]
+    fn an_unowned_link_is_refused_before_destruction_too() {
+        let mut desired = desired();
+        desired.lifecycle = LinkLifecycle::Absent;
+        desired.admin_up = None;
+        desired.wireguard = None;
+        desired.addresses.clear();
+        desired.routes.clear();
+        let observed = with_alias(&desired, Some("someone elses uplink"));
+        // Deletion must be as ownership-gated as mutation.
+        let error = plan_execution(&desired, &observed).expect_err("unowned deletion must fail");
+        assert!(
+            matches!(error, ReconcileError::OwnerTagMissing),
+            "unexpected error for an unowned delete: {error:?}"
+        );
+    }
+
+    #[test]
+    fn a_wrong_kind_link_is_still_refused_before_ownership_is_considered() {
+        let desired = desired();
+        let mut observed = owned(&desired);
+        observed.link_kind = Some(ObservedLinkKind::Other);
+        assert!(matches!(
+            plan_execution(&desired, &observed),
+            Err(ReconcileError::WrongLinkKind)
+        ));
     }
 }

@@ -14,7 +14,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use wg_basic::{
-    domain::{InterfaceName, NetworkPrefix, PrivateKey},
+    domain::{InstallationId, InterfaceId, InterfaceName, NetworkPrefix, OwnerTag, PrivateKey},
     firewall::{DesiredNetworkPolicy, FirewallApplyReceipt, Ipv4Forwarding, NatMode},
     protocol::{request, AuthorizationPolicy, RequestOperation, ResponseBody, SocketServer},
     reconcile::{
@@ -250,12 +250,14 @@ fn managed_interface(
     peer: DesiredManagedPeer,
     address: &str,
     listen_port: u16,
+    owner_tag: OwnerTag,
 ) -> DesiredManagedInterface {
     DesiredManagedInterface {
         interface,
         ownership: OwnershipDeclaration::Managed,
         lifecycle: LinkLifecycle::Present,
         admin_up: Some(true),
+        owner_tag,
         wireguard: Some(DesiredWireGuardConfiguration {
             private_key: PrivateKey::new(private_key).unwrap(),
             listen_port,
@@ -414,6 +416,11 @@ fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
     let server_public = server_keys.public_key;
     let server_interface: InterfaceName = "wg-server".parse().unwrap();
     let client_interface: InterfaceName = "wg-client".parse().unwrap();
+    // Each managed interface gets its own durable owner tag, derived from one
+    // installation identity and the interface identity.
+    let installation = InstallationId::new();
+    let server_owner = OwnerTag::new(installation, InterfaceId::new());
+    let client_owner = OwnerTag::new(installation, InterfaceId::new());
 
     let server_state = || {
         managed_interface(
@@ -427,6 +434,7 @@ fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
             },
             "10.8.0.1/24",
             51820,
+            server_owner.clone(),
         )
     };
     let client_state = || {
@@ -441,6 +449,7 @@ fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
             },
             "10.8.0.2/24",
             51821,
+            client_owner.clone(),
         );
         desired.routes = vec![ManagedRoute {
             destination: "0.0.0.0/0".parse().unwrap(),
@@ -547,6 +556,7 @@ fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
         ownership: OwnershipDeclaration::Managed,
         lifecycle: LinkLifecycle::Absent,
         admin_up: None,
+        owner_tag: server_owner.clone(),
         wireguard: None,
         addresses: vec![DesiredAddress {
             address: "10.8.0.1/24".parse().unwrap(),

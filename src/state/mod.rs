@@ -22,14 +22,16 @@
 //! restrictive filesystem permissions. This is not a sanitized export.
 
 mod error;
-mod identifiers;
 mod model;
 mod projection;
 mod schema;
 mod store;
 
 pub use error::StateError;
-pub use identifiers::{
+// The identifiers themselves live in `crate::domain` so the privileged side can
+// derive an owner tag without depending on the state store. They are re-exported
+// here because that is where callers of the store expect to find them.
+pub use crate::domain::{
     DesiredGeneration, InstallationId, INITIAL_DESIRED_GENERATION, MAX_DESIRED_GENERATION,
 };
 pub use model::{

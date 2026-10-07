@@ -323,8 +323,8 @@ fn enforce_singleton(connection: &Connection) -> Result<(), StateError> {
 /// Creates the singleton rows for a freshly initialized store.
 pub(crate) fn seed_installation(
     connection: &Connection,
-    installation_id: &super::identifiers::InstallationId,
-    generation: super::identifiers::DesiredGeneration,
+    installation_id: &crate::domain::InstallationId,
+    generation: crate::domain::DesiredGeneration,
 ) -> Result<(), StateError> {
     let now = now_seconds();
     connection
@@ -361,7 +361,7 @@ pub(crate) fn now_seconds() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::identifiers::DesiredGeneration;
+    use crate::domain::DesiredGeneration;
     use crate::state::store::StateStore;
     use std::{
         os::unix::fs::PermissionsExt,
@@ -633,10 +633,9 @@ mod tests {
         let temp = TempDir::new();
         let store = StateStore::initialize(temp.db()).unwrap();
         store
-            .mutate(
-                crate::state::identifiers::INITIAL_DESIRED_GENERATION,
-                |_| Ok(populated_state()),
-            )
+            .mutate(crate::domain::INITIAL_DESIRED_GENERATION, |_| {
+                Ok(populated_state())
+            })
             .unwrap();
         drop(store);
         let connection = open_inspection(&temp.db()).unwrap();

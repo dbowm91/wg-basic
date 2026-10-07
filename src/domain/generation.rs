@@ -1,4 +1,8 @@
-//! Typed identifiers for the durable application-state store.
+//! Typed identifiers for durable installation identity and desired generation.
+//!
+//! These live in `domain` rather than in the state module because the privileged
+//! side must be able to derive and verify an owner tag from the installation
+//! identity without ever opening the state database.
 
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};

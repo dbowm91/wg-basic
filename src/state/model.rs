@@ -4,8 +4,8 @@
 //! live in [`super::store`] and never derive `Debug` in a way that would render
 //! secret material.
 
-use super::identifiers::{DesiredGeneration, InstallationId};
 use crate::domain::DesiredState;
+use crate::domain::{DesiredGeneration, InstallationId};
 use std::fmt;
 
 /// Installation metadata that is independent of the desired snapshot.

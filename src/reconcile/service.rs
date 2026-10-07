@@ -8,7 +8,10 @@ use super::model::{
     ReconcilePlanSummary, SafeFailureCategory,
 };
 use super::planner::{plan_execution, plan_managed_interface, Mutation};
-use crate::{domain::InterfaceName, wireguard::WireGuardValidationError};
+use crate::{
+    domain::{InterfaceName, OwnerTag},
+    wireguard::WireGuardValidationError,
+};
 use std::sync::Mutex;
 
 /// One installation-wide lock serializes observe/plan/apply/verify sequences.
@@ -38,7 +41,9 @@ impl ReconciliationService {
         desired: &DesiredManagedInterface,
     ) -> Result<ReconcilePlanSummary, ReconcileError> {
         desired.validate()?;
-        let observed = self.backend.observe(&desired.interface)?;
+        let observed = self
+            .backend
+            .observe(&desired.interface, &desired.owner_tag)?;
         plan_managed_interface(desired, &observed)
     }
 
@@ -56,6 +61,7 @@ pub(crate) trait ReconcileBackend {
     fn observe(
         &self,
         interface: &InterfaceName,
+        owner_tag: &OwnerTag,
     ) -> Result<ObservedManagedInterface, ReconcileError>;
     fn apply(&self, interface: &InterfaceName, mutation: Mutation) -> Result<(), ReconcileError>;
 }
@@ -64,7 +70,7 @@ fn apply_with_backend(
     desired: &DesiredManagedInterface,
     backend: &impl ReconcileBackend,
 ) -> Result<ApplyReceipt, ReconcileError> {
-    let before = backend.observe(&desired.interface)?;
+    let before = backend.observe(&desired.interface, &desired.owner_tag)?;
     let plan = plan_execution(desired, &before)?;
     if plan.mutations.is_empty() {
         return Ok(ApplyReceipt {
@@ -81,7 +87,7 @@ fn apply_with_backend(
     let mut completed_actions = 0;
     for (index, mutation) in plan.mutations.into_iter().enumerate() {
         if let Err(error) = backend.apply(&desired.interface, mutation) {
-            let observed_after = backend.observe(&desired.interface).ok();
+            let observed_after = backend.observe(&desired.interface, &desired.owner_tag).ok();
             let raced_to_desired = observed_after.as_ref().is_some_and(|observed| {
                 plan_execution(desired, observed)
                     .is_ok_and(|remaining| remaining.mutations.is_empty())
@@ -104,7 +110,7 @@ fn apply_with_backend(
         }
         completed_actions += 1;
     }
-    let observed_after = match backend.observe(&desired.interface) {
+    let observed_after = match backend.observe(&desired.interface, &desired.owner_tag) {
         Ok(observed) => observed,
         Err(error) => {
             return Ok(ApplyReceipt {
@@ -160,9 +166,22 @@ mod tests {
         ResourcePresence,
     };
     use super::*;
-    use crate::domain::InterfaceName;
+    use crate::domain::{InstallationId, InterfaceId, InterfaceName, OwnerTag};
     use crate::reconcile::model::ObservedLinkKind;
     use std::sync::Mutex as StdMutex;
+
+    /// One stable tag for the whole module: ownership is proven by an exact
+    /// match between the desired tag and the alias observed on the link.
+    fn owner_tag() -> OwnerTag {
+        OwnerTag::new(
+            "00000000-0000-4000-8000-0000000000a1"
+                .parse::<InstallationId>()
+                .unwrap(),
+            "00000000-0000-4000-8000-0000000000b2"
+                .parse::<InterfaceId>()
+                .unwrap(),
+        )
+    }
 
     fn name() -> InterfaceName {
         "wg-test".parse().unwrap()
@@ -171,6 +190,7 @@ mod tests {
     fn desired() -> DesiredManagedInterface {
         DesiredManagedInterface {
             interface: name(),
+            owner_tag: owner_tag(),
             ownership: OwnershipDeclaration::Managed,
             lifecycle: LinkLifecycle::Present,
             admin_up: Some(true),
@@ -192,6 +212,8 @@ mod tests {
             addresses: Vec::new(),
             routes: Vec::new(),
             unsupported_route_count: 0,
+            interface_alias: Some(owner_tag().as_str()),
+            duplicate_owner_tag: false,
             wireguard: None,
         }
     }
@@ -204,7 +226,11 @@ mod tests {
     }
 
     impl ReconcileBackend for FakeBackend {
-        fn observe(&self, _: &InterfaceName) -> Result<ObservedManagedInterface, ReconcileError> {
+        fn observe(
+            &self,
+            _: &InterfaceName,
+            _: &OwnerTag,
+        ) -> Result<ObservedManagedInterface, ReconcileError> {
             self.state
                 .lock()
                 .map(|state| state.clone())
