@@ -531,7 +531,76 @@ It limits interactive login work using global and raw-transport-peer budgets wit
 
 It is application security state, not authentication truth, and is lost safely on service restart.
 
-## 52. Status vocabulary for planning
+## 52. Advertised endpoint
+
+An **advertised endpoint** is the application-configured host and UDP port written into generated client WireGuard configurations.
+
+It may use a DNS name, IPv4 literal, or IPv6 literal.
+
+It is distinct from:
+
+- the HTTP canonical origin;
+- an observed roaming peer endpoint;
+- a server-side peer endpoint.
+
+Suggested type: `AdvertisedEndpoint`.
+
+## 53. Client label
+
+A **client label** is bounded display metadata for a managed client.
+
+It is never command text, hook text, a filesystem path, or executable configuration.
+
+Suggested type: `ClientLabel`.
+
+## 54. Enforcement state
+
+**Enforcement state** describes whether a committed desired generation has been confirmed in the privileged/kernel layer.
+
+Phase 8 distinguishes at least:
+
+- `converged`;
+- `pending`;
+- `degraded(category)`.
+
+A durable commit and successful enforcement are not synonyms.
+
+This distinction is security-relevant for disable/delete: a client may be durably marked disabled while the kernel peer remains until reconciliation succeeds.
+
+## 55. Product mutation receipt
+
+A **product mutation receipt** is the safe result returned after a generation-CAS application mutation.
+
+It contains:
+
+- committed desired generation;
+- stable resource identity where applicable;
+- enforcement state.
+
+It MUST NOT contain private/preshared keys unless the operation is an explicit enrollment/export artifact operation.
+
+## 56. Audit event
+
+An **audit event** is a durable, secret-safe record of a product/security-relevant application action.
+
+It may record:
+
+- event/time;
+- principal or capability context;
+- action category;
+- stable resource identity;
+- generation transition;
+- bounded outcome category.
+
+It MUST NOT contain credentials, enrollment tokens, client configurations, raw request bodies, or backend error strings.
+
+## 57. Recently active
+
+**Recently active** is an optional UI projection derived from live WireGuard handshake age.
+
+It is not an authoritative connected/disconnected state and MUST NOT be persisted as desired configuration.
+
+## 58. Status vocabulary for planning
 
 Planning uses:
 
