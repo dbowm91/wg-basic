@@ -1,6 +1,6 @@
 # Durable State and Restart Reconciliation Roadmap
 
-Status: active; M001 ready (network-control C001 strictly closed)
+Status: active; M001 closed, M002 ready
 
 Canonical references:
 
@@ -159,7 +159,7 @@ Research/planning is not blocked by C001.
 
 ## 6. Milestone M001 — SQLite state store and desired-generation contract
 
-Status: active. Unblocked by network-control C001 strict closure at `0e74a40`.
+Status: closed at `88f10f9`. Closure record: `plans/closure/durable-state/001-status.md`.
 
 Primary class: infrastructure / invariant.
 
@@ -472,7 +472,7 @@ Phase 6 closure requires re-running the existing M003–M005 kernel/network suit
 
 | Milestone | Status | Implementation plan | Hard blocker |
 |---|---|---|---|
-| M001 SQLite store + generations | ready | `plans/implementation/durable-state/001-sqlite-state-store-and-generations.md` | — |
-| M002 durable ownership + aggregate reconcile | blocked | `plans/implementation/durable-state/002-durable-ownership-and-generation-reconcile.md` | M001 |
+| M001 SQLite store + generations | closed | `plans/implementation/durable-state/001-sqlite-state-store-and-generations.md` | — |
+| M002 durable ownership + aggregate reconcile | ready | `plans/implementation/durable-state/002-durable-ownership-and-generation-reconcile.md` | — |
 | M003 startup reconciliation + recovery | blocked | `plans/implementation/durable-state/003-startup-reconciliation-and-recovery.md` | M002 |
 | M004 backup/restore + migration qualification | blocked | `plans/implementation/durable-state/004-backup-restore-and-migration-qualification.md` | M003 |
