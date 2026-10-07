@@ -1,6 +1,6 @@
 # Durable State and Restart Reconciliation Roadmap
 
-Status: active; M001 closed, M002 ready
+Status: active; M001-M002 closed, M003 ready
 
 Canonical references:
 
@@ -196,7 +196,7 @@ Exit conditions:
 
 ## 7. Milestone M002 — Durable ownership and aggregate netd reconciliation
 
-Status: blocked on M001.
+Status: closed at `65339b8`. Closure record: `plans/closure/durable-state/002-status.md`.
 
 Primary class: invariant / capability.
 
@@ -231,7 +231,7 @@ Exit conditions:
 
 ## 8. Milestone M003 — Startup reconciliation and crash/restart recovery
 
-Status: blocked on M002.
+Status: active. Unblocked by durable-state M002 strict closure at `65339b8`.
 
 Primary class: capability / invariant.
 
@@ -473,6 +473,6 @@ Phase 6 closure requires re-running the existing M003–M005 kernel/network suit
 | Milestone | Status | Implementation plan | Hard blocker |
 |---|---|---|---|
 | M001 SQLite store + generations | closed | `plans/implementation/durable-state/001-sqlite-state-store-and-generations.md` | — |
-| M002 durable ownership + aggregate reconcile | ready | `plans/implementation/durable-state/002-durable-ownership-and-generation-reconcile.md` | — |
-| M003 startup reconciliation + recovery | blocked | `plans/implementation/durable-state/003-startup-reconciliation-and-recovery.md` | M002 |
+| M002 durable ownership + aggregate reconcile | closed | `plans/implementation/durable-state/002-durable-ownership-and-generation-reconcile.md` | — |
+| M003 startup reconciliation + recovery | ready | `plans/implementation/durable-state/003-startup-reconciliation-and-recovery.md` | — |
 | M004 backup/restore + migration qualification | blocked | `plans/implementation/durable-state/004-backup-restore-and-migration-qualification.md` | M003 |
