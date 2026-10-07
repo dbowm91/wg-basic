@@ -3,6 +3,10 @@
 //! Types here are the serialized and internal vocabulary of managed-interface
 //! reconciliation. They contain no policy decisions and no backend behavior.
 
+pub use crate::domain::{
+    DesiredAddress, LinkLifecycle, ManagedRoute, OwnershipDeclaration, ResourcePresence,
+};
+
 use crate::{
     domain::{InterfaceName, NetworkPrefix, PrivateKey, PublicKey},
     wireguard::{
@@ -17,43 +21,7 @@ const MAX_MANAGED_ADDRESSES: usize = 256;
 const MAX_MANAGED_ROUTES: usize = 256;
 const MAX_MANAGED_PEERS: usize = 256;
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OwnershipDeclaration {
-    Managed,
-    ObserveOnly,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LinkLifecycle {
-    Present,
-    Absent,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ResourcePresence {
-    Present,
-    Absent,
-}
-
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct DesiredAddress {
-    pub address: IpNet,
-    pub presence: ResourcePresence,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ManagedRoute {
-    pub destination: NetworkPrefix,
-    pub gateway: Option<IpAddr>,
-    pub presence: ResourcePresence,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DesiredWireGuardConfiguration {
     pub private_key: PrivateKey,
@@ -72,7 +40,7 @@ pub struct DesiredManagedPeer {
     pub endpoint: Option<std::net::SocketAddr>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DesiredManagedInterface {
     pub interface: InterfaceName,

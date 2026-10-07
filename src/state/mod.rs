@@ -1,0 +1,49 @@
+//! The authoritative unprivileged application-state store.
+//!
+//! SQLite desired state is authoritative; kernel state is derivative and is only
+//! ever observed. This module owns storage, schema migration, the monotonic
+//! desired generation, and deterministic projection into kernel intent.
+//!
+//! Ownership boundaries:
+//!
+//! - [`store`] is the only place that issues SQL;
+//! - [`schema`] is the only place that opens a connection or runs migrations;
+//! - [`projection`] is pure and performs no I/O;
+//! - [`error`] keeps operator diagnostics free of SQL text and secret values.
+//!
+//! The store is synchronous by design and holds one connection behind a single
+//! lock. A future HTTP service must reach it through a bounded blocking-worker
+//! adapter rather than by making this API async.
+//!
+//! # Secret-bearing files
+//!
+//! The database contains server private keys, client private keys, and
+//! preshared keys. It and any backup of it are secret-bearing and must use
+//! restrictive filesystem permissions. This is not a sanitized export.
+
+mod error;
+mod identifiers;
+mod model;
+mod projection;
+mod schema;
+mod store;
+
+pub use error::StateError;
+pub use identifiers::{
+    DesiredGeneration, InstallationId, INITIAL_DESIRED_GENERATION, MAX_DESIRED_GENERATION,
+};
+pub use model::{
+    CommittedDesiredState, ConvergenceRecord, InstallationMetadata, PersistedDesiredState,
+};
+pub use projection::{ProjectionError, ResolvedNetworkIntent};
+pub use schema::OpenIntent;
+pub use store::StateStore;
+
+#[cfg(target_os = "linux")]
+pub use projection::project;
+
+/// The default production state database path.
+///
+/// Phase 10 owns installation; this is the documented direction, not a frozen
+/// service layout.
+pub const DEFAULT_STATE_PATH: &str = "/var/lib/wg-basic/state.db";

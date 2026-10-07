@@ -30,6 +30,7 @@ impl<'de> Deserialize<'de> for PublicKey {
     }
 }
 
+#[derive(Clone, Eq, PartialEq)]
 pub struct PrivateKey(String);
 impl PrivateKey {
     pub fn new(value: String) -> Result<Self, KeyError> {
@@ -65,6 +66,7 @@ impl<'de> Deserialize<'de> for PrivateKey {
     }
 }
 
+#[derive(Clone, Eq, PartialEq)]
 pub struct PresharedKey(String);
 impl PresharedKey {
     pub fn new(value: String) -> Result<Self, KeyError> {

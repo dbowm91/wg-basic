@@ -8,6 +8,7 @@ pub mod firewall;
 pub mod protocol;
 #[cfg(target_os = "linux")]
 pub mod reconcile;
+pub mod state;
 #[cfg(target_os = "linux")]
 pub mod wireguard;
 
