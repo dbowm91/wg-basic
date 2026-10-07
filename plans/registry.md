@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-07 (post-Phase-6 corrective registration)
+Last planning reconciliation: 2026-10-07 (post-Phase-6 corrective C001 closed; Phase 7 unblocked)
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -38,7 +38,7 @@ The architecture separates:
 
 The privileged service does not expose arbitrary shell, command, file-write, sysctl-path, nft-script, or raw-netlink execution.
 
-Current production code state: **M001–M005 and C001 are strictly closed. The network-control modules have been decomposed along ownership boundaries with no wire-format, protocol-version, network-policy, or reconciliation-ordering change, and static architecture guards now enforce those boundaries. Phase 6 is strictly closed through M004: a hardened SQLite store persists authoritative desired state with a monotonic desired generation, interface ownership is proven by a durable installation/interface owner tag, one desired generation is the unit of privileged reconciliation, the unprivileged management role applies that generation on startup and after a crash, and the database can be backed up online, validated, restored offline, and used to rebuild real network state. The HTTP surface, installation, and product lifecycle remain later work.**
+Current production code state: **M001–M005 and C001 are strictly closed. The network-control modules have been decomposed along ownership boundaries with no wire-format, protocol-version, network-policy, or reconciliation-ordering change, and static architecture guards now enforce those boundaries. Phase 6 is strictly closed through M004: a hardened SQLite store persists authoritative desired state with a monotonic desired generation, interface ownership is proven by a durable installation/interface owner tag, one desired generation is the unit of privileged reconciliation, the unprivileged management role applies that generation on startup and after a crash, and the database can be backed up online, validated, restored offline, and used to rebuild real network state. The HTTP surface, installation, and product lifecycle remain later work.** Post-Phase-6 C001 has since closed: it reconciled the current-state docs with the shipped code, retired the last M002/M003 rootful evidence debt by qualifying the disable path against a failing firewall, and split `management`, `state/store`, and `state/schema` by subject with the public surface unchanged.
 
 ## 3. Eggstack reuse disposition
 
@@ -63,9 +63,9 @@ Runtime dependency adoption remains evidence-driven.
 | Subsystem | Status | Roadmap | Current milestone |
 |---|---|---|---|
 | Linux network-control foundation | closed | `plans/subsystems/network-control-roadmap.md` + `plans/subsystems/network-control-post-foundation-reconciliation-addendum.md` | M001–M005 and C001 closed |
-| Durable state/restart reconciliation | closed / corrective active | `plans/subsystems/durable-state-restart-reconciliation-roadmap.md` + `plans/subsystems/durable-state-post-phase6-reconciliation-addendum.md` | Phase 6 complete; M001–M004 closed; post-Phase-6 C001 ready |
-| Management service/auth/UI | ready to plan | not yet written | Phase 2 is closed; typed netd protocol and network foundation are stable |
-| Distribution/install/update | proposed | not yet written | begins after service/state layout stabilizes |
+| Durable state/restart reconciliation | closed | `plans/subsystems/durable-state-restart-reconciliation-roadmap.md` + `plans/subsystems/durable-state-post-phase6-reconciliation-addendum.md` | Phase 6 complete; M001–M004 and post-Phase-6 C001 closed |
+| Management service/auth/UI | ready to plan; implementation unblocked | not yet written | Phases 2 and 6 and post-Phase-6 C001 are closed; typed netd protocol, network foundation, and the management/state boundary are stable |
+| Distribution/install/update | proposed | not yet written | begins after the Phase 7 service layout stabilizes |
 
 Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
 
@@ -73,13 +73,13 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
-| Durable-state post-Phase-6 reconciliation | C001 current-state reconciliation + missing disable-path evidence + pre-Phase-7 boundary cleanup | **ready** | `plans/implementation/durable-state/c001-post-phase6-reconciliation-and-pre-phase7-hardening.md` | Phase 6 M001–M004 strict closure |
+No implementation plan is currently open. Durable-state post-Phase-6 C001 closed at `635a130`; its closure record is listed in §7.
 
-C001 is the sole implementation-ready plan. Phase 7 is still unblocked for research/planning, but production implementation should wait until this corrective closes so it consumes the reconciled management/state boundary and the remaining rootful evidence debt is retired.
+The next implementation plan belongs to Phase 7 (management service/auth/UI), which needs its subsystem roadmap written first. C001's closure record §8 recommends starting that roadmap against `ManagementHealth` as the single non-secret projection, whose derivation rule now lives alone in `src/management/health.rs`.
 
 ## 6. Blocked implementation plans
 
-No Phase 7 implementation plan exists yet. Phase 7 may be researched and planned while C001 runs, but its first implementation milestone should remain blocked on post-Phase-6 C001 closure. Phase 8 remains blocked until Phase 7 closes.
+No Phase 7 implementation plan exists yet, and none can be written until its subsystem roadmap exists. **Phase 7 is no longer blocked**: its research, planning, and implementation are all unblocked now that post-Phase-6 C001 has closed, because it consumes the reconciled management/state boundary and no rootful evidence debt remains against it. Phase 8 remains blocked until Phase 7 closes. Nothing else was gated on C001; Phase 9–12 dependencies are unchanged.
 
 ## 7. Recently closed work
 
@@ -93,6 +93,7 @@ No Phase 7 implementation plan exists yet. Phase 7 may be researched and planned
 - Durable-state M002 strict closure: `plans/closure/durable-state/002-status.md` (head `65339b8`, CI run `37623015401`).
 - Durable-state M003 strict closure: `plans/closure/durable-state/003-status.md` (head `6a9cbc7`).
 - Durable-state M004 strict closure and **Phase 6 closure**: `plans/closure/durable-state/004-status.md` (head `772203d`).
+- Durable-state post-Phase-6 C001 strict closure: `plans/closure/durable-state-post-phase6-reconciliation/c001-status.md` (head `635a130`, CI run `37638334930`).
 
 ## 8. M005 and C001 closure and downstream handoff
 
@@ -143,6 +144,8 @@ M005: three-node namespace traffic with nftables, forwarding, NAT, restart/reapp
 
 C001: unchanged behavior proven by re-running every M003–M005 rootful suite, plus static source guards that pin the architecture boundaries (no `wg`/`wg-quick`/`ip` control path, process execution isolated to the nft backend, no shell, no generic protocol escape hatch, secret redaction).
 
+Durable-state post-Phase-6 C001: the existing routine, MSRV, and seven rootful suites, re-run unchanged, plus one new real-kernel case qualifying the disable path when the firewall layer refuses. Injection is a fixture-private `nft` on netd's `PATH`, so the shipped firewall-first ordering is exercised with no production fault-injection hook; two reverted negative controls confirm the case fails when that ordering is broken.
+
 No network milestone may substitute mocked kernel behavior for its required real-kernel closure evidence.
 
 ## 12. Planning hygiene
@@ -155,19 +158,21 @@ Durable-state M002 is closed at `65339b8` (CI run `37623015401`, five jobs). It 
 
 C001 removed stale milestone-era documentation and decomposed `reconcile.rs`, `firewall.rs`, and `protocol/server.rs` into `reconcile/`, `firewall/`, and `protocol/` module trees before persistence/UI added more consumers.
 
+Durable-state post-Phase-6 C001 is closed at `635a130` (CI run `37638334930`, seven jobs). It reconciled current-state docs that still described shipped behavior as future work, split `management`, `state/store`, and `state/schema` by subject with the public surface unchanged and no dependency change, and retired the last M002/M003 evidence debt. Its closure record notes two judgment calls: `store/sql.rs` holds row/column conversion rather than extracted query strings, and the schema contract test suite stayed whole rather than being distributed across the three modules it spans.
+
 Durable-state M003 is closed at `6a9cbc7`: the unprivileged management role reconciles the committed desired generation on startup and after a crash, records convergence evidence only for the generation the database still holds, and qualifies restart recovery at the process level against real `netd` and management child processes, SQLite, RTNETLINK, and nftables. Two classification defects were found and fixed while qualifying: every refusal was being reported as a transient outage, and a partial apply was being reported as a hard refusal. A previously vacuous owned-table fixture was corrected to seed a network policy.
 
 Durable-state M004 is closed at `772203d` and **Phase 6 is closed with it**. Online backup uses SQLite's backup API under the store's mutation lock rather than copying a live WAL database; offline restore validates a candidate completely before replacing anything and retains the previous database; a restored database is qualified end to end by rebuilding a fresh three-namespace environment and carrying real WireGuard, forwarding, and NAT traffic. A fail-closed gap was fixed: `enforce_singleton` accepted a missing installation row, so a tampered database opened successfully and was merely unusable afterwards. A vacuous M001 architecture guard that forbade the now-enabled `rusqlite::backup` was corrected rather than deleted.
 
 Phase 6 is complete under ADR-002 and `plans/subsystems/durable-state-restart-reconciliation-roadmap.md`.
 
-Canonical documents remain stable except for the bounded current-state reconciliation explicitly owned by post-Phase-6 C001. Phase 7 research/planning may proceed in parallel, but implementation should wait for C001 closure.
+Canonical documents are stable again. The one bounded current-state reconciliation owned by post-Phase-6 C001 is complete, so Phase 7 research, planning, and implementation are all unblocked.
 
 If later implementation evidence reveals a material architecture contradiction, record it and revise the appropriate plan/ADR deliberately rather than silently altering the contract.
 
 ## 13. Closure handoff
 
-M001–M005, network-control C001, and durable-state M001–M004 are closed and their strict evidence is recorded. **Phase 6 remains closed.** Post-Phase-6 durable-state C001 is now the sole ready implementation plan. Phase 7 is unblocked for research/planning, but its production implementation should begin after C001 closes. Phase 8 remains blocked until Phase 7 closes.
+M001–M005, network-control C001, durable-state M001–M004, and durable-state post-Phase-6 C001 are closed and their strict evidence is recorded. **Phase 6 remains closed.** No implementation plan is currently open. **Phase 7 is fully unblocked** for research, planning, and implementation; its subsystem roadmap should be written first. Phase 8 remains blocked until Phase 7 closes.
 
 At each future closure, update:
 
