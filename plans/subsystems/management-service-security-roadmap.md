@@ -1,6 +1,6 @@
 # Management Service and Security Substrate Roadmap
 
-Status: active; M001–M003 closed, M004 ready
+Status: closed; M001–M004 closed at `d5d5ca9`. **Phase 7 is closed.**
 
 Canonical references:
 
@@ -210,7 +210,8 @@ Expected outcomes:
 
 ## 8. M004 — Embedded shell, process lifecycle, and Phase 7 qualification
 
-Status: ready. M001–M003 closed strictly.
+Status: closed at `d5d5ca9`. Closure record:
+`plans/closure/management-service/004-status.md`.
 
 Carry-forward from the M003 closure:
 
@@ -236,7 +237,7 @@ Carry-forward from the M003 closure:
 - The login limiter is in-memory by design and resets on restart. M004 must not
   add persistence for it.
 
-Plan:
+Plan (closed):
 
 - `plans/implementation/management-service/004-service-lifecycle-and-phase7-qualification.md`
 
@@ -400,5 +401,5 @@ unit routing/security primitives
 |---|---|---|---|
 | M001 EggServe + management worker | closed | `plans/implementation/management-service/001-eggserve-runtime-and-management-worker.md` | — |
 | M002 admin/session persistence | closed | `plans/implementation/management-service/002-local-admin-and-session-persistence.md` | — |
-| M003 authenticated HTTP perimeter | ready | `plans/implementation/management-service/003-authenticated-http-security-perimeter.md` | M002 closed |
-| M004 lifecycle + Phase 7 qualification | blocked | `plans/implementation/management-service/004-service-lifecycle-and-phase7-qualification.md` | M003 |
+| M003 authenticated HTTP perimeter | closed | `plans/implementation/management-service/003-authenticated-http-security-perimeter.md` | M002 closed |
+| M004 lifecycle + Phase 7 qualification | closed | `plans/implementation/management-service/004-service-lifecycle-and-phase7-qualification.md` | M003 closed |
