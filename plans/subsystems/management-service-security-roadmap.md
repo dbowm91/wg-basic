@@ -1,6 +1,6 @@
 # Management Service and Security Substrate Roadmap
 
-Status: active; M001–M002 closed, M003 ready
+Status: active; M001–M003 closed, M004 ready
 
 Canonical references:
 
@@ -174,7 +174,7 @@ Expected outcomes:
 
 ## 7. M003 — Authenticated HTTP perimeter
 
-Status: ready. M001 and M002 closed strictly.
+Status: closed at `cfe6860`; see `plans/closure/management-service/003-status.md`.
 
 Carry-forward from the M002 closure: measured Argon2id cost is **~300 ms per
 verification** at the required 19 MiB / t=2 / p=1 policy. On one worker thread
@@ -210,7 +210,31 @@ Expected outcomes:
 
 ## 8. M004 — Embedded shell, process lifecycle, and Phase 7 qualification
 
-Status: blocked on M003.
+Status: ready. M001–M003 closed strictly.
+
+Carry-forward from the M003 closure:
+
+- The security headers are applied in exactly one place —
+  `ManagementService::dispatch` wraps the completed answer with `headers::seal`.
+  An architecture guard fails if `seal` is called from more or fewer than one
+  place, and if `Response::builder()` or a `ResponseBody` appears anywhere but
+  `response.rs`/`api.rs`. The embedded asset shell **must** go through that same
+  path, or it becomes the one route that can ship without the headers.
+- The CSP is `default-src 'self'; object-src 'none'; base-uri 'none';
+  frame-ancestors 'none'; form-action 'self'`. Whatever the shell needs must be
+  added deliberately and recorded, not added by editing the header and
+  discovering later that a rule was never tested.
+- `/healthz` is unauthenticated and its body is exactly `ok` or `degraded`.
+  M004's readiness differentiation must not widen it — a richer readiness payload
+  on a route anyone on the host can reach is a disclosure.
+- Security response bodies are fixed literals or small JSON documents; no code
+  path formats an internal value into a body. Serving HTML/JS would be the first
+  response body that is neither, and the guard that proves the others would need
+  to be re-scoped deliberately.
+- The listener can now be started from a *running, authenticated* surface, so the
+  restart and session-survival questions are answerable end to end.
+- The login limiter is in-memory by design and resets on restart. M004 must not
+  add persistence for it.
 
 Plan:
 

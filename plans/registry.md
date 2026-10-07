@@ -74,19 +74,15 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
-| Management service/security | M003 authenticated HTTP security perimeter | **ready** | `plans/implementation/management-service/003-authenticated-http-security-perimeter.md` | Phase 7 M001 and M002 strict closure satisfied |
+| Management service/security | M004 service lifecycle + Phase 7 qualification | **ready** | `plans/implementation/management-service/004-service-lifecycle-and-phase7-qualification.md` | Phase 7 M003 strict closure satisfied |
 
-M003 is the sole implementation-ready plan. It adds the login/session/logout
-routes, `Host`/`Origin` enforcement, CSRF double-submit, security headers, and
-rate limiting. It adds no Phase 8 configuration-mutating route.
+M004 is the sole implementation-ready plan. It adds the embedded asset shell,
+qualifies the service lifecycle, and performs the Phase 7 end-to-end
+qualification. It adds no Phase 8 configuration-mutating route.
 
 ## 6. Blocked implementation plans
 
-| Subsystem | Milestone | Status | Implementation plan | Hard blocker |
-|---|---|---|---|---|
-| Management service/security | M004 service lifecycle + Phase 7 qualification | blocked | `plans/implementation/management-service/004-service-lifecycle-and-phase7-qualification.md` | Phase 7 M003 |
-
-Phase 8 remains blocked until Phase 7 M004 closes.
+None. Phase 8 remains blocked until Phase 7 M004 closes.
 
 ## 7. Recently closed work
 
@@ -103,6 +99,7 @@ Phase 8 remains blocked until Phase 7 M004 closes.
 - Durable-state post-Phase-6 C001 strict closure: `plans/closure/durable-state-post-phase6-reconciliation/c001-status.md` (head `635a130`, CI run `37638334930`).
 - Management-service M001 strict closure: `plans/closure/management-service/001-status.md` (head `5b57d49`).
 - Management-service M002 strict closure: `plans/closure/management-service/002-status.md` (head `60d1482`).
+- Management-service M003 strict closure: `plans/closure/management-service/003-status.md` (head `cfe6860`).
 
 ## 8. M005 and C001 closure and downstream handoff
 
@@ -179,6 +176,8 @@ Phase 7 research/planning is complete under ADR-003 and `plans/subsystems/manage
 
 Phase 7 M001 is closed at `5b57d49`. It proves the ADR-003 boundary empirically rather than by assertion: `eggserve-server` 0.4.0 and `eggserve-primitives` 0.2.2 are sufficient on their own, no router framework was needed, one bounded worker owns `ManagementRuntime`, and HTTP code provably never reaches the store or netd. Three judgment calls are recorded in its closure record: EggServe rejects a zero file-stream/tunnel capacity so the surface pins the floor of 1 with no route able to consume it; the pre-Phase-7 architecture guard's blanket `tokio::` ban was replaced with a narrower and stricter rule (no web stack anywhere in management, `tokio::` only in the worker); and architecture guards now inspect code with comments stripped, because prose that names a forbidden dependency would otherwise fail its own guard.
 
+Phase 7 M003 is closed at `cfe6860`. The surface publishes five routes — `POST /api/v1/login`, `POST /api/v1/logout`, `GET /api/v1/session`, `GET /api/v1/health`, and the unauthenticated `GET /healthz` — and no Phase 8 configuration-mutating route. Five judgment calls are recorded in its closure record. Security headers are applied *after* construction, in exactly one place at the end of `ManagementService::dispatch`, because sealing during construction would have let four separate literal constructors drift and sealing after it makes the guarantee total: a route cannot build a response that skips the headers. Trust is never inferred from a loopback listener, because a rebinding page controls `Host`; an allowed host set and a canonical origin are declared instead, and a routable bind is refused outright without an explicit acknowledgement. The `Secure` cookie attribute and the `__Host-` name follow the configured canonical origin rather than the incoming request, so a plain-HTTP loopback deployment does not emit a cookie a browser would silently drop. The login limiter runs *before* Argon2 — at ~300 ms and 19 MiB per verification under load, a limiter after the hash is a denial of service wearing a rate limit's clothes — and that ordering is enforced by an architecture guard as well as measured, because a timing test cannot catch a refactor that moves one statement. Two defects in already-closed M002 work were found and corrected: `admin set-password` failed on a fresh install because both one-shot commands used a store open that refuses a file which does not exist, and an unknown username returned in microseconds beside a wrong password's ~300 ms, which is a username oracle larger than anything a response body could leak; plan §10 required a dummy verifier for exactly that and it is now in place. No historical closure record was edited.
+
 One corrective finding was made during M001: `ManagementHealth::netd_reachable` was derived from the convergence state, so a recorded `backend_unavailable` — which is the record of netd not answering — projected as reachable. The derivation was untested. It is now derived from the recorded disposition directly, with regression tests. No closed plan's verified surface changed, and no historical closure record was edited.
 
 One carry-forward constraint for M002: `src/state/schema/mod.rs` currently exercises the migration runner through a `#[cfg(test)]`-only step stamped at version 2, so a genuine migration 2 collides with it. M002 must replace that harness with fixtures built from the production v1 schema.
@@ -187,7 +186,7 @@ If later implementation evidence reveals a material architecture contradiction, 
 
 ## 13. Closure handoff
 
-M001–M005, network-control C001, durable-state M001–M004, and durable-state post-Phase-6 C001 are closed and their strict evidence is recorded. **Phase 6 remains closed.** Phase 7 M001 and M002 are closed; M003 is ready and M004 is blocked in order. Phase 8 remains blocked until Phase 7 closes.
+M001–M005, network-control C001, durable-state M001–M004, and durable-state post-Phase-6 C001 are closed and their strict evidence is recorded. **Phase 6 remains closed.** Phase 7 M001, M002, and M003 are closed and M004 is ready. Phase 8 remains blocked until Phase 7 M004 closes.
 
 At each future closure, update:
 
