@@ -361,7 +361,7 @@ fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
         "veth-egress",
     ]);
 
-    nft_input(&server, "add table inet fixture_keep\nadd chain inet fixture_keep forward { type filter hook forward priority 20; policy accept; }\nadd rule inet fixture_keep forward counter comment \"fixture-preserve\" accept\n");
+    nft_input(&server, "add table inet fixture_keep\nadd chain inet fixture_keep forward { type filter hook forward priority 20; policy accept; }\nadd rule inet fixture_keep forward counter accept comment \"fixture-preserve\"\n");
     let firewall_before = nft(&server, &["-j", "list", "table", "inet", "fixture_keep"]).stdout;
 
     let client_netd = Netd::start(&client.0);
