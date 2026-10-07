@@ -570,8 +570,25 @@ fn plan_execution(
             plan_wireguard(desired, observed, created, &mut mutations)?;
             plan_addresses(desired, observed, &mut mutations)?;
             plan_routes(desired, observed, &mut mutations)?;
+            if mutations
+                .iter()
+                .any(|mutation| matches!(mutation, Mutation::AddRoute(_)))
+                && observed.admin_up != Some(true)
+            {
+                let route_index = mutations
+                    .iter()
+                    .position(|mutation| matches!(mutation, Mutation::AddRoute(_)))
+                    .unwrap_or(mutations.len());
+                mutations.insert(route_index, Mutation::SetLinkUp(true));
+            }
             if let Some(admin_up) = desired.admin_up {
-                if (admin_up || !created) && observed.admin_up != Some(admin_up) {
+                let already_scheduled = mutations.iter().any(
+                    |mutation| matches!(mutation, Mutation::SetLinkUp(state) if *state == admin_up),
+                );
+                if (admin_up || !created)
+                    && observed.admin_up != Some(admin_up)
+                    && !already_scheduled
+                {
                     mutations.push(Mutation::SetLinkUp(admin_up));
                 }
             }
@@ -872,8 +889,8 @@ mod tests {
             vec![
                 MutationKind::CreateWireGuardLink,
                 MutationKind::AddAddress,
-                MutationKind::AddRoute,
                 MutationKind::SetLinkUp,
+                MutationKind::AddRoute,
             ]
         );
     }
