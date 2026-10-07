@@ -361,6 +361,18 @@ fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
         "veth-egress",
     ]);
 
+    run(
+        "ip",
+        &[
+            "netns",
+            "exec",
+            &server.0,
+            "sysctl",
+            "-w",
+            "net.ipv4.ip_forward=0",
+        ],
+    );
+
     nft_input(&server, "add table inet fixture_keep\nadd chain inet fixture_keep forward { type filter hook forward priority 20; policy accept; }\nadd rule inet fixture_keep forward counter accept comment \"fixture-preserve\"\n");
     let firewall_before = nft(&server, &["-j", "list", "table", "inet", "fixture_keep"]).stdout;
 
