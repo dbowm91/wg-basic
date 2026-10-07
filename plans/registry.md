@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-07 (Phase 7 M001 closed; M002 ready)
+Last planning reconciliation: 2026-10-07 (Phase 7 M001–M002 closed; M003 ready)
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -65,7 +65,7 @@ Runtime dependency adoption remains evidence-driven.
 |---|---|---|---|
 | Linux network-control foundation | closed | `plans/subsystems/network-control-roadmap.md` + `plans/subsystems/network-control-post-foundation-reconciliation-addendum.md` | M001–M005 and C001 closed |
 | Durable state/restart reconciliation | closed | `plans/subsystems/durable-state-restart-reconciliation-roadmap.md` + `plans/subsystems/durable-state-post-phase6-reconciliation-addendum.md` | Phase 6 complete; M001–M004 and post-Phase-6 C001 closed |
-| Management service/auth/security substrate | active / M002 ready | `plans/subsystems/management-service-security-roadmap.md` | M001 EggServe + bounded worker closed; M002 ready; M003–M004 blocked in order |
+| Management service/auth/security substrate | active / M003 ready | `plans/subsystems/management-service-security-roadmap.md` | M001 EggServe + bounded worker and M002 credentials/sessions closed; M003 ready; M004 blocked in order |
 | Distribution/install/update | proposed | not yet written | begins after the Phase 7 service layout stabilizes |
 
 Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
@@ -74,18 +74,16 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
-| Management service/security | M002 local administrator + session persistence | **ready** | `plans/implementation/management-service/002-local-admin-and-session-persistence.md` | Phase 7 M001 strict closure satisfied |
+| Management service/security | M003 authenticated HTTP security perimeter | **ready** | `plans/implementation/management-service/003-authenticated-http-security-perimeter.md` | Phase 7 M001 and M002 strict closure satisfied |
 
-M002 is the sole implementation-ready plan. It adds credential and session
-primitives behind the worker: real schema migration 1→2, Argon2id local
-administrator credentials, opaque revocable sessions, and a stdin-only CLI
-bootstrap. It adds no HTTP route and no Phase 8 configuration API.
+M003 is the sole implementation-ready plan. It adds the login/session/logout
+routes, `Host`/`Origin` enforcement, CSRF double-submit, security headers, and
+rate limiting. It adds no Phase 8 configuration-mutating route.
 
 ## 6. Blocked implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Hard blocker |
 |---|---|---|---|---|
-| Management service/security | M003 authenticated HTTP security perimeter | blocked | `plans/implementation/management-service/003-authenticated-http-security-perimeter.md` | Phase 7 M002 |
 | Management service/security | M004 service lifecycle + Phase 7 qualification | blocked | `plans/implementation/management-service/004-service-lifecycle-and-phase7-qualification.md` | Phase 7 M003 |
 
 Phase 8 remains blocked until Phase 7 M004 closes.
@@ -104,6 +102,7 @@ Phase 8 remains blocked until Phase 7 M004 closes.
 - Durable-state M004 strict closure and **Phase 6 closure**: `plans/closure/durable-state/004-status.md` (head `772203d`).
 - Durable-state post-Phase-6 C001 strict closure: `plans/closure/durable-state-post-phase6-reconciliation/c001-status.md` (head `635a130`, CI run `37638334930`).
 - Management-service M001 strict closure: `plans/closure/management-service/001-status.md` (head `5b57d49`).
+- Management-service M002 strict closure: `plans/closure/management-service/002-status.md` (head `60d1482`).
 
 ## 8. M005 and C001 closure and downstream handoff
 
@@ -188,7 +187,7 @@ If later implementation evidence reveals a material architecture contradiction, 
 
 ## 13. Closure handoff
 
-M001–M005, network-control C001, durable-state M001–M004, and durable-state post-Phase-6 C001 are closed and their strict evidence is recorded. **Phase 6 remains closed.** Phase 7 M001 is closed; M002 is ready and M003–M004 are blocked in order. Phase 8 remains blocked until Phase 7 closes.
+M001–M005, network-control C001, durable-state M001–M004, and durable-state post-Phase-6 C001 are closed and their strict evidence is recorded. **Phase 6 remains closed.** Phase 7 M001 and M002 are closed; M003 is ready and M004 is blocked in order. Phase 8 remains blocked until Phase 7 closes.
 
 At each future closure, update:
 
