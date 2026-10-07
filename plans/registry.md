@@ -15,6 +15,7 @@ This file is the compact control surface for active wg-basic planning. Detailed 
 | `plans/002-long-term-roadmap.md` | macro dependency/order |
 | `plans/003-planning-process.md` | planning, handoff, corrective, closure rules |
 | `plans/adr/001-linux-native-control-plane.md` | accepted Linux-native/privilege-separated architecture |
+| `plans/adr/002-durable-state-generations-and-ownership.md` | accepted Phase 6 persistence/generation/ownership architecture |
 
 Authority order for implementation handoff:
 
@@ -62,7 +63,7 @@ Runtime dependency adoption remains evidence-driven.
 | Subsystem | Status | Roadmap | Current milestone |
 |---|---|---|---|
 | Linux network-control foundation | closed foundation / corrective active | `plans/subsystems/network-control-roadmap.md` + `plans/subsystems/network-control-post-foundation-reconciliation-addendum.md` | M001–M005 closed; C001 ready |
-| Durable state/restart reconciliation | research/planning | not yet written | M004/M005 ownership and policy contracts are stable; C001 is contract-preserving |
+| Durable state/restart reconciliation | planned | `plans/subsystems/durable-state-restart-reconciliation-roadmap.md` | M001 blocked on network-control C001; M002–M004 ordered behind M001 |
 | Management service/auth/UI | ready to plan | not yet written | Phase 2 is closed; typed netd protocol and network foundation are stable |
 | Distribution/install/update | proposed | not yet written | begins after service/state layout stabilizes |
 
@@ -80,9 +81,12 @@ C001 is the sole implementation-ready plan while Phase 6 research/planning proce
 
 | Subsystem | Milestone | Status | Implementation plan | Hard blocker |
 |---|---|---|---|---|
-| — | — | — | — | — |
+| Durable state/restart reconciliation | M001 SQLite state store + desired generations | blocked | `plans/implementation/durable-state/001-sqlite-state-store-and-generations.md` | network-control C001 closure |
+| Durable state/restart reconciliation | M002 durable ownership + generation-aware aggregate reconcile | blocked | `plans/implementation/durable-state/002-durable-ownership-and-generation-reconcile.md` | Phase 6 M001 |
+| Durable state/restart reconciliation | M003 startup reconciliation + crash/restart recovery | blocked | `plans/implementation/durable-state/003-startup-reconciliation-and-recovery.md` | Phase 6 M002 |
+| Durable state/restart reconciliation | M004 backup/restore + migration qualification | blocked | `plans/implementation/durable-state/004-backup-restore-and-migration-qualification.md` | Phase 6 M003 |
 
-No implementation plans are currently blocked. Revalidate dependency/API assumptions when a future plan becomes ready.
+Phase 6 is fully planned, but none of its implementation milestones is eligible until C001 closes. Revalidate exact crate APIs and repository paths at each promotion.
 
 ## 7. Recently closed work
 
@@ -145,13 +149,15 @@ M001–M005 have strict closure records. The M005 implementation was verified at
 
 C001 is the active corrective/polish handoff. It preserves M001–M005 behavior and exists to remove stale documentation and decompose large modules before persistence/UI add more consumers.
 
+Phase 6 planning is now complete under ADR-002 and `plans/subsystems/durable-state-restart-reconciliation-roadmap.md`. Its implementation remains intentionally blocked behind C001.
+
 Canonical documents should remain stable during C001 implementation unless a material contradiction is discovered.
 
 If later implementation evidence reveals a material architecture contradiction, record it and revise the appropriate plan/ADR deliberately rather than silently altering the contract.
 
 ## 13. Closure handoff
 
-M001–M005 are closed and their strict evidence is recorded. C001 is the sole ready implementation handoff. Phase 6 and Phase 7 remain unblocked for planning; Phase 8 remains blocked until both have implementation plans and close. Phase 6 planning may proceed while C001 is implemented because C001 is contract-preserving, but Phase 6 production implementation should begin only after C001 closes or its final module boundaries are otherwise reconciled.
+M001–M005 are closed and their strict evidence is recorded. C001 is the sole ready implementation handoff. Phase 6 planning is complete, with M001–M004 registered but blocked in order behind C001. Phase 7 remains unblocked for planning. Phase 8 remains blocked until Phases 6 and 7 close.
 
 At each future closure, update:
 
