@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-07 (**Phase 7 closed** at `d5d5ca9`; Phase 8 unblocked)
+Last planning reconciliation: 2026-10-07 (post-Phase-7 C001 registered; Phase 8 research/planning unblocked)
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -39,7 +39,7 @@ The architecture separates:
 
 The privileged service does not expose arbitrary shell, command, file-write, sysctl-path, nft-script, or raw-netlink execution.
 
-Current production code state: **M001–M005 and C001 are strictly closed. The network-control modules have been decomposed along ownership boundaries with no wire-format, protocol-version, network-policy, or reconciliation-ordering change, and static architecture guards now enforce those boundaries. Phase 6 is strictly closed through M004: a hardened SQLite store persists authoritative desired state with a monotonic desired generation, interface ownership is proven by a durable installation/interface owner tag, one desired generation is the unit of privileged reconciliation, the unprivileged management role applies that generation on startup and after a crash, and the database can be backed up online, validated, restored offline, and used to rebuild real network state. Phase 7 has since begun: M001 is strictly closed, so `wg-basic serve` is a real unprivileged loopback EggServe service owning a bounded blocking worker over the durable store, publishing `GET /healthz` with explicit resource ceilings and a fatal-versus-degraded startup rule. Authentication, sessions, installation, and the product lifecycle remain later work.** Post-Phase-6 C001 has since closed: it reconciled the current-state docs with the shipped code, retired the last M002/M003 rootful evidence debt by qualifying the disable path against a failing firewall, and split `management`, `state/store`, and `state/schema` by subject with the public surface unchanged.
+Current production code state: **Network control, Phase 6 durable state, and Phase 7 management/auth/service substrate are strictly closed. `wg-basic serve` is a real unprivileged EggServe service with a bounded worker over SQLite, Argon2id local-admin credentials, opaque revocable sessions, Host/Origin/CSRF enforcement, login throttling, embedded self-contained assets, graceful supervisor shutdown, and real HTTP→SQLite/netd qualification. Phase 8 product CRUD/enrollment/UI is not implemented yet.** A post-Phase-7 corrective is ready because current HEAD has one timing-sensitive limiter test failure on a slow CI runner; the production limiter behavior is consistent with policy, so the corrective is evidence/test determinism plus planning reconciliation rather than a Phase 7 architecture change.
 
 ## 3. Eggstack reuse disposition
 
@@ -65,7 +65,7 @@ Runtime dependency adoption remains evidence-driven.
 |---|---|---|---|
 | Linux network-control foundation | closed | `plans/subsystems/network-control-roadmap.md` + `plans/subsystems/network-control-post-foundation-reconciliation-addendum.md` | M001–M005 and C001 closed |
 | Durable state/restart reconciliation | closed | `plans/subsystems/durable-state-restart-reconciliation-roadmap.md` + `plans/subsystems/durable-state-post-phase6-reconciliation-addendum.md` | Phase 6 complete; M001–M004 and post-Phase-6 C001 closed |
-| Management service/auth/security substrate | **closed** | `plans/subsystems/management-service-security-roadmap.md` | M001–M004 all closed; Phase 7 complete and Phase 8 unblocked |
+| Management service/auth/security substrate | closed / corrective active | `plans/subsystems/management-service-security-roadmap.md` + `plans/subsystems/management-service-post-phase7-reconciliation-addendum.md` | M001–M004 closed; post-Phase-7 C001 ready |
 | Distribution/install/update | proposed | not yet written | begins after the Phase 7 service layout stabilizes |
 
 Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
@@ -74,10 +74,9 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
-| Management service/security | Phase 8 product CRUD / UI / enrollment | **ready to plan** | — | Phase 7 M001–M004 all strictly closed; see the readiness recommendation in `plans/closure/management-service/004-status.md` |
+| Management service post-Phase-7 reconciliation | C001 deterministic limiter evidence + Phase 8 readiness reconciliation | **ready** | `plans/implementation/management-service/c001-post-phase7-ci-and-phase8-readiness.md` | Phase 7 M001–M004 strict closure |
 
-No implementation plan is currently written. Phase 8's first milestone has no
-plan file yet; writing one is the next action, not implementing one.
+C001 is the sole implementation-ready plan. Phase 8 may be researched/planned in parallel, but its first production implementation milestone should remain blocked until C001 closes on a green current-head CI baseline.
 
 Phase 7 contributed no configuration-mutating route, and Phase 8 inherits four
 constraints from its closure rather than from any milestone document:
@@ -93,7 +92,7 @@ constraints from its closure rather than from any milestone document:
 
 ## 6. Blocked implementation plans
 
-None. Phase 7 is closed and Phase 8 is unblocked.
+Phase 8 implementation plans are not yet written. Phase 8 research/planning is unblocked, but production implementation is temporarily gated on post-Phase-7 C001 closure so the product line begins from a green deterministic baseline.
 
 ## 7. Recently closed work
 
