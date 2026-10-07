@@ -1,125 +1,35 @@
-//! The typed desired-state store.
+//! The desired snapshot: reading it and committing a new one.
 //!
-//! One store owns one `rusqlite` connection behind a single synchronization
-//! boundary. `Connection` is never part of the public API, there are no async
-//! traits, and no caller can issue SQL.
-//!
-//! Phase 7 must cross into this blocking store through a bounded
-//! blocking-worker adapter rather than by making this API async.
+//! A commit is one atomic generation advance. `StateStore::mutate` re-reads the
+//! stored snapshot inside the same write transaction that advances the
+//! generation, so a stale writer, a validation failure, or any write failure
+//! leaves no partial row changes and does not advance the generation.
 
 use super::{
-    error::StateError,
-    model::{
-        AttemptDisposition, CommittedDesiredState, ConvergenceRecord, InstallationMetadata,
-        PersistedDesiredState,
+    sql::{
+        lifecycle_label, ownership_label, parse_ipaddr, parse_ipnet, parse_lifecycle,
+        parse_ownership, parse_prefix, parse_prefix_column, parse_presence, parse_socket_addr,
+        prefix_strings, presence_label, read_generation, read_installation, read_interface_row,
+        InterfaceRow,
     },
-    schema::{self, OpenIntent},
+    StateStore,
 };
-use crate::domain::{
-    validate_desired_state, ClientRoutePolicy, DesiredAddress, DesiredClient, DesiredGeneration,
-    DesiredInterface, DesiredNetworkPolicy, DesiredPeer, DesiredState, InstallationId, InterfaceId,
-    InterfaceName, LinkLifecycle, ManagedRoute, NetworkPrefix, OwnershipDeclaration, PresharedKey,
-    PrivateKey, PublicKey, ResourcePresence, INITIAL_DESIRED_GENERATION,
+use crate::{
+    domain::{
+        validate_desired_state, ClientRoutePolicy, DesiredAddress, DesiredClient,
+        DesiredGeneration, DesiredInterface, DesiredNetworkPolicy, DesiredPeer, DesiredState,
+        InterfaceId, InterfaceName, ManagedRoute, NetworkPrefix, PresharedKey, PrivateKey,
+        PublicKey,
+    },
+    state::{
+        error::StateError,
+        model::{CommittedDesiredState, InstallationMetadata, PersistedDesiredState},
+        schema,
+    },
 };
-use ipnet::IpNet;
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};
-use std::{
-    net::{IpAddr, SocketAddr},
-    path::{Path, PathBuf},
-    sync::Mutex,
-};
-
-/// The authoritative unprivileged application-state store.
-pub struct StateStore {
-    path: PathBuf,
-    connection: Mutex<Connection>,
-}
-
-impl std::fmt::Debug for StateStore {
-    /// Deliberately opaque: the store holds secret-bearing rows.
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("StateStore")
-            .field("path", &self.path)
-            .finish_non_exhaustive()
-    }
-}
-
-impl Drop for StateStore {
-    /// Releases this process's claim on the database path.
-    ///
-    /// Restoring over a path this process still holds open would corrupt the
-    /// live store, so the claim is released exactly when the connection closes.
-    fn drop(&mut self) {
-        super::inuse::unregister(&self.path);
-    }
-}
 
 impl StateStore {
-    /// Creates a new store and runs every migration.
-    ///
-    /// Generates the installation identity. Refuses to touch an existing file.
-    pub fn initialize(path: impl AsRef<Path>) -> Result<Self, StateError> {
-        Self::with_expected_owner(path.as_ref(), OpenIntent::Initialize, current_uid())
-    }
-
-    /// Opens an existing store and applies any pending migrations.
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, StateError> {
-        Self::with_expected_owner(path.as_ref(), OpenIntent::Reopen, current_uid())
-    }
-
-    /// Opens a store with an explicit expected owner.
-    ///
-    /// Exposed so tests can assert the ownership checks independently of the
-    /// process uid.
-    pub fn open_with_expected_owner(
-        path: impl AsRef<Path>,
-        expected_uid: u32,
-    ) -> Result<Self, StateError> {
-        Self::with_expected_owner(path.as_ref(), OpenIntent::Reopen, expected_uid)
-    }
-
-    fn with_expected_owner(
-        path: &Path,
-        intent: OpenIntent,
-        expected_uid: u32,
-    ) -> Result<Self, StateError> {
-        let connection = schema::open_connection(path, intent, expected_uid)?;
-        if intent == OpenIntent::Initialize {
-            schema::seed_installation(
-                &connection,
-                &InstallationId::new(),
-                INITIAL_DESIRED_GENERATION,
-            )?;
-        }
-        // Checked after seeding, so "exactly one row" holds for a brand-new
-        // store and a missing installation row fails closed on reopen.
-        schema::enforce_singleton(&connection)?;
-        super::inuse::register(path);
-        Ok(Self {
-            path: path.to_path_buf(),
-            connection: Mutex::new(connection),
-        })
-    }
-
-    /// The schema version this database currently declares.
-    pub fn schema_version(&self) -> Result<i64, StateError> {
-        let connection = self.lock()?;
-        connection
-            .query_row("PRAGMA user_version", [], |row| row.get(0))
-            .map_err(StateError::database)
-    }
-
-    /// The path this store was opened from.
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
-    pub(crate) fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, StateError> {
-        self.connection
-            .lock()
-            .map_err(|_| StateError::Corrupt("state store mutex poisoned"))
-    }
-
     /// Reads installation metadata, including the current desired generation.
     pub fn installation_metadata(&self) -> Result<InstallationMetadata, StateError> {
         let connection = self.lock()?;
@@ -135,118 +45,6 @@ impl StateStore {
     pub fn load(&self) -> Result<PersistedDesiredState, StateError> {
         let connection = self.lock()?;
         load_desired(&connection)
-    }
-
-    /// Reads the recorded reconciliation evidence.
-    pub fn convergence(&self) -> Result<ConvergenceRecord, StateError> {
-        let connection = self.lock()?;
-        connection
-            .query_row(
-                "SELECT last_attempted_generation, last_converged_generation,
-                        last_attempt_timestamp, last_outcome
-                 FROM convergence_state WHERE singleton = 1",
-                [],
-                |row| {
-                    Ok((
-                        row.get::<_, Option<i64>>(0)?,
-                        row.get::<_, Option<i64>>(1)?,
-                        row.get::<_, Option<i64>>(2)?,
-                        row.get::<_, Option<String>>(3)?,
-                    ))
-                },
-            )
-            .map_err(StateError::database)
-            .and_then(|(attempted, converged, timestamp, outcome)| {
-                Ok(ConvergenceRecord {
-                    last_attempted_generation: read_optional_generation(attempted, "attempted")?,
-                    last_converged_generation: read_optional_generation(converged, "converged")?,
-                    last_attempt_timestamp: timestamp,
-                    last_outcome: outcome,
-                })
-            })
-    }
-
-    /// Records that an apply attempt for `generation` has started.
-    ///
-    /// This is only evidence that an attempt began. It never implies the kernel
-    /// reached the desired state.
-    pub fn record_attempt_start(&self, generation: DesiredGeneration) -> Result<(), StateError> {
-        let connection = self.lock()?;
-        connection
-            .execute(
-                "UPDATE convergence_state
-                 SET last_attempted_generation = ?1, last_attempt_timestamp = ?2
-                 WHERE singleton = 1",
-                rusqlite::params![generation.to_storage(), schema::now_seconds()],
-            )
-            .map_err(StateError::database)?;
-        Ok(())
-    }
-
-    /// Records the outcome of an attempt for `generation`.
-    ///
-    /// The disposition is a category, never a secret-bearing message, so a
-    /// reconcile failure cannot leak key material into the database.
-    pub fn record_attempt_result(
-        &self,
-        generation: DesiredGeneration,
-        disposition: &AttemptDisposition,
-    ) -> Result<(), StateError> {
-        let connection = self.lock()?;
-        connection
-            .execute(
-                "UPDATE convergence_state
-                 SET last_attempted_generation = ?1, last_outcome = ?2
-                 WHERE singleton = 1",
-                rusqlite::params![generation.to_storage(), disposition.as_str()],
-            )
-            .map_err(StateError::database)?;
-        Ok(())
-    }
-
-    /// Marks `generation` converged only if it is still the current desired
-    /// generation.
-    ///
-    /// This is the guard that stops a late receipt for generation N from
-    /// marking a newer desired state N+1 as converged. Returns whether the
-    /// write happened.
-    pub fn record_converged_if_current(
-        &self,
-        generation: DesiredGeneration,
-    ) -> Result<bool, StateError> {
-        let mut connection = self.lock()?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(StateError::database)?;
-
-        let current = read_generation(&transaction)?;
-        if current != generation {
-            // Stale completion: recorded as attempt evidence only. The current
-            // desired generation is untouched and will be reconciled on its own.
-            transaction
-                .execute(
-                    "UPDATE convergence_state SET last_outcome = ?1 WHERE singleton = 1",
-                    rusqlite::params![AttemptDisposition::Superseded.as_str()],
-                )
-                .map_err(StateError::database)?;
-            transaction.commit().map_err(StateError::database)?;
-            return Ok(false);
-        }
-
-        transaction
-            .execute(
-                "UPDATE convergence_state
-                 SET last_converged_generation = ?1, last_attempted_generation = ?1,
-                     last_outcome = ?2
-                 WHERE singleton = 1",
-                rusqlite::params![
-                    generation.to_storage(),
-                    AttemptDisposition::Converged.as_str()
-                ],
-            )
-            .map_err(StateError::database)?;
-        transaction.commit().map_err(StateError::database)?;
-        Ok(true)
     }
 
     /// Commits a new desired snapshot if `expected_generation` is still current.
@@ -296,83 +94,6 @@ impl StateStore {
     }
 }
 
-/// The uid the store refuses to share a database with.
-fn current_uid() -> u32 {
-    // The management role runs unprivileged; the store refuses a database or
-    // parent directory it does not own rather than widening access to it.
-    std::os::unix::fs::MetadataExt::uid(
-        &std::fs::metadata("/proc/self").expect("effective uid is readable from /proc/self"),
-    )
-}
-
-// ---------------------------------------------------------------------------
-// Row reading. Row structs intentionally have no `Debug` derive so that a
-// future field addition cannot silently expose secret material through logging.
-// ---------------------------------------------------------------------------
-
-fn read_installation(connection: &Connection) -> Result<InstallationMetadata, StateError> {
-    let row = connection
-        .query_row(
-            "SELECT installation_id, desired_generation, created_at, updated_at
-             FROM installation WHERE singleton = 1",
-            [],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, i64>(2)?,
-                    row.get::<_, i64>(3)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(StateError::database)?
-        .ok_or(StateError::Corrupt("installation row missing"))?;
-
-    let installation_id: InstallationId = row
-        .0
-        .parse()
-        .map_err(|_| StateError::Corrupt("invalid installation id"))?;
-    let generation =
-        DesiredGeneration::from_storage(row.1).ok_or(StateError::Corrupt("invalid generation"))?;
-    Ok(InstallationMetadata {
-        installation_id,
-        desired_generation: generation,
-        created_at: row.2,
-        updated_at: row.3,
-    })
-}
-
-/// Decodes a nullable generation column, treating a stored invalid value as
-/// corruption rather than as "unset".
-fn read_optional_generation(
-    raw: Option<i64>,
-    column: &'static str,
-) -> Result<Option<DesiredGeneration>, StateError> {
-    match raw {
-        None => Ok(None),
-        Some(value) => DesiredGeneration::from_storage(value)
-            .map(Some)
-            .ok_or(StateError::Corrupt(match column {
-                "attempted" => "invalid attempted generation",
-                _ => "invalid converged generation",
-            })),
-    }
-}
-
-fn read_generation(connection: &Connection) -> Result<DesiredGeneration, StateError> {
-    let raw: i64 = connection
-        .query_row(
-            "SELECT desired_generation FROM installation WHERE singleton = 1",
-            [],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(StateError::database)?
-        .ok_or(StateError::Corrupt("installation row missing"))?;
-    DesiredGeneration::from_storage(raw).ok_or(StateError::Corrupt("invalid generation"))
-}
-
 fn load_desired(connection: &Connection) -> Result<PersistedDesiredState, StateError> {
     let generation = read_generation(connection)?;
     let state = read_desired(connection)?;
@@ -413,30 +134,6 @@ fn read_desired(connection: &Connection) -> Result<DesiredState, StateError> {
         interfaces,
         client_routes,
         network_policy,
-    })
-}
-
-struct InterfaceRow {
-    id: String,
-    name: String,
-    ownership: String,
-    lifecycle: String,
-    admin_up: Option<i64>,
-    private_key: String,
-    listen_port: Option<i64>,
-    manage_all_peers: i64,
-}
-
-fn read_interface_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<InterfaceRow> {
-    Ok(InterfaceRow {
-        id: row.get(0)?,
-        name: row.get(1)?,
-        ownership: row.get(2)?,
-        lifecycle: row.get(3)?,
-        admin_up: row.get(4)?,
-        private_key: row.get(5)?,
-        listen_port: row.get(6)?,
-        manage_all_peers: row.get(7)?,
     })
 }
 
@@ -906,83 +603,4 @@ fn query_prefixes_for(
         .collect::<Result<Vec<_>, _>>()
         .map_err(StateError::database)?;
     values.iter().map(|value| parse_prefix(value)).collect()
-}
-
-/// Parses an ordered prefix column that carries no foreign key.
-fn parse_prefix_column(values: Vec<String>) -> Result<Vec<NetworkPrefix>, StateError> {
-    values.iter().map(|value| parse_prefix(value)).collect()
-}
-
-/// Renders prefixes in their canonical stored form.
-fn prefix_strings(prefixes: &[NetworkPrefix]) -> Vec<String> {
-    prefixes.iter().map(|prefix| prefix.to_string()).collect()
-}
-
-fn parse_prefix(value: &str) -> Result<NetworkPrefix, StateError> {
-    value
-        .parse()
-        .map_err(|_| StateError::Corrupt("stored prefix is not a valid network prefix"))
-}
-
-fn parse_ipnet(value: &str) -> Result<IpNet, StateError> {
-    value
-        .parse()
-        .map_err(|_| StateError::Corrupt("stored address is not a valid prefix"))
-}
-
-fn parse_ipaddr(value: &str) -> Result<IpAddr, StateError> {
-    value
-        .parse()
-        .map_err(|_| StateError::Corrupt("stored gateway is not a valid address"))
-}
-
-fn parse_socket_addr(value: &str) -> Result<SocketAddr, StateError> {
-    value
-        .parse()
-        .map_err(|_| StateError::Corrupt("stored endpoint is not a valid socket address"))
-}
-
-fn parse_ownership(value: &str) -> Result<OwnershipDeclaration, StateError> {
-    match value {
-        "managed" => Ok(OwnershipDeclaration::Managed),
-        "observe_only" => Ok(OwnershipDeclaration::ObserveOnly),
-        _ => Err(StateError::Corrupt("unknown ownership declaration")),
-    }
-}
-
-fn parse_lifecycle(value: &str) -> Result<LinkLifecycle, StateError> {
-    match value {
-        "present" => Ok(LinkLifecycle::Present),
-        "absent" => Ok(LinkLifecycle::Absent),
-        _ => Err(StateError::Corrupt("unknown link lifecycle")),
-    }
-}
-
-fn parse_presence(value: &str) -> Result<ResourcePresence, StateError> {
-    match value {
-        "present" => Ok(ResourcePresence::Present),
-        "absent" => Ok(ResourcePresence::Absent),
-        _ => Err(StateError::Corrupt("unknown resource presence")),
-    }
-}
-
-fn ownership_label(value: OwnershipDeclaration) -> &'static str {
-    match value {
-        OwnershipDeclaration::Managed => "managed",
-        OwnershipDeclaration::ObserveOnly => "observe_only",
-    }
-}
-
-fn lifecycle_label(value: LinkLifecycle) -> &'static str {
-    match value {
-        LinkLifecycle::Present => "present",
-        LinkLifecycle::Absent => "absent",
-    }
-}
-
-fn presence_label(value: ResourcePresence) -> &'static str {
-    match value {
-        ResourcePresence::Present => "present",
-        ResourcePresence::Absent => "absent",
-    }
 }

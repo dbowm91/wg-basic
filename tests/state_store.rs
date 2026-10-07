@@ -523,8 +523,25 @@ fn the_state_module_does_not_depend_on_the_network_backends() {
     // snapshot, not a privileged or network operation. M004 enables it
     // deliberately, and the guards below pin what still must not appear.
     let storage_modules = [
-        ("schema.rs", include_str!("../src/state/schema.rs")),
-        ("store.rs", include_str!("../src/state/store.rs")),
+        ("schema/mod.rs", include_str!("../src/state/schema/mod.rs")),
+        (
+            "schema/validation.rs",
+            include_str!("../src/state/schema/validation.rs"),
+        ),
+        (
+            "schema/migrations.rs",
+            include_str!("../src/state/schema/migrations.rs"),
+        ),
+        ("store/mod.rs", include_str!("../src/state/store/mod.rs")),
+        (
+            "store/desired.rs",
+            include_str!("../src/state/store/desired.rs"),
+        ),
+        (
+            "store/convergence.rs",
+            include_str!("../src/state/store/convergence.rs"),
+        ),
+        ("store/sql.rs", include_str!("../src/state/store/sql.rs")),
         ("backup.rs", include_str!("../src/state/backup.rs")),
         ("model.rs", include_str!("../src/state/model.rs")),
     ];
@@ -544,8 +561,25 @@ fn the_state_module_does_not_depend_on_the_network_backends() {
     }
 
     let every_module = [
-        ("schema.rs", include_str!("../src/state/schema.rs")),
-        ("store.rs", include_str!("../src/state/store.rs")),
+        ("schema/mod.rs", include_str!("../src/state/schema/mod.rs")),
+        (
+            "schema/validation.rs",
+            include_str!("../src/state/schema/validation.rs"),
+        ),
+        (
+            "schema/migrations.rs",
+            include_str!("../src/state/schema/migrations.rs"),
+        ),
+        ("store/mod.rs", include_str!("../src/state/store/mod.rs")),
+        (
+            "store/desired.rs",
+            include_str!("../src/state/store/desired.rs"),
+        ),
+        (
+            "store/convergence.rs",
+            include_str!("../src/state/store/convergence.rs"),
+        ),
+        ("store/sql.rs", include_str!("../src/state/store/sql.rs")),
         ("backup.rs", include_str!("../src/state/backup.rs")),
         ("model.rs", include_str!("../src/state/model.rs")),
         ("projection.rs", include_str!("../src/state/projection.rs")),
