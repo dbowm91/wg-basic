@@ -1,13 +1,8 @@
 # Distribution M001 — Release Identity, Authenticity, and Target Qualification
 
-Status: active
+Status: closed
 
-Implementation note (2026-10-08): release identity/target policy, a
-verify-before-parse Minisign seam, the Eggpack consumer adapter, and the
-Eggpack producer inputs are implemented. Both targets build at the glibc 2.17
-floor; x86_64 has native smoke evidence and aarch64 has cross-build/ELF evidence.
-M001 remains open for aarch64 native execution and hosted CI evidence before
-strict closure.
+Strict closure record: `plans/closure/distribution/001-status.md`.
 
 Dependency graph qualification update (2026-10-08): an external fixture outside
 both workspaces resolved and compiled under Rust 1.89 with registry-only pins:

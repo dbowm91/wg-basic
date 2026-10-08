@@ -94,7 +94,7 @@ management/auth substrate (Phase 7), product/enrollment/UI (Phase 8), and
 operational hardening (Phase 9) are closed. Installation and transactional
 self-update are **not implemented**; Phase 10 (distribution/install/update) is
 under implementation, with M001 release identity/authenticity/target
-qualification active. Implementation status lives in
+qualification strictly closed and M002 installation ready. Implementation status lives in
 [the planning registry](../plans/registry.md).
 
 ## Full deep-dive index
