@@ -1,6 +1,6 @@
 # Operational Hardening M001 — Authoritative Doctor and Preflight
 
-Status: ready
+Status: active
 
 Repository baseline: `e8fd6b1212491576f3c6bdd7468591a97d5aaf3c`
 

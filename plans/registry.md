@@ -41,7 +41,7 @@ The architecture separates:
 
 The privileged service does not expose arbitrary shell, command, file-write, sysctl-path, nft-script, or raw-netlink execution.
 
-Current production code state: **Network control and Phases 6–8 are strictly closed. The authenticated product API and embedded UI provide server setup, client lifecycle, config/QR export, one-time enrollment, live telemetry, and bounded audit history.** Phase 9 is fully researched/planned but not implemented: the next line hardens diagnostics, maintenance ownership, whole-server disable/purge, recovery drills, structured logging/housekeeping, abuse/security evidence, and old/new upgrade rollback before Phase 10 distribution automation.
+Current production code state: **Network control and Phases 6–8 are strictly closed. The authenticated product API and embedded UI provide server setup, client lifecycle, config/QR export, one-time enrollment, live telemetry, and bounded audit history.** Phase 9 implementation is active at M001: doctor now emits a bounded human/JSON report with read-only SQLite integrity/runtime, forwarding, netd reachability, and optional HTTP-policy checks. Authoritative product/convergence diagnostics, backend probes, aggregate ownership planning, and no-mutation evidence remain open; M002–M005 stay blocked in order.
 
 ## 3. Eggstack reuse disposition
 
@@ -78,9 +78,9 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
-| Operational hardening | M001 authoritative doctor + preflight | **ready** | `plans/implementation/operational-hardening/001-authoritative-doctor-and-preflight.md` | Phase 8 strict closure at `e8fd6b1` |
+| Operational hardening | M001 authoritative doctor + preflight | **active** | `plans/implementation/operational-hardening/001-authoritative-doctor-and-preflight.md` | Phase 8 strict closure at `e8fd6b1`; authoritative product/network checks remain unfinished |
 
-M001 is the sole implementation-ready plan. It is read-only diagnostics/preflight work: no repair mode, state purge, service units, or updater behavior is permitted in M001.
+M001 is the sole active implementation plan. It remains read-only diagnostics/preflight work: no repair mode, state purge, service units, or updater behavior is permitted in M001.
 
 ## 6. Blocked implementation plans
 
