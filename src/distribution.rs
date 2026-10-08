@@ -719,13 +719,13 @@ fn run_install_health_smoke() -> Result<(), String> {
             .max_output_bytes(32 * 1024),
     )
     .map_err(|_| "post-install doctor smoke failed")?;
-    if doctor.exit_code() != Some(0) {
-        return Err("post-install doctor reported a required failure or attention".into());
-    }
     let report: crate::doctor::DoctorReport = serde_json::from_slice(doctor.stdout())
         .map_err(|_| "post-install doctor report was invalid")?;
-    if report.overall != crate::doctor::DoctorDisposition::Pass {
-        return Err("post-install doctor did not pass".into());
+    if doctor.exit_code() != Some(0) || report.overall != crate::doctor::DoctorDisposition::Pass {
+        return Err(format!(
+            "post-install doctor did not pass:\n{}",
+            report.render_human()
+        ));
     }
     let address = SocketAddr::from(([127, 0, 0, 1], 8000));
     let mut stream = TcpStream::connect_timeout(&address, Duration::from_secs(3))
