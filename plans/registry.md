@@ -79,9 +79,9 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
-| Distribution/install/update | M003 Eggpack pipeline/signing handoff | **ready** | `plans/implementation/distribution/003-eggpack-release-pipeline-and-signed-draft.md` | M002 strict closure at `plans/closure/distribution/002-status.md` |
+| Distribution/install/update | M003 Eggpack pipeline/signing handoff | **active** | `plans/implementation/distribution/003-eggpack-release-pipeline-and-signed-draft.md` | M002 strict closure at `plans/closure/distribution/002-status.md` |
 
-M001 and M002 are strictly closed. M003 is the only implementation-ready plan and covers the producer/release handoff; updater and lifecycle closure remain blocked in order.
+M001 and M002 are strictly closed. M003 is active and covers the producer/release handoff; updater and lifecycle closure remain blocked in order.
 
 ## 6. Blocked implementation plans
 

@@ -177,7 +177,7 @@ Expected outcomes:
 
 ## 7. M003 — Eggpack producer pipeline and signed draft release
 
-Status: ready; M002 is strictly closed.
+Status: active; M002 is strictly closed.
 
 Implementation plan:
 

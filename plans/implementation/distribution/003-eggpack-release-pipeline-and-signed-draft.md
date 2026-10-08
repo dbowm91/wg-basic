@@ -1,6 +1,6 @@
 # Distribution M003 — Eggpack Release Pipeline and Signed Draft Handoff
 
-Status: ready
+Status: active
 
 Source roadmap:
 
