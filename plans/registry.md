@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-08 (Phase 9 M001 strictly closed; M002 active)
+Last planning reconciliation: 2026-10-08 (Phase 9 M001–M002 strictly closed; M003 active)
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -41,7 +41,7 @@ The architecture separates:
 
 The privileged service does not expose arbitrary shell, command, file-write, sysctl-path, nft-script, or raw-netlink execution.
 
-Current production code state: **Network control and Phases 6–8 are strictly closed. The authenticated product API and embedded UI provide server setup, client lifecycle, config/QR export, one-time enrollment, live telemetry, and bounded audit history.** Phase 9 M001 is strictly closed: doctor emits a bounded human/JSON report covering immutable state/product/convergence/recovery inspection, SQLite runtime identity, netd/capabilities, plan-only network ownership and backend observations, forwarding, HTTP policy, and listen-port certainty. Rootful fixtures prove drift, convergence, and ownership conflict checks leave state untouched. M002 is active; M003–M005 remain blocked in order.
+Current production code state: **Network control and Phases 6–8 are strictly closed. The authenticated product API and embedded UI provide server setup, client lifecycle, config/QR export, one-time enrollment, live telemetry, and bounded audit history.** Phase 9 M001–M002 are strictly closed: doctor reports read-only authoritative diagnostics; M002 adds singleton serve ownership, durable whole-network disable/enable, immutable backup verification, restore exclusion, and fail-closed state purge. Real-kernel fixtures qualify disable/restart/re-enable and purge safety. M003 is active; M004–M005 remain blocked in order.
 
 ## 3. Eggstack reuse disposition
 
@@ -78,15 +78,14 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
-| Operational hardening | M002 maintenance lease + disable/purge/recovery | **active** | `plans/implementation/operational-hardening/002-maintenance-disable-purge-and-recovery.md` | M001 strict closure at `plans/closure/operational-hardening/001-status.md` |
+| Operational hardening | M003 structured logging + housekeeping + runtime hardening | **active** | `plans/implementation/operational-hardening/003-logging-housekeeping-and-runtime-hardening.md` | M002 strict closure at `plans/closure/operational-hardening/002-status.md` |
 
-M002 is the sole active implementation plan. M001 strictly closed in `plans/closure/operational-hardening/001-status.md`; its listen-port ambiguity is reported as Unknown and its service-lease check hands off explicitly to M002.
+M003 is the sole active implementation plan. M001 and M002 strictly closed in `plans/closure/operational-hardening/001-status.md` and `plans/closure/operational-hardening/002-status.md`. M004 and M005 remain blocked on their direct predecessor closures.
 
 ## 6. Blocked implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Hard blocker |
 |---|---|---|---|---|
-| Operational hardening | M003 logging + housekeeping + runtime hardening | blocked | `plans/implementation/operational-hardening/003-logging-housekeeping-and-runtime-hardening.md` | Phase 9 M002 |
 | Operational hardening | M004 abuse/security/dependency qualification | blocked | `plans/implementation/operational-hardening/004-abuse-security-and-dependency-qualification.md` | Phase 9 M003 |
 | Operational hardening | M005 upgrade/rollback rehearsal + Phase 9 closure | blocked | `plans/implementation/operational-hardening/005-upgrade-rollback-rehearsal-and-phase9-closure.md` | Phase 9 M004 |
 
@@ -95,6 +94,7 @@ Phase 10 distribution/install/update remains proposed and blocked until Phase 9 
 ## 7. Recently closed work
 
 - Operational-hardening M001 strict closure: `plans/closure/operational-hardening/001-status.md` (implementation commit `3e5b21c`; real-kernel doctor drift/convergence/conflict fixtures).
+- Operational-hardening M002 strict closure: `plans/closure/operational-hardening/002-status.md` (implementation commit `8c46078`; real serve lease, schema v5, network lifecycle, recovery and purge evidence).
 
 - M001 strict closure: `plans/closure/network-control/001-status.md`.
 - M002 strict closure: `plans/closure/network-control/002-status.md`.
