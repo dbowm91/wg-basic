@@ -404,6 +404,53 @@ pub fn read_journal(path: &Path) -> io::Result<UpdateJournal> {
     read_journal_owned_by(path, 0)
 }
 
+/// Persist one legal state-machine transition after revalidating the current
+/// durable journal. The caller must perform the next irreversible action only
+/// after this function returns successfully.
+pub fn advance_journal(
+    path: &Path,
+    expected: &UpdateJournal,
+    next: UpdatePhase,
+) -> io::Result<UpdateJournal> {
+    let current = read_journal(path)?;
+    if current != *expected || !transition_allowed(current.phase, next) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "update journal phase transition is invalid",
+        ));
+    }
+    let mut updated = current;
+    updated.phase = next;
+    write_journal(path, &updated)?;
+    Ok(updated)
+}
+
+fn transition_allowed(from: UpdatePhase, to: UpdatePhase) -> bool {
+    use UpdatePhase::*;
+    matches!(
+        (from, to),
+        (Prepared, BackupVerified | RecoveryRequired)
+            | (
+                BackupVerified,
+                ServicesStopped | RollingBack | RecoveryRequired
+            )
+            | (
+                ServicesStopped,
+                BinaryCommitted | RollingBack | RecoveryRequired
+            )
+            | (
+                BinaryCommitted,
+                CandidateStarted | RollingBack | RecoveryRequired
+            )
+            | (
+                CandidateStarted,
+                CandidateHealthy | RollingBack | RecoveryRequired
+            )
+            | (CandidateHealthy, Committed | RollingBack | RecoveryRequired)
+            | (RollingBack, RolledBack | RecoveryRequired)
+    )
+}
+
 fn read_journal_owned_by(path: &Path, expected_uid: u32) -> io::Result<UpdateJournal> {
     let metadata = fs::symlink_metadata(path)?;
     if !metadata.file_type().is_file()
@@ -607,6 +654,34 @@ mod tests {
         let mut value = journal(root);
         value.candidate_sha256 = "not-a-digest".into();
         assert!(value.validate(root).is_err());
+    }
+
+    #[test]
+    fn journal_state_machine_rejects_skipped_and_terminal_transitions() {
+        assert!(transition_allowed(
+            UpdatePhase::Prepared,
+            UpdatePhase::BackupVerified
+        ));
+        assert!(!transition_allowed(
+            UpdatePhase::Prepared,
+            UpdatePhase::BinaryCommitted
+        ));
+        assert!(transition_allowed(
+            UpdatePhase::CandidateHealthy,
+            UpdatePhase::Committed
+        ));
+        assert!(transition_allowed(
+            UpdatePhase::CandidateHealthy,
+            UpdatePhase::RollingBack
+        ));
+        assert!(!transition_allowed(
+            UpdatePhase::Committed,
+            UpdatePhase::RollingBack
+        ));
+        assert!(!transition_allowed(
+            UpdatePhase::RolledBack,
+            UpdatePhase::CandidateStarted
+        ));
     }
 
     #[test]
