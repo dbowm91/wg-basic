@@ -1,25 +1,116 @@
 # Architecture overview
 
-## Implemented foundation
+wg-basic is a Linux-native WireGuard management appliance: one small Rust
+executable with two separated privilege domains. The Linux kernel owns the
+WireGuard dataplane. This document is the bird's-eye view and the index for
+the per-component deep dives in this directory. Those files describe
+**current implemented behavior**; planned work belongs in `plans/`.
 
-The repository is a Rust 2021 package with one library and one executable. The library owns typed identifiers, Linux interface-name validation, IP prefix values, desired/observed state shells, client assignment validation, and secret wrappers. It also owns the unprivileged durable application-state store: SQLite storage with hardened opening, ordered migrations, one stable installation identity, a monotonic desired generation with compare-and-swap mutation, and deterministic projection into kernel intent. Private and preshared keys redact ordinary `Debug` and `Display` formatting and zeroize their owned strings when dropped. Key strings are validated as base64-encoded 32-byte WireGuard keys when constructed or deserialized.
+## Bird's-eye view
 
-The executable accepts `serve`, `netd`, `doctor`, `reconcile`, `health`, and `state`. `netd` serves a bounded, versioned protocol over a local Unix-domain socket. It provides ping and read-only capability inspection, typed WireGuard device observation/patch operations through Generic Netlink, and high-level managed-interface planning/application. Linux link, address, and route operations use RTNETLINK. `reconcile` is the management role: it projects the current durable desired generation into one aggregate network intent, applies it through authorized `netd`, and records convergence evidence. `health` reports the same state without contacting `netd`, and `state status|backup|restore` inspects, snapshots, and restores the durable database without ever contacting the kernel. `serve` is the unprivileged management service role: it owns a dedicated bounded worker thread holding the durable state store and publishes authenticated login/session/health and server/client CRUD routes through an embedded EggServe runtime. Management code never opens the database from a request handler. Product route mutations use typed worker commands and generation compare-and-swap. `doctor` performs read-only state-file/integrity, SQLite runtime, netd reachability, forwarding, and optional HTTP-policy checks; ownership and service-lease checks remain unknown until authoritative probes ship.
+```text
+operator / browser
+      │  HTTPS via reverse proxy, or loopback HTTP
+      ▼
+serve (unprivileged management role) ── owns ──► SQLite state store (authoritative)
+  │  embedded EggServe HTTP surface          monotonic desired generation + CAS
+  │  one bounded worker thread holds         installation identity, owner tags,
+  │  ManagementRuntime; HTTP code never      convergence evidence, credentials,
+  │  touches the store or netd directly      product metadata, audit history
+  │                                              │
+  │  typed request over local UDS socket         │  one aggregate intent per
+  │  (SO_PEERCRED authorized, no shell,          │  generation, projected from
+  │   no raw netlink/nft/sysctl/file ops)       │  the committed snapshot
+  ▼                                              ▼
+netd (privileged network role, CAP_NET_ADMIN) ◄── ManagementRuntime::reconcile
+  │  typed WireGuard observation/patch (Generic Netlink, nl-wireguard)
+  │  typed link/address/route reconcile (RTNETLINK, rtnetlink)
+  │  typed IPv4 forwarding/NAT/firewall policy (bounded nft subprocess)
+  │  ownership proven per resource (IFLA_IFALIAS tags, table markers)
+  └──► kernel state (derivative — only ever observed, never authoritative)
+```
 
-Linux-specific code has a `platform::linux` boundary. The library can still be built on other targets for domain use, but production network roles and the UDS protocol are Linux-only by design.
+Two invariants shape everything:
 
-## Implemented boundaries
+- **State authority.** SQLite desired state is authoritative; kernel state is
+  derivative. Startup reconciles unconditionally because the kernel may have
+  drifted while stopped. A late receipt can never mark a newer generation
+  converged.
+- **Privilege separation.** Only the unprivileged management role opens the
+  database (`netd` is database-free). Only `netd` touches the kernel, and only
+  through typed operations. There is no arbitrary shell, command, file-write,
+  sysctl-path, nft-script, or raw-netlink execution anywhere in the protocol.
 
-The state store is authoritative for desired state; kernel state is derivative and only ever observed. It is secret-bearing and must stay owner-only. Only the unprivileged management role opens it, and `netd` remains database-free. See [durable state store](state-store.md).
+## Discrete modules and where to dive deeper
 
-M004 manages explicitly declared WireGuard links, exact tunnel addresses, and a bounded main-table unicast route shape through deterministic desired/observed reconciliation. M005 adds typed IPv4 forwarding and optional masquerade policy in a dedicated `inet wg_basic` table, with ownership checks and an end-to-end namespace fixture. Durable interface ownership and one generation-aware aggregate reconcile are also implemented: created links carry an installation/interface owner tag, the owned nftables table binds to the installation identity, and a single outer coordinator serializes aggregate applies with in-process generation monotonicity.
+| Source subtree | Owns | Deep dive |
+|---|---|---|
+| `src/domain/` | typed identifiers, interface-name validation, IP prefix values, key/secret wrappers, generation, owner tags, intent/state shells | [domain-model](domain-model.md) |
+| `src/state/` | hardened SQLite store, ordered migrations, installation identity, CAS generations, projection, convergence evidence, backup/restore, service/maintenance leases | [state-store](state-store.md) |
+| `src/protocol/` | versioned UDS protocol: framing, peer-credential auth, capability inspection, dispatch, typed client | [privilege-boundary](privilege-boundary.md) |
+| `src/wireguard/` | kernel WireGuard backend over Generic Netlink (device/peer observe/patch, telemetry) | [wireguard-control](wireguard-control.md) |
+| `src/firewall/` | typed IPv4 forwarding/NAT policy, planner, bounded `nft` service, owned-table model | [firewall](firewall.md) |
+| `src/reconcile/` + `src/aggregate.rs` | deterministic link/address/route planner, Linux applier, aggregate coordinator, receipts | [reconciliation](reconciliation.md) |
+| ownership markers | `IFLA_IFALIAS` owner tags, `inet wg_basic` table markers, aggregate generation monotonicity, fail-closed rules | [ownership](ownership.md) |
+| `src/management/` | runtime lifecycle, bounded worker, reconcile coordinator, health projection, credential/session operations | [startup-recovery](startup-recovery.md), [management-http](management-http.md), [authentication](authentication.md) |
+| `src/http/` | EggServe surface: routing, Host/Origin/CSRF perimeter, security headers, rate limits, readiness, embedded assets, `serve` lifecycle | [management-http](management-http.md) |
+| `src/management/auth.rs` + `src/domain/auth.rs` | Argon2id credentials, opaque digest-only sessions, cookie/CSRF profile, login/logout/session routes | [authentication](authentication.md) |
+| `src/product/` | server setup, client lifecycle, address allocation, config/QR export, one-time enrollment, telemetry, audit, embedded product UI | [product-management](product-management.md) |
+| `src/doctor.rs` + `src/operational.rs` + maintenance | read-only doctor/preflight, structured stderr events, service/maintenance leases, disable/enable/purge, backup/restore ops | [diagnostics-maintenance](diagnostics-maintenance.md) |
+| `src/main.rs` CLI roles | `serve`, `netd`, `reconcile`, `health`, `doctor`, `admin`, `state`, `network` command surface | [cli-roles](cli-roles.md) |
+| `tests/` + fixtures | unprivileged suites, rootful namespace fixtures, static architecture guards, upgrade rehearsal | [testing-qualification](testing-qualification.md) |
+| service contract | recommended systemd hardening profile (no unit files shipped yet) | [service-hardening](service-hardening.md) |
+| update contract | binary+database transaction rule, rollback order, crash-window matrix (contract only — no updater shipped) | [update-rollback-contract](update-rollback-contract.md) |
 
-Startup reconciliation and crash/restart recovery are implemented. The management role always loads, projects, and applies the current desired generation on start — unconditionally, because the kernel may have drifted while services were stopped — and records convergence evidence only when the database still holds the generation that was applied, so a late receipt can never mark newer state converged. Transient failures get a bounded retry; ownership and state conflicts fail fast and preserve desired state. A process-level rootful harness qualifies restart recovery against real `netd` and management child processes, SQLite, real RTNETLINK, and real nftables.
+## Tools and capabilities (operator view)
 
-Backup, restore, and migration qualification are implemented as well: backup uses SQLite's online backup API under the store's mutation lock so the receipt's generation is the file's generation, and restore validates a candidate completely before replacing anything, retaining the previous database. A restored database drives ordinary startup reconciliation and is not authority over unrelated host state.
+- **Serve the appliance:** `wg-basic serve` (unprivileged HTTP + worker),
+  `wg-basic netd` (privileged UDS backend). Loopback by default; routable binds
+  and HTTPS origins are explicit, acknowledged deployments. See
+  [cli-roles](cli-roles.md) and [management-http](management-http.md).
+- **Administer credentials:** `wg-basic admin set-password --password-stdin`
+  (stdin only, never argv/env), `wg-basic admin status` (safe projection).
+  See [authentication](authentication.md).
+- **Inspect and recover state:** `state status|backup|restore|verify`,
+  `network status|disable|enable`, `state purge` (guarded, needs
+  disabled+converged+no-op plan), `health`, `doctor` (read-only,
+  exit 0/1/2). See [cli-roles](cli-roles.md) and
+  [diagnostics-maintenance](diagnostics-maintenance.md).
+- **Run the product:** login/session/health, one-time server setup, managed
+  client CRUD with `expected_generation` compare-and-swap (`200`/`201`
+  enforced vs `202` pending), explicit config/QR export, one-time enrollment
+  links, live telemetry, bounded audit pages, embedded UI. See
+  [product-management](product-management.md).
+- **Qualify a change:** ordinary `cargo test`, rootful namespace suites with
+  `--features linux-integration`, static guards in
+  `tests/architecture_guards.rs`. See
+  [testing-qualification](testing-qualification.md) and
+  [development](../docs/development.md).
 
-The management HTTP boundary is an authenticated, loopback-by-default surface: `src/http/` owns the wire protocol and reaches management only through a bounded command queue served by one blocking worker thread that owns `ManagementRuntime`. Every request must present a configured `Host`; unsafe methods must carry the exact configured `Origin` and the session CSRF token; security headers are applied centrally on every path; no CORS header is emitted; and login attempts are rate limited before Argon2 runs. Startup reconciliation that fails because `netd` is unavailable is degraded and still serves; a database, path, or migration failure is fatal and binds no listener. Explicit connection, in-flight, header, target, body, and deadline ceilings are published. See [the management HTTP boundary](management-http.md).
+## Status
 
-Local administrator credentials and server-side sessions are implemented behind the same bounded worker: Argon2id at a 19 MiB work factor with a self-describing PHC verifier, 256-bit opaque bearer tokens persisted only as SHA-256 digests, per-session CSRF tokens, finite expiry, and revocation of every session on password reset. Provisioning is a stdin-only local CLI and the HTTP login route exchanges credentials for a server-side session. See [authentication](authentication.md).
+Network control, durable state/restart reconciliation (Phases 6),
+management/auth substrate (Phase 7), product/enrollment/UI (Phase 8), and
+operational hardening (Phase 9) are closed. Installation and transactional
+self-update are **not implemented**; Phase 10 (distribution/install/update) is
+researched and planned with M001 ready. Implementation status lives in
+[the planning registry](../plans/registry.md).
 
-Phase 7 is closed. It delivered the HTTP/worker boundary, the authenticated perimeter over local credentials and server-side sessions, a deterministic `serve` lifecycle that stops on `SIGTERM`, sessions that survive a restart while honouring revocation and expiry, a self-contained embedded operator shell needing no CSP concession, four-way readiness differentiation, and end-to-end plus abuse/resource qualification against real processes and a real network backend. Phase 8 is closed with the durable product model, authenticated setup/client CRUD, deterministic config and QR export, digest-only one-time enrollment, fresh client telemetry, bounded audit pages, and the embedded product UI. Direct TLS and installation/update remain absent. See [product management](product-management.md), [the management HTTP boundary](management-http.md), and [the product roadmap](../plans/subsystems/product-management-enrollment-ui-roadmap.md).
+## Full deep-dive index
+
+- [domain-model](domain-model.md) — value types, secrets, generations, owner tags
+- [state-store](state-store.md) — durable SQLite store, migrations, leases
+- [startup-recovery](startup-recovery.md) — startup sequence, coordinator, retry, drift repair
+- [privilege-boundary](privilege-boundary.md) — UDS protocol, peer auth, intended service contract
+- [wireguard-control](wireguard-control.md) — backend selection, M003 contract, key/error handling
+- [reconciliation](reconciliation.md) — RTNETLINK lifecycle, ordering, receipts
+- [firewall](firewall.md) — IPv4 policy, nftables boundary, disable/preservation
+- [ownership](ownership.md) — interface/firewall ownership proof, aggregate rules
+- [management-http](management-http.md) — HTTP boundary, worker, pipeline, limits, lifecycle
+- [authentication](authentication.md) — credentials, sessions, cookies, CSRF, limiter
+- [product-management](product-management.md) — product API, enrollment, telemetry, audit, UI
+- [diagnostics-maintenance](diagnostics-maintenance.md) — doctor, events, leases, maintenance ops
+- [cli-roles](cli-roles.md) — every `wg-basic` subcommand and its contract
+- [testing-qualification](testing-qualification.md) — suites, rootful fixtures, guards
+- [service-hardening](service-hardening.md) — Phase 10 systemd contract (recommended, not shipped)
+- [update-rollback-contract](update-rollback-contract.md) — update transaction (contract only)
