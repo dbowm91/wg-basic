@@ -32,6 +32,8 @@ jobs:
             --workflow .github/workflows/release-eggpack.yml
       - name: Exercise product installer delegation
         run: python3 scripts/test-release-installer.py
+      - name: Check signing-request verifier syntax
+        run: python3 scripts/test-signing-request.py
 
   native-release-candidate:
     strategy:
