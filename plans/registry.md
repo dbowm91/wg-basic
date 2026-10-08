@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-08 (Phase 9 M001–M004 strictly closed; M005 active)
+Last planning reconciliation: 2026-10-08 (Phase 9 M001–M005 strictly closed; Phase 10 unblocked for research/planning)
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -41,7 +41,7 @@ The architecture separates:
 
 The privileged service does not expose arbitrary shell, command, file-write, sysctl-path, nft-script, or raw-netlink execution.
 
-Current production code state: **Network control and Phases 6–8 are strictly closed. The authenticated product API and embedded UI provide server setup, client lifecycle, config/QR export, one-time enrollment, live telemetry, and bounded audit history.** Phase 9 M001–M004 are strictly closed: doctor reports read-only authoritative diagnostics; M002 adds singleton serve ownership, durable whole-network disable/enable, immutable backup verification, restore exclusion, and fail-closed state purge; M003 adds secret-safe structured events, bounded retention, crash/resource qualification, and the Phase 10 service contract; M004 qualifies abuse/security boundaries and the dependency gate. M005 is active. Phase 10 remains blocked on Phase 9 closure.
+Current production code state: **Network control and Phases 6–9 are strictly closed. The authenticated product API and embedded UI provide server setup, client lifecycle, config/QR export, one-time enrollment, live telemetry, and bounded audit history.** Phase 9 includes authoritative read-only doctor/preflight; singleton serve ownership; durable whole-network disable/enable, verified backup/restore, and fail-closed purge; secret-safe structured events and bounded housekeeping; crash/resource and abuse qualification; a pinned dependency advisory gate; and a real Phase 8→9 upgrade, rollback, clean-namespace recovery drill. Phase 10 distribution/install/update is unblocked for research/planning only and is not implemented.
 
 ## 3. Eggstack reuse disposition
 
@@ -69,8 +69,8 @@ Runtime dependency adoption remains evidence-driven.
 | Durable state/restart reconciliation | closed | `plans/subsystems/durable-state-restart-reconciliation-roadmap.md` + `plans/subsystems/durable-state-post-phase6-reconciliation-addendum.md` | Phase 6 complete; M001–M004 and post-Phase-6 C001 closed |
 | Management service/auth/security substrate | closed | `plans/subsystems/management-service-security-roadmap.md` + `plans/subsystems/management-service-post-phase7-reconciliation-addendum.md` | M001–M004 and post-Phase-7 C001 closed |
 | Product management/enrollment/UI | closed | `plans/subsystems/product-management-enrollment-ui-roadmap.md` | Phase 8 M001–M005 closed |
-| Operational hardening | active | `plans/subsystems/operational-hardening-roadmap.md` | M001–M004 closed; M005 active |
-| Distribution/install/update | proposed | not yet written | Phase 10; blocked behind Phase 9 closure |
+| Operational hardening | closed | `plans/subsystems/operational-hardening-roadmap.md` | M001–M005 closed; Phase 9 closed |
+| Distribution/install/update | unblocked for research/planning | not yet written | Phase 10; no implementation plan or updater exists |
 
 Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
 
@@ -78,16 +78,14 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
-| Operational hardening | M005 upgrade/rollback rehearsal + Phase 9 closure | **active** | `plans/implementation/operational-hardening/005-upgrade-rollback-rehearsal-and-phase9-closure.md` | M004 strict closure at `plans/closure/operational-hardening/004-status.md` |
-
-M005 is the sole active implementation plan. M001–M004 strictly closed in `plans/closure/operational-hardening/001-status.md` through `004-status.md`.
+No implementation plan is currently active. Operational-hardening M001–M005 strictly closed in `plans/closure/operational-hardening/001-status.md` through `005-status.md`.
 
 ## 6. Blocked implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Hard blocker |
 |---|---|---|---|---|
 
-No implementation plan is currently blocked. Phase 10 distribution/install/update remains proposed and blocked until Phase 9 M005 closes.
+No implementation plan is currently blocked. Phase 10 distribution/install/update is unblocked for research/planning after Phase 9 closure; implementation remains out of scope until a bounded plan is written.
 
 ## 7. Recently closed work
 
@@ -95,6 +93,7 @@ No implementation plan is currently blocked. Phase 10 distribution/install/updat
 - Operational-hardening M002 strict closure: `plans/closure/operational-hardening/002-status.md` (implementation commit `ae60e81`; real serve lease, schema v5, network lifecycle, recovery and purge evidence).
 - Operational-hardening M003 strict closure: `plans/closure/operational-hardening/003-status.md` (implementation commit `5815c59`; structured events, bounded retention, crash/resource qualification, and service-manager contract).
 - Operational-hardening M004 strict closure: `plans/closure/operational-hardening/004-status.md` (implementation commits `f821e3b` and `4c326f4`; abuse-boundary tests, threat review, and pinned advisory gate).
+- Operational-hardening M005 strict closure and **Phase 9 closure**: `plans/closure/operational-hardening/005-status.md` (implementation head `6a9f354`; CI run `37741533304`).
 
 - M001 strict closure: `plans/closure/network-control/001-status.md`.
 - M002 strict closure: `plans/closure/network-control/002-status.md`.
@@ -209,7 +208,7 @@ M001–M005, network-control C001, durable-state M001–M004, and durable-state 
 
 Phase 7 M004 closed strictly at `d5d5ca9`. The milestone delivered a self-contained embedded operator shell (12,723 bytes, compiled in, no document root, no external origin, no CSP concession), a deterministic `serve` lifecycle, sessions qualified across a real process restart over real cookies, four-way readiness differentiation, and end-to-end plus abuse/resource qualification against real processes and a real network backend. Two defects were corrected that the code alone would not have shown: `serve` died from `SIGTERM` without draining, because `ctrlc`'s `termination` feature was not enabled and only its handler covers a supervisor's signal; and `ManagementHealth::netd_reachable` could not distinguish a dead backend from an installation that had simply not applied anything yet, so an authenticated live read-only probe was added while the unauthenticated probe was deliberately left unable to dial the privileged backend. The rootful service fixture drives the management HTTP surface against a real `netd` inside a disposable namespace and qualifies real convergence in both directions — `ok` when converged, `degraded` when the backend is gone. Measured footprint is 13.34 MiB combined against the long-term 30 MiB engineering signal, with 0 idle CPU ticks for both roles over a two-second window; nothing was weakened to meet the signal, and the Argon2id parameters remain at the M002 policy, asserted with a latency *floor* so they cannot be traded for speed. No high or medium finding remains open. No historical closure record was edited.
 
-Phase 8 M005 closed at implementation head `8b20a7c`, completing the first user-facing product boundary. The buildless embedded UI consumes the authenticated API for setup, client lifecycle, explicit credential exports, one-time link actions, live telemetry, and audit. The combined Linux-integration suite and six-test product rootful suite passed; the rootful product case configures a real client from HTTP-exported values, proves a kernel handshake and traffic, then drives disable, re-enable, and delete through HTTP. The five embedded assets total 29,811 bytes. The release footprint measured 13.54 MiB combined serve/netd RSS and zero idle CPU ticks over two seconds; no high, medium, or low finding remains open. Phase 9 M001–M004 are strictly closed; M005 is active, and Phase 10 remains blocked on Phase 9 closure.
+Phase 8 M005 closed at implementation head `8b20a7c`, completing the first user-facing product boundary. The buildless embedded UI consumes the authenticated API for setup, client lifecycle, explicit credential exports, one-time link actions, live telemetry, and audit. The combined Linux-integration suite and six-test product rootful suite passed; the rootful product case configures a real client from HTTP-exported values, proves a kernel handshake and traffic, then drives disable, re-enable, and delete through HTTP. The five embedded assets total 29,811 bytes. The release footprint measured 13.54 MiB combined serve/netd RSS and zero idle CPU ticks over two seconds; no high, medium, or low finding remains open. Phase 9 M001–M005 are now strictly closed with the upgrade/rollback and clean-target recovery evidence at `plans/closure/operational-hardening/005-status.md`. Phase 10 is unblocked for research/planning only; update/install behavior remains unimplemented.
 
 At each future closure, update:
 

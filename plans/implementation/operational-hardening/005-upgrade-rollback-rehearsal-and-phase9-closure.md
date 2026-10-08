@@ -1,6 +1,6 @@
 # Operational Hardening M005 — Upgrade/Rollback Rehearsal and Phase 9 Closure
 
-Status: active
+Status: closed; strict closure recorded at `plans/closure/operational-hardening/005-status.md`
 
 Source roadmap:
 

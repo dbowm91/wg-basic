@@ -309,7 +309,7 @@ This is the first user-facing product-capability closure boundary.
 
 ## 11. Phase 9 — Operational hardening
 
-Status: planned; M001 ready.
+Status: closed; Phase 9 M001–M005 strictly closed. Closure evidence: `plans/closure/operational-hardening/005-status.md`.
 
 Owned by:
 
@@ -351,7 +351,7 @@ Phase 9 does not install systemd units or implement self-update; it produces the
 
 ## 12. Phase 10 — Distribution, installation, update, and rollback
 
-Status: blocked on a stable service/state layout from Phase 9.
+Status: unblocked for research/planning; implementation remains unwritten and not implemented.
 
 Owned by a future distribution/operations roadmap.
 
@@ -470,7 +470,7 @@ Before the first public production claim:
 | 6 durable state/restart reconciliation | closed | `plans/subsystems/durable-state-restart-reconciliation-roadmap.md` | — |
 | 7 service/security substrate | closed | `plans/subsystems/management-service-security-roadmap.md` | — |
 | 8 management API/UI/enrollment | closed | `plans/subsystems/product-management-enrollment-ui-roadmap.md` | — |
-| 9 operational hardening | ready to plan | future operations roadmap | — |
-| 10 distribution/update | proposed | future distribution roadmap | Phase 9 |
+| 9 operational hardening | closed | `plans/subsystems/operational-hardening-roadmap.md` | — |
+| 10 distribution/update | unblocked for research/planning | future distribution roadmap | Phase 9 closed; bounded roadmap/plan still needed |
 | 11 IPv6/route-policy qualification | deferred | future roadmap | stable product baseline |
 | 12 advanced capabilities | deferred | separate future research | explicit product decision |
