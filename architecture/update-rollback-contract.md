@@ -1,14 +1,21 @@
 # Update and rollback contract
 
 This contract is Phase 9 output for Phase 10. It describes the required
-transaction around a candidate binary and the authoritative SQLite database;
-wg-basic does not yet implement an automatic updater.
+transaction around a candidate binary and the authoritative SQLite database.
+The CLI now exposes `update --check`, `update`, and `update recover`, and the
+library contains bounded release-discovery, signature-before-projection,
+candidate-integrity, and durable-journal primitives. The production trust root
+is still unprovisioned, `update --check` fails before network access, and the
+mutating update/recovery transaction is not enabled. No automatic updater is
+available to operators.
 
-The M001 verify-only release foundation is strictly closed and implemented in `src/release.rs`: stable
-version policy, the two canonical GNU target mappings, Minisign verification,
-and Eggpack ReleaseManifest projection after signature verification. The
-production public trust root is not provisioned. This code performs no release
-discovery, acquisition, installation, service mutation, or live update.
+The M001 verify-only release foundation is strictly closed and implemented in
+`src/release.rs`: stable version policy, the two canonical GNU target mappings,
+Minisign verification, and Eggpack ReleaseManifest projection after signature
+verification. M004's bounded transport layer composes those primitives but is
+not callable from the production CLI until a trust root is provisioned. The
+production public trust root is not provisioned. No binary installation,
+service mutation, or live update is currently available.
 
 ## Transaction rule
 
