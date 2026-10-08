@@ -1,6 +1,6 @@
 # Distribution, Installation, Update, and Rollback Roadmap
 
-Status: active; M001 closed and M002 active
+Status: active; M001–M002 closed and M003 active
 
 Canonical references:
 
@@ -150,7 +150,7 @@ Expected outcomes:
 
 ## 6. M002 — Native system installation and systemd services
 
-Status: active; M001 is strictly closed.
+Status: closed at `plans/closure/distribution/002-status.md`.
 
 Implementation plan:
 
@@ -177,7 +177,7 @@ Expected outcomes:
 
 ## 7. M003 — Eggpack producer pipeline and signed draft release
 
-Status: blocked on M002.
+Status: ready; M002 is strictly closed.
 
 Implementation plan:
 
@@ -574,7 +574,7 @@ A production release requires explicit maintainer authorization after:
 | Milestone | Status | Implementation plan | Hard blocker |
 |---|---|---|---|
 | M001 release identity/authenticity/targets | closed | `plans/implementation/distribution/001-release-identity-authenticity-and-targets.md` | `plans/closure/distribution/001-status.md` |
-| M002 system install/service layout | ready | `plans/implementation/distribution/002-system-install-and-service-layout.md` | M001 closed |
-| M003 Eggpack producer pipeline/signed draft | blocked | `plans/implementation/distribution/003-eggpack-release-pipeline-and-signed-draft.md` | M002 |
+| M002 system install/service layout | closed | `plans/implementation/distribution/002-system-install-and-service-layout.md` | `plans/closure/distribution/002-status.md` |
+| M003 Eggpack producer pipeline/signed draft | ready | `plans/implementation/distribution/003-eggpack-release-pipeline-and-signed-draft.md` | M002 closed |
 | M004 transactional self-update/rollback | blocked | `plans/implementation/distribution/004-transactional-self-update-and-rollback.md` | M003 |
 | M005 lifecycle E2E/Phase 10 closure | blocked | `plans/implementation/distribution/005-install-update-uninstall-e2e-and-phase10-closure.md` | M004 |

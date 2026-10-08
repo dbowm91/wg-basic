@@ -1,6 +1,6 @@
 # Distribution M002 — System Install and Service Layout
 
-Status: active
+Status: closed
 
 Source roadmap:
 

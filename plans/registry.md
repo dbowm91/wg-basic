@@ -42,7 +42,7 @@ The architecture separates:
 
 The privileged service does not expose arbitrary shell, command, file-write, sysctl-path, nft-script, or raw-netlink execution.
 
-Current production code state: **Network control and Phases 6–9 are strictly closed. The authenticated product API and embedded UI provide server setup, client lifecycle, config/QR export, one-time enrollment, live telemetry, bounded audit history, operational diagnostics, safe maintenance/recovery, and a proven old/new database rollback contract.** Phase 10 is fully researched/planned but not implemented. The selected distribution baseline is systemd/Linux x86_64+aarch64, Eggpack producer contracts, project-owned Minisign release authenticity, Eggup local transaction/service primitives, root-owned install/update metadata, and a crash-recoverable binary+database update journal.
+Current production code state: **Network control and Phases 6–9 are strictly closed. The authenticated product API and embedded UI provide server setup, client lifecycle, config/QR export, one-time enrollment, live telemetry, bounded audit history, operational diagnostics, safe maintenance/recovery, and a proven old/new database rollback contract.** Phase 10 implementation is underway: M001 release identity/authenticity and M002 native system installation are strictly closed; M003 is ready. M004 and M005 remain blocked in order. The selected distribution baseline is systemd/Linux x86_64+aarch64, Eggpack producer contracts, project-owned Minisign release authenticity, Eggup local transaction/service primitives, root-owned install/update metadata, and a crash-recoverable binary+database update journal.
 
 ## 3. Eggstack reuse disposition
 
@@ -71,7 +71,7 @@ Runtime dependency adoption remains evidence-driven.
 | Management service/auth/security substrate | closed | `plans/subsystems/management-service-security-roadmap.md` + `plans/subsystems/management-service-post-phase7-reconciliation-addendum.md` | M001–M004 and post-Phase-7 C001 closed |
 | Product management/enrollment/UI | closed | `plans/subsystems/product-management-enrollment-ui-roadmap.md` | Phase 8 M001–M005 closed |
 | Operational hardening | closed | `plans/subsystems/operational-hardening-roadmap.md` | M001–M005 closed; Phase 9 closed |
-| Distribution/install/update | planned | `plans/subsystems/distribution-install-update-roadmap.md` | M001 ready; M002–M005 blocked in order |
+| Distribution/install/update | active | `plans/subsystems/distribution-install-update-roadmap.md` | M001–M002 closed; M003 ready; M004–M005 blocked in order |
 
 Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
 
@@ -79,9 +79,9 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
-| Distribution/install/update | M002 system install/service layout | **active** | `plans/implementation/distribution/002-system-install-and-service-layout.md` | M001 strict closure at `7f4e49f` |
+| Distribution/install/update | M003 Eggpack pipeline/signing handoff | **ready** | `plans/implementation/distribution/003-eggpack-release-pipeline-and-signed-draft.md` | M002 strict closure at `plans/closure/distribution/002-status.md` |
 
-M001 is strictly closed. M002 is the only implementation-ready plan and covers native system installation; update, publishing, and rollback remain blocked in order.
+M001 and M002 are strictly closed. M003 is the only implementation-ready plan and covers the producer/release handoff; updater and lifecycle closure remain blocked in order.
 
 ## 6. Blocked implementation plans
 
@@ -101,6 +101,7 @@ Production public-release readiness additionally requires maintainer provisionin
 - Operational-hardening M004 strict closure: `plans/closure/operational-hardening/004-status.md` (implementation commits `f821e3b` and `4c326f4`; abuse-boundary tests, threat review, and pinned advisory gate).
 - Operational-hardening M005 strict closure and **Phase 9 closure**: `plans/closure/operational-hardening/005-status.md` (implementation head `6a9f354`; CI run `37741533304`).
 - Distribution M001 strict closure: `plans/closure/distribution/001-status.md` (implementation head `c4d4e87`; native target run `37782271310`; full CI run `37782271299`).
+- Distribution M002 strict closure: `plans/closure/distribution/002-status.md` (implementation head `d1813da`; systemd qualification and full CI run `37799075225`).
 
 - M001 strict closure: `plans/closure/network-control/001-status.md`.
 - M002 strict closure: `plans/closure/network-control/002-status.md`.
