@@ -1,6 +1,6 @@
 # Operational Hardening M005 — Upgrade/Rollback Rehearsal and Phase 9 Closure
 
-Status: blocked on Operational Hardening M004 closure
+Status: active
 
 Source roadmap:
 

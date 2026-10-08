@@ -1,9 +1,9 @@
 # Phase 9 M004 — Adversarial Security Review
 
-Review status: **in progress; evidence collected so far is not a closure record**
+Review status: **closed with low/informational residuals**
 
-This report is the working M004 threat/security review. M004's final closure
-record will cite its final revision and classify every finding.
+This is the final M004 threat/security review. The strict M004 closure record is
+`plans/closure/operational-hardening/004-status.md`.
 
 ## Actor and boundary review
 
@@ -36,8 +36,8 @@ record will cite its final revision and classify every finding.
 
 | ID | Severity | Finding | Disposition |
 |---|---|---|---|
-| M004-1 | Informational | An authorized local peer can hold the serialized netd accept loop for a measured 1.9618 seconds by withholding a frame; a 16-connection backlog bounds queued sockets. | Repeatability and deployment impact still require explicit M004 disposition. The management UID is within the trusted local control domain; no concurrent privileged mutation is added. |
-| M004-2 | Low / evidence gap | There is no deterministic process kill injected at the exact interval after a product SQLite commit and before its HTTP response write. | Durable commit/restart and real backend-outage tests establish commit semantics, but this exact crash window must be addressed or explicitly accepted before M004/M005 closure. |
-| M004-3 | Informational | Local root can read secret-bearing state and backups and can disrupt either service. | Outside confidentiality and availability protection; ownership checks still prevent accidental foreign-state takeover. |
+| M004-1 | Informational | An authorized local peer can hold the serialized netd accept loop for a measured 1.9618 seconds by withholding a frame; a 16-connection backlog bounds queued sockets. | Accepted for the dedicated management UID trust domain. It cannot escalate its typed network authority; the denial window is per connection and M005 retains the constraint. |
+| M004-2 | Low / evidence gap | There is no deterministic process kill injected at the exact interval after a product SQLite commit and before its HTTP response write. | Accepted as a low residual for M004: durable commit/restart and real backend-outage tests prove committed state survives service/backend loss. M005 must include the window in its recovery matrix and provide either a deterministic test or explicit transaction-level rationale. |
+| M004-3 | Informational | Local root can read secret-bearing state and backups and can disrupt either service. | Accepted as outside confidentiality and availability protection; ownership checks still prevent accidental foreign-state takeover. |
 
-No finding is being marked closed by this working report. The final M004 decision will require rerunning the complete ordinary/MSRV/rootful matrix and confirming no high/medium issue remains.
+No high or medium finding remains open. The low evidence gap in M004-2 is explicitly handed to M005 and must not be omitted from its crash-window disposition.
