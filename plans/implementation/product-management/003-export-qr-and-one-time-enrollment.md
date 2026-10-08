@@ -1,6 +1,6 @@
 # Product Management M003 — Export, QR, and One-Time Enrollment
 
-Status: active
+Status: closed. Evidence: `plans/closure/product-management/003-status.md`.
 
 Source roadmap:
 

@@ -1,6 +1,6 @@
 # Product Management, Enrollment, and UI Roadmap
 
-Status: active; M001–M002 closed, M003 active
+Status: active; M001–M003 closed, M004 active
 
 Canonical references:
 
@@ -209,7 +209,7 @@ Expected outcomes:
 
 ## 7. M003 — Standard export, QR, and one-time enrollment
 
-Status: active; M002 closed.
+Status: closed. Evidence: `plans/closure/product-management/003-status.md`.
 
 Implementation plan:
 
@@ -238,7 +238,7 @@ Expected outcomes:
 
 ## 8. M004 — Live telemetry and audit/status surface
 
-Status: blocked on M003.
+Status: active; M003 closed.
 
 Implementation plan:
 
@@ -583,7 +583,7 @@ Secret routes additionally assert:
 | Milestone | Status | Implementation plan | Hard blocker |
 |---|---|---|---|
 | M001 product model + mutations | closed | `plans/implementation/product-management/001-product-model-and-generation-safe-mutations.md` | post-Phase-7 C001 (closed) |
-| M002 authenticated CRUD API | ready | `plans/implementation/product-management/002-authenticated-product-crud-api.md` | M001 (closed) |
-| M003 export/QR/enrollment | blocked | `plans/implementation/product-management/003-export-qr-and-one-time-enrollment.md` | M002 |
-| M004 telemetry/audit surface | blocked | `plans/implementation/product-management/004-live-telemetry-and-audit-surface.md` | M003 |
+| M002 authenticated CRUD API | closed | `plans/implementation/product-management/002-authenticated-product-crud-api.md` | `plans/closure/product-management/002-status.md` |
+| M003 export/QR/enrollment | closed | `plans/implementation/product-management/003-export-qr-and-one-time-enrollment.md` | `plans/closure/product-management/003-status.md` |
+| M004 telemetry/audit surface | active | `plans/implementation/product-management/004-live-telemetry-and-audit-surface.md` | M003 closed |
 | M005 embedded product UI/closure | blocked | `plans/implementation/product-management/005-embedded-product-ui-and-phase8-qualification.md` | M004 |
