@@ -3,7 +3,9 @@
   "mode": {
     "product_wrappers": {
       "posix_source": "release/eggpack/install.sh",
-      "generated_posix_name": "install-exact.sh"
+      "powershell_source": "release/eggpack/install.ps1",
+      "generated_posix_name": "install-exact.sh",
+      "generated_powershell_name": "install-exact.ps1"
     }
   }
 }
