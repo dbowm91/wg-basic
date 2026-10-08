@@ -12,6 +12,7 @@ Authoritative companions:
 - `plans/adr/003-management-http-auth-and-worker-boundary.md`
 - `plans/adr/004-product-management-enrollment-and-api-semantics.md`
 - `plans/adr/005-operational-hardening-maintenance-and-recovery.md`
+- `plans/adr/006-distribution-install-authenticity-and-update.md`
 
 This roadmap orders wg-basic from a fresh repository to a small, production-credible Linux-native WireGuard appliance. Milestone-specific execution belongs in subsystem roadmaps and `plans/implementation/`.
 
@@ -351,31 +352,60 @@ Phase 9 does not install systemd units or implement self-update; it produces the
 
 ## 12. Phase 10 — Distribution, installation, update, and rollback
 
-Status: unblocked for research/planning; implementation remains unwritten and not implemented.
+Status: planned; M001 ready.
 
-Owned by a future distribution/operations roadmap.
+Owned by:
 
-Preferred Eggstack direction:
+- `plans/subsystems/distribution-install-update-roadmap.md`.
 
-- Eggup for staged local update/replacement, ownership revalidation, locking, rollback/recovery evidence, and service lifecycle;
-- Eggpack for deterministic producer-side release contracts and draft release preparation;
-- project-owned release authenticity/signing policy.
+Architecture decision:
 
-Expected release targets:
+- `plans/adr/006-distribution-install-authenticity-and-update.md`.
 
-- Linux x86_64;
-- Linux aarch64;
-- optional ARMv7 only after qualified.
+Objective:
+
+Turn the closed Linux appliance into a signed, native, systemd-managed installation with transactional self-update and fail-safe rollback.
+
+Selected Eggstack boundaries:
+
+- Eggup Core for local staged/integrity/ownership-safe executable replacement;
+- Eggup acquisition + preferred curl adapter for bounded release acquisition;
+- Eggup Eggpack adapter for signed-manifest-derived artifact inputs;
+- Eggup-service for explicit systemd registration/lifecycle mechanics;
+- Eggpack for deterministic producer target/build/manifest/installer/draft-release contracts;
+- wg-basic owns release authenticity, service ordering, state backup/migration, health policy, update journal/commit marker, and crash recovery.
+
+Release target baseline:
+
+- `x86_64-unknown-linux-gnu`;
+- `aarch64-unknown-linux-gnu`;
+- native qualification required for both;
+- ARMv7/musl/non-systemd Linux remain unsupported until separate qualification.
+
+Authenticity baseline:
+
+- detached Minisign signature over the exact Eggpack release manifest;
+- pinned project public verification key in the installed updater;
+- production private signing key kept outside the repository and ordinary CI;
+- GitHub/Sigstore attestations may supplement but do not replace the runtime trust root.
 
 Expected operator experience:
 
 ```text
-install -> preflight -> initialize -> start -> print management URL
-update  -> stage -> verify -> stop/replace -> start/health -> commit or rollback
-uninstall -> stop/remove program files while preserving VPN state unless purge requested
+install -> verify -> systemd users/services -> state init -> doctor -> admin bootstrap
+update  -> signed manifest -> stage -> DB backup -> stop -> replace -> migrate/health -> commit or rollback
+uninstall -> stop/remove owned program/service material while preserving VPN state by default
 ```
 
-Docker/container distribution MAY be added as secondary packaging only.
+Milestones:
+
+- M001 release identity/authenticity/target qualification;
+- M002 system install/service layout;
+- M003 Eggpack producer pipeline and signed-draft handoff;
+- M004 transactional self-update/rollback;
+- M005 install/update/uninstall E2E and Phase 10 closure.
+
+Docker/container distribution MAY be added later as secondary packaging only.
 
 ## 13. Phase 11 — IPv6 and route-policy production qualification
 
