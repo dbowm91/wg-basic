@@ -648,7 +648,63 @@ It is the rollback authority for returning to an older binary whose schema suppo
 
 The automatic pre-migration snapshot remains separate defense-in-depth evidence.
 
-## 64. Status vocabulary for planning
+## 64. Release manifest
+
+A **release manifest** is the Eggpack ReleaseManifest document binding one wg-basic release identity to its canonical target artifacts, exact byte sizes, and SHA-256 digests.
+
+Its artifact hashes are integrity evidence.
+
+The manifest becomes authenticity-bearing wg-basic release metadata only after its exact bytes verify under the project release signing key.
+
+## 65. Release trust root
+
+The **release trust root** is the pinned public verification key accepted by an installed wg-basic binary for detached release-manifest signatures.
+
+The corresponding private signing key is maintainer-controlled release authority and MUST NOT be present in the repository, ordinary CI, logs, artifacts, or the shipped binary.
+
+A fixture signing key is not a release trust root.
+
+## 66. Installation metadata
+
+**Installation metadata** is the root-owned, secret-free record describing the system installation wg-basic is authorized to refresh, update, or uninstall.
+
+It binds safe facts such as:
+
+- installed binary/version/target and digest;
+- exact unit/sysusers file paths and digests;
+- service identities;
+- state/runtime paths;
+- source release/manifest/signing-key identity.
+
+It is ownership evidence for program/service material, not authority over the VPN database itself.
+
+## 67. Update journal
+
+The **update journal** is the root-owned crash-recovery state machine for one system update transaction.
+
+It records only safe metadata and a durable transaction phase.
+
+The journal's `Committed` state is the update commit marker.
+
+PID/process observations are never substitutes for the journal phase.
+
+## 68. Recovery generation
+
+A **recovery generation** is the verified prior executable plus its compatible pre-update state snapshot retained by the update transaction until the candidate is durably committed.
+
+It is distinct from Eggup's in-process rollback material: wg-basic retains it specifically so recovery remains possible after updater process death.
+
+## 69. Bootstrap trust
+
+**Bootstrap trust** is the trust placed in the channel that delivers the initial installer before wg-basic's pinned release trust root can protect self-update.
+
+For the convenience `curl | sudo sh` path, the initial script is trusted through the configured HTTPS/GitHub delivery path.
+
+High-assurance bootstrap verifies detached signatures with an independently obtained public key before executing the installer.
+
+The installer cannot authenticate itself solely with a key embedded in the same unverified script.
+
+## 70. Status vocabulary for planning
 
 Planning uses:
 
