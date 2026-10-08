@@ -550,6 +550,17 @@ fn v4_product_traffic_rolls_back_and_reupgrades_as_one_transaction() {
         String::from_utf8_lossy(&migration.stderr)
     );
     assert!(String::from_utf8_lossy(&migration.stdout).contains("schema version:     5"));
+    checkpoint_state(&state);
+    let migrated_snapshot = wg_basic::state::inspect_readonly(&state).unwrap();
+    let migrated_interface = migrated_snapshot.desired.state.interfaces[0].id;
+    assert_eq!(
+        migrated_snapshot
+            .product
+            .network_operational_enabled
+            .get(&migrated_interface),
+        Some(&true),
+        "v4→v5 migration must preserve the prior enabled network behavior"
+    );
     let auto_snapshot = state.with_file_name("state.db.pre-migration-v4");
     assert!(auto_snapshot.exists());
     let snapshot_verify = Command::new(candidate)
