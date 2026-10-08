@@ -1606,7 +1606,6 @@ pub fn recover() -> Result<(), String> {
     if journal.transaction_id != initial.transaction_id {
         return Err("update journal changed while acquiring the transaction lock".into());
     }
-    validate_transaction_directory(&journal)?;
     if journal.phase == UpdatePhase::Committed || journal.phase == UpdatePhase::RolledBack {
         let expected_version = if journal.phase == UpdatePhase::Committed {
             &journal.version_to
@@ -1664,6 +1663,7 @@ pub fn recover() -> Result<(), String> {
     // An interrupted transaction must not leave a possibly unknown generation
     // serving while its bytes and recovery artifacts are classified.
     stop_owned_services()?;
+    validate_transaction_directory(&journal)?;
     let current_digest = match installed_binary_digest() {
         Ok(digest) => digest,
         Err(_) => {
