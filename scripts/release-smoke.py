@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import tomllib
 from pathlib import Path
 
 
@@ -23,11 +24,18 @@ def main() -> int:
         print("expected one candidate path", file=sys.stderr)
         return 2
     binary = Path(sys.argv[1])
+    with (Path.cwd() / "Cargo.toml").open("rb") as handle:
+        package_version = tomllib.load(handle)["package"]["version"]
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", package_version):
+        raise RuntimeError("source package version is not stable X.Y.Z")
+    runtime_plan = Path.cwd() / "eggpack-runtime" / "release-plan.json"
+    if runtime_plan.exists():
+        plan = json.loads(runtime_plan.read_text(encoding="utf-8"))
+        if plan.get("release_id") != package_version:
+            raise RuntimeError("Eggpack manifest identity does not match Cargo package version")
     version = run(binary, "--version")
-    if version.returncode or not re.fullmatch(
-        r"wg-basic [0-9]+\.[0-9]+\.[0-9]+\n?", version.stdout
-    ):
-        raise RuntimeError("candidate version identity is invalid")
+    if version.returncode or version.stdout.strip() != f"wg-basic {package_version}":
+        raise RuntimeError("candidate version identity does not match release source")
     help_result = run(binary, "--help")
     if help_result.returncode or "Linux-native WireGuard appliance" not in help_result.stdout:
         raise RuntimeError("candidate help smoke failed")
