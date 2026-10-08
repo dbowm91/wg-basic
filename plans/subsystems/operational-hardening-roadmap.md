@@ -1,6 +1,6 @@
 # Operational Hardening Roadmap
 
-Status: planned; M001 ready
+Status: active; M001 in progress
 
 Canonical references:
 

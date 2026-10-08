@@ -57,8 +57,18 @@ enum Command {
     },
     /// Read-only service capability check.
     Doctor {
+        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        state: PathBuf,
         #[arg(long, default_value = DEFAULT_SOCKET)]
         socket: PathBuf,
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        http_bind: Option<String>,
+        #[arg(long)]
+        canonical_origin: Option<String>,
+        #[arg(long)]
+        allow_non_loopback: bool,
     },
     /// Unprivileged management runtime: opens the durable store and reconciles
     /// the current desired generation against the local network service.
@@ -236,30 +246,120 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
             );
             Ok(())
         }
-        Some(Command::Doctor { socket }) => {
-            let result = request(&socket, RequestOperation::InspectCapabilities, 2)
-                .map_err(|_| "could not inspect capabilities through local netd".to_owned())?;
-            match result {
-                ResponseBody::Capabilities(snapshot) => println!(
-                    "{}",
-                    serde_json::to_string_pretty(&snapshot)
-                        .map_err(|_| "could not format capability snapshot")?
+        Some(Command::Doctor {
+            state,
+            socket,
+            json,
+            http_bind,
+            canonical_origin,
+            allow_non_loopback,
+        }) => {
+            let mut checks = doctor_state_checks(&state);
+            checks.push(
+                match request(&socket, RequestOperation::InspectCapabilities, 2) {
+                    Ok(ResponseBody::Capabilities(_)) => wg_basic::doctor::DoctorCheck::new(
+                        wg_basic::doctor::DoctorCheckId::Netd,
+                        wg_basic::doctor::DoctorDisposition::Pass,
+                        "netd answered the typed capability request",
+                        "protocol version accepted",
+                        "none",
+                    ),
+                    _ => wg_basic::doctor::DoctorCheck::new(
+                        wg_basic::doctor::DoctorCheckId::Netd,
+                        wg_basic::doctor::DoctorDisposition::Unknown,
+                        "netd capability state is unavailable",
+                        "no safe capability response was received",
+                        "start netd and verify its socket path and peer permissions",
+                    ),
+                },
+            );
+            checks.push(wg_basic::doctor::DoctorCheck::new(
+                wg_basic::doctor::DoctorCheckId::ServiceLease,
+                wg_basic::doctor::DoctorDisposition::Unknown,
+                "service singleton lease is not available in this milestone",
+                "serve lease support is implemented in Phase 9 M002",
+                "ensure only one serve process uses this state database",
+            ));
+            checks.push(match std::fs::read_to_string("/proc/sys/net/ipv4/ip_forward") {
+                Ok(value) if value.trim() == "1" => wg_basic::doctor::DoctorCheck::new(
+                    wg_basic::doctor::DoctorCheckId::Forwarding,
+                    wg_basic::doctor::DoctorDisposition::Pass,
+                    "IPv4 forwarding is enabled",
+                    "read-only kernel setting is 1",
+                    "none",
                 ),
-                ResponseBody::Pong { .. } => {
-                    return Err("netd returned an unexpected protocol response".into())
-                }
-                ResponseBody::WireGuardDevice(_)
-                | ResponseBody::WireGuardApplied(_)
-                | ResponseBody::ManagedInterfacePlan(_)
-                | ResponseBody::ManagedInterfaceApplied(_)
-                | ResponseBody::NetworkPolicyPlan(_)
-                | ResponseBody::NetworkPolicyApplied(_)
-                | ResponseBody::InstallationNetworkPlanned(_)
-                | ResponseBody::InstallationNetworkApplied(_) => {
-                    return Err("netd returned an unexpected protocol response".into())
-                }
+                Ok(_) => wg_basic::doctor::DoctorCheck::new(
+                    wg_basic::doctor::DoctorCheckId::Forwarding,
+                    wg_basic::doctor::DoctorDisposition::Unknown,
+                    "IPv4 forwarding is disabled",
+                    "read-only kernel setting is 0; the product snapshot is unavailable",
+                    "check whether this installation routes traffic, then enable forwarding through host configuration if required",
+                ),
+                Err(_) => wg_basic::doctor::DoctorCheck::new(
+                    wg_basic::doctor::DoctorCheckId::Forwarding,
+                    wg_basic::doctor::DoctorDisposition::Unknown,
+                    "IPv4 forwarding state could not be read",
+                    "the expected procfs setting is unavailable",
+                    "run doctor on the Linux host that owns the WireGuard network",
+                ),
+            });
+            checks.push(wg_basic::doctor::DoctorCheck::new(
+                wg_basic::doctor::DoctorCheckId::NetworkOwnership,
+                wg_basic::doctor::DoctorDisposition::Unknown,
+                "managed network ownership has not been inspected",
+                "the diagnostic did not issue a plan-only aggregate network request",
+                "review network ownership with the normal read-only network inspection tools",
+            ));
+            if let Some(bind) = http_bind {
+                use wg_basic::http::ServeConfig;
+                let valid = match (canonical_origin.as_deref(), allow_non_loopback) {
+                    (Some(origin), false) if origin.starts_with("https://") => {
+                        ServeConfig::behind_https_proxy(
+                            state.clone(),
+                            socket.clone(),
+                            &bind,
+                            origin,
+                        )
+                        .is_ok()
+                    }
+                    (Some(origin), true) => ServeConfig::acknowledged_off_host(
+                        state.clone(),
+                        socket.clone(),
+                        &bind,
+                        origin,
+                    )
+                    .is_ok(),
+                    (None, false) => ServeConfig::new(state.clone(), socket.clone(), &bind).is_ok(),
+                    _ => false,
+                };
+                checks.push(match valid {
+                    true => wg_basic::doctor::DoctorCheck::new(
+                        wg_basic::doctor::DoctorCheckId::HttpPolicy,
+                        wg_basic::doctor::DoctorDisposition::Pass,
+                        "HTTP bind and origin policy are valid",
+                        "same ServeConfig policy as serve",
+                        "none",
+                    ),
+                    false => wg_basic::doctor::DoctorCheck::new(
+                        wg_basic::doctor::DoctorCheckId::HttpPolicy,
+                        wg_basic::doctor::DoctorDisposition::Fail,
+                        "HTTP bind and origin policy are invalid",
+                        "ServeConfig rejected the supplied policy",
+                        "correct the bind/origin and exposure acknowledgement",
+                    ),
+                });
             }
-            Ok(())
+            let report = wg_basic::doctor::DoctorReport::new(checks);
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&report)
+                        .map_err(|_| "could not format diagnostic report")?
+                );
+            } else {
+                print!("{}", report.render_human());
+            }
+            std::process::exit(report.exit_code());
         }
         Some(Command::Netd {
             socket,
@@ -338,6 +438,166 @@ fn run_admin_action(action: AdminAction) -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+/// Performs only read-only checks. In particular this deliberately avoids
+/// `StateStore::open`, whose normal contract is to apply pending migrations.
+#[cfg(target_os = "linux")]
+fn doctor_state_checks(path: &std::path::Path) -> Vec<wg_basic::doctor::DoctorCheck> {
+    use rusqlite::OpenFlags;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    use wg_basic::doctor::{DoctorCheck, DoctorCheckId as Id, DoctorDisposition as D};
+
+    let mut checks = Vec::new();
+    let version = rusqlite::Connection::open_in_memory().and_then(|connection| {
+        connection.query_row("SELECT sqlite_version(), sqlite_source_id()", [], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+    });
+    let (version_text, source_id) =
+        version.unwrap_or_else(|_| ("unknown".into(), "unavailable".into()));
+    let supported = version_text
+        .split('.')
+        .map(|part| part.parse::<u32>().unwrap_or(0))
+        .collect::<Vec<_>>();
+    let sqlite_ok = supported.as_slice() >= &[3, 51, 3];
+    checks.push(DoctorCheck::new(
+        Id::Sqlite,
+        if sqlite_ok { D::Pass } else { D::Fail },
+        if sqlite_ok {
+            "bundled SQLite runtime meets the WAL safety floor"
+        } else {
+            "SQLite runtime is below the supported WAL safety floor"
+        },
+        format!("SQLite {version_text}; source {source_id}"),
+        if sqlite_ok {
+            "none"
+        } else {
+            "use the bundled SQLite runtime at version 3.51.3 or newer"
+        },
+    ));
+
+    let result = (|| -> Result<(i64, String), &'static str> {
+        let metadata = std::fs::symlink_metadata(path)
+            .map_err(|_| "state file does not exist or cannot be inspected")?;
+        if !metadata.file_type().is_file() {
+            return Err("state path is not a regular non-symlink file");
+        }
+        let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+        let parent_meta =
+            std::fs::metadata(parent).map_err(|_| "state parent cannot be inspected")?;
+        let uid = std::fs::metadata("/proc/self")
+            .map_err(|_| "effective uid cannot be inspected")?
+            .uid();
+        if metadata.uid() != uid
+            || metadata.permissions().mode() & 0o077 != 0
+            || parent_meta.uid() != uid
+            || parent_meta.permissions().mode() & 0o022 != 0
+        {
+            return Err("state ownership or permissions are broader than the store policy");
+        }
+        let wal_path = sidecar_path(path, "-wal");
+        let shm_path = sidecar_path(path, "-shm");
+        if wal_path.exists() || shm_path.exists() {
+            return Err(
+                "SQLite WAL sidecars are present; safe immutable inspection is unavailable",
+            );
+        }
+        let uri = immutable_sqlite_uri(path)?;
+        let connection = rusqlite::Connection::open_with_flags(
+            uri,
+            OpenFlags::SQLITE_OPEN_READ_ONLY
+                | OpenFlags::SQLITE_OPEN_NOFOLLOW
+                | OpenFlags::SQLITE_OPEN_URI,
+        )
+        .map_err(|_| "state database could not be opened in immutable read-only mode")?;
+        let quick: String = connection
+            .query_row("PRAGMA quick_check", [], |row| row.get(0))
+            .map_err(|_| "SQLite quick_check could not complete")?;
+        if quick != "ok" {
+            return Err("SQLite quick_check reported an integrity failure");
+        }
+        let fk: i64 = connection
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })
+            .map_err(|_| "foreign-key check could not complete")?;
+        if fk != 0 {
+            return Err("SQLite foreign-key check reported inconsistent rows");
+        }
+        let schema: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .map_err(|_| "schema version could not be read")?;
+        if !(1..=4).contains(&schema) {
+            return Err("schema version is unsupported by this binary");
+        }
+        if wal_path.exists() || shm_path.exists() {
+            return Err(
+                "SQLite WAL sidecars appeared during inspection; result is not authoritative",
+            );
+        }
+        Ok((schema, quick))
+    })();
+    checks.push(match result {
+        Ok((schema, _)) => DoctorCheck::new(
+            Id::State,
+            D::Pass,
+            "state file passed read-only safety and integrity checks",
+            format!("schema {schema}; SQLite quick_check and foreign-key check passed"),
+            "none",
+        ),
+        Err(reason) if reason == "state file does not exist or cannot be inspected" => {
+            DoctorCheck::new(
+                Id::State,
+                D::Warn,
+                "state database is not initialized",
+                reason,
+                "initialize the state database with the documented setup flow",
+            )
+        }
+        Err(reason) if reason.starts_with("SQLite WAL sidecars") => DoctorCheck::new(
+            Id::State,
+            D::Unknown,
+            "state database integrity was not inspected",
+            reason,
+            "stop the service before offline inspection, or rerun doctor when no WAL sidecars exist",
+        ),
+        Err(reason) => DoctorCheck::new(
+            Id::State,
+            D::Fail,
+            "state database failed a read-only safety check",
+            reason,
+            "correct the path/ownership or restore a verified backup",
+        ),
+    });
+    checks
+}
+
+#[cfg(target_os = "linux")]
+fn sidecar_path(path: &std::path::Path, suffix: &str) -> std::path::PathBuf {
+    let mut value = path.as_os_str().to_owned();
+    value.push(suffix);
+    value.into()
+}
+
+/// Builds a percent-encoded immutable URI so inspection neither creates WAL
+/// shared-memory files nor writes database metadata. Existing WAL sidecars are
+/// refused by the caller because immutable mode intentionally ignores them.
+#[cfg(target_os = "linux")]
+fn immutable_sqlite_uri(path: &std::path::Path) -> Result<String, &'static str> {
+    use std::os::unix::ffi::OsStrExt;
+    let absolute = std::path::absolute(path).map_err(|_| "path could not be made absolute")?;
+    let mut uri = String::from("file:");
+    for byte in absolute.as_os_str().as_bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(*byte, b'/' | b'-' | b'_' | b'.' | b'~') {
+            uri.push(char::from(*byte));
+        } else {
+            uri.push('%');
+            uri.push_str(&format!("{byte:02X}"));
+        }
+    }
+    uri.push_str("?mode=ro&immutable=1");
+    Ok(uri)
 }
 
 /// Reads a password from standard input, trimming exactly one trailing newline.
@@ -555,5 +815,50 @@ mod tests {
                 "state CLI must not advertise {forbidden}"
             );
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn doctor_state_check_does_not_change_the_database_or_create_sidecars() {
+        use std::{os::unix::fs::PermissionsExt, time::SystemTime};
+        let root = std::path::Path::new("/tmp").join(format!(
+            "wg-basic-doctor-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let path = root.join("state.db");
+        drop(wg_basic::state::StateStore::initialize(&path).unwrap());
+        let before = std::fs::read(&path).unwrap();
+        let entries_before = std::fs::read_dir(&root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>();
+
+        let checks = doctor_state_checks(&path);
+        let state = checks
+            .iter()
+            .find(|check| check.id == wg_basic::doctor::DoctorCheckId::State)
+            .unwrap();
+        let sqlite = checks
+            .iter()
+            .find(|check| check.id == wg_basic::doctor::DoctorCheckId::Sqlite)
+            .unwrap();
+        assert_eq!(state.disposition, wg_basic::doctor::DoctorDisposition::Pass);
+        assert_eq!(
+            sqlite.disposition,
+            wg_basic::doctor::DoctorDisposition::Pass
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        let entries_after = std::fs::read_dir(&root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>();
+        assert_eq!(entries_after, entries_before);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -784,10 +784,10 @@ mod tests {
         let second = auth.authenticate("admin", PASSWORD).unwrap();
         assert_eq!(store.session_count().unwrap(), 2);
 
-        // Expire only the first session by rewinding its own clock, so the
-        // sweep has something to find and something to keep.
-        let first_expiry = first.session.expires_at;
-        let later = first_expiry + 1;
+        // Sweep strictly beyond both expiries. Sessions issued in the same
+        // second can have equal deadlines, and `purge_expired_sessions` keeps a
+        // row whose expiry equals the supplied time.
+        let later = first.session.expires_at.max(second.session.expires_at) + 1;
         assert_eq!(store.purge_expired_sessions(later).unwrap(), 2);
         assert_eq!(store.session_count().unwrap(), 0);
         assert!(

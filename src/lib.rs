@@ -2,6 +2,7 @@
 
 #[cfg(target_os = "linux")]
 pub mod aggregate;
+pub mod doctor;
 pub mod domain;
 pub mod error;
 #[cfg(target_os = "linux")]
