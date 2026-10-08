@@ -46,6 +46,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "product_management",
         sql: include_str!("../migrations/003_product_management.sql"),
     },
+    Migration {
+        version: 4,
+        name: "enrollment_capabilities",
+        sql: include_str!("../migrations/004_enrollment_capabilities.sql"),
+    },
 ];
 
 /// The highest schema version this binary understands.

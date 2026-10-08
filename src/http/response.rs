@@ -17,11 +17,10 @@ use eggserve_primitives::{Response, ResponseBody, StatusCode};
 /// The whole-body ceiling for a management response.
 ///
 /// Every API literal in this module is far below it. The bound is the
-/// `assets::MAX_EMBEDDED_ASSET_BYTES_EACH` ceiling raised to a round number, so
-/// the embedded operator shell fits while nothing assembled at runtime can: no
-/// code path formats a value into a response body, so the only bodies that
-/// exist are the fixed literals and the compile-time assets.
-pub const MAX_MANAGEMENT_BODY_BYTES: usize = 16 * 1024;
+/// The largest bounded response, raised to include the locally generated QR
+/// SVG. Ordinary API responses remain much smaller, and dynamic responses are
+/// checked before construction.
+pub const MAX_MANAGEMENT_BODY_BYTES: usize = 256 * 1024;
 
 /// `text/plain` responses are never cached by a browser or an intermediary.
 ///

@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-08 (Phase 8 M002 closed; M003 unblocked)
+Last planning reconciliation: 2026-10-08 (Phase 8 M003 implementation active)
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -40,7 +40,7 @@ The architecture separates:
 
 The privileged service does not expose arbitrary shell, command, file-write, sysctl-path, nft-script, or raw-netlink execution.
 
-Current production code state: **Network control, Phase 6 durable state, and Phase 7 management/auth/service substrate are strictly closed. Phase 8 M001 and M002 are strictly closed; authenticated server/client CRUD is implemented. M003 export/QR/one-time enrollment is now ready, with M004 telemetry/audit and M005 product UI ordered behind it.** The service retains its bounded SQLite worker, Argon2id local-admin credentials, opaque revocable sessions, Host/Origin/CSRF enforcement, login throttling, embedded self-contained assets, and graceful supervisor shutdown.
+Current production code state: **Network control, Phase 6 durable state, and Phase 7 management/auth/service substrate are strictly closed. Phase 8 M001 and M002 are strictly closed; authenticated server/client CRUD is implemented. M003 export/QR/one-time enrollment is active; M004 telemetry/audit and M005 product UI remain ordered behind it.** The service retains its bounded SQLite worker, Argon2id local-admin credentials, opaque revocable sessions, Host/Origin/CSRF enforcement, login throttling, embedded self-contained assets, and graceful supervisor shutdown.
 
 ## 3. Eggstack reuse disposition
 
@@ -67,7 +67,7 @@ Runtime dependency adoption remains evidence-driven.
 | Linux network-control foundation | closed | `plans/subsystems/network-control-roadmap.md` + `plans/subsystems/network-control-post-foundation-reconciliation-addendum.md` | M001–M005 and C001 closed |
 | Durable state/restart reconciliation | closed | `plans/subsystems/durable-state-restart-reconciliation-roadmap.md` + `plans/subsystems/durable-state-post-phase6-reconciliation-addendum.md` | Phase 6 complete; M001–M004 and post-Phase-6 C001 closed |
 | Management service/auth/security substrate | closed | `plans/subsystems/management-service-security-roadmap.md` + `plans/subsystems/management-service-post-phase7-reconciliation-addendum.md` | M001–M004 and post-Phase-7 C001 closed |
-| Product management/enrollment/UI | active | `plans/subsystems/product-management-enrollment-ui-roadmap.md` | M001–M002 closed; M003 ready; M004–M005 ordered behind it |
+| Product management/enrollment/UI | active | `plans/subsystems/product-management-enrollment-ui-roadmap.md` | M001–M002 closed; M003 active; M004–M005 ordered behind it |
 | Distribution/install/update | proposed | not yet written | Phase 10; blocked behind Phase 9 operational hardening |
 
 Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
@@ -93,7 +93,7 @@ Phase 8 planning is complete under ADR-004 and `plans/subsystems/product-managem
 |---|---|---|---|---|
 | Product management/enrollment/UI | M001 product model + schema v3 + generation-safe mutations | **closed** | `plans/implementation/product-management/001-product-model-and-generation-safe-mutations.md` | post-Phase-7 C001 |
 | Product management/enrollment/UI | M002 authenticated product CRUD API | **closed** | `plans/implementation/product-management/002-authenticated-product-crud-api.md` | Phase 8 M001; `plans/closure/product-management/002-status.md` |
-| Product management/enrollment/UI | M003 export + QR + one-time enrollment | **ready** | `plans/implementation/product-management/003-export-qr-and-one-time-enrollment.md` | Phase 8 M002 closed |
+| Product management/enrollment/UI | M003 export + QR + one-time enrollment | **active** | `plans/implementation/product-management/003-export-qr-and-one-time-enrollment.md` | Phase 8 M002 closed |
 | Product management/enrollment/UI | M004 live telemetry + audit surface | blocked | `plans/implementation/product-management/004-live-telemetry-and-audit-surface.md` | Phase 8 M003 |
 | Product management/enrollment/UI | M005 embedded product UI + Phase 8 qualification | blocked | `plans/implementation/product-management/005-embedded-product-ui-and-phase8-qualification.md` | Phase 8 M004 |
 

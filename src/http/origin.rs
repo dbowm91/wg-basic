@@ -308,6 +308,11 @@ fn strip_host_port(host: &str) -> Option<String> {
 }
 
 impl OriginPolicy {
+    /// The configured canonical origin used to construct same-origin share URLs.
+    pub fn canonical_origin(&self) -> String {
+        self.canonical.as_header_value()
+    }
+
     /// Builds the default policy: loopback only, `http://127.0.0.1:<port>`.
     ///
     /// The allowed-host set contains both `127.0.0.1` and `[::1]` forms and the

@@ -52,9 +52,9 @@ use super::{
 use crate::{
     domain::{DesiredGeneration, PrincipalId},
     product::{
-        ClientCreateCommand, ClientDeleteCommand, ClientUpdateCommand, ProductClient,
-        ProductMutationReceipt, ProductServer, ProductService, ServerSetupCommand,
-        SetClientEnabledCommand,
+        ClientCreateCommand, ClientDeleteCommand, ClientUpdateCommand, CreatedEnrollmentLink,
+        EnrollmentCapabilityId, EnrollmentToken, ProductClient, ProductMutationReceipt,
+        ProductServer, ProductService, SecretArtifact, ServerSetupCommand, SetClientEnabledCommand,
     },
     state::{AttemptDisposition, StoredSession},
 };
@@ -159,6 +159,30 @@ pub enum WorkerCommand {
         command: ClientDeleteCommand,
         reply: oneshot::Sender<Result<ProductMutationReceipt, ProductFailure>>,
     },
+    /// Return one explicit secret-bearing client export artifact.
+    ClientConfig {
+        client_id: crate::domain::ClientId,
+        reply: oneshot::Sender<Result<SecretArtifact, ProductFailure>>,
+    },
+    /// Create one digest-only, expiring share capability.
+    CreateEnrollmentLink {
+        principal_id: PrincipalId,
+        client_id: crate::domain::ClientId,
+        ttl_seconds: u64,
+        reply: oneshot::Sender<Result<CreatedEnrollmentLink, ProductFailure>>,
+    },
+    /// Revoke an unused capability.
+    RevokeEnrollmentLink {
+        principal_id: PrincipalId,
+        capability_id: EnrollmentCapabilityId,
+        reply: oneshot::Sender<Result<bool, ProductFailure>>,
+    },
+    /// Consume a one-time capability, if it remains available.
+    ConsumeEnrollment {
+        capability_id: EnrollmentCapabilityId,
+        token: EnrollmentToken,
+        reply: oneshot::Sender<Result<Option<SecretArtifact>, ProductFailure>>,
+    },
     /// Stop the worker; the reply confirms the stop was observed.
     Shutdown { reply: oneshot::Sender<()> },
 }
@@ -215,6 +239,10 @@ pub enum ProductFailure {
     Invalid,
     #[error("durable state rejected the mutation")]
     StateUnavailable,
+    #[error("client export material is unavailable")]
+    SecretUnavailable,
+    #[error("enrollment capability is not available")]
+    EnrollmentUnavailable,
 }
 
 impl ProductFailure {
@@ -228,8 +256,14 @@ impl ProductFailure {
             ProductError::ServerAlreadyConfigured => Self::ServerAlreadyConfigured,
             ProductError::ServerNotConfigured => Self::ServerNotConfigured,
             ProductError::UnknownInterface(_)
+            | ProductError::UnknownClient(_)
             | ProductError::ClientMissingAfterMutation(_)
             | ProductError::ServerMissingAfterSetup => Self::NotFound,
+            ProductError::ClientPrivateKeyUnavailable => Self::SecretUnavailable,
+            ProductError::Artifact(_) => Self::Invalid,
+            ProductError::InvalidEnrollmentLifetime | ProductError::EnrollmentToken(_) => {
+                Self::Invalid
+            }
             ProductError::Key(_) => Self::Invalid,
             ProductError::Allocation(_) => Self::AddressUnavailable,
             ProductError::State(crate::state::StateError::StaleGeneration { .. }) => {
@@ -532,6 +566,62 @@ impl WorkerClient {
     pub async fn product_snapshot(&self) -> Result<ProductSnapshotReply, WorkerError> {
         let (reply, answer) = oneshot::channel();
         self.admit(WorkerCommand::ProductSnapshot { reply }).await?;
+        self.product_reply(answer).await
+    }
+
+    /// Renders one client configuration through the state-owning worker.
+    pub async fn client_config(
+        &self,
+        client_id: crate::domain::ClientId,
+    ) -> Result<SecretArtifact, WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::ClientConfig { client_id, reply })
+            .await?;
+        self.product_reply(answer).await
+    }
+
+    pub async fn create_enrollment_link(
+        &self,
+        principal_id: PrincipalId,
+        client_id: crate::domain::ClientId,
+        ttl_seconds: u64,
+    ) -> Result<CreatedEnrollmentLink, WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::CreateEnrollmentLink {
+            principal_id,
+            client_id,
+            ttl_seconds,
+            reply,
+        })
+        .await?;
+        self.product_reply(answer).await
+    }
+    pub async fn revoke_enrollment_link(
+        &self,
+        principal_id: PrincipalId,
+        capability_id: EnrollmentCapabilityId,
+    ) -> Result<bool, WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::RevokeEnrollmentLink {
+            principal_id,
+            capability_id,
+            reply,
+        })
+        .await?;
+        self.product_reply(answer).await
+    }
+    pub async fn consume_enrollment(
+        &self,
+        capability_id: EnrollmentCapabilityId,
+        token: EnrollmentToken,
+    ) -> Result<Option<SecretArtifact>, WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::ConsumeEnrollment {
+            capability_id,
+            token,
+            reply,
+        })
+        .await?;
         self.product_reply(answer).await
     }
 
@@ -978,6 +1068,47 @@ fn serve(runtime: ManagementRuntime, receiver: &mut mpsc::Receiver<WorkerCommand
                     })()
                     .map_err(product_failure),
                 );
+            }
+            WorkerCommand::ClientConfig { client_id, reply } => {
+                let result = ProductService::new(runtime.store())
+                    .client_config_material(client_id)
+                    .and_then(|material| {
+                        crate::product::render_config(&material)
+                            .map_err(crate::product::ProductError::Artifact)
+                    })
+                    .map_err(|error| ProductFailure::classify(&error));
+                let _ = reply.send(result);
+            }
+            WorkerCommand::CreateEnrollmentLink {
+                principal_id,
+                client_id,
+                ttl_seconds,
+                reply,
+            } => {
+                let result = ProductService::new(runtime.store())
+                    .create_enrollment_link(principal_id, client_id, ttl_seconds)
+                    .map_err(|error| ProductFailure::classify(&error));
+                let _ = reply.send(result);
+            }
+            WorkerCommand::RevokeEnrollmentLink {
+                principal_id,
+                capability_id,
+                reply,
+            } => {
+                let result = ProductService::new(runtime.store())
+                    .revoke_enrollment_link(principal_id, capability_id)
+                    .map_err(|error| ProductFailure::classify(&error));
+                let _ = reply.send(result);
+            }
+            WorkerCommand::ConsumeEnrollment {
+                capability_id,
+                token,
+                reply,
+            } => {
+                let result = ProductService::new(runtime.store())
+                    .consume_enrollment_link(capability_id, &token)
+                    .map_err(|error| ProductFailure::classify(&error));
+                let _ = reply.send(result);
             }
             WorkerCommand::Shutdown { reply } => {
                 let _ = reply.send(());

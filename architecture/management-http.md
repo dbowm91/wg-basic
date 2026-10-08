@@ -1,9 +1,9 @@
 # Management HTTP boundary and the bounded worker
 
 This document describes **current implemented behaviour**. Phase 7's service
-and security substrate is closed, and Phase 8 M001/M002 now expose the first
-generation-safe product management API. Export, enrollment, telemetry, audit
-query, and the product UI remain later Phase 8 milestones.
+and security substrate is closed, and Phase 8 M001–M003 now expose the
+generation-safe product API, explicit config/QR export, and one-time enrollment.
+Telemetry, audit query, and the product UI remain later Phase 8 milestones.
 
 Architecture decisions behind this boundary are recorded in
 [ADR-003](../plans/adr/003-management-http-auth-and-worker-boundary.md).
@@ -13,8 +13,9 @@ Credentials and sessions are in
 ## What exists today
 
 `wg-basic serve` is the unprivileged management service role. It publishes the
-authenticated service surface, product CRUD routes, one liveness probe, and the
-embedded operator shell.
+authenticated service surface, product CRUD and export routes, public one-time
+enrollment endpoints, one liveness probe, and embedded operator/enrollment
+pages.
 
 | Method | Path                | Auth    | CSRF     | Origin | Body |
 | ------ | ------------------- | ------- | -------- | ------ | ---- |
@@ -31,15 +32,23 @@ embedded operator shell.
 | `POST` | `/api/v1/clients/<canonical-uuid>/enable` | session | required | exact | generation JSON ≤ 8 KiB |
 | `POST` | `/api/v1/clients/<canonical-uuid>/disable` | session | required | exact | generation JSON ≤ 8 KiB |
 | `DELETE` | `/api/v1/clients/<canonical-uuid>` | session | required | exact | generation JSON ≤ 8 KiB |
+| `GET` | `/api/v1/clients/<canonical-uuid>/config` | session | none | — | none |
+| `GET` | `/api/v1/clients/<canonical-uuid>/qr` | session | none | — | none |
+| `POST` | `/api/v1/clients/<canonical-uuid>/enrollment-links` | session | required | exact | JSON ≤ 8 KiB |
+| `DELETE` | `/api/v1/enrollment-links/<canonical-uuid>` | session | required | exact | none |
+| `GET` | `/enroll/<canonical-uuid>` | capability page | none | — | none |
+| `POST` | `/api/v1/enroll/<canonical-uuid>/consume` | capability token | none | exact | JSON ≤ 1 KiB |
 | `GET`  | `/healthz`          | none    | none     | —      | none |
 | `GET`  | `/`                 | none    | none     | —      | none |
 | `GET`  | `/assets/app.css`   | none    | none     | —      | none |
 | `GET`  | `/assets/app.js`    | none    | none     | —      | none |
+| `GET` | `/enroll` | none | none | — | none |
+| `GET` | `/assets/enroll.js` | none | none | — | none |
 
 Login uses its 4 KiB bound. Product JSON mutations each use an explicit 8 KiB
-bound; read routes accept no body. The three shell routes answer only `GET` and
-are matched exactly from a closed table — there is no prefix rule, so `/assets/`
-and `/assets/app.css.map` are `404`. Client IDs must be canonical lowercase
+bound; read routes accept no body. Static shell/enrollment assets answer only
+`GET` and are matched exactly from a closed table — there is no prefix rule, so
+`/assets/` and `/assets/app.css.map` are `404`. Client IDs must be canonical lowercase
 UUIDs, and dynamic routes require an exact segment count.
 
 The product API is a thin typed-worker transport. Every unsafe request carries
@@ -54,8 +63,6 @@ in those projection types. See [product management](product-management.md).
 
 The following Phase 8 work is still absent:
 
-* **No config export, QR, or enrollment flow.** The local administrator is
-  provisioned by the CLI, never through the browser surface.
 * **No live telemetry or audit query route.** `/api/v1/health` remains the
   service health projection; client activity is not exposed yet.
 * **No product UI.** `/` remains the Phase 7 login shell and health readout.
@@ -95,12 +102,11 @@ src/http/                          src/management/
 * `src/management/worker.rs` owns the single OS thread that holds
   `ManagementRuntime`. It is the only way into management state.
 
-`src/http/assets.rs` embeds the operator shell at compile time with
-`include_str!`. There is no document root, no filesystem lookup at request time,
-no external origin, and no build step: the three files in `src/http/assets/` are
-the whole shell, 12,723 bytes in total. They need no inline script or style, so
-the `default-src 'self'` policy every other response already carries applies to
-them unchanged — the shell required no CSP concession, which was the point.
+`src/http/assets.rs` embeds the operator shell and enrollment page at compile
+time with `include_str!`. There is no document root, filesystem lookup at
+request time, external origin, or build step. The five embedded files total
+14,431 bytes. They need no inline script or style, so the `default-src 'self'`
+policy every other response already carries applies unchanged.
 
 HTTP code never opens the database and never contacts `netd`. A request handler
 reaching either would block a Tokio worker thread on synchronous disk I/O or on a

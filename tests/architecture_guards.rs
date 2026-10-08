@@ -1384,7 +1384,7 @@ fn the_shell_is_embedded_at_compile_time_and_never_read_from_disk() {
     let assets = shippable(source_of("src/http/assets.rs"));
     assert_eq!(
         assets.matches("include_str!").count(),
-        3,
+        5,
         "each embedded asset must be an include_str!, so the binary is the only source"
     );
     for forbidden in [
