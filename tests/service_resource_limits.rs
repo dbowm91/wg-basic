@@ -1214,3 +1214,36 @@ fn the_declared_bounds_are_the_documented_ones() {
     );
     assert_eq!(limits.bind.ip(), std::net::IpAddr::V4(Ipv4Addr::LOCALHOST));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn header_count_boundary_accepts_32_and_rejects_33_without_losing_service() {
+    let scratch = Scratch::new();
+    let server = Harness::start(&scratch).await;
+
+    let send_raw = |extra_count: usize| {
+        let mut raw = format!("GET /healthz HTTP/1.1\r\nHost: {}\r\n", server.host());
+        for index in 0..extra_count {
+            raw.push_str(&format!("X-Boundary-{index}: x\r\n"));
+        }
+        raw.push_str("Connection: close\r\n\r\n");
+        let mut stream = TcpStream::connect(server.addr).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        stream.write_all(raw.as_bytes()).unwrap();
+        let mut bytes = Vec::new();
+        let _ = stream.read_to_end(&mut bytes);
+        String::from_utf8_lossy(&bytes)
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .and_then(|status| status.parse::<u16>().ok())
+    };
+
+    // Host + 30 distinct headers + Connection: close is exactly 32 headers.
+    assert_eq!(send_raw(30), Some(200));
+    // One additional field crosses the configured maximum.
+    assert_ne!(send_raw(31), Some(200));
+    server.assert_still_serving();
+    server.stop().await;
+}
