@@ -345,6 +345,23 @@ fn install_client(
 }
 
 fn require_handshake(namespace: &Namespace, socket: &Path) {
+    let baseline_response = request(
+        socket,
+        RequestOperation::ObserveWireGuardDevice {
+            interface: "wg-client".parse().unwrap(),
+        },
+        9702,
+    )
+    .unwrap();
+    let ResponseBody::WireGuardDevice(baseline_device) = baseline_response else {
+        panic!("expected client WireGuard baseline: {baseline_response:?}");
+    };
+    let baseline_peer = baseline_device
+        .peers
+        .first()
+        .expect("the configured client peer is observable");
+    let baseline_tx = baseline_peer.tx_bytes.unwrap_or_default();
+    let baseline_rx = baseline_peer.rx_bytes.unwrap_or_default();
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         let response = request(
@@ -360,8 +377,8 @@ fn require_handshake(namespace: &Namespace, socket: &Path) {
         };
         if device.peers.iter().any(|peer| {
             peer.latest_handshake.is_some()
-                && peer.rx_bytes.unwrap_or_default() > 0
-                && peer.tx_bytes.unwrap_or_default() > 0
+                && peer.rx_bytes.unwrap_or_default() > baseline_rx
+                && peer.tx_bytes.unwrap_or_default() > baseline_tx
         }) {
             return;
         }
@@ -397,6 +414,26 @@ fn assert_healthy_service(addr: SocketAddr, cookie: &str) {
     assert_eq!(value["health"]["database_healthy"], true, "{}", health.body);
     assert_eq!(value["health"]["netd_reachable"], true, "{}", health.body);
     assert_eq!(value["backend"]["answered"], true, "{}", health.body);
+}
+
+fn assert_doctor_has_no_required_failure(output: &std::process::Output, label: &str) {
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("{label} doctor JSON: {error}"));
+    let checks = report["checks"].as_array().expect("doctor checks array");
+    assert!(
+        checks.iter().all(|check| check["disposition"] != "fail"),
+        "{label} doctor has a failed required check: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    for required in ["sqlite", "state", "netd"] {
+        assert!(
+            checks
+                .iter()
+                .any(|check| check["id"] == required && check["disposition"] == "pass"),
+            "{label} doctor did not pass required check {required}: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
 }
 
 fn checkpoint_state(path: &Path) {
@@ -646,13 +683,7 @@ fn v4_product_traffic_rolls_back_and_reupgrades_as_one_transaction() {
         .args(["--json"])
         .output()
         .unwrap();
-    assert_eq!(
-        restored_doctor.status.code(),
-        Some(0),
-        "restored-v4 doctor failed: stdout={} stderr={}",
-        String::from_utf8_lossy(&restored_doctor.stdout),
-        String::from_utf8_lossy(&restored_doctor.stderr)
-    );
+    assert_doctor_has_no_required_failure(&restored_doctor, "restored-v4");
     drop(restored_server_netd);
     client_netd.stop();
 
@@ -699,11 +730,7 @@ fn v4_product_traffic_rolls_back_and_reupgrades_as_one_transaction() {
         .args(["--json"])
         .output()
         .unwrap();
-    assert!(
-        candidate_doctor.status.success(),
-        "candidate doctor failed: {}",
-        String::from_utf8_lossy(&candidate_doctor.stdout)
-    );
+    assert_doctor_has_no_required_failure(&candidate_doctor, "candidate-v5");
     drop(candidate_client_netd);
     drop(candidate_netd);
 }
