@@ -2,6 +2,7 @@
 """Native, read-only smoke for the exact Eggpack candidate executable."""
 
 import json
+import hashlib
 import os
 import platform
 import re
@@ -81,6 +82,8 @@ def main() -> int:
     print(
         "native version/help/doctor passed; "
         f"GLIBC floor 2.17 verified (max {'.'.join(map(str, max(glibc_versions)))}); "
+        f"artifact size {binary.stat().st_size}; "
+        f"artifact SHA-256 {hashlib.sha256(binary.read_bytes()).hexdigest()}; "
         f"dynamic dependencies: {dependencies.stdout.strip().replace(chr(10), '; ')}"
     )
     return 0
