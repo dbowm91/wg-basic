@@ -251,6 +251,68 @@ pub fn acquire_candidate(
     })
 }
 
+/// Commit one verified candidate through Eggup Core and run wg-basic's
+/// product-health/commit-marker callback while Eggup retains rollback evidence.
+/// Service quiescence and the durable state backup are caller prerequisites.
+#[allow(dead_code)] // Called by the M004 transaction entrypoint after trust-root provisioning.
+pub(crate) fn eggup_commit_binary<F>(
+    install_root: &Path,
+    destination_name: &str,
+    candidate: &Path,
+    version: &str,
+    expected_old_sha256: [u8; 32],
+    expected_candidate_sha256: [u8; 32],
+    post_commit: F,
+) -> Result<eggup_core::TransactionReceipt, String>
+where
+    F: FnOnce() -> Result<(), String>,
+{
+    use eggup_core::{
+        AbsentPolicy, ArtifactMember, ArtifactSet, CommitOwnership, ExactDigestVerifier,
+        InstallPlan, IntegrityRequirement, MemberId, PermissionsIntent, ProductId, ReleaseId,
+        TransactionDisposition,
+    };
+
+    crate::release::parse_stable_version(version).map_err(str::to_owned)?;
+    let member_id = MemberId::new("wg-basic").map_err(|_| "invalid binary member identity")?;
+    let product = ProductId::new(crate::release::PRODUCT_ID)
+        .map_err(|_| "invalid update product identity")?;
+    let release = ReleaseId::new(version).map_err(|_| "invalid update release identity")?;
+    let member = ArtifactMember::new(member_id.clone(), candidate, destination_name)
+        .map_err(|_| "invalid candidate destination")?
+        .with_permissions(PermissionsIntent::Executable)
+        .with_integrity(IntegrityRequirement::Sha256(expected_candidate_sha256));
+    let plan = InstallPlan::new(
+        product,
+        release,
+        install_root,
+        ArtifactSet::single(member).map_err(|_| "invalid candidate artifact set")?,
+    )
+    .map_err(|_| "could not prepare Eggup binary transaction")?;
+    let validator =
+        eggup_core::ExactIdentityValidator::new(member_id.clone(), format!("wg-basic {version}\n"))
+            .args(["--version"])
+            .timeout(Duration::from_secs(5))
+            .max_output_bytes(1024);
+    let validated = plan
+        .prepare()
+        .and_then(|prepared| prepared.verify_integrity())
+        .and_then(|verified| verified.validate(&validator))
+        .map_err(|_| "Eggup candidate integrity or identity validation failed")?;
+    let verifier = ExactDigestVerifier::new(vec![(member_id, expected_old_sha256)]);
+    let receipt = validated
+        .commit_with_post_commit(
+            CommitOwnership::new(&verifier, AbsentPolicy::DenyCreate),
+            eggup_core::PostCommitFailurePolicy::RollBack,
+            post_commit,
+        )
+        .map_err(|_| "Eggup binary transaction could not prove a terminal result")?;
+    if receipt.disposition() == TransactionDisposition::RecoveryRequired {
+        return Err("Eggup binary rollback requires operator recovery".into());
+    }
+    Ok(receipt)
+}
+
 fn metadata_limits() -> FetchLimits {
     FetchLimits::new(
         256 * 1024,
@@ -829,5 +891,63 @@ mod tests {
             include_str!("../tests/fixtures/release-auth/minisign.fixture.pub"),
         )
         .is_err());
+    }
+
+    #[test]
+    fn eggup_commit_keeps_old_binary_until_product_check_and_rolls_back_on_failure() {
+        use eggup_core::TransactionDisposition;
+        use std::os::unix::fs::PermissionsExt;
+
+        let base =
+            std::env::temp_dir().join(format!("wg-basic-eggup-update-{}", uuid::Uuid::new_v4()));
+        let install = base.join("install");
+        let stage = base.join("stage");
+        fs::create_dir_all(&install).unwrap();
+        fs::create_dir_all(&stage).unwrap();
+        let installed = install.join("wg-basic");
+        let candidate = stage.join("candidate");
+        fs::write(&installed, b"old binary bytes").unwrap();
+        fs::write(
+            &candidate,
+            b"#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'wg-basic 0.2.0\\n'; exit 0; fi\nexit 1\n",
+        )
+        .unwrap();
+        fs::set_permissions(&installed, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::set_permissions(&candidate, fs::Permissions::from_mode(0o700)).unwrap();
+        let old_digest = eggup_core::hash_file(&installed).unwrap();
+        let candidate_digest = eggup_core::hash_file(&candidate).unwrap();
+        let passed = std::cell::Cell::new(false);
+        let receipt = eggup_commit_binary(
+            &install,
+            "wg-basic",
+            &candidate,
+            "0.2.0",
+            old_digest,
+            candidate_digest,
+            || {
+                passed.set(true);
+                assert_eq!(fs::read(&installed).unwrap(), fs::read(&candidate).unwrap());
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(passed.get());
+        assert_eq!(receipt.disposition(), TransactionDisposition::Committed);
+        assert_eq!(fs::read(&installed).unwrap(), fs::read(&candidate).unwrap());
+
+        fs::write(&installed, b"old binary bytes").unwrap();
+        let failed = eggup_commit_binary(
+            &install,
+            "wg-basic",
+            &candidate,
+            "0.2.0",
+            old_digest,
+            candidate_digest,
+            || Err("product health failed".to_owned()),
+        )
+        .unwrap();
+        assert_eq!(failed.disposition(), TransactionDisposition::RolledBack);
+        assert_eq!(fs::read(&installed).unwrap(), b"old binary bytes");
+        let _ = fs::remove_dir_all(base);
     }
 }
