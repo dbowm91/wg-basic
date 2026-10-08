@@ -1,8 +1,8 @@
 # CLI roles
 
 This document describes **current implemented behavior** for every `wg-basic`
-subcommand in `src/main.rs`. Installation and transactional self-update are
-**not implemented** (no installer, no updater binary path); see
+subcommand in `src/main.rs`. Native system installation is implemented under
+M002 qualification; transactional self-update is **not implemented**. See
 [overview](overview.md) for status.
 
 Part of the [architecture overview](overview.md). Role internals live in
@@ -32,19 +32,34 @@ Part of the [architecture overview](overview.md). Role internals live in
 | Role / subcommand | Key flags (defaults) | Touches | Never touches |
 |---|---|---|---|
 | `serve` | `--state`, `--socket`, `--http-bind` (`127.0.0.1:8000`), `--canonical-origin` (none), `--allow-non-loopback` (false) | state DB via bounded worker, netd via UDS client, TCP listener | kernel/netlink/nft directly; never spawns or elevates netd |
-| `netd` | `--socket`, `--allow-uid UID` (repeatable) | UDS socket bind, kernel via typed backends (Generic Netlink, RTNETLINK, bounded `nft`, `/proc/sys/net/ipv4/ip_forward` fixed write) | state DB (database-free) |
+| `netd` | `--socket`, `--allow-uid UID`, `--allow-user NAME` (repeatable) | UDS socket bind, kernel via typed backends (Generic Netlink, RTNETLINK, bounded `nft`, `/proc/sys/net/ipv4/ip_forward` fixed write) | state DB (database-free) |
 | `doctor` | `--state`, `--socket`, `--json`, `--http-bind`, `--canonical-origin`, `--allow-non-loopback` | read-only SQLite inspection, netd plan-only/observe requests, read-only `/proc/sys/net/ipv4/ip_forward` | migrations, kernel applies, state writes |
 | `reconcile` | `--state`, `--socket` | state DB open, one aggregate reconcile via UDS | kernel directly |
 | `health` | `--state`, `--socket` | state DB open, health projection | netd, kernel |
 | `admin set-password` | `--username`, `--password-stdin` (required), `--state` | state DB credential row + session revocation | argv/env password sources, verifier/token output |
 | `admin status` | `--state` | state DB safe projection | verifiers, tokens |
 | `state status` | `--state` | state DB metadata/convergence | keys, row contents, kernel |
+| `state init` | `--state` | create current schema or validate/migrate existing owned DB | network IPC, kernel |
 | `state backup <dest>` | `--state` | consistent snapshot write (fails if dest exists, owner-only `0600`) | kernel |
 | `state restore <cand>` | `--state` | validate-then-replace, retains `<state>.pre-restore` | kernel |
 | `state verify <cand>` | (positional only) | read-only candidate check | live DB, migrations, kernel |
 | `state purge` | `--confirm-installation-id`, `--dry-run`, `--state`, `--socket` | verified DB files only, after guards | lease files, operator files, foreign kernel state |
 | `network status` | `--state` | read-only inspection | kernel, netd |
 | `network disable/enable` | `--state`, `--socket` | durable flag commit + reconcile attempt | kernel directly |
+| `system install` | `--candidate` (current executable by default) | root-owned system layout, sysusers, systemd units and services | automatic sudo, release discovery, signature claims |
+| `system status` | none | installation receipt, file ownership and systemd lifecycle inspection | state mutation, kernel mutation |
+
+## `system` (native installation)
+
+- `install`: requires effective root and an active systemd system manager. It
+  serializes with a root-owned advisory lock, accepts a local executable with
+  the exact running release identity, installs the canonical binary/sysusers/
+  service layout, starts netd before serve, and writes the private receipt
+  last. It refuses unowned or modified destinations and never invokes sudo.
+  This is a local-candidate path and does not claim signature authenticity.
+- `status`: validates the root-owned receipt, executable and exact product
+  definition digests, systemd registration/lifecycle, and state directory
+  ownership. It does not mutate the installation.
 
 ## `serve` (unprivileged management role)
 

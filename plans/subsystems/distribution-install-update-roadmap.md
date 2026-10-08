@@ -1,6 +1,6 @@
 # Distribution, Installation, Update, and Rollback Roadmap
 
-Status: active; M001 closed and M002 ready
+Status: active; M001 closed and M002 active
 
 Canonical references:
 
@@ -150,7 +150,7 @@ Expected outcomes:
 
 ## 6. M002 — Native system installation and systemd services
 
-Status: ready; M001 is strictly closed.
+Status: active; M001 is strictly closed.
 
 Implementation plan:
 

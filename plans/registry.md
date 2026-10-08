@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-08 (Phase 10 researched/planned under ADR-006; M001 ready)
+Last planning reconciliation: 2026-10-08 (Phase 10 M001 closed; M002 active)
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -79,7 +79,7 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
-| Distribution/install/update | M002 system install/service layout | **ready** | `plans/implementation/distribution/002-system-install-and-service-layout.md` | M001 strict closure at `7f4e49f` |
+| Distribution/install/update | M002 system install/service layout | **active** | `plans/implementation/distribution/002-system-install-and-service-layout.md` | M001 strict closure at `7f4e49f` |
 
 M001 is strictly closed. M002 is the only implementation-ready plan and covers native system installation; update, publishing, and rollback remain blocked in order.
 
