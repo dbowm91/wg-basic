@@ -501,7 +501,25 @@ pub fn project_diagnostic_intent(
     product: &ProductState,
 ) -> Result<Option<InstallationNetworkIntent>, ManagementError> {
     let visibility = ClientVisibility::from_product(state, product);
-    build_intent(installation_id, generation, state, &visibility)
+    let mut effective = state.clone();
+    if let Some(interface) = effective.interfaces.first_mut() {
+        if product
+            .network_operational_enabled
+            .get(&interface.id)
+            .is_some_and(|enabled| !enabled)
+        {
+            interface.lifecycle = crate::domain::LinkLifecycle::Absent;
+            interface.admin_up = None;
+            for address in &mut interface.addresses {
+                address.presence = crate::domain::ResourcePresence::Absent;
+            }
+            for route in &mut interface.routes {
+                route.presence = crate::domain::ResourcePresence::Absent;
+            }
+            effective.network_policy = None;
+        }
+    }
+    build_intent(installation_id, generation, &effective, &visibility)
 }
 
 #[cfg(not(target_os = "linux"))]

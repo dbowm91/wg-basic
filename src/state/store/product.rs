@@ -66,6 +66,7 @@ impl ClientProductRecord {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ProductState {
     pub interfaces: BTreeMap<InterfaceId, InterfaceProductState>,
+    pub network_operational_enabled: BTreeMap<InterfaceId, bool>,
     pub clients: BTreeMap<crate::domain::ClientId, ClientProductRecord>,
 }
 
@@ -638,8 +639,32 @@ pub(crate) fn read_product(connection: &Connection) -> Result<ProductState, Stat
         }
     }
 
+    let mut network_operational_enabled = BTreeMap::new();
+    {
+        let mut statement = connection
+            .prepare("SELECT interface_id, operational_enabled FROM network_operational_state")
+            .map_err(StateError::database)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(StateError::database)?;
+        for value in rows {
+            let (interface_id, enabled) = value.map_err(StateError::database)?;
+            let id = interface_id
+                .parse()
+                .map_err(|_| StateError::Corrupt("invalid operational interface id"))?;
+            let enabled = match enabled {
+                0 => false,
+                1 => true,
+                _ => return Err(StateError::Corrupt("invalid operational state")),
+            };
+            network_operational_enabled.insert(id, enabled);
+        }
+    }
     Ok(ProductState {
         interfaces,
+        network_operational_enabled,
         clients,
     })
 }
@@ -678,7 +703,11 @@ pub(super) fn write_product(
     // Rewritten wholesale for the same reason `write_desired` rewrites the
     // snapshot: the stored state must not retain a row the product state no
     // longer contains.
-    for table in ["client_dns_servers", "client_product_settings"] {
+    for table in [
+        "client_dns_servers",
+        "client_product_settings",
+        "network_operational_state",
+    ] {
         transaction
             .execute(&format!("DELETE FROM {table}"), [])
             .map_err(StateError::database)?;
@@ -698,6 +727,16 @@ pub(super) fn write_product(
                     settings.advertised_endpoint.host(),
                     i64::from(settings.advertised_endpoint.port()),
                 ],
+            )
+            .map_err(StateError::database)?;
+    }
+
+    for (interface_id, enabled) in &product.network_operational_enabled {
+        transaction
+            .execute(
+                "INSERT INTO network_operational_state (interface_id, operational_enabled)
+                 VALUES (?1, ?2)",
+                rusqlite::params![interface_id.to_string(), i64::from(*enabled)],
             )
             .map_err(StateError::database)?;
     }
@@ -785,6 +824,8 @@ fn parse_action(value: &str) -> Option<AuditAction> {
         AuditAction::ClientEnable,
         AuditAction::ClientDisable,
         AuditAction::ClientDelete,
+        AuditAction::NetworkEnable,
+        AuditAction::NetworkDisable,
         AuditAction::EnforcementDegraded,
         AuditAction::EnrollmentCapabilityCreated,
         AuditAction::EnrollmentCapabilityRevoked,

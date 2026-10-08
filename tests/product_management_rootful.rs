@@ -521,7 +521,7 @@ async fn a_created_client_becomes_a_real_kernel_peer() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn exported_client_config_establishes_a_real_kernel_handshake() {
     require_root("exported client handshake");
-    let installation = Installation::start_unconfigured("export").await;
+    let mut installation = Installation::start_unconfigured("export").await;
     let client_ns = Namespace::new("client");
     let client_scratch = Scratch::new();
     let client_netd = Managed::netd(&client_ns.0, &client_scratch);
@@ -912,6 +912,109 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
             })
     });
 
+    // Whole-network maintenance keeps the configured server/client rows while
+    // projecting the interface and owned network policy absent.
+    let before_disabled = installation.store.load().unwrap();
+    let before_product = installation.store.load_product().unwrap();
+    let disabled = Command::new(BINARY)
+        .args(["network", "disable", "--state"])
+        .arg(installation.scratch.state())
+        .args(["--socket"])
+        .arg(installation.scratch.netd_socket())
+        .output()
+        .unwrap();
+    assert!(
+        disabled.status.success(),
+        "disable failed: {}",
+        String::from_utf8_lossy(&disabled.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&disabled.stdout).contains("and enforced"),
+        "disable receipt: {}; convergence {:?}",
+        String::from_utf8_lossy(&disabled.stdout),
+        installation.store.convergence().unwrap()
+    );
+    wait_until("whole-network disable to remove the interface", || {
+        !installation.namespace.interface_exists("wg0")
+    });
+    let disabled_state = installation.store.load().unwrap();
+    let disabled_product = installation.store.load_product().unwrap();
+    assert_eq!(disabled_state.state, before_disabled.state);
+    assert_eq!(disabled_product.state.clients, before_product.state.clients);
+    assert_eq!(
+        disabled_product
+            .state
+            .network_operational_enabled
+            .get(&installation.interface_id()),
+        Some(&false)
+    );
+
+    // A backend and management-worker restart must preserve disabled state.
+    let _ = installation.netd.child.kill();
+    let _ = installation.netd.child.wait();
+    wait_until("netd to stop for disabled restart", || {
+        !installation.netd.alive()
+    });
+    installation.restart_backend().await;
+    installation.restart_worker();
+    assert!(
+        !installation.namespace.interface_exists("wg0"),
+        "restart must not enable a durably disabled network"
+    );
+
+    let enabled = Command::new(BINARY)
+        .args(["network", "enable", "--state"])
+        .arg(installation.scratch.state())
+        .args(["--socket"])
+        .arg(installation.scratch.netd_socket())
+        .output()
+        .unwrap();
+    assert!(
+        enabled.status.success(),
+        "enable failed: {}",
+        String::from_utf8_lossy(&enabled.stderr)
+    );
+    wait_until("whole-network enable to restore the interface", || {
+        installation.namespace.interface_exists("wg0")
+    });
+    let restored = installation
+        .namespace
+        .device(&installation.scratch.netd_socket(), "wg0");
+    assert_eq!(restored.listen_port, Some(51820));
+    assert!(restored
+        .peers
+        .iter()
+        .any(|peer| peer.public_key == client_public_key));
+    let ping = Command::new("ip")
+        .args([
+            "netns",
+            "exec",
+            &client_ns.0,
+            "ping",
+            "-n",
+            "-c",
+            "1",
+            "-W",
+            "2",
+            "-I",
+            "wg-client",
+            "10.67.0.1",
+        ])
+        .output()
+        .expect("ping after network re-enable");
+    let _ = ping;
+    wait_until(
+        "the same exported peer to handshake after re-enable",
+        || {
+            installation
+                .namespace
+                .device(&installation.scratch.netd_socket(), "wg0")
+                .peers
+                .iter()
+                .any(|peer| peer.public_key == client_public_key && peer.latest_handshake.is_some())
+        },
+    );
+
     let audit_rows_before = installation.store.audit_events(1_000).unwrap().len();
     let telemetry_started = std::time::Instant::now();
     let (telemetry_status, telemetry_body, telemetry_headers) = http(
@@ -1010,7 +1113,11 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
     assert!(!audit_body.contains("PrivateKey"));
     assert!(!audit_body.contains("PresharedKey"));
 
-    let generation = created["generation"].as_u64().unwrap();
+    let generation = installation
+        .store
+        .current_generation()
+        .unwrap()
+        .to_storage() as u64;
     let (disable_status, disable_body, _) = http(
         addr,
         "POST",
@@ -1531,6 +1638,36 @@ async fn a_backend_outage_after_commit_is_committed_but_degraded_and_restart_con
     let _ = installation.netd.child.wait();
     wait_until("netd to stop answering", || !installation.netd.alive());
 
+    let disabled = Command::new(BINARY)
+        .args(["network", "disable", "--state"])
+        .arg(installation.scratch.state())
+        .args(["--socket"])
+        .arg(installation.scratch.netd_socket())
+        .output()
+        .unwrap();
+    assert!(disabled.status.success());
+    assert!(
+        String::from_utf8_lossy(&disabled.stdout).contains("committed at generation"),
+        "offline disable must report its durable commit: {}",
+        String::from_utf8_lossy(&disabled.stdout)
+    );
+    assert!(
+        String::from_utf8_lossy(&disabled.stdout).contains("not yet enforced"),
+        "offline disable must not claim enforcement: {}",
+        String::from_utf8_lossy(&disabled.stdout)
+    );
+    assert_eq!(
+        installation
+            .store
+            .load_product()
+            .unwrap()
+            .state
+            .network_operational_enabled
+            .get(&installation.interface_id()),
+        Some(&false),
+        "offline disable commits the durable operational flag"
+    );
+
     let degraded = worker
         .create_client(ClientCreateCommand {
             principal_id: installation.principal,
@@ -1594,9 +1731,26 @@ async fn a_backend_outage_after_commit_is_committed_but_degraded_and_restart_con
         "an audit row never carries key material"
     );
 
-    // A later restart converges what the outage deferred.
+    // A later backend restart must preserve disabled state. Re-enabling then
+    // converges all durable client rows that were committed during the outage.
     installation.restart_backend().await;
     installation.restart_worker();
+    assert!(
+        !installation.namespace.interface_exists("wg0"),
+        "disabled state survives a backend restart"
+    );
+    let enabled = Command::new(BINARY)
+        .args(["network", "enable", "--state"])
+        .arg(installation.scratch.state())
+        .args(["--socket"])
+        .arg(installation.scratch.netd_socket())
+        .output()
+        .unwrap();
+    assert!(
+        enabled.status.success(),
+        "enable failed: {}",
+        String::from_utf8_lossy(&enabled.stderr)
+    );
     let key = degraded.client.public_key.expose().to_owned();
     wait_until("the deferred peer to reach the device", || {
         installation

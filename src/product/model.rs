@@ -436,6 +436,8 @@ pub enum AuditAction {
     ClientEnable,
     ClientDisable,
     ClientDelete,
+    NetworkEnable,
+    NetworkDisable,
     /// A post-commit reconciliation outcome, recorded separately because the
     /// kernel's answer is not inside the transaction that wrote the mutation.
     EnforcementDegraded,
@@ -454,6 +456,8 @@ impl AuditAction {
             AuditAction::ClientEnable => "client_enable",
             AuditAction::ClientDisable => "client_disable",
             AuditAction::ClientDelete => "client_delete",
+            AuditAction::NetworkEnable => "network_enable",
+            AuditAction::NetworkDisable => "network_disable",
             AuditAction::EnforcementDegraded => "enforcement_degraded",
             AuditAction::EnrollmentCapabilityCreated => "enrollment_capability_created",
             AuditAction::EnrollmentCapabilityRevoked => "enrollment_capability_revoked",

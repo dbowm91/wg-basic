@@ -98,6 +98,9 @@ pub enum StateError {
     #[error("the database was busy")]
     Busy,
 
+    #[error("the state service is active or its maintenance lease is unsafe")]
+    MaintenanceLeaseUnavailable,
+
     #[error("the selected tunnel prefix cannot serve another client address")]
     AddressPoolUnavailable,
 }

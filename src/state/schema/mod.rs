@@ -25,7 +25,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-pub(crate) use migrations::recovery_snapshot_path;
+pub use migrations::recovery_snapshot_path;
 /// The highest schema version this binary understands.
 ///
 /// Re-exported so a caller outside this module reads the version through the
@@ -335,7 +335,7 @@ mod tests {
             .unwrap();
         assert_eq!(user_version, migrations::supported_version());
         assert_eq!(
-            user_version, 4,
+            user_version, 5,
             "a fresh database is created at the current head, never behind it"
         );
 
@@ -354,6 +354,7 @@ mod tests {
             "network_policy_source_prefixes",
             "convergence_state",
             "interface_product_settings",
+            "network_operational_state",
             "client_product_settings",
             "client_dns_servers",
             "audit_events",
@@ -384,7 +385,7 @@ mod tests {
             StateStore::open(temp.db()),
             Err(StateError::SchemaTooNew {
                 found: 9999,
-                supported: 4
+                supported: 5
             })
         ));
     }
@@ -662,7 +663,7 @@ mod tests {
         );
 
         migrations::apply_migrations(&mut connection, MIGRATIONS).unwrap();
-        assert_eq!(user_version_of(&connection), 4);
+        assert_eq!(user_version_of(&connection), 5);
 
         // Every version the upgrade ran through must actually have created its
         // schema.
@@ -695,10 +696,80 @@ mod tests {
         assert_eq!(stored_identity, identity.to_string());
         connection.close().unwrap();
 
-        // The production opener must accept the migrated file: version 4 is one
+        // The production opener must accept the migrated file: version 5 is one
         // this binary actually supports, so refusing it would be a false alarm.
         StateStore::open(temp.db())
             .expect("a migrated database must open through the production path");
+    }
+
+    #[test]
+    fn migration_v4_to_v5_preserves_generation_and_enables_existing_server() {
+        let temp = TempDir::new();
+        historical_v1(&temp);
+        let (identity, _) = commit_snapshot_at_v2(&temp);
+        let mut connection = Connection::open(temp.db()).unwrap();
+        migrations::apply_migrations(&mut connection, &MIGRATIONS[..4]).unwrap();
+        connection
+            .execute(
+                "INSERT INTO interface_product_settings
+                 (interface_id, advertised_host, advertised_port)
+                 SELECT id, 'vpn.example.test', 51820 FROM managed_interfaces",
+                [],
+            )
+            .unwrap();
+        let before_generation: i64 = connection
+            .query_row(
+                "SELECT desired_generation FROM installation WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(user_version_of(&connection), 4);
+        connection.close().unwrap();
+
+        let store = StateStore::open(temp.db()).unwrap();
+        assert_eq!(store.schema_version().unwrap(), 5);
+        let metadata = store.installation_metadata().unwrap();
+        assert_eq!(metadata.installation_id, identity);
+        assert_eq!(metadata.desired_generation.to_storage(), before_generation);
+        let desired = store.load().unwrap();
+        assert_eq!(desired.state.interfaces.len(), 1);
+        let product = store.load_product().unwrap();
+        let interface_id = desired.state.interfaces[0].id;
+        assert_eq!(
+            product.state.network_operational_enabled.get(&interface_id),
+            Some(&true)
+        );
+        assert_eq!(product.state.clients.len(), 1);
+        drop(store);
+
+        let recovery = migrations::recovery_snapshot_path(&temp.db(), 4);
+        let backup = Connection::open(&recovery).unwrap();
+        assert_eq!(user_version_of(&backup), 4);
+    }
+
+    #[test]
+    fn migration_v5_failure_rolls_back_schema_version_and_partial_ddl() {
+        let temp = TempDir::new();
+        migrations::initialize_at_version(&temp.db(), 4).unwrap();
+        let mut connection = Connection::open(temp.db()).unwrap();
+        connection
+            .execute_batch("CREATE TABLE network_operational_state (operator_fixture INTEGER);")
+            .unwrap();
+        let error = migrations::apply_migrations(&mut connection, MIGRATIONS).unwrap_err();
+        assert!(matches!(
+            error,
+            StateError::MigrationFailed { version: 5, .. }
+        ));
+        assert_eq!(user_version_of(&connection), 4);
+        let columns: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('network_operational_state')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(columns, 1, "the conflicting table is unchanged by rollback");
     }
 
     #[test]
@@ -738,10 +809,10 @@ mod tests {
         let temp = TempDir::new();
         historical_v1(&temp);
 
-        // The production list stops at version 4, so a database stamped 5 comes
+        // The production list stops at version 5, so a database stamped 6 comes
         // from a future binary.
         let connection = Connection::open(temp.db()).unwrap();
-        connection.execute("PRAGMA user_version = 5", []).unwrap();
+        connection.execute("PRAGMA user_version = 6", []).unwrap();
         drop(connection);
 
         let mut connection = Connection::open(temp.db()).unwrap();
@@ -750,8 +821,8 @@ mod tests {
             matches!(
                 error,
                 StateError::SchemaTooNew {
-                    found: 5,
-                    supported: 4
+                    found: 6,
+                    supported: 5
                 }
             ),
             "{error:?}"

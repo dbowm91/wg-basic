@@ -224,6 +224,40 @@ pub struct ServerSetupCommand {
 pub type SetupResult = (ProductServer, ProductMutationReceipt);
 
 impl<'a> ProductService<'a> {
+    /// Persist the whole server's operational network state while preserving
+    /// every desired/product row and recording one bounded audit event.
+    pub fn set_network_enabled(
+        &self,
+        expected_generation: DesiredGeneration,
+        enabled: bool,
+    ) -> Result<DesiredGeneration, ProductError> {
+        let committed =
+            self.store
+                .mutate_product(expected_generation, None, |state, product| {
+                    let interface = state
+                        .interfaces
+                        .first()
+                        .ok_or(StateError::Corrupt("server is not configured"))?;
+                    let operational = product
+                        .network_operational_enabled
+                        .get_mut(&interface.id)
+                        .ok_or(StateError::Corrupt("server operational state is missing"))?;
+                    *operational = enabled;
+                    Ok((
+                        state.clone(),
+                        ProductAudit::server(
+                            if enabled {
+                                AuditAction::NetworkEnable
+                            } else {
+                                AuditAction::NetworkDisable
+                            },
+                            interface.id,
+                        ),
+                    ))
+                })?;
+        Ok(committed.generation)
+    }
+
     /// Configures the managed server exactly once.
     pub fn setup_server(&self, command: ServerSetupCommand) -> Result<SetupResult, ProductError> {
         let loaded = self.store.load().map_err(ProductError::State)?;
@@ -322,6 +356,9 @@ impl<'a> ProductService<'a> {
                         advertised_endpoint: advertised_endpoint.clone(),
                     },
                 );
+                product
+                    .network_operational_enabled
+                    .insert(interface_id, true);
 
                 Ok((
                     next,

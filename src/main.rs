@@ -107,6 +107,11 @@ enum Command {
         #[command(subcommand)]
         action: StateCommand,
     },
+    /// Inspect or change the whole server's network availability.
+    Network {
+        #[command(subcommand)]
+        action: NetworkCommand,
+    },
 }
 
 #[derive(Subcommand)]
@@ -160,12 +165,45 @@ enum StateCommand {
     ///
     /// The candidate is fully checked before anything is replaced, and the
     /// previous database is retained as `<state>.pre-restore`. Stop the
-    /// management service first: this refuses to run against a database this
-    /// process still holds open.
+    /// management service first: a cross-process lease refuses an active serve
+    /// and this process's open-handle check remains as defense in depth.
     Restore {
         candidate: PathBuf,
         #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
         state: PathBuf,
+    },
+    /// Verify a candidate without migrating or modifying it.
+    Verify { candidate: PathBuf },
+    /// Purge only verified wg-basic state after proving owned networking is gone.
+    Purge {
+        #[arg(long)]
+        confirm_installation_id: wg_basic::domain::InstallationId,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        state: PathBuf,
+        #[arg(long, default_value = DEFAULT_SOCKET)]
+        socket: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum NetworkCommand {
+    Status {
+        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        state: PathBuf,
+    },
+    Disable {
+        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        state: PathBuf,
+        #[arg(long, default_value = DEFAULT_SOCKET)]
+        socket: PathBuf,
+    },
+    Enable {
+        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        state: PathBuf,
+        #[arg(long, default_value = DEFAULT_SOCKET)]
+        socket: PathBuf,
     },
 }
 
@@ -310,12 +348,21 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
                     "resolve the state diagnostic first, then rerun doctor",
                 ));
             }
+            let lease = wg_basic::state::ServiceLease::is_held(&state);
             checks.push(wg_basic::doctor::DoctorCheck::new(
                 wg_basic::doctor::DoctorCheckId::ServiceLease,
-                wg_basic::doctor::DoctorDisposition::Unknown,
-                "service singleton lease is not available in this milestone",
-                "serve lease support is implemented in Phase 9 M002",
-                "ensure only one serve process uses this state database",
+                match lease {
+                    Ok(true) => wg_basic::doctor::DoctorDisposition::Warn,
+                    Ok(false) => wg_basic::doctor::DoctorDisposition::Pass,
+                    Err(_) => wg_basic::doctor::DoctorDisposition::Unknown,
+                },
+                match lease {
+                    Ok(true) => "a serve process currently holds the state lease",
+                    Ok(false) => "the state service lease is free",
+                    Err(_) => "the state service lease could not be inspected safely",
+                },
+                "advisory lock state was checked without trusting PID metadata",
+                "stop the active serve process before offline maintenance",
             ));
             if let Some(bind) = http_bind {
                 use wg_basic::http::ServeConfig;
@@ -392,6 +439,7 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
         }
         Some(Command::Admin { action }) => run_admin_action(action),
         Some(Command::State { action }) => run_state_action(action),
+        Some(Command::Network { action }) => run_network_action(action),
     }
 }
 
@@ -938,6 +986,8 @@ fn serve(
             ServeConfig::new(state, socket, &http_bind).map_err(|error| error.to_string())?
         }
     };
+    let _lease = wg_basic::state::ServiceLease::acquire(&config.state_path)
+        .map_err(|error| error.to_string())?;
     let (signal, wait) = tokio::sync::oneshot::channel::<()>();
     // The handler may fire more than once, so the sender lives behind a mutex:
     // the first Ctrl-C consumes it, and later ones find nothing to do.
@@ -963,7 +1013,7 @@ fn serve(
 /// contents. A backup is a second copy of the VPN secrets, and the output says
 /// so rather than leaving the operator to guess.
 fn run_state_action(action: StateCommand) -> Result<(), String> {
-    use wg_basic::state::{restore, validate_candidate, StateStore};
+    use wg_basic::state::{restore, validate_candidate, verify_candidate_readonly, StateStore};
 
     match action {
         StateCommand::Status { state } => {
@@ -1035,7 +1085,340 @@ fn run_state_action(action: StateCommand) -> Result<(), String> {
             println!("startup still fails closed on foreign or untagged resources.");
             Ok(())
         }
+        StateCommand::Verify { candidate } => {
+            let result =
+                verify_candidate_readonly(&candidate).map_err(|error| error.to_string())?;
+            println!("candidate:          {}", result.path.display());
+            println!("installation id:    {}", result.installation_id);
+            println!("desired generation: {}", result.generation);
+            println!("schema version:     {}", result.schema_version);
+            println!(
+                "integrity:          {}",
+                if result.integrity_ok { "ok" } else { "failed" }
+            );
+            println!(
+                "foreign keys:       {}",
+                if result.foreign_keys_ok {
+                    "ok"
+                } else {
+                    "failed"
+                }
+            );
+            println!("would migrate:      {}", result.would_migrate);
+            println!("too new:            {}", result.too_new);
+            println!("warning: this candidate contains VPN private and preshared keys");
+            Ok(())
+        }
+        StateCommand::Purge {
+            confirm_installation_id,
+            dry_run,
+            state,
+            socket,
+        } => purge_state(state, socket, confirm_installation_id, dry_run),
     }
+}
+
+#[cfg(target_os = "linux")]
+fn purge_state(
+    state: PathBuf,
+    socket: PathBuf,
+    confirmation: wg_basic::domain::InstallationId,
+    dry_run: bool,
+) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+    use wg_basic::{
+        management::project_diagnostic_intent,
+        protocol::{request, RequestOperation, ResponseBody},
+        state::{inspect_readonly, MaintenanceLease, ServiceLease},
+    };
+    let lease = ServiceLease::acquire(&state).map_err(|error| error.to_string())?;
+    let _maintenance = MaintenanceLease::exclusive(&state).map_err(|error| error.to_string())?;
+    let snapshot = inspect_readonly(&state).map_err(|error| error.to_string())?;
+    if snapshot.metadata.installation_id != confirmation {
+        return Err("installation ID confirmation does not match this state".to_owned());
+    }
+    let mut unmet = Vec::new();
+    match snapshot.desired.state.interfaces.first() {
+        Some(interface)
+            if snapshot
+                .product
+                .network_operational_enabled
+                .get(&interface.id)
+                .copied()
+                .unwrap_or(true) =>
+        {
+            unmet.push("network must be disabled")
+        }
+        Some(_) => {}
+        None => unmet.push("a configured server is required"),
+    }
+    if snapshot.convergence.last_converged_generation != Some(snapshot.desired.generation) {
+        unmet.push("the current desired generation must be recorded as converged");
+    }
+    if !unmet.is_empty() {
+        if dry_run {
+            let paths = purge_paths(&state, snapshot.schema_version)?;
+            print_purge_report(&state, snapshot.metadata.installation_id, &paths, &unmet);
+        }
+        return Err(unmet.join("; "));
+    }
+    let intent = project_diagnostic_intent(
+        snapshot.metadata.installation_id,
+        snapshot.desired.generation,
+        &snapshot.desired.state,
+        &snapshot.product,
+    )
+    .map_err(|_| "disabled desired state could not be projected".to_owned())?
+    .ok_or_else(|| "disabled network intent is unavailable".to_owned())?;
+    let planned = request(
+        &socket,
+        RequestOperation::PlanInstallationNetworkIntent { intent },
+        19,
+    );
+    let plan = match planned {
+        Ok(ResponseBody::InstallationNetworkPlanned(plan)) => plan,
+        Ok(_) | Err(_) => {
+            let unmet = ["netd did not prove owned network resources are absent"];
+            if dry_run {
+                let paths = purge_paths(&state, snapshot.schema_version)?;
+                print_purge_report(&state, snapshot.metadata.installation_id, &paths, &unmet);
+            }
+            return Err(unmet[0].to_owned());
+        }
+    };
+    if !plan.interface_plan.actions.is_empty() || !plan.firewall_plan.actions.is_empty() {
+        let unmet = ["the fresh netd plan still contains owned network changes"];
+        if dry_run {
+            let paths = purge_paths(&state, snapshot.schema_version)?;
+            print_purge_report(&state, snapshot.metadata.installation_id, &paths, &unmet);
+        }
+        return Err(
+            "netd plan still contains owned network changes; reconcile and retry".to_owned(),
+        );
+    }
+    let paths = purge_paths(&state, snapshot.schema_version)?;
+    print_purge_report(&state, snapshot.metadata.installation_id, &paths, &[]);
+    if dry_run {
+        println!("dry run: no paths removed");
+        return Ok(());
+    }
+    for path in paths {
+        match std::fs::symlink_metadata(&path) {
+            Ok(metadata)
+                if metadata.is_file()
+                    && !metadata.file_type().is_symlink()
+                    && metadata.uid() == nix::unistd::geteuid().as_raw()
+                    && metadata.mode() & 0o077 == 0 =>
+            {
+                std::fs::remove_file(&path)
+                    .map_err(|_| format!("could not safely remove {}", path.display()))?;
+            }
+            Ok(_) => return Err(format!("unsafe purge artifact: {}", path.display())),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => {
+                return Err(format!(
+                    "could not inspect purge artifact: {}",
+                    path.display()
+                ))
+            }
+        }
+    }
+    drop(lease);
+    println!("purge complete; the advisory lease file was preserved to prevent lock-inode races");
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn print_purge_report(
+    state: &std::path::Path,
+    installation_id: wg_basic::domain::InstallationId,
+    paths: &[PathBuf],
+    unmet: &[&str],
+) {
+    println!("installation id: {installation_id}");
+    println!("network state:   operational flag inspected; see preconditions");
+    println!("preconditions:");
+    if unmet.is_empty() {
+        println!("  all passed");
+    } else {
+        for requirement in unmet {
+            println!("  unmet: {requirement}");
+        }
+    }
+    println!("removal paths:");
+    for path in paths {
+        println!("  {}", path.display());
+    }
+    let lease = wg_basic::state::ServiceLease::path_for_state(state)
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|_| "state service lease path unavailable".to_owned());
+    println!("preserved paths:");
+    println!("  {lease} (kept to prevent lock-inode races)");
+    let maintenance = wg_basic::state::MaintenanceLease::path_for_state(state)
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|_| "state maintenance lease path unavailable".to_owned());
+    println!("  {maintenance} (kept to coordinate online backups)");
+    println!("  other files in the state directory, including operator backups/configuration");
+}
+
+#[cfg(target_os = "linux")]
+fn purge_paths(state: &std::path::Path, schema_version: i64) -> Result<Vec<PathBuf>, String> {
+    use std::os::unix::fs::MetadataExt;
+    let mut paths = vec![state.to_path_buf()];
+    for suffix in ["-wal", "-shm"] {
+        let mut name = state.as_os_str().to_os_string();
+        name.push(suffix);
+        paths.push(PathBuf::from(name));
+    }
+    paths.push(wg_basic::state::retained_previous_path(state));
+    for source_schema in 1..schema_version {
+        paths.push(wg_basic::state::recovery_snapshot_path(
+            state,
+            source_schema,
+        ));
+    }
+    let parent = state
+        .parent()
+        .ok_or_else(|| "state path has no parent".to_owned())?;
+    let file_name = state
+        .file_name()
+        .ok_or_else(|| "state path has no file name".to_owned())?
+        .to_string_lossy();
+    for entry in std::fs::read_dir(parent).map_err(|_| "state directory could not be inspected")? {
+        let entry = entry.map_err(|_| "state directory entry could not be inspected")?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let known_temporary = [
+            format!(".{file_name}.backup."),
+            format!(".{file_name}.restore."),
+        ]
+        .iter()
+        .any(|prefix| {
+            name.strip_prefix(prefix)
+                .is_some_and(|pid| !pid.is_empty() && pid.bytes().all(|byte| byte.is_ascii_digit()))
+        });
+        if known_temporary {
+            paths.push(entry.path());
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    for path in &paths {
+        if let Ok(metadata) = std::fs::symlink_metadata(path) {
+            if metadata.file_type().is_symlink()
+                || !metadata.is_file()
+                || metadata.uid() != nix::unistd::geteuid().as_raw()
+                || metadata.mode() & 0o077 != 0
+            {
+                return Err(format!("unsafe purge artifact: {}", path.display()));
+            }
+        }
+    }
+    Ok(paths)
+}
+
+#[cfg(target_os = "linux")]
+fn run_network_action(action: NetworkCommand) -> Result<(), String> {
+    use wg_basic::state::ServiceLease;
+    match action {
+        NetworkCommand::Status { state } => {
+            let snapshot =
+                wg_basic::state::inspect_readonly(&state).map_err(|error| error.to_string())?;
+            let Some(interface) = snapshot.desired.state.interfaces.first() else {
+                println!("no managed server is configured");
+                return Ok(());
+            };
+            let enabled = snapshot
+                .product
+                .network_operational_enabled
+                .get(&interface.id)
+                .copied()
+                .unwrap_or(true);
+            let lease = match ServiceLease::is_held(&state) {
+                Ok(true) => "active",
+                Ok(false) => "free",
+                Err(_) => "unknown",
+            };
+            println!("installation id:    {}", snapshot.metadata.installation_id);
+            println!("desired generation: {}", snapshot.desired.generation);
+            println!(
+                "network:            {}",
+                if enabled { "enabled" } else { "disabled" }
+            );
+            println!(
+                "last converged:     {}",
+                snapshot
+                    .convergence
+                    .last_converged_generation
+                    .map_or_else(|| "none".to_owned(), |value| value.to_string())
+            );
+            println!("serve lease:        {lease}");
+            println!("server interface:   {}", interface.name);
+            println!("configured clients: {}", snapshot.product.clients.len());
+            Ok(())
+        }
+        NetworkCommand::Disable { state, socket } => set_network_enabled(state, socket, false),
+        NetworkCommand::Enable { state, socket } => set_network_enabled(state, socket, true),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn set_network_enabled(state: PathBuf, socket: PathBuf, enabled: bool) -> Result<(), String> {
+    use wg_basic::{
+        management::ManagementRuntime,
+        product::ProductService,
+        state::{ServiceLease, StateStore},
+    };
+    let _lease = ServiceLease::acquire(&state).map_err(|error| error.to_string())?;
+    let store = StateStore::open(&state).map_err(|error| error.to_string())?;
+    let metadata = store
+        .installation_metadata()
+        .map_err(|error| error.to_string())?;
+    let desired = store.load().map_err(|error| error.to_string())?;
+    let product = store.load_product().map_err(|error| error.to_string())?;
+    let interface = desired
+        .state
+        .interfaces
+        .first()
+        .ok_or_else(|| "no managed server is configured".to_owned())?;
+    let was_enabled = product
+        .state
+        .network_operational_enabled
+        .get(&interface.id)
+        .copied()
+        .unwrap_or(true);
+    if was_enabled == enabled {
+        println!(
+            "network is already {}; no mutation was committed",
+            if enabled { "enabled" } else { "disabled" }
+        );
+        return Ok(());
+    }
+    let generation = ProductService::new(&store)
+        .set_network_enabled(metadata.desired_generation, enabled)
+        .map_err(|error| error.to_string())?;
+    drop(store);
+
+    match ManagementRuntime::open(&state, &socket)
+        .and_then(|runtime| runtime.reconcile_after_commit(generation))
+    {
+        Ok(receipt) if receipt.is_enforced() => println!(
+            "network {} committed at generation {} and enforced",
+            if enabled { "enable" } else { "disable" },
+            generation
+        ),
+        Ok(receipt) => println!(
+            "network {} committed at generation {} but not yet enforced ({:?}); check netd and rerun `wg-basic reconcile`",
+            if enabled { "enable" } else { "disable" },
+            generation,
+            receipt.enforcement
+        ),
+        Err(_) => println!(
+            "network {} committed at generation {} but reconciliation could not be confirmed; check netd and rerun `wg-basic reconcile`",
+            if enabled { "enable" } else { "disable" },
+            generation,
+        ),
+    }
+    Ok(())
 }
 
 #[cfg(test)]

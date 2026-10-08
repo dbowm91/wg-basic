@@ -19,6 +19,7 @@ The store is a façade over focused submodules rather than one file:
 | `src/state/schema/mod.rs` | the one canonical connection initializer and the structural singleton invariants |
 | `src/state/schema/validation.rs` | database ownership/permission checks and the hardened pragma contract |
 | `src/state/schema/migrations.rs` | the ordered migration runner and the pre-migration recovery snapshot |
+| `src/state/service_lease.rs` | crash-released per-database service and maintenance advisory leases |
 
 The store layering is one-directional (`sql` → `desired`/`convergence` → `mod`), so a change to the stored representation has exactly one owner and cannot introduce a cycle. `tests/architecture_guards.rs` asserts that layering.
 
@@ -92,7 +93,22 @@ The initial schema is created entirely by migration 1. Singleton rows are enforc
 | `client_global_route_prefixes` | client routes not attached to a single client |
 | `network_policy` | singleton IPv4 forwarding/NAT/egress intent |
 | `network_policy_source_prefixes` | explicit policy prefixes |
+| `network_operational_state` | durable whole-server enabled/disabled projection, keyed by interface identity |
 | `convergence_state` | reconciliation evidence: attempted generation, converged generation, attempt timestamp, and a disposition category |
+
+Schema v5 adds `network_operational_state`, backfilled enabled for every
+existing managed interface. Disabling networking advances the desired
+generation and records a bounded audit event while retaining the server,
+clients, keys, addresses, and endpoint. Projection asks netd to remove the
+owned interface and firewall policy; enabling restores the same intent.
+
+`serve` holds an advisory lock at `<state>.serve.lock` for its full lifetime.
+The kernel lock, not the file's PID text, proves ownership and is released on
+process death. Online backup takes a shared `<state>.maintenance.lock`; restore
+and purge take it exclusively, preventing backup races while backups remain
+available during `serve`. Both lock files remain after purge because unlinking
+a locked inode could let another process create and lock a new inode at the
+same path.
 
 DNS server storage is deferred until a consumer exists. It must never be overloaded into a route table.
 

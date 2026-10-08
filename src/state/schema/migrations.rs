@@ -51,6 +51,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "enrollment_capabilities",
         sql: include_str!("../migrations/004_enrollment_capabilities.sql"),
     },
+    Migration {
+        version: 5,
+        name: "network_operational_state",
+        sql: include_str!("../migrations/005_network_operational_state.sql"),
+    },
 ];
 
 /// The highest schema version this binary understands.
@@ -129,7 +134,7 @@ pub(super) fn recovery_snapshot(
 }
 
 /// The deterministic location of the pre-migration recovery snapshot.
-pub(crate) fn recovery_snapshot_path(database: &Path, from_version: i64) -> PathBuf {
+pub fn recovery_snapshot_path(database: &Path, from_version: i64) -> PathBuf {
     let parent = database.parent().unwrap_or_else(|| Path::new("."));
     let name = database
         .file_name()
