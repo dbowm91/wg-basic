@@ -255,24 +255,63 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
             allow_non_loopback,
         }) => {
             let mut checks = doctor_state_checks(&state);
-            checks.push(
-                match request(&socket, RequestOperation::InspectCapabilities, 2) {
-                    Ok(ResponseBody::Capabilities(_)) => wg_basic::doctor::DoctorCheck::new(
+            match request(&socket, RequestOperation::InspectCapabilities, 2) {
+                Ok(ResponseBody::Capabilities(snapshot)) => {
+                    let netd_ready =
+                        snapshot.runtime_directory_safe && snapshot.cap_net_admin == Some(true);
+                    checks.push(wg_basic::doctor::DoctorCheck::new(
                         wg_basic::doctor::DoctorCheckId::Netd,
-                        wg_basic::doctor::DoctorDisposition::Pass,
-                        "netd answered the typed capability request",
-                        "protocol version accepted",
-                        "none",
-                    ),
-                    _ => wg_basic::doctor::DoctorCheck::new(
-                        wg_basic::doctor::DoctorCheckId::Netd,
-                        wg_basic::doctor::DoctorDisposition::Unknown,
-                        "netd capability state is unavailable",
-                        "no safe capability response was received",
-                        "start netd and verify its socket path and peer permissions",
-                    ),
-                },
-            );
+                        if netd_ready {
+                            wg_basic::doctor::DoctorDisposition::Pass
+                        } else {
+                            wg_basic::doctor::DoctorDisposition::Fail
+                        },
+                        if netd_ready {
+                            "netd answered and its runtime/capability checks passed"
+                        } else {
+                            "netd runtime directory or CAP_NET_ADMIN check failed"
+                        },
+                        format!(
+                            "uid {}; gid {}; CAP_NET_ADMIN {}; runtime directory {}; kernel {} ({})",
+                            snapshot.effective_uid,
+                            snapshot.effective_gid,
+                            snapshot.cap_net_admin.map_or("unknown", |value| if value { "present" } else { "absent" }),
+                            if snapshot.runtime_directory_safe { "safe" } else { "unsafe" },
+                            snapshot.kernel_release.as_deref().unwrap_or("unknown"),
+                            snapshot.architecture,
+                        ),
+                        if netd_ready { "none" } else { "review netd privilege and runtime-directory ownership/mode" },
+                    ));
+                    checks.push(wg_basic::doctor::DoctorCheck::new(
+                        wg_basic::doctor::DoctorCheckId::WireGuard,
+                        capability_disposition(snapshot.wireguard_control),
+                        "WireGuard Generic Netlink probe",
+                        format!("netd capability snapshot: {:?}", snapshot.wireguard_control),
+                        "verify kernel WireGuard support and netd permissions if unavailable",
+                    ));
+                    checks.push(wg_basic::doctor::DoctorCheck::new(
+                        wg_basic::doctor::DoctorCheckId::Nftables,
+                        capability_disposition(snapshot.nftables),
+                        "nftables probe",
+                        format!("netd capability snapshot: {:?}", snapshot.nftables),
+                        "verify nftables availability and netd execution policy if unavailable",
+                    ));
+                }
+                _ => checks.push(wg_basic::doctor::DoctorCheck::new(
+                    wg_basic::doctor::DoctorCheckId::Netd,
+                    wg_basic::doctor::DoctorDisposition::Unknown,
+                    "netd capability state is unavailable",
+                    "no safe capability response was received",
+                    "start netd and verify its socket path and peer permissions",
+                )),
+            }
+            checks.push(wg_basic::doctor::DoctorCheck::new(
+                wg_basic::doctor::DoctorCheckId::Rtnetlink,
+                wg_basic::doctor::DoctorDisposition::Unknown,
+                "RTNETLINK read-only observation was not requested",
+                "the capability protocol does not currently expose a harmless link observation without desired state",
+                "no host-state mutation was attempted",
+            ));
             checks.push(wg_basic::doctor::DoctorCheck::new(
                 wg_basic::doctor::DoctorCheckId::ServiceLease,
                 wg_basic::doctor::DoctorDisposition::Unknown,
@@ -571,6 +610,21 @@ fn doctor_state_checks(path: &std::path::Path) -> Vec<wg_basic::doctor::DoctorCh
         ),
     });
     checks
+}
+
+#[cfg(target_os = "linux")]
+fn capability_disposition(
+    state: wg_basic::protocol::CapabilityState,
+) -> wg_basic::doctor::DoctorDisposition {
+    match state {
+        wg_basic::protocol::CapabilityState::Available => wg_basic::doctor::DoctorDisposition::Pass,
+        wg_basic::protocol::CapabilityState::Unavailable => {
+            wg_basic::doctor::DoctorDisposition::Fail
+        }
+        wg_basic::protocol::CapabilityState::Unknown => {
+            wg_basic::doctor::DoctorDisposition::Unknown
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
