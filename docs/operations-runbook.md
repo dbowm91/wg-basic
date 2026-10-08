@@ -33,10 +33,11 @@ wg-basic doctor --state /var/lib/wg-basic/state.db \
   --socket /run/wg-basic/netd.sock --json
 ```
 
-The restore is offline and does not touch kernel state. Start netd, then serve,
-and let startup reconcile the restored desired state. Confirm doctor required
-checks, authenticated product health, and a real client handshake/traffic
-before declaring recovery complete. If an old binary refuses a newer schema,
+The restore is offline and does not touch kernel state. Start netd by itself,
+run doctor against its typed read-only backend, then start serve and let startup
+reconcile the restored desired state. Confirm doctor required checks,
+authenticated product health, and a real client handshake/traffic before
+declaring recovery complete. If an old binary refuses a newer schema,
 that is expected: restore a compatible database first; never start the old
 binary against a migrated database and call the refusal rollback.
 

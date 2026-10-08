@@ -629,19 +629,34 @@ fn v4_product_traffic_rolls_back_and_reupgrades_as_one_transaction() {
     // force the release health gate to fail after the v4→v5 migration.
     drop(old_netd);
 
-    let migration = Command::new(candidate)
-        .args(["state", "status", "--state"])
+    // The candidate's real serve startup owns migration and the singleton
+    // lease. Its required netd dependency is deliberately absent below.
+    let (mut degraded_candidate, degraded_addr) =
+        start_serve(candidate, &state, &scratch.server_socket());
+
+    let degraded = http(degraded_addr, "GET", "/healthz", &[], "");
+    assert_eq!(degraded.body, "degraded");
+    assert!(degraded_candidate.0.try_wait().unwrap().is_none());
+    let failed_doctor = Command::new(candidate)
+        .args(["doctor", "--state"])
         .arg(&state)
+        .args(["--socket"])
+        .arg(scratch.server_socket())
+        .args(["--json"])
         .output()
         .unwrap();
-    assert!(
-        migration.status.success(),
-        "{}",
-        String::from_utf8_lossy(&migration.stderr)
+    assert_ne!(
+        failed_doctor.status.code(),
+        Some(0),
+        "missing netd must fail release health"
     );
-    assert!(String::from_utf8_lossy(&migration.stdout).contains("schema version:     5"));
+    let failed_report: serde_json::Value = serde_json::from_slice(&failed_doctor.stdout).unwrap();
+    assert_ne!(failed_report["overall"], "pass");
+    // State rollback must happen before old roles resume.
+    degraded_candidate.stop();
     checkpoint_state(&state);
     let migrated_snapshot = wg_basic::state::inspect_readonly(&state).unwrap();
+    assert_eq!(migrated_snapshot.schema_version, 5);
     let migrated_interface = migrated_snapshot.desired.state.interfaces[0].id;
     assert_eq!(
         migrated_snapshot
@@ -670,28 +685,6 @@ fn v4_product_traffic_rolls_back_and_reupgrades_as_one_transaction() {
         .unwrap();
     assert!(!old_refusal.status.success());
 
-    let (mut degraded_candidate, degraded_addr) =
-        start_serve(candidate, &state, &scratch.server_socket());
-    let degraded = http(degraded_addr, "GET", "/healthz", &[], "");
-    assert_eq!(degraded.body, "degraded");
-    assert!(degraded_candidate.0.try_wait().unwrap().is_none());
-    let failed_doctor = Command::new(candidate)
-        .args(["doctor", "--state"])
-        .arg(&state)
-        .args(["--socket"])
-        .arg(scratch.server_socket())
-        .args(["--json"])
-        .output()
-        .unwrap();
-    assert_ne!(
-        failed_doctor.status.code(),
-        Some(0),
-        "missing netd must fail release health"
-    );
-    let failed_report: serde_json::Value = serde_json::from_slice(&failed_doctor.stdout).unwrap();
-    assert_ne!(failed_report["overall"], "pass");
-    // State rollback must happen before old roles resume.
-    degraded_candidate.stop();
     let restore = Command::new(old)
         .args(["state", "restore", "--state"])
         .arg(&state)

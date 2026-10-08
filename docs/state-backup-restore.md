@@ -188,14 +188,18 @@ wg-basic state verify /secure/wg-basic/pre-update-v4.db
 systemctl stop wg-basic-serve wg-basic-netd
 wg-basic state restore /secure/wg-basic/pre-update-v4.db \
   --state /var/lib/wg-basic/state.db
+systemctl start wg-basic-netd
 wg-basic doctor --state /var/lib/wg-basic/state.db \
   --socket /run/wg-basic/netd.sock --json
-systemctl start wg-basic-netd wg-basic-serve
+systemctl start wg-basic-serve
 wg-basic doctor --state /var/lib/wg-basic/state.db \
   --socket /run/wg-basic/netd.sock --json
 ```
 
-Run authenticated product and real client traffic checks after startup. The
+Starting netd alone gives doctor its typed read-only backend without starting
+the management service against the restored database. Then start serve and let
+startup reconciliation apply the restored desired generation. Run authenticated
+product and real client traffic checks after startup. The
 Phase 9 rehearsal executes these CLI backup/verify/restore operations with an
 immutable Phase 8 v4 database, then checks the restored v4 state with the
 read-only doctor before old service startup. The Phase 8 binary predates the
