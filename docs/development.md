@@ -35,7 +35,8 @@ maintenance lock.
 Phase 10 M002 adds `wg-basic system install [--candidate PATH]` for a local
 executable and `wg-basic system status` for read-only ownership/service
 inspection. Installation requires effective root and an active systemd system
-manager; it never invokes sudo. It installs the canonical `/usr/local/bin` and
+manager; canonical destination parents must be root-owned and not group/world
+writable. It never invokes sudo. It installs the canonical `/usr/local/bin` and
 `/var/lib` layout, creates the `wg-basic` identities through
 `systemd-sysusers`, and starts netd before the management service. This local
 install path performs no release discovery or signature verification; a
