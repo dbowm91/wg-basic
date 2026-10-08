@@ -1247,3 +1247,135 @@ async fn header_count_boundary_accepts_32_and_rejects_33_without_losing_service(
     server.assert_still_serving();
     server.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_keepalive_connection_is_closed_after_256_requests() {
+    let scratch = Scratch::new();
+    let server = Harness::start(&scratch).await;
+    let mut stream = TcpStream::connect(server.addr).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    let request = format!("GET /healthz HTTP/1.1\r\nHost: {}\r\n\r\n", server.host());
+
+    for index in 0..256 {
+        stream.write_all(request.as_bytes()).unwrap();
+        stream.flush().unwrap();
+        let response = read_reply(&mut reader, &request)
+            .unwrap_or_else(|()| panic!("keepalive request {index} was cut short"));
+        assert_eq!(response.status, 200);
+    }
+
+    stream.write_all(request.as_bytes()).unwrap();
+    stream.flush().unwrap();
+    assert!(
+        read_reply(&mut reader, &request).is_err(),
+        "the 257th request must be refused by the per-connection bound"
+    );
+    server.assert_still_serving();
+    server.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn request_target_limit_accepts_1024_bytes_and_rejects_1025() {
+    let scratch = Scratch::new();
+    let server = Harness::start(&scratch).await;
+    let host = server.host();
+    let exact = format!(
+        "GET /{} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n",
+        "x".repeat(1023)
+    );
+    let over = format!(
+        "GET /{} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n",
+        "x".repeat(1024)
+    );
+    assert_eq!(
+        server.request(&exact).status,
+        404,
+        "1024-byte target reaches routing"
+    );
+    assert_ne!(
+        server.request(&over).status,
+        404,
+        "1025-byte target is rejected by transport"
+    );
+    server.assert_still_serving();
+    server.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn header_byte_limit_accepts_8192_and_rejects_8193_bytes() {
+    let scratch = Scratch::new();
+    let server = Harness::start(&scratch).await;
+    let prefix = format!(
+        "GET /healthz HTTP/1.1\r\nHost: {}\r\nX-Pad: ",
+        server.host()
+    );
+    let suffix = "\r\nConnection: close\r\n\r\n";
+    let request_of_size = |size: usize| {
+        let padding = size.checked_sub(prefix.len() + suffix.len()).unwrap();
+        format!("{}{}{}", prefix, "x".repeat(padding), suffix)
+    };
+    let exact = request_of_size(8192);
+    let over = request_of_size(8193);
+    assert_eq!(
+        server.request(&exact).status,
+        200,
+        "8 KiB header boundary is inclusive"
+    );
+    assert_ne!(
+        server.request(&over).status,
+        200,
+        "one byte over the header limit is rejected"
+    );
+    server.assert_still_serving();
+    server.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn total_connection_lifetime_closes_a_still_open_keepalive_socket() {
+    let scratch = Scratch::new();
+    let limits = HttpLimits {
+        connection_total_timeout: Duration::from_millis(250),
+        header_read_timeout: Duration::from_millis(100),
+        body_read_timeout: Duration::from_millis(100),
+        handler_timeout: Duration::from_millis(100),
+        response_write_timeout: Duration::from_millis(100),
+        keep_alive_idle_timeout: Duration::from_millis(100),
+        ..HttpLimits::default()
+    };
+    let server = Harness::start_with(&scratch, limits, None).await;
+    let mut stream = TcpStream::connect(server.addr).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    let request = format!("GET /healthz HTTP/1.1\r\nHost: {}\r\n\r\n", server.host());
+    stream.write_all(request.as_bytes()).unwrap();
+    stream.flush().unwrap();
+    assert_eq!(read_reply(&mut reader, &request).unwrap().status, 200);
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let mut byte = [0_u8; 1];
+            match reader.read(&mut byte) {
+                Ok(0) => break,
+                Ok(_) => continue,
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    continue
+                }
+                Err(error) => panic!("reading the connection close: {error}"),
+            }
+        }
+    })
+    .await
+    .expect("the configured total lifetime closes the connection");
+    server.assert_still_serving();
+    server.stop().await;
+}
