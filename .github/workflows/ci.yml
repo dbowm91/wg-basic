@@ -80,6 +80,8 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+      - name: Secure the disposable runner's canonical installation parent
+        run: sudo chmod 0755 /usr/local/bin
       - name: Qualify native installation, service identities, and exact ownership on the disposable systemd runner
         run: sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo cargo test --locked --test system_installation -- --ignored --exact systemd_installation_ownership_reinstall_and_service_credentials --nocapture --test-threads=1
 
