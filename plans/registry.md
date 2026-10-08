@@ -79,7 +79,7 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
-| Distribution/install/update | M004 transactional self-update/rollback | ready | `plans/implementation/distribution/004-transactional-self-update-and-rollback.md` | M001–M003 closed; production update remains disabled until the production key is provisioned |
+| Distribution/install/update | M004 transactional self-update/rollback | active | `plans/implementation/distribution/004-transactional-self-update-and-rollback.md` | M001–M003 closed; production update remains disabled until the production key is provisioned |
 
 ## 6. Blocked implementation plans
 

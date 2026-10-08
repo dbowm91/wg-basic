@@ -8,6 +8,9 @@ use sha2::{Digest, Sha256};
 
 pub const PRODUCT_ID: &str = "wg-basic";
 pub const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Production release trust root. Maintainers provision this public key only
+/// after verifying a signed draft; fixture keys must never be substituted.
+pub const PRODUCTION_PUBLIC_KEY: Option<&str> = None;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LinuxTarget {

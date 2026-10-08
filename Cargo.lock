@@ -69,9 +69,9 @@ dependencies = [
 
 [[package]]
 name = "arbitrary"
-version = "1.5.0"
+version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3bc62ac97cc33321f50863d514c3bc38a453947a8f9e781137e47c7401020aed"
+checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
 dependencies = [
  "derive_arbitrary",
 ]
@@ -390,13 +390,13 @@ checksum = "7cd812cc2bc1d69d4764bd80df88b4317eaef9e773c75226407d9bc0876b211c"
 
 [[package]]
 name = "derive_arbitrary"
-version = "1.5.0"
+version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b034bd7d5f032402a2479444dcc6f74e36a03f31854d41680fb240ef682a1ac"
+checksum = "1e567bd82dcff979e4b03460c307b3cdc9e96fde3d73bed1496d2bc75d9dd62a"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -498,6 +498,15 @@ checksum = "161b244bc474fa24815ebd81db8cda46e0f752dd4b84983e454239f89fd789ad"
 dependencies = [
  "self-replace",
  "sha2 0.10.9",
+]
+
+[[package]]
+name = "eggup-curl"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79df200f5080c1f11c8d5a908ba8d73d44083ad13b17ae5576a8ad8cc52ab465"
+dependencies = [
+ "eggup-acquisition",
 ]
 
 [[package]]
@@ -1736,7 +1745,9 @@ dependencies = [
  "eggpack-manifest",
  "eggserve-primitives",
  "eggserve-server",
+ "eggup-acquisition",
  "eggup-core",
+ "eggup-curl",
  "eggup-eggpack",
  "eggup-service",
  "futures-util",
