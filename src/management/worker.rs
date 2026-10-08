@@ -51,6 +51,11 @@ use super::{
 };
 use crate::{
     domain::{DesiredGeneration, PrincipalId},
+    product::{
+        ClientCreateCommand, ClientDeleteCommand, ClientUpdateCommand, ProductClient,
+        ProductMutationReceipt, ProductServer, ProductService, ServerSetupCommand,
+        SetClientEnabledCommand,
+    },
     state::{AttemptDisposition, StoredSession},
 };
 use std::{
@@ -122,8 +127,134 @@ pub enum WorkerCommand {
     AdminStatus {
         reply: oneshot::Sender<Result<Option<AdminStatus>, AuthFailure>>,
     },
+    /// The safe product snapshot: the managed server and its clients.
+    ///
+    /// Read-only, and secret-free by construction: the reply type has no field
+    /// that could hold a private or preshared key.
+    ProductSnapshot {
+        reply: oneshot::Sender<Result<ProductSnapshotReply, ProductFailure>>,
+    },
+    /// Configure the one managed server.
+    SetupServer {
+        command: ServerSetupCommand,
+        reply: oneshot::Sender<Result<SetupReply, ProductFailure>>,
+    },
+    /// Create one managed client.
+    CreateClient {
+        command: ClientCreateCommand,
+        reply: oneshot::Sender<Result<ClientMutationReply, ProductFailure>>,
+    },
+    /// Apply the present fields of an update to one managed client.
+    UpdateClient {
+        command: ClientUpdateCommand,
+        reply: oneshot::Sender<Result<ClientMutationReply, ProductFailure>>,
+    },
+    /// Enable or disable one managed client.
+    SetClientEnabled {
+        command: SetClientEnabledCommand,
+        reply: oneshot::Sender<Result<ClientMutationReply, ProductFailure>>,
+    },
+    /// Delete one managed client.
+    DeleteClient {
+        command: ClientDeleteCommand,
+        reply: oneshot::Sender<Result<ProductMutationReceipt, ProductFailure>>,
+    },
     /// Stop the worker; the reply confirms the stop was observed.
     Shutdown { reply: oneshot::Sender<()> },
+}
+
+/// The safe product snapshot returned by [`WorkerCommand::ProductSnapshot`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProductSnapshotReply {
+    pub generation: DesiredGeneration,
+    pub server: Option<ProductServer>,
+    pub clients: Vec<ProductClient>,
+}
+
+/// The result of configuring the managed server.
+///
+/// A safe summary and a receipt. No private key: the server's identity is
+/// generated internally and is reachable only through M003's explicit export.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SetupReply {
+    pub server: ProductServer,
+    pub receipt: ProductMutationReceipt,
+}
+
+/// A client mutation's safe summary together with its receipt.
+///
+/// The receipt is the *reconciled* one, produced by the worker after the commit
+/// rather than by the product service before it. That split is the whole point:
+/// the worker is the only place that can talk to the kernel, and only it can
+/// answer whether a committed change was enforced.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClientMutationReply {
+    pub client: ProductClient,
+    pub receipt: ProductMutationReceipt,
+}
+
+/// Why a product command was refused.
+///
+/// Deliberately a closed set of categories rather than an error string: these
+/// replies cross the same boundary an HTTP body would, and a formatted internal
+/// error is exactly the kind of thing that should not become operator-facing
+/// text.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum ProductFailure {
+    #[error("no managed server is configured yet")]
+    ServerNotConfigured,
+    #[error("a managed server is already configured")]
+    ServerAlreadyConfigured,
+    #[error("the named interface or client does not exist")]
+    NotFound,
+    #[error("the requested address cannot be allocated")]
+    AddressUnavailable,
+    #[error("the mutation conflicts with a newer desired generation")]
+    StaleGeneration,
+    #[error("the requested change is not valid")]
+    Invalid,
+    #[error("durable state rejected the mutation")]
+    StateUnavailable,
+}
+
+impl ProductFailure {
+    /// Maps a product-layer error onto a bounded category.
+    ///
+    /// Every other cause collapses into one of these rather than carrying its
+    /// text outward.
+    pub(crate) fn classify(error: &crate::product::ProductError) -> Self {
+        use crate::product::ProductError;
+        match error {
+            ProductError::ServerAlreadyConfigured => Self::ServerAlreadyConfigured,
+            ProductError::ServerNotConfigured => Self::ServerNotConfigured,
+            ProductError::UnknownInterface(_)
+            | ProductError::ClientMissingAfterMutation(_)
+            | ProductError::ServerMissingAfterSetup => Self::NotFound,
+            ProductError::Key(_) => Self::Invalid,
+            ProductError::Allocation(_) => Self::AddressUnavailable,
+            ProductError::State(crate::state::StateError::StaleGeneration { .. }) => {
+                Self::StaleGeneration
+            }
+            ProductError::State(crate::state::StateError::Validation(_)) => Self::Invalid,
+            ProductError::State(_) => Self::StateUnavailable,
+        }
+    }
+
+    /// Maps a post-commit reconcile failure onto a bounded category.
+    ///
+    /// A reconcile that cannot even be attempted is a state or projection
+    /// problem, not something the operator caused and not something a retry of
+    /// the same request fixes.
+    pub(crate) fn classify_runtime(error: &ManagementError) -> Self {
+        match error {
+            ManagementError::BackendUnavailable
+            | ManagementError::PartialFailure
+            | ManagementError::Unauthorized
+            | ManagementError::Rejected
+            | ManagementError::Conflict => Self::StateUnavailable,
+            _ => Self::StateUnavailable,
+        }
+    }
 }
 
 /// Why a command was refused.
@@ -190,6 +321,13 @@ pub enum WorkerError {
     /// The credentials were accepted but the session could not be issued.
     #[error("a session could not be issued")]
     Unavailable,
+    /// A product command was refused.
+    ///
+    /// Kept distinct from [`Self::Rejected`]: that variant means credentials
+    /// were not accepted, and answering a product refusal with it would tell an
+    /// operator their client was refused for an authentication reason.
+    #[error("product command refused: {0}")]
+    Product(#[from] ProductFailure),
     /// An administrative credential operation failed.
     #[error("the credential store is unavailable")]
     Storage,
@@ -390,6 +528,83 @@ impl WorkerClient {
         self.auth_reply(answer).await
     }
 
+    /// The safe product snapshot: the managed server and its clients.
+    pub async fn product_snapshot(&self) -> Result<ProductSnapshotReply, WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::ProductSnapshot { reply }).await?;
+        self.product_reply(answer).await
+    }
+
+    /// Configures the managed server exactly once.
+    pub async fn setup_server(
+        &self,
+        command: ServerSetupCommand,
+    ) -> Result<SetupReply, WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::SetupServer { command, reply })
+            .await?;
+        self.product_reply(answer).await
+    }
+
+    /// Creates one managed client.
+    pub async fn create_client(
+        &self,
+        command: ClientCreateCommand,
+    ) -> Result<ClientMutationReply, WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::CreateClient { command, reply })
+            .await?;
+        self.product_reply(answer).await
+    }
+
+    /// Applies an update to one managed client.
+    pub async fn update_client(
+        &self,
+        command: ClientUpdateCommand,
+    ) -> Result<ClientMutationReply, WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::UpdateClient { command, reply })
+            .await?;
+        self.product_reply(answer).await
+    }
+
+    /// Enables or disables one managed client.
+    pub async fn set_client_enabled(
+        &self,
+        command: SetClientEnabledCommand,
+    ) -> Result<ClientMutationReply, WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::SetClientEnabled { command, reply })
+            .await?;
+        self.product_reply(answer).await
+    }
+
+    /// Deletes one managed client.
+    pub async fn delete_client(
+        &self,
+        command: ClientDeleteCommand,
+    ) -> Result<ProductMutationReceipt, WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::DeleteClient { command, reply })
+            .await?;
+        self.product_reply(answer).await
+    }
+
+    /// Awaits a product reply under the configured deadline.
+    ///
+    /// Mirrors [`Self::auth_reply`]: a refusal is a completed round trip
+    /// carrying a refusal, so it is surfaced as `Ok(Err(..))` rather than being
+    /// flattened into a transport failure.
+    async fn product_reply<T>(
+        &self,
+        answer: oneshot::Receiver<Result<T, ProductFailure>>,
+    ) -> Result<T, WorkerError> {
+        match self.await_reply(answer).await? {
+            Ok(value) => Ok(value),
+            Err(failure) => Err(WorkerError::Product(failure)),
+        }
+    }
+
     /// Awaits an authentication reply under the configured deadline.
     ///
     /// `WorkerError::Failed` is deliberately never produced here: an
@@ -580,6 +795,70 @@ fn run(
     serve(runtime, &mut receiver);
 }
 
+/// Builds the safe product snapshot from durable state.
+///
+/// A store failure becomes a `StateUnavailable` category rather than an error
+/// string, because this reply is what an operator-facing surface would render.
+fn product_snapshot(runtime: &ManagementRuntime) -> Result<ProductSnapshotReply, ProductFailure> {
+    let store = runtime.store();
+    let service = ProductService::new(store);
+    let generation = store
+        .current_generation()
+        .map_err(|_| ProductFailure::StateUnavailable)?;
+    let server = service
+        .server()
+        .map_err(|_| ProductFailure::StateUnavailable)?;
+    let clients = service
+        .list_clients()
+        .map_err(|_| ProductFailure::StateUnavailable)?;
+    Ok(ProductSnapshotReply {
+        generation,
+        server,
+        clients,
+    })
+}
+
+/// A product command can fail before its commit or after it.
+///
+/// The two are different facts and are kept apart: a pre-commit failure means
+/// nothing changed, while a post-commit failure means the mutation *did* land
+/// and only its enforcement is unconfirmed. Collapsing them would turn a
+/// degraded receipt back into a failed request.
+enum ProductCommandError {
+    Product(crate::product::ProductError),
+    Runtime(ManagementError),
+}
+
+impl From<crate::product::ProductError> for ProductCommandError {
+    fn from(error: crate::product::ProductError) -> Self {
+        Self::Product(error)
+    }
+}
+
+impl From<ManagementError> for ProductCommandError {
+    fn from(error: ManagementError) -> Self {
+        Self::Runtime(error)
+    }
+}
+
+fn run_product_mutation<T>(
+    runtime: &ManagementRuntime,
+    commit: impl FnOnce() -> Result<(T, ProductMutationReceipt), crate::product::ProductError>,
+) -> Result<(T, ProductMutationReceipt), ProductCommandError> {
+    let (value, pending) = commit()?;
+    let receipt = runtime
+        .reconcile_after_commit(pending.generation)
+        .map_err(ProductCommandError::Runtime)?;
+    Ok((value, receipt))
+}
+
+fn product_failure(error: ProductCommandError) -> ProductFailure {
+    match error {
+        ProductCommandError::Product(error) => ProductFailure::classify(&error),
+        ProductCommandError::Runtime(error) => ProductFailure::classify_runtime(&error),
+    }
+}
+
 /// The command loop. The runtime is the only thing this thread owns.
 ///
 /// The loop is exhaustive over [`WorkerCommand`] on purpose: adding a command
@@ -652,6 +931,53 @@ fn serve(runtime: ManagementRuntime, receiver: &mut mpsc::Receiver<WorkerCommand
             WorkerCommand::AdminStatus { reply } => {
                 let auth = AuthService::new(runtime.store());
                 let _ = reply.send(auth.status().map_err(AuthFailure::from));
+            }
+            WorkerCommand::ProductSnapshot { reply } => {
+                let _ = reply.send(product_snapshot(&runtime));
+            }
+            WorkerCommand::SetupServer { command, reply } => {
+                let service = ProductService::new(runtime.store());
+                let _ = reply.send(
+                    run_product_mutation(&runtime, || service.setup_server(command))
+                        .map(|(server, receipt)| SetupReply { server, receipt })
+                        .map_err(product_failure),
+                );
+            }
+            WorkerCommand::CreateClient { command, reply } => {
+                let service = ProductService::new(runtime.store());
+                let _ = reply.send(
+                    run_product_mutation(&runtime, || service.create_client(command))
+                        .map(|(client, receipt)| ClientMutationReply { client, receipt })
+                        .map_err(product_failure),
+                );
+            }
+            WorkerCommand::UpdateClient { command, reply } => {
+                let service = ProductService::new(runtime.store());
+                let _ = reply.send(
+                    run_product_mutation(&runtime, || service.update_client(command))
+                        .map(|(client, receipt)| ClientMutationReply { client, receipt })
+                        .map_err(product_failure),
+                );
+            }
+            WorkerCommand::SetClientEnabled { command, reply } => {
+                let service = ProductService::new(runtime.store());
+                let _ = reply.send(
+                    run_product_mutation(&runtime, || service.set_client_enabled(command))
+                        .map(|(client, receipt)| ClientMutationReply { client, receipt })
+                        .map_err(product_failure),
+                );
+            }
+            WorkerCommand::DeleteClient { command, reply } => {
+                let service = ProductService::new(runtime.store());
+                let _ = reply.send(
+                    (|| -> Result<ProductMutationReceipt, ProductCommandError> {
+                        let pending = service.delete_client(command)?;
+                        runtime
+                            .reconcile_after_commit(pending.generation)
+                            .map_err(ProductCommandError::Runtime)
+                    })()
+                    .map_err(product_failure),
+                );
             }
             WorkerCommand::Shutdown { reply } => {
                 let _ = reply.send(());

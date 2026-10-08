@@ -1,0 +1,763 @@
+//! The product mutation service.
+//!
+//! Everything an operator can change about a configured server or client
+//! happens here, and nowhere else. HTTP in M002 will be a thin translation from
+//! JSON into these commands; M001 has no HTTP at all, which is what proves the
+//! product layer stands on its own.
+//!
+//! # Two truths, never collapsed
+//!
+//! A product mutation has two outcomes that happen at different times and in
+//! different places: the database commit, which is durable and immediate, and
+//! the kernel apply, which is later and may fail. [`ProductMutationReceipt`]
+//! carries them separately. Every method here returns `Err` only when *nothing
+//! committed*; once a receipt exists, the caller is holding durable truth and is
+//! told plainly whether the kernel has caught up.
+//!
+//! # Key material is generated here, returned nowhere
+//!
+//! Server and client keypairs are generated inside these commands and stored
+//! into durable state. No method returns a private key. Explicit secret export
+//! is a separate, deliberate operation that M003 owns.
+
+use crate::{
+    domain::{
+        ClientId, ClientRoutePolicy, DesiredAddress, DesiredClient, DesiredGeneration,
+        DesiredInterface, DesiredPeer, DesiredState, InterfaceId, InterfaceName, LinkLifecycle,
+        NetworkPrefix, OwnershipDeclaration, PeerId, ResourcePresence,
+    },
+    product::{
+        allocator::{AddressRequest, AllocationContext},
+        model::{
+            AdvertisedEndpoint, AuditAction, ClientEnabled, ClientLabel, DegradedCategory,
+            ProductClient, ProductMutationReceipt, ProductServer,
+        },
+    },
+    state::{
+        ClientProductRecord, InterfaceProductState, ProductAudit, ProductState, StateError,
+        StateStore,
+    },
+};
+use ipnet::IpNet;
+use std::net::IpAddr;
+
+/// The product service over a state store.
+///
+/// Borrows the store rather than owning it: the service performs no caching of
+/// its own, and the worker owns exactly one [`StateStore`] for the process's
+/// lifetime, so an `Arc` here would imply a second authority that does not exist.
+pub struct ProductService<'a> {
+    store: &'a StateStore,
+}
+
+impl<'a> ProductService<'a> {
+    pub fn new(store: &'a StateStore) -> Self {
+        Self { store }
+    }
+
+    /// The underlying store, for callers that need a read-only view.
+    pub fn store(&self) -> &'a StateStore {
+        self.store
+    }
+
+    /// Reads the managed server summary, if one is configured.
+    pub fn server(&self) -> Result<Option<ProductServer>, ProductError> {
+        let loaded = self.store.load().map_err(ProductError::State)?;
+        let product = self.store.load_product().map_err(ProductError::State)?;
+        Ok(assemble_server(&loaded.state, &product.state))
+    }
+
+    /// Lists managed clients, newest first, without any secret material.
+    pub fn list_clients(&self) -> Result<Vec<ProductClient>, ProductError> {
+        let loaded = self.store.load().map_err(ProductError::State)?;
+        let product = self.store.load_product().map_err(ProductError::State)?;
+        Ok(assemble_clients(&loaded.state, &product.state))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Commands
+// ---------------------------------------------------------------------------
+
+/// Configure the one managed server. Rejected if a server already exists.
+#[derive(Clone, Debug)]
+pub struct ServerSetupCommand {
+    pub principal_id: crate::domain::PrincipalId,
+    pub expected_generation: DesiredGeneration,
+    pub interface_name: InterfaceName,
+    pub tunnel_prefix: NetworkPrefix,
+    /// Omitted means "allocate the first usable address inside the prefix".
+    pub server_address: Option<IpAddr>,
+    pub listen_port: u16,
+    pub advertised_endpoint: AdvertisedEndpoint,
+    pub egress_interface: InterfaceName,
+    pub ipv4_forwarding_required: bool,
+    pub masquerade: bool,
+    pub default_client_route_policy: ClientRoutePolicy,
+}
+
+/// A safe server summary plus its receipt. No private key, by construction.
+pub type SetupResult = (ProductServer, ProductMutationReceipt);
+
+impl<'a> ProductService<'a> {
+    /// Configures the managed server exactly once.
+    pub fn setup_server(&self, command: ServerSetupCommand) -> Result<SetupResult, ProductError> {
+        let loaded = self.store.load().map_err(ProductError::State)?;
+        if !loaded.state.interfaces.is_empty() {
+            return Err(ProductError::ServerAlreadyConfigured);
+        }
+
+        let ServerSetupCommand {
+            principal_id,
+            expected_generation,
+            interface_name,
+            tunnel_prefix,
+            server_address,
+            listen_port,
+            advertised_endpoint,
+            egress_interface,
+            ipv4_forwarding_required,
+            masquerade,
+            default_client_route_policy,
+        } = command;
+
+        let ipv4_prefix = match tunnel_prefix.network() {
+            IpNet::V4(v4) => v4,
+            IpNet::V6(_) => return Err(ProductError::Allocation(super::AllocationError::NotIpv4)),
+        };
+
+        // The server's own address is allocated from the same pool as client
+        // addresses, so the two can never collide.
+        let server_ipv4 = match server_address {
+            Some(IpAddr::V4(v4)) => v4,
+            Some(IpAddr::V6(_)) => {
+                return Err(ProductError::Allocation(super::AllocationError::NotIpv4))
+            }
+            None => AllocationContext::new(IpNet::V4(ipv4_prefix))?
+                .allocate(AddressRequest::Automatic)?,
+        };
+
+        let interface_id = InterfaceId::new();
+        // The generated pair's public half is not stored on the interface: the
+        // server's public key is always derived from its stored private key, so
+        // the two cannot drift apart.
+        let server_key = crate::domain::generate_keypair()
+            .map_err(ProductError::Key)?
+            .private_key;
+
+        let committed = self.store.mutate_product(
+            expected_generation,
+            Some(principal_id),
+            |state, product| {
+                if !state.interfaces.is_empty() {
+                    return Err(StateError::Corrupt("a server already exists"));
+                }
+                if product
+                    .interfaces
+                    .values()
+                    .any(|existing| existing.interface_id == interface_id)
+                {
+                    return Err(StateError::Corrupt("duplicate product interface"));
+                }
+
+                let interface = DesiredInterface {
+                    id: interface_id,
+                    name: interface_name.clone(),
+                    ownership: OwnershipDeclaration::Managed,
+                    lifecycle: LinkLifecycle::Present,
+                    admin_up: Some(true),
+                    private_key: server_key.clone(),
+                    listen_port: Some(listen_port),
+                    manage_all_peers: true,
+                    tunnel_prefixes: vec![tunnel_prefix.clone()],
+                    addresses: vec![DesiredAddress {
+                        address: host_v4(server_ipv4),
+                        presence: ResourcePresence::Present,
+                    }],
+                    routes: Vec::new(),
+                    peers: Vec::new(),
+                    clients: Vec::new(),
+                };
+
+                let next = DesiredState {
+                    interfaces: vec![interface],
+                    client_routes: default_client_route_policy.clone(),
+                    network_policy: Some(crate::domain::DesiredNetworkPolicy {
+                        wireguard_interface: interface_name.clone(),
+                        ipv4_forwarding_required,
+                        egress_interface: egress_interface.clone(),
+                        source_prefixes: vec![tunnel_prefix.clone()],
+                        masquerade,
+                    }),
+                };
+
+                product.interfaces.insert(
+                    interface_id,
+                    InterfaceProductState {
+                        interface_id,
+                        advertised_endpoint: advertised_endpoint.clone(),
+                    },
+                );
+
+                Ok((
+                    next,
+                    ProductAudit::server(AuditAction::ServerSetup, interface_id),
+                ))
+            },
+        )?;
+
+        let server = assemble_server(&committed.state, &committed.product)
+            .ok_or(ProductError::ServerMissingAfterSetup)?;
+        Ok((
+            server,
+            ProductMutationReceipt::pending(committed.generation),
+        ))
+    }
+}
+
+/// Create one managed client.
+#[derive(Clone, Debug)]
+pub struct ClientCreateCommand {
+    pub principal_id: crate::domain::PrincipalId,
+    pub expected_generation: DesiredGeneration,
+    pub interface_id: InterfaceId,
+    pub label: ClientLabel,
+    /// Requested address, or `None` to allocate the lowest usable free one.
+    pub requested_address: Option<IpAddr>,
+    /// Overrides the interface's default client route policy when set.
+    pub route_policy: Option<ClientRoutePolicy>,
+    pub dns_servers: Vec<IpAddr>,
+    pub client_keepalive_seconds: Option<u16>,
+}
+
+/// Fields an update may change. Absent means "leave unchanged".
+#[derive(Clone, Debug, Default)]
+pub struct ClientUpdateCommand {
+    pub principal_id: crate::domain::PrincipalId,
+    pub expected_generation: DesiredGeneration,
+    pub client_id: ClientId,
+    pub label: Option<ClientLabel>,
+    pub route_policy: Option<ClientRoutePolicy>,
+    pub dns_servers: Option<Vec<IpAddr>>,
+    pub client_keepalive_seconds: Option<Option<u16>>,
+    pub requested_address: Option<IpAddr>,
+}
+
+/// Delete one managed client and release its address.
+#[derive(Clone, Copy, Debug)]
+pub struct ClientDeleteCommand {
+    pub principal_id: crate::domain::PrincipalId,
+    pub expected_generation: DesiredGeneration,
+    pub client_id: ClientId,
+}
+
+/// Set a managed client's enable bit.
+#[derive(Clone, Copy, Debug)]
+pub struct SetClientEnabledCommand {
+    pub principal_id: crate::domain::PrincipalId,
+    pub expected_generation: DesiredGeneration,
+    pub client_id: ClientId,
+    pub enabled: ClientEnabled,
+}
+
+impl<'a> ProductService<'a> {
+    /// Creates a managed client: allocates its address, generates its keypair,
+    /// and records the product metadata.
+    ///
+    /// The reply carries no private key. The key is retained in durable state
+    /// for the explicit export that M003 owns, and is reachable nowhere else.
+    pub fn create_client(
+        &self,
+        command: ClientCreateCommand,
+    ) -> Result<(ProductClient, ProductMutationReceipt), ProductError> {
+        let loaded = self.store.load().map_err(ProductError::State)?;
+        let base = loaded
+            .state
+            .interfaces
+            .iter()
+            .find(|interface| interface.id == command.interface_id)
+            .ok_or(ProductError::UnknownInterface(command.interface_id))?;
+        if base.tunnel_prefixes.is_empty() {
+            return Err(ProductError::ServerNotConfigured);
+        }
+
+        let allocation = allocation_context(&loaded.state, command.interface_id)?;
+        let requested = match command.requested_address {
+            Some(IpAddr::V4(v4)) => AddressRequest::Requested(v4),
+            Some(IpAddr::V6(_)) => {
+                return Err(ProductError::Allocation(super::AllocationError::NotIpv4))
+            }
+            None => AddressRequest::Automatic,
+        };
+        let address = allocation.allocate(requested)?;
+
+        let client_id = ClientId::new();
+        let peer_id = PeerId::new();
+        let client_keypair = crate::domain::generate_keypair().map_err(ProductError::Key)?;
+        let client_key = client_keypair.private_key;
+        let client_public = client_keypair.public_key;
+        let interface_id = command.interface_id;
+
+        let route_policy = command
+            .route_policy
+            .clone()
+            .unwrap_or_else(|| loaded.state.client_routes.clone());
+
+        let committed = self.store.mutate_product(
+            command.expected_generation,
+            Some(command.principal_id),
+            |state, product| {
+                // The desired snapshot arrives by shared reference so the
+                // transaction owns the only mutable copy; the next state is
+                // built by editing a clone and returning it.
+                let mut next = state.clone();
+                let interface = next
+                    .interfaces
+                    .iter_mut()
+                    .find(|interface| interface.id == interface_id)
+                    .ok_or(StateError::Corrupt("interface vanished mid-transaction"))?;
+
+                if interface.peers.iter().any(|peer| peer.id == peer_id) {
+                    return Err(StateError::Corrupt("duplicate peer id"));
+                }
+
+                interface.peers.push(DesiredPeer {
+                    id: peer_id,
+                    public_key: client_public.clone(),
+                    // Retained so M003 can export the peer's own configuration.
+                    // Never projected, never returned, never logged.
+                    private_key: Some(client_key.clone()),
+                    preshared_key: None,
+                    allowed_ips: vec![NetworkPrefix::new(host_v4(address))],
+                    // Server-side keepalive stays independent of the client's.
+                    persistent_keepalive_seconds: None,
+                    endpoint: None,
+                });
+                interface.clients.push(DesiredClient {
+                    id: client_id,
+                    peer_id,
+                    assigned_address: host_v4(address),
+                    route_policy: route_policy.clone(),
+                });
+
+                let now = crate::state::now_seconds();
+                let mut record = ClientProductRecord::new(command.label.clone(), now);
+                record.dns_servers = command.dns_servers.clone();
+                record.settings.client_keepalive_seconds = command.client_keepalive_seconds;
+                product.clients.insert(client_id, record);
+
+                Ok((
+                    next,
+                    ProductAudit::client(AuditAction::ClientCreate, client_id),
+                ))
+            },
+        )?;
+
+        let client = committed
+            .product
+            .clients
+            .get(&client_id)
+            .map(|record| ProductClient {
+                client_id,
+                peer_id,
+                interface_id,
+                public_key: client_public,
+                assigned_address: host_v4(address),
+                settings: record.settings.clone(),
+                route_policy: route_policy.clone(),
+                dns_servers: record.dns_servers.clone(),
+            })
+            .ok_or(ProductError::ClientMissingAfterMutation(client_id))?;
+
+        Ok((
+            client,
+            ProductMutationReceipt::pending(committed.generation),
+        ))
+    }
+
+    /// Applies the present fields of `command`, reassigning the address only
+    /// when one is explicitly requested.
+    ///
+    /// Keys are never rotated implicitly: an operator who wants a new key asks
+    /// for a new client.
+    pub fn update_client(
+        &self,
+        command: ClientUpdateCommand,
+    ) -> Result<(ProductClient, ProductMutationReceipt), ProductError> {
+        let client_id = command.client_id;
+        let committed = self.store.mutate_product(
+            command.expected_generation,
+            Some(command.principal_id),
+            |state, product| {
+                let record = product
+                    .clients
+                    .get_mut(&client_id)
+                    .ok_or(StateError::Corrupt("no such managed client"))?;
+                if let Some(label) = &command.label {
+                    record.settings.label = label.clone();
+                }
+                if let Some(keepalive) = command.client_keepalive_seconds {
+                    record.settings.client_keepalive_seconds = keepalive;
+                }
+                if let Some(dns) = &command.dns_servers {
+                    record.dns_servers = dns.clone();
+                }
+                record.settings.updated_at = crate::state::now_seconds();
+
+                let mut next = state.clone();
+                if let Some(policy) = &command.route_policy {
+                    for interface in &mut next.interfaces {
+                        for client in &mut interface.clients {
+                            if client.id == client_id {
+                                client.route_policy = policy.clone();
+                            }
+                        }
+                    }
+                }
+
+                // Reassignment is part of the same atomic mutation, so the old
+                // address is released and the new one taken in one step and a
+                // uniqueness violation can never land between them.
+                if let Some(requested) = command.requested_address {
+                    let IpAddr::V4(v4) = requested else {
+                        return Err(StateError::Corrupt("IPv6 assignment is out of scope"));
+                    };
+                    let interface_id = next
+                        .interfaces
+                        .iter()
+                        .find(|interface| interface.clients.iter().any(|c| c.id == client_id))
+                        .map(|interface| interface.id)
+                        .ok_or(StateError::Corrupt("client has no owning interface"))?;
+                    let allocation = allocation_context(&next, interface_id)
+                        .map_err(ProductError::into_state)?;
+                    let address = allocation
+                        .allocate(AddressRequest::Requested(v4))
+                        .map_err(|error| ProductError::from(error).into_state())?;
+                    let peer_id = next
+                        .interfaces
+                        .iter()
+                        .flat_map(|interface| &interface.clients)
+                        .find(|client| client.id == client_id)
+                        .map(|client| client.peer_id)
+                        .ok_or(StateError::Corrupt("client has no peer"))?;
+
+                    for interface in &mut next.interfaces {
+                        for client in &mut interface.clients {
+                            if client.id == client_id {
+                                client.assigned_address = host_v4(address);
+                            }
+                        }
+                        for peer in &mut interface.peers {
+                            if peer.id == peer_id {
+                                peer.allowed_ips = vec![NetworkPrefix::new(host_v4(address))];
+                            }
+                        }
+                    }
+                }
+
+                Ok((
+                    next,
+                    ProductAudit::client(AuditAction::ClientUpdate, client_id),
+                ))
+            },
+        )?;
+
+        let client = assemble_client(&committed.state, &committed.product, client_id)
+            .ok_or(ProductError::ClientMissingAfterMutation(client_id))?;
+        Ok((
+            client,
+            ProductMutationReceipt::pending(committed.generation),
+        ))
+    }
+
+    /// Enables or disables a managed client.
+    ///
+    /// A disabled client keeps its peer, its key, and its address reservation;
+    /// only its presence in projected intent changes. That is what makes
+    /// re-enable restore the *same* peer rather than a new one.
+    pub fn set_client_enabled(
+        &self,
+        command: SetClientEnabledCommand,
+    ) -> Result<(ProductClient, ProductMutationReceipt), ProductError> {
+        let client_id = command.client_id;
+        let enabled = command.enabled;
+        let committed = self.store.mutate_product(
+            command.expected_generation,
+            Some(command.principal_id),
+            |state, product| {
+                let record = product
+                    .clients
+                    .get_mut(&client_id)
+                    .ok_or(StateError::Corrupt("no such managed client"))?;
+                record.settings.enabled = enabled;
+                record.settings.updated_at = crate::state::now_seconds();
+                let next = state.clone();
+                let action = match enabled {
+                    ClientEnabled::Enabled => AuditAction::ClientEnable,
+                    ClientEnabled::Disabled => AuditAction::ClientDisable,
+                };
+                Ok((next, ProductAudit::client(action, client_id)))
+            },
+        )?;
+
+        let client = assemble_client(&committed.state, &committed.product, client_id)
+            .ok_or(ProductError::ClientMissingAfterMutation(client_id))?;
+        Ok((
+            client,
+            ProductMutationReceipt::pending(committed.generation),
+        ))
+    }
+
+    /// Deletes a managed client and releases its address.
+    ///
+    /// This is a durable removal of product state, not a claim about the
+    /// ciphertext left behind in the database file.
+    pub fn delete_client(
+        &self,
+        command: ClientDeleteCommand,
+    ) -> Result<ProductMutationReceipt, ProductError> {
+        let client_id = command.client_id;
+        let committed = self.store.mutate_product(
+            command.expected_generation,
+            Some(command.principal_id),
+            |state, product| {
+                product.clients.remove(&client_id);
+                let mut next = state.clone();
+                for interface in &mut next.interfaces {
+                    // The peer identifiers have to be captured before the client
+                    // rows are dropped: a client is what points at its peer, so
+                    // removing the client first would leave nothing to look the
+                    // peers up by, and the peer would outlive its client.
+                    let removed: Vec<PeerId> = interface
+                        .clients
+                        .iter()
+                        .filter(|client| client.id == client_id)
+                        .map(|client| client.peer_id)
+                        .collect();
+                    interface.clients.retain(|client| client.id != client_id);
+                    interface.peers.retain(|peer| !removed.contains(&peer.id));
+                }
+                Ok((
+                    next,
+                    ProductAudit::client(AuditAction::ClientDelete, client_id),
+                ))
+            },
+        )?;
+        Ok(ProductMutationReceipt::pending(committed.generation))
+    }
+
+    /// Records that a committed mutation did not reach the kernel.
+    ///
+    /// A separate transaction from the mutation itself, because the kernel's
+    /// answer arrives after the commit that wrote the mutation has closed. No
+    /// generation window is recorded: this event describes no generation change.
+    pub fn record_degraded_enforcement(
+        &self,
+        principal_id: Option<crate::domain::PrincipalId>,
+        resource_id: impl ToString,
+        category: DegradedCategory,
+    ) -> Result<(), ProductError> {
+        let _ = category;
+        self.store
+            .append_audit_event(
+                principal_id,
+                ProductAudit {
+                    action: AuditAction::EnforcementDegraded,
+                    resource_kind: crate::product::model::AuditResourceKind::Client,
+                    resource_id: Some(resource_id.to_string()),
+                },
+            )
+            .map_err(ProductError::State)?;
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Assembly helpers
+// ---------------------------------------------------------------------------
+
+/// The `/32` host prefix an IPv4 client or server address is stored as.
+///
+/// Every managed address is a host address, so this is written once rather than
+/// as a bare `(addr, 32)` literal at each use.
+fn host_v4(address: std::net::Ipv4Addr) -> IpNet {
+    IpNet::V4(ipnet::Ipv4Net::new(address, 32).expect("a /32 is always a valid prefix"))
+}
+
+/// Builds the allocation context for one interface from *all* of its reserved
+/// addresses, enabled or not.
+fn allocation_context(
+    state: &DesiredState,
+    interface_id: InterfaceId,
+) -> Result<AllocationContext, ProductError> {
+    let interface = state
+        .interfaces
+        .iter()
+        .find(|interface| interface.id == interface_id)
+        .ok_or(ProductError::UnknownInterface(interface_id))?;
+    let Some(IpNet::V4(prefix)) = interface.tunnel_prefixes.first().map(|p| p.network()) else {
+        return Err(ProductError::Allocation(super::AllocationError::NotIpv4));
+    };
+    let server_addresses = interface
+        .addresses
+        .iter()
+        .filter_map(|address| match address.address.addr() {
+            IpAddr::V4(v4) => Some(v4),
+            IpAddr::V6(_) => None,
+        })
+        .collect::<Vec<_>>();
+    let client_addresses = interface
+        .clients
+        .iter()
+        .filter_map(|client| match client.assigned_address.addr() {
+            IpAddr::V4(v4) => Some(v4),
+            IpAddr::V6(_) => None,
+        })
+        .collect::<Vec<_>>();
+    Ok(AllocationContext::new(IpNet::V4(prefix))?
+        .with_server_addresses(server_addresses)
+        .with_reserved_clients(client_addresses))
+}
+
+fn assemble_server(state: &DesiredState, product: &ProductState) -> Option<ProductServer> {
+    let interface = state.interfaces.first()?;
+    let settings = product.interfaces.get(&interface.id)?;
+    let server_address = interface
+        .addresses
+        .iter()
+        .find(|address| address.presence == ResourcePresence::Present)
+        .map(|address| address.address.addr())?;
+    let policy = state.network_policy.as_ref()?;
+    // A server summary always carries a real prefix: the interface's first
+    // tunnel prefix, or a /32 over the server's own address when the interface
+    // has none, rather than a fabricated or empty value.
+    let tunnel_prefix = match interface.tunnel_prefixes.first() {
+        Some(prefix) => prefix.clone(),
+        None => {
+            let IpAddr::V4(server) = server_address else {
+                return None;
+            };
+            NetworkPrefix::new(host_v4(server))
+        }
+    };
+    Some(ProductServer {
+        interface_id: interface.id,
+        name: interface.name.clone(),
+        tunnel_prefix,
+        server_address,
+        listen_port: interface.listen_port?,
+        advertised_endpoint: settings.advertised_endpoint.clone(),
+        public_key: crate::domain::derive_public_key(&interface.private_key).ok()?,
+        egress_interface: policy.egress_interface.clone(),
+        ipv4_forwarding_required: policy.ipv4_forwarding_required,
+        masquerade: policy.masquerade,
+        default_client_route_policy: state.client_routes.clone(),
+    })
+}
+
+fn assemble_clients(state: &DesiredState, product: &ProductState) -> Vec<ProductClient> {
+    state
+        .interfaces
+        .iter()
+        .flat_map(|interface| &interface.clients)
+        .filter_map(|client| assemble_client(state, product, client.id))
+        .collect()
+}
+
+fn assemble_client(
+    state: &DesiredState,
+    product: &ProductState,
+    client_id: ClientId,
+) -> Option<ProductClient> {
+    let (interface, client) = state.interfaces.iter().find_map(|interface| {
+        interface
+            .clients
+            .iter()
+            .find(|client| client.id == client_id)
+            .map(|client| (interface, client))
+    })?;
+    let peer = interface
+        .peers
+        .iter()
+        .find(|peer| peer.id == client.peer_id)?;
+    let record = product.clients.get(&client_id)?;
+    Some(ProductClient {
+        client_id,
+        peer_id: client.peer_id,
+        interface_id: interface.id,
+        public_key: peer.public_key.clone(),
+        assigned_address: client.assigned_address,
+        settings: record.settings.clone(),
+        route_policy: client.route_policy.clone(),
+        dns_servers: record.dns_servers.clone(),
+    })
+}
+
+/// Errors the product layer reports, all of them pre-commit.
+///
+/// Note what is *absent*: there is no "committed but not enforced" error. That
+/// outcome is a [`ProductMutationReceipt`], not a failure.
+#[derive(Debug, thiserror::Error)]
+pub enum ProductError {
+    #[error("a managed server is already configured")]
+    ServerAlreadyConfigured,
+    #[error("no managed server is configured yet")]
+    ServerNotConfigured,
+    #[error("interface {0} is not managed by this installation")]
+    UnknownInterface(InterfaceId),
+    #[error("client {0} is missing from the committed product state")]
+    ClientMissingAfterMutation(crate::domain::ClientId),
+    #[error("the managed server is missing from the committed product state")]
+    ServerMissingAfterSetup,
+    #[error("state error: {0}")]
+    State(#[from] StateError),
+    #[error("key generation failed: {0}")]
+    Key(#[from] crate::domain::KeyError),
+    #[error("allocation error: {0}")]
+    Allocation(#[from] super::AllocationError),
+}
+
+impl ProductError {
+    /// Collapses a product-layer failure into the store's error vocabulary.
+    ///
+    /// A mutation closure runs inside the store's transaction and can only
+    /// propagate [`StateError`], so a product failure has to say the same thing
+    /// in the store's words without losing its meaning. Each mapping is exact:
+    /// a conflict and an out-of-prefix address already have first-class
+    /// validation errors, and the remaining allocation failures all mean the
+    /// same thing at this layer -- this prefix cannot serve another address.
+    fn into_state(self) -> StateError {
+        match self {
+            ProductError::State(error) => error,
+            ProductError::Allocation(super::AllocationError::AlreadyUsed(address)) => {
+                StateError::Validation(crate::domain::StateValidationError::DuplicateClientAddress(
+                    IpAddr::V4(address),
+                ))
+            }
+            ProductError::Allocation(super::AllocationError::OutsidePrefix(address)) => {
+                StateError::Validation(
+                    crate::domain::StateValidationError::ClientAddressOutsideTunnel(IpAddr::V4(
+                        address,
+                    )),
+                )
+            }
+            ProductError::Allocation(_) => StateError::AddressPoolUnavailable,
+            ProductError::UnknownInterface(_) => {
+                StateError::Corrupt("product mutation referenced an unknown interface")
+            }
+            ProductError::Key(_) => StateError::Corrupt("key material could not be generated"),
+            ProductError::ServerAlreadyConfigured => {
+                StateError::Corrupt("a managed server already exists")
+            }
+            ProductError::ServerNotConfigured => {
+                StateError::Corrupt("no managed server is configured")
+            }
+            ProductError::ClientMissingAfterMutation(_) => StateError::Corrupt(
+                "committed product metadata could not be read back from the store",
+            ),
+            ProductError::ServerMissingAfterSetup => StateError::Corrupt(
+                "committed server metadata could not be read back from the store",
+            ),
+        }
+    }
+}

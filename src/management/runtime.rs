@@ -23,7 +23,14 @@ use std::{
 };
 
 #[cfg(target_os = "linux")]
-use crate::state::{project, ResolvedNetworkIntent};
+use crate::{
+    domain::PrincipalId,
+    product::{DegradedCategory, ProductMutationReceipt},
+    state::{
+        project, ClientVisibility, CommittedProductState, ProductAudit, ProductState,
+        ResolvedNetworkIntent,
+    },
+};
 
 /// The outcome of one reconcile cycle.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -85,10 +92,16 @@ impl ManagementRuntime {
     pub fn current_intent(&self) -> Result<Option<InstallationNetworkIntent>, ManagementError> {
         let metadata = self.store.installation_metadata()?;
         let persisted = self.store.load()?;
+        // A disabled managed client's peer must be absent from the intent the
+        // kernel is asked to hold, so the product snapshot is read here rather
+        // than projected from desired state alone.
+        let product = self.store.load_product()?;
+        let visibility = ClientVisibility::from_product(&persisted.state, &product.state);
         build_intent(
             metadata.installation_id,
             persisted.generation,
             &persisted.state,
+            &visibility,
         )
     }
 
@@ -102,6 +115,64 @@ impl ManagementRuntime {
             return Ok(None);
         };
         self.apply_intent(&intent).map(Some)
+    }
+
+    /// Applies one already-committed product mutation and reports the two
+    /// outcomes separately.
+    ///
+    /// This exists because `apply_intent` cannot answer the question a product
+    /// mutation has to answer. A commit either succeeded or it did not, and a
+    /// reconcile either enforced it or it did not -- but a *committed* mutation
+    /// whose reconcile failed is not a failure of the mutation, and returning it
+    /// as one would tell an operator their client was not created when it very
+    /// much was.
+    ///
+    /// So the two facts are kept apart. The generation is durable and is
+    /// returned whatever happened; `enforcement` says only whether the kernel
+    /// has caught up. A `Degraded` receipt is not a pending request: the
+    /// reconciler will converge it on a later pass, and the operator's change is
+    /// already recorded.
+    pub fn reconcile_after_commit(
+        &self,
+        generation: DesiredGeneration,
+    ) -> Result<ProductMutationReceipt, ManagementError> {
+        match self.reconcile_current() {
+            Ok(outcome) => Ok(receipt_for(generation, outcome)),
+            // A backend that is unreachable, refusing, or rejecting produces a
+            // degraded receipt rather than an error. That is the whole reason
+            // this method exists: reporting "the backend is down" to a caller
+            // that has *already committed* would tell the operator their change
+            // did not happen when it did. Only a failure to even attempt the
+            // reconcile -- a state or projection problem -- is still an error,
+            // and it is an error about the reconcile, not about the commit.
+            Err(error) if is_backend_outcome(&error) => Ok(ProductMutationReceipt::degraded(
+                generation,
+                degraded_category(&error),
+            )),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Commits a product mutation and reconciles it, returning one receipt.
+    ///
+    /// `mutate` runs inside the store's transaction, so an error it returns is a
+    /// pre-commit refusal and nothing is reconciled. Once it returns `Ok`, the
+    /// commit is durable and `reconcile_after_commit` can only ever add an
+    /// enforcement fact to it.
+    pub fn commit_product_and_reconcile(
+        &self,
+        expected_generation: DesiredGeneration,
+        principal_id: Option<PrincipalId>,
+        mutate: impl FnOnce(
+            &DesiredState,
+            &mut ProductState,
+        ) -> Result<(DesiredState, ProductAudit), StateError>,
+    ) -> Result<(ProductMutationReceipt, CommittedProductState), ManagementError> {
+        let committed = self
+            .store
+            .mutate_product(expected_generation, principal_id, mutate)?;
+        let receipt = self.reconcile_after_commit(committed.generation)?;
+        Ok((receipt, committed))
     }
 
     /// Applies one generation with bounded retry on transient failures.
@@ -294,6 +365,64 @@ fn generation_of(intent: &InstallationNetworkIntent) -> DesiredGeneration {
     intent.generation
 }
 
+/// Turns a reconcile outcome into the enforcement half of a receipt.
+///
+/// `None` means the installation projects no intent at all -- an empty
+/// installation, where "converged" and "nothing to enforce" are the same fact.
+/// A failed reconcile is reported as `Degraded` with the category that actually
+/// caused it, so an operator learns whether the backend was unreachable,
+/// refused, or rejected without the internal error text ever becoming a
+/// user-facing string.
+fn receipt_for(
+    generation: DesiredGeneration,
+    outcome: Option<ReconcileOutcome>,
+) -> ProductMutationReceipt {
+    let Some(outcome) = outcome else {
+        return ProductMutationReceipt::converged(generation);
+    };
+    if outcome.converged {
+        return ProductMutationReceipt::converged(generation);
+    }
+    let category = match outcome.disposition {
+        AttemptDisposition::BackendUnavailable => DegradedCategory::BackendUnreachable,
+        AttemptDisposition::Unauthorized => DegradedCategory::BackendRefused,
+        AttemptDisposition::Converged
+        | AttemptDisposition::PartialFailure
+        | AttemptDisposition::VerificationFailed
+        | AttemptDisposition::FailedBeforeMutation
+        | AttemptDisposition::Superseded
+        | AttemptDisposition::StateConflict
+        | AttemptDisposition::Rejected => DegradedCategory::BackendRefused,
+    };
+    ProductMutationReceipt::degraded(generation, category)
+}
+
+/// Whether a reconcile failure is the kernel's answer rather than a fault in
+/// applying the intent at all.
+///
+/// A backend that refused, rejected, or went away means the kernel does not
+/// currently hold the committed generation. A state or projection failure means
+/// the intent could not even be formed, which is a different problem entirely.
+fn is_backend_outcome(error: &ManagementError) -> bool {
+    matches!(
+        error,
+        ManagementError::BackendUnavailable
+            | ManagementError::PartialFailure
+            | ManagementError::Unauthorized
+            | ManagementError::Rejected
+            | ManagementError::Conflict
+            | ManagementError::UnexpectedResponse
+    )
+}
+
+/// The bounded category an operator sees for a failed enforcement.
+fn degraded_category(error: &ManagementError) -> DegradedCategory {
+    match error {
+        ManagementError::BackendUnavailable => DegradedCategory::BackendUnreachable,
+        _ => DegradedCategory::BackendRefused,
+    }
+}
+
 fn disposition_for(body: &InstallationNetworkApplyBody) -> AttemptDisposition {
     match body.status {
         AggregateStatus::Applied => AttemptDisposition::Converged,
@@ -313,8 +442,9 @@ fn build_intent(
     installation_id: InstallationId,
     generation: DesiredGeneration,
     state: &DesiredState,
+    visibility: &ClientVisibility,
 ) -> Result<Option<InstallationNetworkIntent>, ManagementError> {
-    let resolved: ResolvedNetworkIntent = project(state, installation_id)
+    let resolved: ResolvedNetworkIntent = project(state, installation_id, visibility)
         .map_err(|error| ManagementError::Projection(error.into()))?;
 
     let Some(desired) = resolved.interfaces.into_iter().next() else {
@@ -347,6 +477,7 @@ fn build_intent(
     _installation_id: InstallationId,
     _generation: DesiredGeneration,
     _state: &DesiredState,
+    _visibility: &ClientVisibility,
 ) -> Result<Option<InstallationNetworkIntent>, ManagementError> {
     Err(ManagementError::BackendUnavailable)
 }
@@ -377,6 +508,7 @@ mod tests {
             InstallationId::new(),
             DesiredGeneration::new(1).unwrap(),
             &empty,
+            &ClientVisibility::all_enabled(),
         );
         assert!(
             intent.is_ok(),
@@ -393,9 +525,14 @@ mod tests {
         let interface_id = InterfaceId::new();
         let snapshot = sample_state(interface_id);
         let generation = DesiredGeneration::new(7).unwrap();
-        let intent = build_intent(installation, generation, &snapshot)
-            .expect("valid snapshot projects")
-            .expect("one interface yields one intent");
+        let intent = build_intent(
+            installation,
+            generation,
+            &snapshot,
+            &ClientVisibility::all_enabled(),
+        )
+        .expect("valid snapshot projects")
+        .expect("one interface yields one intent");
 
         assert_eq!(intent.installation_id, installation);
         assert_eq!(intent.generation, generation);

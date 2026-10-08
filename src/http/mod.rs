@@ -41,7 +41,10 @@ pub mod session_cookie;
 
 pub use api::{AuthenticatedApi, RequestGuard, RequestRejection, LOGIN_BODY_LIMIT};
 pub use assets::{asset, Asset, INVENTORY};
-pub use config::{HttpError, HttpLimits, ManagementHttpConfig};
+pub use config::{
+    HttpError, HttpLimits, ManagementHttpConfig, DEFAULT_HANDLER_TIMEOUT,
+    DEFAULT_MAX_IN_FLIGHT_REQUESTS,
+};
 pub use origin::{
     CanonicalOrigin, ExposureMode, OriginConfigError, OriginPolicy, CSRF_HEADER,
     SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE_NAME,

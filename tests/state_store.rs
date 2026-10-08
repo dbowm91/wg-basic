@@ -632,14 +632,29 @@ fn projection_is_deterministic_across_reopen_and_store_cycles() {
         .unwrap();
 
     let installation = store.installation_metadata().unwrap().installation_id;
-    let from_store = project(&store.load().unwrap().state, installation).unwrap();
+    let from_store = project(
+        &store.load().unwrap().state,
+        installation,
+        &wg_basic::state::ClientVisibility::all_enabled(),
+    )
+    .unwrap();
     drop(store);
     let reopened = StateStore::open(temp.db()).unwrap();
-    let after_reopen = project(&reopened.load().unwrap().state, installation).unwrap();
+    let after_reopen = project(
+        &reopened.load().unwrap().state,
+        installation,
+        &wg_basic::state::ClientVisibility::all_enabled(),
+    )
+    .unwrap();
 
     assert_eq!(from_store, after_reopen);
     assert_eq!(
-        project(&reopened.load().unwrap().state, installation).unwrap(),
+        project(
+            &reopened.load().unwrap().state,
+            installation,
+            &wg_basic::state::ClientVisibility::all_enabled()
+        )
+        .unwrap(),
         from_store
     );
 }
@@ -654,7 +669,12 @@ fn projection_produces_the_existing_kernel_intent_types() {
         .unwrap();
 
     let installation = store.installation_metadata().unwrap().installation_id;
-    let intent = project(&store.load().unwrap().state, installation).unwrap();
+    let intent = project(
+        &store.load().unwrap().state,
+        installation,
+        &wg_basic::state::ClientVisibility::all_enabled(),
+    )
+    .unwrap();
     assert_eq!(intent.interfaces.len(), 1);
 
     let interface = &intent.interfaces[0];
@@ -687,7 +707,11 @@ fn projection_refuses_ipv6_policy_prefixes_before_privileged_work() {
     // Bypass validation to prove the projector independently refuses the shape.
     state.network_policy.as_mut().unwrap().source_prefixes =
         vec![NetworkPrefix::new("2001:db8::/64".parse().unwrap())];
-    let result = wg_basic::state::project(&state, wg_basic::domain::InstallationId::new());
+    let result = wg_basic::state::project(
+        &state,
+        wg_basic::domain::InstallationId::new(),
+        &wg_basic::state::ClientVisibility::all_enabled(),
+    );
     assert!(matches!(
         result,
         Err(ProjectionError::NonIpv4PolicyPrefix(_))
@@ -708,7 +732,12 @@ fn an_absent_interface_projects_without_a_wireguard_configuration() {
         .unwrap();
 
     let installation = store.installation_metadata().unwrap().installation_id;
-    let intent = project(&store.load().unwrap().state, installation).unwrap();
+    let intent = project(
+        &store.load().unwrap().state,
+        installation,
+        &wg_basic::state::ClientVisibility::all_enabled(),
+    )
+    .unwrap();
     assert!(intent.interfaces[0].wireguard.is_none());
     assert!(intent.network_policy.is_none());
 }

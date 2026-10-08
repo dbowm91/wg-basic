@@ -1,6 +1,6 @@
 # Management Service C001 — Post-Phase-7 CI and Phase 8 Readiness Reconciliation
 
-Status: ready
+Status: closed. Evidence: `plans/closure/management-service/c001-status.md`.
 
 Repository baseline: `df872f1d6ac63584b58610d7521752ae51f1c902`
 

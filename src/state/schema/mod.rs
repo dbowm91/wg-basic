@@ -334,7 +334,7 @@ mod tests {
             .unwrap();
         assert_eq!(user_version, migrations::supported_version());
         assert_eq!(
-            user_version, 2,
+            user_version, 3,
             "a fresh database is created at the current head, never behind it"
         );
 
@@ -352,6 +352,10 @@ mod tests {
             "network_policy",
             "network_policy_source_prefixes",
             "convergence_state",
+            "interface_product_settings",
+            "client_product_settings",
+            "client_dns_servers",
+            "audit_events",
         ] {
             let exists: i64 = connection
                 .query_row(
@@ -360,7 +364,7 @@ mod tests {
                     |row| row.get(0),
                 )
                 .unwrap();
-            assert_eq!(exists, 1, "migration 1 must create {table}");
+            assert_eq!(exists, 1, "the schema at head must create {table}");
         }
     }
 
@@ -379,7 +383,7 @@ mod tests {
             StateStore::open(temp.db()),
             Err(StateError::SchemaTooNew {
                 found: 9999,
-                supported: 2
+                supported: 3
             })
         ));
     }
@@ -448,7 +452,7 @@ mod tests {
     }
 
     #[test]
-    fn client_dns_servers_are_not_stored_in_a_route_table() {
+    fn dns_is_stored_in_its_own_table_and_never_overloaded_into_routes() {
         let temp = TempDir::new();
         let store = StateStore::initialize(temp.db()).unwrap();
         store
@@ -459,6 +463,11 @@ mod tests {
         drop(store);
         let connection = open_inspection(&temp.db()).unwrap();
 
+        // Phase 7 forbade a DNS *column* anywhere, because at that time nothing
+        // consumed DNS and any column would have had to be smuggled into an
+        // existing route structure. Phase 8 M001 gives DNS a consumer and a
+        // dedicated `client_dns_servers` table instead, which is the resolution
+        // of that concern rather than a retreat from it.
         let dns_table: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name LIKE '%dns%'",
@@ -467,9 +476,58 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            dns_table, 0,
-            "DNS has no consumer yet and must not be overloaded"
+            dns_table, 1,
+            "DNS must have exactly one dedicated table, never a shared one"
         );
+
+        // The invariant that actually mattered is that DNS never borrows the
+        // route/AllowedIP tables: a DNS server is not a route, and encoding one
+        // as a prefix would make it indistinguishable from real tunnel traffic
+        // to every consumer, including the kernel-facing ones.
+        for table in [
+            "client_route_prefixes",
+            "client_global_route_prefixes",
+            "peer_allowed_ips",
+            "interface_tunnel_prefixes",
+            "managed_routes",
+        ] {
+            let columns: Vec<String> = {
+                let mut statement = connection
+                    .prepare(&format!("SELECT name FROM pragma_table_info('{table}')"))
+                    .unwrap();
+                let rows = statement
+                    .query_map([], |row| row.get::<_, String>(0))
+                    .unwrap()
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap();
+                rows
+            };
+            for column in columns {
+                assert!(
+                    !column.to_ascii_lowercase().contains("dns"),
+                    "{table}.{column} would overload a route table with DNS"
+                );
+            }
+        }
+
+        // And the dedicated table must not smuggle routes back the other way.
+        let dns_columns: Vec<String> = {
+            let mut statement = connection
+                .prepare("SELECT name FROM pragma_table_info('client_dns_servers')")
+                .unwrap();
+            statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        for column in dns_columns {
+            assert!(
+                !column.to_ascii_lowercase().contains("prefix")
+                    && !column.to_ascii_lowercase().contains("route"),
+                "client_dns_servers.{column} would store a route, not a resolver"
+            );
+        }
     }
 
     #[test]
@@ -498,9 +556,10 @@ mod tests {
 
     /// Builds a genuine version-1 database from the production migration list.
     ///
-    /// Since Phase 7 M002 added migration 2, this is a real historical schema:
-    /// exactly what a user who installed wg-basic during Phase 6 would still have
-    /// on disk. It is no longer a simulation.
+    /// Since Phase 7 M002 added migration 2 and Phase 8 M001 added migration 3,
+    /// this is a real historical schema: exactly what a user who installed
+    /// wg-basic during Phase 6 would still have on disk. It is no longer a
+    /// simulation.
     fn historical_v1(temp: &TempDir) {
         migrations::initialize_at_version(&temp.db(), 1).expect("historical v1 fixture");
     }
@@ -512,28 +571,65 @@ mod tests {
             .expect("user_version is readable")
     }
 
-    /// Commits a real typed snapshot at generation 2 into the historical file and
-    /// returns it with the installation identity, so a later step can compare it
-    /// against the upgrade. The store is opened without migrating, so the rows
-    /// really do exist at schema version 1.
+    /// Commits a real typed snapshot into the historical file and returns the
+    /// equivalent desired state with the installation identity, so a later step
+    /// can compare it against the upgrade.
+    ///
+    /// The rows are seeded with plain SQL rather than through `StateStore::mutate`,
+    /// and that is the point: `mutate` writes the Phase 8 product tables, which do
+    /// not exist in a version-1 file, so it cannot be the tool that fills one. A
+    /// genuine historical database was written by a binary that had never heard of
+    /// those tables, and seeding it that way is what makes "the upgrade preserved
+    /// the data" a claim about an older writer's rows rather than about this one.
     fn commit_snapshot_at_v2(
         temp: &TempDir,
-    ) -> (
-        crate::domain::InstallationId,
-        crate::state::CommittedDesiredState,
-    ) {
-        // Opened *without* migrating, so the committed rows are written into a
-        // genuine version-1 file and the later upgrade has real data to preserve.
-        let store = StateStore::open_without_migrating(temp.db()).unwrap();
-        let committed = store
-            .mutate(crate::domain::INITIAL_DESIRED_GENERATION, |_| {
-                Ok(populated_state())
-            })
+    ) -> (crate::domain::InstallationId, crate::domain::DesiredState) {
+        use crate::domain::{ClientId, InterfaceId, PeerId};
+
+        let interface_id = InterfaceId::new();
+        let peer_id = PeerId::new();
+        let client_id = ClientId::new();
+        let connection = Connection::open(temp.db()).unwrap();
+        connection
+            .execute_batch(&format!(
+                "INSERT INTO managed_interfaces
+                     (id, name, ownership, lifecycle, admin_up, private_key,
+                      listen_port, manage_all_peers, position)
+                 VALUES ('{interface_id}', 'wg0', 'managed', 'present', 1,
+                         'yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=', 51820, 1, 0);
+                 INSERT INTO interface_tunnel_prefixes (interface_id, prefix, position)
+                 VALUES ('{interface_id}', '10.8.0.0/24', 0);
+                 INSERT INTO peers
+                     (id, interface_id, public_key, private_key, preshared_key,
+                      persistent_keepalive_seconds, endpoint, position)
+                 VALUES ('{peer_id}', '{interface_id}',
+                         'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=', NULL, NULL, NULL, NULL, 0);
+                 INSERT INTO peer_allowed_ips (peer_id, prefix, position)
+                 VALUES ('{peer_id}', '10.8.0.2/32', 0);
+                 INSERT INTO clients (id, interface_id, peer_id, assigned_address, position)
+                 VALUES ('{client_id}', '{interface_id}', '{peer_id}', '10.8.0.2/32', 0);
+                 UPDATE installation SET desired_generation = 2 WHERE singleton = 1;"
+            ))
+            .expect("seed a genuine version-1 snapshot");
+
+        let identity: crate::domain::InstallationId = connection
+            .query_row(
+                "SELECT installation_id FROM installation WHERE singleton = 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap()
+            .parse()
             .unwrap();
-        assert_eq!(committed.generation, DesiredGeneration::new(2).unwrap());
-        let identity = store.installation_metadata().unwrap().installation_id;
+        connection.close().unwrap();
+
+        let store = StateStore::open_without_migrating(temp.db()).unwrap();
+        let loaded = store.load().unwrap();
+        assert_eq!(loaded.generation, DesiredGeneration::new(2).unwrap());
+        assert_eq!(loaded.state.interfaces.len(), 1);
         drop(store);
-        (identity, committed)
+
+        (identity, loaded.state)
     }
 
     /// Applies the real production upgrade from version 1 to the current head.
@@ -565,10 +661,18 @@ mod tests {
         );
 
         migrations::apply_migrations(&mut connection, MIGRATIONS).unwrap();
-        assert_eq!(user_version_of(&connection), 2);
+        assert_eq!(user_version_of(&connection), 3);
 
-        // The new version must actually have created its schema.
-        for table in ["admin_principals", "admin_sessions"] {
+        // Every version the upgrade ran through must actually have created its
+        // schema.
+        for table in [
+            "admin_principals",
+            "admin_sessions",
+            "interface_product_settings",
+            "client_product_settings",
+            "client_dns_servers",
+            "audit_events",
+        ] {
             let exists: i64 = connection
                 .query_row(
                     "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
@@ -589,7 +693,7 @@ mod tests {
         assert_eq!(stored_identity, identity.to_string());
         connection.close().unwrap();
 
-        // The production opener must accept the migrated file: version 2 is one
+        // The production opener must accept the migrated file: version 3 is one
         // this binary actually supports, so refusing it would be a false alarm.
         StateStore::open(temp.db())
             .expect("a migrated database must open through the production path");
@@ -617,11 +721,12 @@ mod tests {
             "an upgrade must not advance or rewind the desired generation"
         );
         assert_eq!(
-            loaded.generation, expected.generation,
+            loaded.generation,
+            DesiredGeneration::new(2).unwrap(),
             "the committed generation must survive the upgrade"
         );
         assert_eq!(
-            loaded.state, expected.state,
+            loaded.state, expected,
             "the typed desired state must survive the upgrade unchanged"
         );
     }
@@ -631,10 +736,10 @@ mod tests {
         let temp = TempDir::new();
         historical_v1(&temp);
 
-        // The production list stops at version 2, so a database stamped 3 comes
+        // The production list stops at version 3, so a database stamped 4 comes
         // from a future binary.
         let connection = Connection::open(temp.db()).unwrap();
-        connection.execute("PRAGMA user_version = 3", []).unwrap();
+        connection.execute("PRAGMA user_version = 4", []).unwrap();
         drop(connection);
 
         let mut connection = Connection::open(temp.db()).unwrap();
@@ -643,8 +748,8 @@ mod tests {
             matches!(
                 error,
                 StateError::SchemaTooNew {
-                    found: 3,
-                    supported: 2
+                    found: 4,
+                    supported: 3
                 }
             ),
             "{error:?}"
