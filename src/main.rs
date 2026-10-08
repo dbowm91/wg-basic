@@ -67,6 +67,9 @@ enum Command {
         /// Additional management-service UID permitted by SO_PEERCRED.
         #[arg(long = "allow-uid")]
         allowed_uids: Vec<u32>,
+        /// Additional local account permitted by SO_PEERCRED.
+        #[arg(long = "allow-user")]
+        allowed_users: Vec<String>,
     },
     /// Read-only service capability check.
     Doctor {
@@ -125,6 +128,23 @@ enum Command {
         #[command(subcommand)]
         action: NetworkCommand,
     },
+    /// Install the current local executable or inspect its system registration.
+    System {
+        #[command(subcommand)]
+        action: SystemCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum SystemCommand {
+    /// Install this local executable into the canonical system layout.
+    Install {
+        /// Optional staging executable; defaults to this running executable.
+        #[arg(long)]
+        candidate: Option<PathBuf>,
+    },
+    /// Read-only installation ownership and service status.
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -158,6 +178,11 @@ enum AdminAction {
 
 #[derive(Subcommand)]
 enum StateCommand {
+    /// Create an empty schema or validate and migrate an existing owned state database.
+    Init {
+        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        state: PathBuf,
+    },
     /// Prints a safe status projection: identifiers, generations, and integrity.
     ///
     /// Never prints private keys, preshared keys, or any row contents.
@@ -290,6 +315,17 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
             }
             Ok(())
         }
+        Some(Command::System { action }) => match action {
+            SystemCommand::Install { candidate } => {
+                let candidate = match candidate {
+                    Some(path) => path,
+                    None => wg_basic::distribution::current_executable()
+                        .map_err(|_| "could not identify the running executable".to_owned())?,
+                };
+                wg_basic::distribution::install_local(&candidate)
+            }
+            SystemCommand::Status => wg_basic::distribution::install_status(),
+        },
         Some(Command::Health { state, socket }) => {
             let runtime = wg_basic::management::ManagementRuntime::open(&state, &socket)
                 .map_err(|error| error.to_string())?;
@@ -447,9 +483,13 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
         Some(Command::Netd {
             socket,
             allowed_uids,
+            allowed_users,
         }) => {
             let mut policy = AuthorizationPolicy::current_user_and_root();
             policy.extend(allowed_uids);
+            let resolved = wg_basic::distribution::resolve_allowed_user_uids(&allowed_users)
+                .map_err(|_| "could not resolve a configured local netd user".to_owned())?;
+            policy.extend(resolved);
             let server = SocketServer::bind(&socket, policy)
                 .map_err(|_| "could not safely bind the configured netd socket path".to_owned())?;
             let shutdown = Arc::new(AtomicBool::new(false));
@@ -1066,6 +1106,20 @@ fn run_state_action(action: StateCommand) -> Result<(), String> {
     use wg_basic::state::{restore, validate_candidate, verify_candidate_readonly, StateStore};
 
     match action {
+        StateCommand::Init { state } => {
+            if state.exists() {
+                let store = StateStore::open(&state).map_err(|error| error.to_string())?;
+                println!(
+                    "state ready: {} (schema {})",
+                    store.path().display(),
+                    store.schema_version().map_err(|error| error.to_string())?
+                );
+            } else {
+                let store = StateStore::initialize(&state).map_err(|error| error.to_string())?;
+                println!("state initialized: {}", store.path().display());
+            }
+            Ok(())
+        }
         StateCommand::Status { state } => {
             let store = StateStore::open(&state).map_err(|error| error.to_string())?;
             let metadata = store

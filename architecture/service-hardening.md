@@ -1,9 +1,9 @@
 # Service hardening contract
 
-This is the Phase 10 service-manager contract established by Phase 9. These are
-recommended systemd controls; this repository does not yet ship unit files.
-Phase 10 must validate the selected paths and ceilings against its installation
-layout and measured release behavior.
+This is the Phase 10 service-manager contract established by Phase 9. The
+product-owned systemd definitions encode these controls at the canonical paths.
+Phase 10 qualification must validate their runtime ownership, capabilities,
+and ceilings against the installed services.
 
 | Directive | `serve` | `netd` | Reason / qualification |
 |---|---|---|---|
@@ -23,7 +23,7 @@ layout and measured release behavior.
 | `RestartSec=` | `2s` | `2s` | Avoid a hot restart loop. |
 | `StartLimitIntervalSec=` / `StartLimitBurst=` | `60s` / `5` | `60s` / `5` | Bound repeated startup failures for operator diagnosis. |
 
-Example profile fragments (installation paths are placeholders):
+The shipped profile fragments are:
 
 ```ini
 # serve

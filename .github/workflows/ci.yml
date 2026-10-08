@@ -72,6 +72,17 @@ jobs:
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
 
+  system-install-systemd:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Qualify native installation, service identities, and exact ownership on the disposable systemd runner
+        run: sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo cargo test --locked --test system_installation -- --ignored --exact systemd_installation_ownership_reinstall_and_service_credentials --nocapture --test-threads=1
+
   doctor-readonly:
     runs-on: ubuntu-latest
     steps:

@@ -32,6 +32,15 @@ informational only. Online backups use a shared `<state>.maintenance.lock`, so
 they can run while serve is active. Restore and purge take the exclusive
 maintenance lock.
 
+Phase 10 M002 adds `wg-basic system install [--candidate PATH]` for a local
+executable and `wg-basic system status` for read-only ownership/service
+inspection. Installation requires effective root and an active systemd system
+manager; it never invokes sudo. It installs the canonical `/usr/local/bin` and
+`/var/lib` layout, creates the `wg-basic` identities through
+`systemd-sysusers`, and starts netd before the management service. This local
+install path performs no release discovery or signature verification; a
+qualified public release path is part of the later release pipeline.
+
 ## Local administrator credentials
 
 Provision or reset the local administrator from the terminal. The same
@@ -295,6 +304,21 @@ code:
   either way, so the database is always released; only the confirmation is late.
 
 ## Release candidate qualification
+
+The native installation qualification deliberately changes the system users,
+`/usr/local/bin`, `/etc/systemd`, `/var/lib`, and live systemd services. Run it
+only in a disposable systemd Linux VM:
+
+```sh
+sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo \
+  cargo test --locked --test system_installation -- --ignored --exact \
+    systemd_installation_ownership_reinstall_and_service_credentials \
+    --nocapture --test-threads=1
+```
+
+It verifies service UIDs and effective capabilities, state/socket ownership,
+unrelated-UID socket denial, exact-version reinstall, modified-unit refusal,
+doctor, and `/healthz`.
 
 The Phase 10 foundation workflow validates the Eggpack producer inputs and
 builds each Linux GNU candidate with cargo-zigbuild 0.23.3 and Zig 0.14.1 at a

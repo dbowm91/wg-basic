@@ -49,8 +49,8 @@ as root plus server setup; see
 
 Network control, durable state/restart reconciliation, management/auth,
 product/enrollment/UI, and operational hardening are implemented and
-qualified in Linux namespaces. Installation and transactional
-self-update are **not implemented** (planned; see
+qualified in Linux namespaces. Transactional self-update is **not implemented**;
+native installation is under implementation and not yet release-qualified (see
 [plans/registry.md](plans/registry.md)).
 
 ## Docs

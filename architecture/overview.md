@@ -56,10 +56,11 @@ Two invariants shape everything:
 | `src/http/` | EggServe surface: routing, Host/Origin/CSRF perimeter, security headers, rate limits, readiness, embedded assets, `serve` lifecycle | [management-http](management-http.md) |
 | `src/management/auth.rs` + `src/domain/auth.rs` | Argon2id credentials, opaque digest-only sessions, cookie/CSRF profile, login/logout/session routes | [authentication](authentication.md) |
 | `src/product/` | server setup, client lifecycle, address allocation, config/QR export, one-time enrollment, telemetry, audit, embedded product UI | [product-management](product-management.md) |
+| `src/distribution.rs` | canonical system layout, authenticated metadata identity, exact systemd/sysusers material, local install/status transaction | [service-hardening](service-hardening.md) |
 | `src/doctor.rs` + `src/operational.rs` + maintenance | read-only doctor/preflight, structured stderr events, service/maintenance leases, disable/enable/purge, backup/restore ops | [diagnostics-maintenance](diagnostics-maintenance.md) |
-| `src/main.rs` CLI roles | `serve`, `netd`, `reconcile`, `health`, `doctor`, `admin`, `state`, `network` command surface | [cli-roles](cli-roles.md) |
+| `src/main.rs` CLI roles | `serve`, `netd`, `reconcile`, `health`, `doctor`, `admin`, `state`, `network`, `system install/status` command surface | [cli-roles](cli-roles.md) |
 | `tests/` + fixtures | unprivileged suites, rootful namespace fixtures, static architecture guards, upgrade rehearsal | [testing-qualification](testing-qualification.md) |
-| service contract | recommended systemd hardening profile (no unit files shipped yet) | [service-hardening](service-hardening.md) |
+| service contract | product-owned systemd service definitions and hardening profile | [service-hardening](service-hardening.md) |
 | update contract | binary+database transaction rule, rollback order, crash-window matrix (contract only — no updater shipped) | [update-rollback-contract](update-rollback-contract.md) |
 
 ## Tools and capabilities (operator view)
@@ -91,10 +92,10 @@ Two invariants shape everything:
 
 Network control, durable state/restart reconciliation (Phases 6),
 management/auth substrate (Phase 7), product/enrollment/UI (Phase 8), and
-operational hardening (Phase 9) are closed. Installation and transactional
-self-update are **not implemented**; Phase 10 (distribution/install/update) is
-under implementation, with M001 release identity/authenticity/target
-qualification strictly closed and M002 installation ready. Implementation status lives in
+operational hardening (Phase 9) are closed. Transactional self-update is **not
+implemented**. Phase 10 installation is under M002 implementation and
+qualification; M001 release identity/authenticity/target qualification is
+strictly closed. Implementation status lives in
 [the planning registry](../plans/registry.md).
 
 ## Full deep-dive index
@@ -113,5 +114,5 @@ qualification strictly closed and M002 installation ready. Implementation status
 - [diagnostics-maintenance](diagnostics-maintenance.md) — doctor, events, leases, maintenance ops
 - [cli-roles](cli-roles.md) — every `wg-basic` subcommand and its contract
 - [testing-qualification](testing-qualification.md) — suites, rootful fixtures, guards
-- [service-hardening](service-hardening.md) — Phase 10 systemd contract (recommended, not shipped)
+- [service-hardening](service-hardening.md) — Phase 10 product-owned systemd service contract
 - [update-rollback-contract](update-rollback-contract.md) — update transaction (contract only)
