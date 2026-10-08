@@ -41,18 +41,30 @@
 //! or an internal type.
 
 use super::{
-    api::{AuthenticatedApi, RequestRejection, LOGIN_BODY_LIMIT},
+    api::{build_response, AuthenticatedApi, RequestRejection, LOGIN_BODY_LIMIT},
     headers,
     response::{self, Liveness},
 };
-use crate::management::WorkerError;
+use crate::{
+    domain::{ClientId, ClientRoutePolicy, DesiredGeneration, InterfaceName, NetworkPrefix},
+    management::{ProductFailure, WorkerError},
+    product::{
+        AdvertisedEndpoint, ClientCreateCommand, ClientDeleteCommand, ClientEnabled, ClientLabel,
+        ClientUpdateCommand, ServerSetupCommand, SetClientEnabledCommand,
+    },
+};
 use eggserve_primitives::{
     request_body_policy::RequestBodyPolicy, request_head::RequestHead, Request, Response,
     ResponseBody,
 };
 use eggserve_server::service::{Service, ServiceFuture};
 use futures_util::StreamExt;
-use std::net::SocketAddr;
+use std::{
+    net::{IpAddr, SocketAddr},
+    str::FromStr,
+};
+
+const PRODUCT_BODY_LIMIT: usize = 8 * 1024;
 
 /// The single unauthenticated liveness route.
 ///
@@ -97,17 +109,39 @@ pub enum Route {
     Shell,
     /// One embedded stylesheet or script, matched from a closed table.
     Asset,
+    /// Authenticated product endpoint with an optional canonical client id.
+    Product(ProductRoute, Option<ClientId>),
     /// A path this surface does not have.
     Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProductRoute {
+    Server,
+    Setup,
+    Clients,
+    Client,
+    Enable,
+    Disable,
 }
 
 impl Route {
     /// Whether this route accepts a request body.
     ///
-    /// Only login does. Everything else is refused by the transport before this
-    /// service runs, so a `GET` route can never be made to buffer bytes.
+    /// Each unsafe JSON family gets its own small bound; read routes refuse bodies.
     pub fn accepts_body(&self) -> bool {
-        matches!(self, Self::Login)
+        matches!(
+            self,
+            Self::Login
+                | Self::Product(
+                    ProductRoute::Setup
+                        | ProductRoute::Clients
+                        | ProductRoute::Client
+                        | ProductRoute::Enable
+                        | ProductRoute::Disable,
+                    _
+                )
+        )
     }
 
     /// The methods this route answers.
@@ -121,6 +155,14 @@ impl Route {
                 method == "GET"
             }
             Self::Login | Self::Logout => method == "POST",
+            Self::Product(route, _) => match route {
+                ProductRoute::Server => method == "GET",
+                ProductRoute::Setup | ProductRoute::Enable | ProductRoute::Disable => {
+                    method == "POST"
+                }
+                ProductRoute::Clients => method == "GET" || method == "POST",
+                ProductRoute::Client => method == "GET" || method == "PATCH" || method == "DELETE",
+            },
             Self::Unknown => false,
         }
     }
@@ -132,6 +174,10 @@ impl Route {
         }
         !self.accepts(method)
     }
+}
+
+fn request_has_body(route: Route, method: &str) -> bool {
+    route.accepts_body() && matches!(method, "POST" | "PATCH" | "DELETE")
 }
 
 /// Resolves a request target to a route.
@@ -151,7 +197,31 @@ pub fn route(path: &str) -> Route {
         // closed table of three entries -- so there is no prefix rule here that
         // could match more than it should.
         path if super::assets::asset(path).is_some() => Route::Asset,
-        _ => Route::Unknown,
+        "/api/v1/server" => Route::Product(ProductRoute::Server, None),
+        "/api/v1/setup" => Route::Product(ProductRoute::Setup, None),
+        "/api/v1/clients" => Route::Product(ProductRoute::Clients, None),
+        path => product_route(path).unwrap_or(Route::Unknown),
+    }
+}
+
+fn product_route(path: &str) -> Option<Route> {
+    let pieces: Vec<_> = path.split('/').collect();
+    if pieces.len() < 5 || pieces[1..4] != ["api", "v1", "clients"] {
+        return None;
+    }
+    let id = ClientId::from_str(pieces[4]).ok()?;
+    if id.to_string() != pieces[4] {
+        return None;
+    }
+    match pieces.as_slice() {
+        ["", "api", "v1", "clients", _] => Some(Route::Product(ProductRoute::Client, Some(id))),
+        ["", "api", "v1", "clients", _, "enable"] => {
+            Some(Route::Product(ProductRoute::Enable, Some(id)))
+        }
+        ["", "api", "v1", "clients", _, "disable"] => {
+            Some(Route::Product(ProductRoute::Disable, Some(id)))
+        }
+        _ => None,
     }
 }
 
@@ -264,6 +334,18 @@ impl ManagementService {
                     Err(error) => response_for_worker_error(error),
                 }
             }
+            Route::Product(route, id) => {
+                let Some(session) = self.api.authenticate(head).await else {
+                    return refusal(RequestRejection::NotAuthenticated);
+                };
+                if matches!(head.method().as_str(), "POST" | "PATCH" | "DELETE") {
+                    if let Err(rejection) = guard.check_csrf(head, &session) {
+                        return refusal(rejection);
+                    }
+                }
+                let principal_id = session.session.principal_id;
+                self.product(route, id, principal_id, body, head).await
+            }
             // The shell and its two assets. Unauthenticated, because a login
             // frame nobody can reach is not a login frame -- and empty of
             // appliance state, because everything it shows arrives from the
@@ -284,6 +366,253 @@ impl ManagementService {
                 }
             }
             Route::Unknown => response::not_found(),
+        }
+    }
+
+    async fn product(
+        &self,
+        route: ProductRoute,
+        id: Option<ClientId>,
+        principal_id: crate::domain::PrincipalId,
+        body: &[u8],
+        head: &RequestHead,
+    ) -> Response {
+        use ProductRoute::*;
+        if matches!(head.method().as_str(), "POST" | "PATCH" | "DELETE") {
+            if let Err(error) = self.api.guard().check_json_content_type(head) {
+                return refusal(error);
+            }
+            if body.len() > PRODUCT_BODY_LIMIT {
+                return refusal(RequestRejection::BodyTooLarge);
+            }
+        }
+        if head.method().as_str() == "GET"
+            && matches!(route, Server | Clients | Client)
+            && !body.is_empty()
+        {
+            return refusal(RequestRejection::BodyMalformed);
+        }
+        match route {
+            Server => match self.api.worker().product_snapshot().await {
+                Ok(snapshot) => json_response(
+                    eggserve_primitives::StatusCode::OK,
+                    &serde_json::json!({"generation": snapshot.generation, "server": snapshot.server}),
+                ),
+                Err(error) => response_for_worker_error(error),
+            },
+            Clients => {
+                if head.method().as_str() == "GET" {
+                    match self.api.worker().product_snapshot().await {
+                        Ok(snapshot) => json_response(
+                            eggserve_primitives::StatusCode::OK,
+                            &serde_json::json!({"generation": snapshot.generation, "clients": snapshot.clients}),
+                        ),
+                        Err(error) => response_for_worker_error(error),
+                    }
+                } else {
+                    let input: CreateBody = match parse_json(body) {
+                        Some(v) => v,
+                        None => return product_status(422, "invalid request"),
+                    };
+                    let Some(generation) = DesiredGeneration::new(input.expected_generation) else {
+                        return product_status(422, "invalid request");
+                    };
+                    let requested_address = match input.address {
+                        Some(value) => match IpAddr::from_str(&value) {
+                            Ok(address) => Some(address),
+                            Err(_) => return product_status(422, "invalid request"),
+                        },
+                        None => None,
+                    };
+                    let command = ClientCreateCommand {
+                        principal_id,
+                        expected_generation: generation,
+                        interface_id: input.interface_id,
+                        label: match ClientLabel::new(input.label) {
+                            Ok(v) => v,
+                            Err(_) => return product_status(422, "invalid request"),
+                        },
+                        requested_address,
+                        route_policy: input.route_policy,
+                        dns_servers: match parse_ips(input.dns_servers) {
+                            Some(v) => v,
+                            None => return product_status(422, "invalid request"),
+                        },
+                        client_keepalive_seconds: input.client_keepalive_seconds,
+                    };
+                    match self.api.worker().create_client(command).await {
+                        Ok(reply) => mutation_response(201, 202, &reply.client, reply.receipt),
+                        Err(error) => product_error(error),
+                    }
+                }
+            }
+            Setup => {
+                let input: SetupBody = match parse_json(body) {
+                    Some(v) => v,
+                    None => return product_status(422, "invalid request"),
+                };
+                let Some(generation) = DesiredGeneration::new(input.expected_generation) else {
+                    return product_status(422, "invalid request");
+                };
+                let server_address = match input.server_address {
+                    Some(value) => match IpAddr::from_str(&value) {
+                        Ok(address) => Some(address),
+                        Err(_) => return product_status(422, "invalid request"),
+                    },
+                    None => None,
+                };
+                let Some(tunnel_prefix) = input.tunnel_prefix.parse::<NetworkPrefix>().ok() else {
+                    return product_status(422, "invalid request");
+                };
+                let command = ServerSetupCommand {
+                    principal_id,
+                    expected_generation: generation,
+                    interface_name: match InterfaceName::new(input.interface_name) {
+                        Ok(v) => v,
+                        Err(_) => return product_status(422, "invalid request"),
+                    },
+                    tunnel_prefix,
+                    server_address,
+                    listen_port: input.listen_port,
+                    advertised_endpoint: match AdvertisedEndpoint::parse(&input.advertised_endpoint)
+                    {
+                        Ok(v) => v,
+                        Err(_) => return product_status(422, "invalid request"),
+                    },
+                    egress_interface: match InterfaceName::new(input.egress_interface) {
+                        Ok(v) => v,
+                        Err(_) => return product_status(422, "invalid request"),
+                    },
+                    ipv4_forwarding_required: input.ipv4_forwarding_required,
+                    masquerade: input.masquerade,
+                    default_client_route_policy: input.default_client_route_policy,
+                };
+                match self.api.worker().setup_server(command).await {
+                    Ok(reply) => mutation_response(200, 202, &reply.server, reply.receipt),
+                    Err(error) => product_error(error),
+                }
+            }
+            Client => {
+                let Some(id) = id else {
+                    return response::not_found();
+                };
+                if head.method().as_str() == "GET" {
+                    return match self.api.worker().product_snapshot().await {
+                        Ok(snapshot) => match snapshot
+                            .clients
+                            .iter()
+                            .find(|client| client.client_id == id)
+                        {
+                            Some(client) => json_response(
+                                eggserve_primitives::StatusCode::OK,
+                                &serde_json::json!({"generation":snapshot.generation,"client":client}),
+                            ),
+                            None => response::not_found(),
+                        },
+                        Err(error) => response_for_worker_error(error),
+                    };
+                }
+                if head.method().as_str() == "DELETE" {
+                    let input: GenerationBody = match parse_json(body) {
+                        Some(v) => v,
+                        None => return product_status(422, "invalid request"),
+                    };
+                    let Some(generation) = DesiredGeneration::new(input.expected_generation) else {
+                        return product_status(422, "invalid request");
+                    };
+                    match self
+                        .api
+                        .worker()
+                        .delete_client(ClientDeleteCommand {
+                            principal_id,
+                            expected_generation: generation,
+                            client_id: id,
+                        })
+                        .await
+                    {
+                        Ok(receipt) => mutation_response(
+                            200,
+                            202,
+                            &serde_json::json!({"deleted":true}),
+                            receipt,
+                        ),
+                        Err(error) => product_error(error),
+                    }
+                } else {
+                    let input: PatchBody = match parse_json(body) {
+                        Some(v) => v,
+                        None => return product_status(422, "invalid request"),
+                    };
+                    let Some(generation) = DesiredGeneration::new(input.expected_generation) else {
+                        return product_status(422, "invalid request");
+                    };
+                    let label = match input.label {
+                        Some(v) => match ClientLabel::new(v) {
+                            Ok(v) => Some(v),
+                            Err(_) => return product_status(422, "invalid request"),
+                        },
+                        None => None,
+                    };
+                    let dns = match input.dns_servers {
+                        Some(v) => match parse_ips(v) {
+                            Some(v) => Some(v),
+                            None => return product_status(422, "invalid request"),
+                        },
+                        None => None,
+                    };
+                    let requested_address = match input.address {
+                        Some(value) => match IpAddr::from_str(&value) {
+                            Ok(address) => Some(address),
+                            Err(_) => return product_status(422, "invalid request"),
+                        },
+                        None => None,
+                    };
+                    let command = ClientUpdateCommand {
+                        principal_id,
+                        expected_generation: generation,
+                        client_id: id,
+                        label,
+                        route_policy: input.route_policy,
+                        dns_servers: dns,
+                        client_keepalive_seconds: input.client_keepalive_seconds,
+                        requested_address,
+                    };
+                    match self.api.worker().update_client(command).await {
+                        Ok(reply) => mutation_response(200, 202, &reply.client, reply.receipt),
+                        Err(error) => product_error(error),
+                    }
+                }
+            }
+            Enable | Disable => {
+                let Some(id) = id else {
+                    return response::not_found();
+                };
+                let input: GenerationBody = match parse_json(body) {
+                    Some(v) => v,
+                    None => return product_status(422, "invalid request"),
+                };
+                let Some(generation) = DesiredGeneration::new(input.expected_generation) else {
+                    return product_status(422, "invalid request");
+                };
+                match self
+                    .api
+                    .worker()
+                    .set_client_enabled(SetClientEnabledCommand {
+                        principal_id,
+                        expected_generation: generation,
+                        client_id: id,
+                        enabled: if route == Enable {
+                            ClientEnabled::Enabled
+                        } else {
+                            ClientEnabled::Disabled
+                        },
+                    })
+                    .await
+                {
+                    Ok(reply) => mutation_response(200, 202, &reply.client, reply.receipt),
+                    Err(error) => product_error(error),
+                }
+            }
         }
     }
 }
@@ -323,24 +652,30 @@ fn response_for_worker_error(error: WorkerError) -> Response {
         WorkerError::Rejected | WorkerError::Unavailable | WorkerError::Storage => {
             response::unavailable()
         }
-        // A refused product command is the server's answer about durable state,
-        // not an outage and not a credential problem. It renders as a bounded
-        // internal error; M002 owns giving product refusals their own statuses.
+        // A refused product command that reaches a read-only path has no
+        // request-specific projection and stays a bounded internal failure.
         WorkerError::Product(_) => response::internal_error(),
     }
 }
 
 impl Service for ManagementService {
-    /// Only the login route may carry a body.
+    /// Only login and the explicitly bounded product mutation routes carry bodies.
     ///
     /// The runtime consults this before routing, so a body on any other route is
-    /// refused by the transport rather than by application code, and the login
-    /// route's own 4 KiB bound is enforced in the route as well as here.
+    /// refused by the transport rather than by application code. Each permitted
+    /// route has its own bound, checked again by its handler.
     fn request_body_policy(&self, head: &RequestHead) -> RequestBodyPolicy {
-        match route(head.target().path()) {
-            matched if matched.accepts_body() => RequestBodyPolicy::Buffer {
-                max_bytes: LOGIN_BODY_LIMIT as u64,
-            },
+        let matched = route(head.target().path());
+        match matched {
+            matched if request_has_body(matched, head.method().as_str()) => {
+                RequestBodyPolicy::Buffer {
+                    max_bytes: if matches!(matched, Route::Login) {
+                        LOGIN_BODY_LIMIT
+                    } else {
+                        PRODUCT_BODY_LIMIT
+                    } as u64,
+                }
+            }
             _ => RequestBodyPolicy::Reject,
         }
     }
@@ -355,14 +690,20 @@ impl Service for ManagementService {
             .connection()
             .remote_addr
             .unwrap_or_else(|| SocketAddr::from(([127, 0, 0, 1], 0)));
-        let accepts_body = route(head.target().path()).accepts_body();
+        let matched = route(head.target().path());
+        let body_limit = if matches!(matched, Route::Login) {
+            LOGIN_BODY_LIMIT
+        } else {
+            PRODUCT_BODY_LIMIT
+        };
+        let accepts_body = request_has_body(matched, head.method().as_str());
         let service = self.clone();
         Box::pin(async move {
-            // The body is read only for the one route whose body policy allows
+            // The body is read only for routes whose body policy allows
             // it. Every other route is `Reject`, so the runtime never hands one
             // bytes to buffer.
             let body = if accepts_body {
-                collect_bounded_body(request.into_body(), LOGIN_BODY_LIMIT).await
+                collect_bounded_body(request.into_body(), body_limit).await
             } else {
                 Vec::new()
             };
@@ -396,6 +737,135 @@ async fn collect_bounded_body(mut body: eggserve_primitives::RequestBody, limit:
     collected
 }
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GenerationBody {
+    expected_generation: u64,
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SetupBody {
+    expected_generation: u64,
+    interface_name: String,
+    tunnel_prefix: String,
+    #[serde(default)]
+    server_address: Option<String>,
+    listen_port: u16,
+    advertised_endpoint: String,
+    egress_interface: String,
+    ipv4_forwarding_required: bool,
+    masquerade: bool,
+    #[serde(default)]
+    default_client_route_policy: ClientRoutePolicy,
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateBody {
+    expected_generation: u64,
+    interface_id: crate::domain::InterfaceId,
+    label: String,
+    #[serde(default)]
+    address: Option<String>,
+    #[serde(default)]
+    route_policy: Option<ClientRoutePolicy>,
+    #[serde(default)]
+    dns_servers: Vec<String>,
+    #[serde(default)]
+    client_keepalive_seconds: Option<u16>,
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PatchBody {
+    expected_generation: u64,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default)]
+    address: Option<String>,
+    #[serde(default)]
+    route_policy: Option<ClientRoutePolicy>,
+    #[serde(default)]
+    dns_servers: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "deserialize_optional_optional")]
+    client_keepalive_seconds: Option<Option<u16>>,
+}
+
+fn deserialize_optional_optional<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    <Option<T> as serde::Deserialize>::deserialize(deserializer).map(Some)
+}
+
+fn parse_json<T: serde::de::DeserializeOwned>(body: &[u8]) -> Option<T> {
+    serde_json::from_slice(body).ok()
+}
+fn parse_ips(values: Vec<String>) -> Option<Vec<IpAddr>> {
+    values
+        .into_iter()
+        .map(|value| IpAddr::from_str(&value).ok())
+        .collect()
+}
+fn status(value: u16) -> eggserve_primitives::StatusCode {
+    eggserve_primitives::StatusCode::new(value).expect("fixed HTTP status")
+}
+fn json_response<T: serde::Serialize>(
+    status_code: eggserve_primitives::StatusCode,
+    payload: &T,
+) -> Response {
+    match serde_json::to_vec(payload) {
+        Ok(body) if body.len() <= super::response::MAX_MANAGEMENT_BODY_BYTES => {
+            build_response(status_code, ResponseBody::Bytes(body), None)
+        }
+        _ => response::internal_error(),
+    }
+}
+fn product_status(code: u16, message: &'static str) -> Response {
+    json_response(status(code), &serde_json::json!({"error":message}))
+}
+fn mutation_response<T: serde::Serialize>(
+    converged_status: u16,
+    degraded_status: u16,
+    value: &T,
+    receipt: crate::product::ProductMutationReceipt,
+) -> Response {
+    let (enforcement, degraded) = match receipt.enforcement {
+        crate::product::EnforcementState::Converged => ("converged", None),
+        crate::product::EnforcementState::Pending => ("pending", None),
+        crate::product::EnforcementState::Degraded(category) => {
+            ("degraded", Some(category.as_str()))
+        }
+    };
+    let code = if degraded.is_some() {
+        degraded_status
+    } else {
+        converged_status
+    };
+    json_response(
+        status(code),
+        &serde_json::json!({"data":value,"generation":receipt.generation,"enforcement":enforcement,"degraded_category":degraded,"revocation_confirmed":degraded.is_none()}),
+    )
+}
+fn product_error(error: WorkerError) -> Response {
+    match error {
+        WorkerError::Product(ProductFailure::StaleGeneration) => {
+            product_status(409, "generation conflict")
+        }
+        WorkerError::Product(ProductFailure::NotFound) => response::not_found(),
+        WorkerError::Product(ProductFailure::ServerAlreadyConfigured) => {
+            product_status(409, "server already configured")
+        }
+        WorkerError::Product(ProductFailure::Invalid | ProductFailure::AddressUnavailable) => {
+            product_status(422, "invalid request")
+        }
+        WorkerError::Product(ProductFailure::ServerNotConfigured) => {
+            product_status(409, "server not configured")
+        }
+        WorkerError::Product(ProductFailure::StateUnavailable) => response::unavailable(),
+        other => response_for_worker_error(other),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -408,6 +878,18 @@ mod tests {
         assert_eq!(route("/api/v1/logout"), Route::Logout);
         assert_eq!(route("/api/v1/session"), Route::Session);
         assert_eq!(route("/api/v1/health"), Route::ApiHealth);
+        assert_eq!(
+            route("/api/v1/server"),
+            Route::Product(ProductRoute::Server, None)
+        );
+        assert_eq!(
+            route("/api/v1/setup"),
+            Route::Product(ProductRoute::Setup, None)
+        );
+        assert_eq!(
+            route("/api/v1/clients"),
+            Route::Product(ProductRoute::Clients, None)
+        );
         assert_eq!(route("/"), Route::Shell);
         assert_eq!(route("/assets/app.css"), Route::Asset);
         assert_eq!(route("/assets/app.js"), Route::Asset);
@@ -429,7 +911,7 @@ mod tests {
             "/api/v1",
             "/api/v1/login/",
             "/api/v1/peers",
-            "/api/v1/clients",
+            "/api/v1/clients/not-a-uuid",
             "/api/v1/interfaces",
             "/API/V1/LOGIN",
             "/api/v1/login%00",
@@ -440,9 +922,7 @@ mod tests {
     }
 
     #[test]
-    fn only_login_accepts_a_body() {
-        // Phase 8 owns the configuration routes; this is the whole body-accepting
-        // surface today.
+    fn only_declared_json_routes_accept_bodies() {
         assert!(Route::Login.accepts_body());
         for matched in [
             Route::Healthz,
@@ -455,6 +935,15 @@ mod tests {
         ] {
             assert!(!matched.accepts_body(), "{matched:?} must accept no body");
         }
+        let id = ClientId::new();
+        let client = Route::Product(ProductRoute::Client, Some(id));
+        assert!(request_has_body(client, "PATCH"));
+        assert!(request_has_body(client, "DELETE"));
+        assert!(!request_has_body(client, "GET"));
+        assert!(request_has_body(
+            Route::Product(ProductRoute::Setup, None),
+            "POST"
+        ));
     }
 
     #[test]
@@ -484,16 +973,30 @@ mod tests {
     }
 
     #[test]
-    fn the_surface_publishes_no_phase_8_configuration_route() {
-        // Proof that this milestone added authentication and not peer/client
-        // management, which Phase 8 owns.
+    fn dynamic_product_routes_require_canonical_uuid_and_exact_segments() {
+        let id = ClientId::new().to_string();
+        assert_eq!(
+            route(&format!("/api/v1/clients/{id}")),
+            Route::Product(ProductRoute::Client, Some(ClientId::from_str(&id).unwrap()))
+        );
+        assert_eq!(
+            route(&format!("/api/v1/clients/{id}/enable")),
+            Route::Product(ProductRoute::Enable, Some(ClientId::from_str(&id).unwrap()))
+        );
+        for target in [
+            format!("/api/v1/clients/{id}/"),
+            format!("/api/v1/clients/{id}/enable/extra"),
+            format!("/api/v1/clients/{}/enable", id.to_uppercase()),
+            format!("/api/v1/clients/{id}%00"),
+        ] {
+            assert_eq!(route(&target), Route::Unknown, "{target} must not match");
+        }
         for target in [
             "/api/v1/peers",
-            "/api/v1/clients",
             "/api/v1/interfaces",
             "/api/v1/network-policy",
         ] {
-            assert_eq!(route(target), Route::Unknown, "{target} must not exist yet");
+            assert_eq!(route(target), Route::Unknown, "{target} must not exist");
         }
     }
 

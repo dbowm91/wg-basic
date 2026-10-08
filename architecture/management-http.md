@@ -1,9 +1,9 @@
 # Management HTTP boundary and the bounded worker
 
-This document describes **current implemented behaviour**. Phase 7 is closed:
-the service lifecycle, the embedded asset shell, and the end-to-end and abuse
-qualification all landed in M004. What is still absent is stated plainly in
-[What Phase 8 still owns](#what-phase-8-still-owns).
+This document describes **current implemented behaviour**. Phase 7's service
+and security substrate is closed, and Phase 8 M001/M002 now expose the first
+generation-safe product management API. Export, enrollment, telemetry, audit
+query, and the product UI remain later Phase 8 milestones.
 
 Architecture decisions behind this boundary are recorded in
 [ADR-003](../plans/adr/003-management-http-auth-and-worker-boundary.md).
@@ -12,8 +12,9 @@ Credentials and sessions are in
 
 ## What exists today
 
-`wg-basic serve` is the unprivileged management service role. It publishes eight
-HTTP routes: five API routes, one liveness probe, and the embedded operator shell.
+`wg-basic serve` is the unprivileged management service role. It publishes the
+authenticated service surface, product CRUD routes, one liveness probe, and the
+embedded operator shell.
 
 | Method | Path                | Auth    | CSRF     | Origin | Body |
 | ------ | ------------------- | ------- | -------- | ------ | ---- |
@@ -21,27 +22,43 @@ HTTP routes: five API routes, one liveness probe, and the embedded operator shel
 | `POST` | `/api/v1/logout`    | session | required | exact  | none |
 | `GET`  | `/api/v1/session`   | session | none     | —      | none |
 | `GET`  | `/api/v1/health`    | session | none     | —      | none |
+| `GET`  | `/api/v1/server`    | session | none     | —      | none |
+| `POST` | `/api/v1/setup`     | session | required | exact  | JSON ≤ 8 KiB |
+| `GET`  | `/api/v1/clients`   | session | none     | —      | none |
+| `POST` | `/api/v1/clients`   | session | required | exact  | JSON ≤ 8 KiB |
+| `GET`  | `/api/v1/clients/<canonical-uuid>` | session | none | — | none |
+| `PATCH`| `/api/v1/clients/<canonical-uuid>` | session | required | exact | JSON ≤ 8 KiB |
+| `POST` | `/api/v1/clients/<canonical-uuid>/enable` | session | required | exact | generation JSON ≤ 8 KiB |
+| `POST` | `/api/v1/clients/<canonical-uuid>/disable` | session | required | exact | generation JSON ≤ 8 KiB |
+| `DELETE` | `/api/v1/clients/<canonical-uuid>` | session | required | exact | generation JSON ≤ 8 KiB |
 | `GET`  | `/healthz`          | none    | none     | —      | none |
 | `GET`  | `/`                 | none    | none     | —      | none |
 | `GET`  | `/assets/app.css`   | none    | none     | —      | none |
 | `GET`  | `/assets/app.js`    | none    | none     | —      | none |
 
-Login is the only route that accepts a body. The three shell routes answer only
-`GET` and accept none, and are matched exactly from a closed three-entry table —
-there is no prefix rule, so `/assets/` and `/assets/app.css.map` are `404`.
+Login uses its 4 KiB bound. Product JSON mutations each use an explicit 8 KiB
+bound; read routes accept no body. The three shell routes answer only `GET` and
+are matched exactly from a closed table — there is no prefix rule, so `/assets/`
+and `/assets/app.css.map` are `404`. Client IDs must be canonical lowercase
+UUIDs, and dynamic routes require an exact segment count.
 
-There is **no** peer, client, or interface route. Phase 8 owns those. M003's job
-was to close the perimeter *before* a configuration-mutating route exists to be
-abused through it, and M004 kept it that way.
+The product API is a thin typed-worker transport. Every unsafe request carries
+`expected_generation`; a stale value returns `409` without a commit. A committed
+mutation returns `200`/`201` when converged and `202` when enforcement is pending
+or degraded. The JSON receipt names the committed generation and bounded
+enforcement category. Ordinary server/client projections contain public
+configuration metadata and public keys only; private keys are not representable
+in those projection types. See [product management](product-management.md).
 
 ## What Phase 8 still owns
 
-Nothing in this document implies product management exists. Specifically:
+The following Phase 8 work is still absent:
 
-* **No peer, client, or interface CRUD.** There is no route that creates,
-  modifies, or deletes anything. `/` is a login frame and a health readout.
-* **No enrollment flow.** The local administrator is provisioned by the CLI,
-  never through the browser surface.
+* **No config export, QR, or enrollment flow.** The local administrator is
+  provisioned by the CLI, never through the browser surface.
+* **No live telemetry or audit query route.** `/api/v1/health` remains the
+  service health projection; client activity is not exposed yet.
+* **No product UI.** `/` remains the Phase 7 login shell and health readout.
 * **No direct TLS.** Phase 7 terminates none; the HTTPS story is a
   TLS-terminating reverse proxy in front of a loopback listener.
 * **No multi-user or roles.** Exactly one local administrator, no groups, no
