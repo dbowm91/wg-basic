@@ -38,6 +38,9 @@ pages.
 | `DELETE` | `/api/v1/enrollment-links/<canonical-uuid>` | session | required | exact | none |
 | `GET` | `/enroll/<canonical-uuid>` | capability page | none | — | none |
 | `POST` | `/api/v1/enroll/<canonical-uuid>/consume` | capability token | none | exact | JSON ≤ 1 KiB |
+| `GET` | `/api/v1/clients/telemetry` | session | none | — | none |
+| `GET` | `/api/v1/audit` | session | none | — | none |
+| `GET` | `/api/v1/audit/<unix-seconds>/<event-uuid>` | session | none | — | none |
 | `GET`  | `/healthz`          | none    | none     | —      | none |
 | `GET`  | `/`                 | none    | none     | —      | none |
 | `GET`  | `/assets/app.css`   | none    | none     | —      | none |
@@ -63,8 +66,6 @@ in those projection types. See [product management](product-management.md).
 
 The following Phase 8 work is still absent:
 
-* **No live telemetry or audit query route.** `/api/v1/health` remains the
-  service health projection; client activity is not exposed yet.
 * **No product UI.** `/` remains the Phase 7 login shell and health readout.
 * **No direct TLS.** Phase 7 terminates none; the HTTPS story is a
   TLS-terminating reverse proxy in front of a loopback listener.

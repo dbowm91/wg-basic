@@ -1,7 +1,7 @@
 # Product management API
 
-This document describes behavior implemented by Phase 8 M001–M003. Live
-telemetry, audit queries, and the product UI remain later milestones.
+This document describes behavior implemented by Phase 8 M001–M004. The product
+UI remains the final Phase 8 milestone.
 
 ## Authority and mutation path
 
@@ -42,6 +42,9 @@ CORS policy. Setup, create, update, enable, disable, and delete use an explicit
 | DELETE | `/api/v1/enrollment-links/<uuid>` | Revoke an unused share link |
 | GET | `/enroll/<uuid>` | Load the static enrollment page without consuming the link |
 | POST | `/api/v1/enroll/<uuid>/consume` | Consume a valid capability exactly once |
+| GET | `/api/v1/clients/telemetry` | Observe live WireGuard peer telemetry |
+| GET | `/api/v1/audit` | Read the newest audit page |
+| GET | `/api/v1/audit/<unix-seconds>/<event-uuid>` | Read the next stable audit page |
 
 IDs must be canonical lowercase UUIDs and routes match exact path segments.
 Unknown or malformed IDs return a bounded not-found answer. Setup is one-time;
@@ -65,6 +68,15 @@ only in the URL fragment. The landing page moves the token into a same-origin
 bounded POST; GET never consumes it. A separate limiter runs before capability
 lookup, and the state transaction consumes and audits the token atomically.
 Audit rows contain no config or token data.
+
+Telemetry is a fresh read-only observation through the worker and existing
+`ObserveWireGuardDevice` operation. Peers are joined to product records by
+public key, then returned with stable client/peer IDs, present/missing state,
+drift, endpoint, absolute Unix-second handshake time and age, and byte counts.
+It is never written to SQLite. At most 1,024 client rows are returned; an
+explicit `truncated` flag identifies larger installations. Audit pages contain
+at most 100 immutable events and use timestamp plus event ID to continue
+newest-first ordering.
 
 ## Operational boundary
 

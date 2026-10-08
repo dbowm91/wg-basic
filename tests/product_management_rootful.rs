@@ -695,6 +695,300 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
                     && peer.tx_bytes.unwrap_or_default() > 0
             })
     });
+
+    let http_api = AuthenticatedApi::new(
+        management.clone(),
+        Arc::new(OriginPolicy::loopback_only("127.0.0.1:0".parse().unwrap())),
+        Arc::new(LoginLimiter::new(
+            Bucket::per_second(100, 100),
+            Bucket::per_second(100, 100),
+            16,
+        )),
+    );
+    let http_server = Server::builder()
+        .runtime(
+            ManagementHttpConfig::new("127.0.0.1:0")
+                .unwrap()
+                .runtime_config()
+                .unwrap(),
+        )
+        .build()
+        .unwrap();
+    let handle = http_server
+        .start_with_service(ManagementService::new(http_api))
+        .await
+        .unwrap();
+    let addr = handle.local_addr();
+    let host = addr.to_string();
+    let origin = format!("http://{host}");
+    let (control, mut completion) = handle.into_parts();
+    let (status, _, login_headers) = http(
+        addr,
+        "POST",
+        "/api/v1/login",
+        &host,
+        Some(&origin),
+        None,
+        None,
+        r#"{"username":"admin","password":"an administrator password"}"#,
+    );
+    assert_eq!(status, 200);
+    let cookie = login_headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("set-cookie"))
+        .unwrap()
+        .1
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let audit_rows_before = installation.store.audit_events(1_000).unwrap().len();
+    let (telemetry_status, telemetry_body, telemetry_headers) = http(
+        addr,
+        "GET",
+        "/api/v1/clients/telemetry",
+        &host,
+        None,
+        Some(&cookie),
+        None,
+        "",
+    );
+    assert_eq!(telemetry_status, 200, "{telemetry_body}");
+    assert_eq!(
+        telemetry_headers
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case("cache-control"))
+            .map(|(_, value)| value.as_str()),
+        Some("no-store")
+    );
+    assert!(telemetry_headers
+        .iter()
+        .all(|(name, _)| !name.eq_ignore_ascii_case("access-control-allow-origin")));
+    let telemetry: serde_json::Value = serde_json::from_str(&telemetry_body).unwrap();
+    let row = telemetry["clients"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["client_id"] == client.client_id.to_string())
+        .unwrap();
+    assert_eq!(row["peer_id"], client.peer_id.to_string());
+    assert_eq!(row["observation"], "present");
+    assert_eq!(row["drift"], false);
+    assert_eq!(row["endpoint"], "198.18.0.2:51821");
+    assert!(row["latest_handshake_unix_seconds"].as_u64().unwrap() > 1_700_000_000);
+    assert!(row["rx_bytes"].as_u64().unwrap() > 0);
+    assert!(row["tx_bytes"].as_u64().unwrap() > 0);
+    assert_eq!(
+        installation.store.audit_events(1_000).unwrap().len(),
+        audit_rows_before,
+        "telemetry reads do not persist observations"
+    );
+    let removed_enabled_peer = wg_basic::protocol::request(
+        &installation.scratch.netd_socket(),
+        RequestOperation::ApplyWireGuardDevice {
+            interface: "wg0".parse().unwrap(),
+            patch: WireGuardDevicePatch {
+                private_key: FieldUpdate::Keep,
+                listen_port: FieldUpdate::Keep,
+                peer: Some(PeerMutation::Remove {
+                    public_key: client.public_key.clone(),
+                }),
+            },
+        },
+        9006,
+    )
+    .expect("remove enabled peer from observation fixture");
+    assert!(matches!(
+        removed_enabled_peer,
+        ResponseBody::WireGuardApplied(_)
+    ));
+    let (missing_status, missing_body, _) = http(
+        addr,
+        "GET",
+        "/api/v1/clients/telemetry",
+        &host,
+        None,
+        Some(&cookie),
+        None,
+        "",
+    );
+    assert_eq!(missing_status, 200, "{missing_body}");
+    let missing_json: serde_json::Value = serde_json::from_str(&missing_body).unwrap();
+    let missing_row = missing_json["clients"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["client_id"] == client.client_id.to_string())
+        .unwrap();
+    assert_eq!(missing_row["enabled"], true);
+    assert_eq!(missing_row["observation"], "missing");
+    assert_eq!(missing_row["drift"], true);
+    let (audit_status, audit_body, _) = http(
+        addr,
+        "GET",
+        "/api/v1/audit",
+        &host,
+        None,
+        Some(&cookie),
+        None,
+        "",
+    );
+    assert_eq!(audit_status, 200, "{audit_body}");
+    assert!(audit_body.contains("client_create"));
+    assert!(!audit_body.contains("PrivateKey"));
+    assert!(!audit_body.contains("PresharedKey"));
+
+    management
+        .set_client_enabled(SetClientEnabledCommand {
+            principal_id: installation.principal,
+            expected_generation: installation.store.current_generation().unwrap(),
+            client_id: client.client_id,
+            enabled: wg_basic::product::ClientEnabled::Disabled,
+        })
+        .await
+        .expect("disable client");
+    let (disabled_status, disabled_body, _) = http(
+        addr,
+        "GET",
+        "/api/v1/clients/telemetry",
+        &host,
+        None,
+        Some(&cookie),
+        None,
+        "",
+    );
+    assert_eq!(disabled_status, 200, "{disabled_body}");
+    let disabled_json: serde_json::Value = serde_json::from_str(&disabled_body).unwrap();
+    let disabled_row = disabled_json["clients"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["client_id"] == client.client_id.to_string())
+        .unwrap();
+    assert_eq!(disabled_row["enabled"], false);
+    assert_eq!(disabled_row["observation"], "missing");
+    assert_eq!(disabled_row["drift"], false);
+
+    let unexpected_peer = wg_basic::protocol::request(
+        &installation.scratch.netd_socket(),
+        RequestOperation::ApplyWireGuardDevice {
+            interface: "wg0".parse().unwrap(),
+            patch: WireGuardDevicePatch {
+                private_key: FieldUpdate::Keep,
+                listen_port: FieldUpdate::Keep,
+                peer: Some(PeerMutation::Add(DesiredWireGuardPeer {
+                    public_key: client.public_key.clone(),
+                    preshared_key: None,
+                    allowed_ips: vec![NetworkPrefix::new(client.assigned_address)],
+                    persistent_keepalive_seconds: None,
+                    endpoint: None,
+                })),
+            },
+        },
+        9005,
+    )
+    .expect("inject read-only observation drift fixture");
+    assert!(matches!(unexpected_peer, ResponseBody::WireGuardApplied(_)));
+    let extra_pair = wg_basic::wireguard::generate_keypair().unwrap();
+    let extra_peer = wg_basic::protocol::request(
+        &installation.scratch.netd_socket(),
+        RequestOperation::ApplyWireGuardDevice {
+            interface: "wg0".parse().unwrap(),
+            patch: WireGuardDevicePatch {
+                private_key: FieldUpdate::Keep,
+                listen_port: FieldUpdate::Keep,
+                peer: Some(PeerMutation::Add(DesiredWireGuardPeer {
+                    public_key: extra_pair.public_key,
+                    preshared_key: None,
+                    allowed_ips: vec!["10.67.0.250/32".parse().unwrap()],
+                    persistent_keepalive_seconds: None,
+                    endpoint: None,
+                })),
+            },
+        },
+        9007,
+    )
+    .expect("add unmanaged peer to bounded observation fixture");
+    assert!(matches!(extra_peer, ResponseBody::WireGuardApplied(_)));
+    let (drift_status, drift_body, _) = http(
+        addr,
+        "GET",
+        "/api/v1/clients/telemetry",
+        &host,
+        None,
+        Some(&cookie),
+        None,
+        "",
+    );
+    assert_eq!(drift_status, 200, "{drift_body}");
+    let drift_json: serde_json::Value = serde_json::from_str(&drift_body).unwrap();
+    let drift_row = drift_json["clients"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["client_id"] == client.client_id.to_string())
+        .unwrap();
+    assert_eq!(drift_row["enabled"], false);
+    assert_eq!(drift_row["observation"], "present");
+    assert_eq!(drift_row["drift"], true);
+    assert_eq!(drift_json["unassociated_peer_count"], 1);
+
+    management
+        .set_client_enabled(SetClientEnabledCommand {
+            principal_id: installation.principal,
+            expected_generation: installation.store.current_generation().unwrap(),
+            client_id: client.client_id,
+            enabled: wg_basic::product::ClientEnabled::Enabled,
+        })
+        .await
+        .expect("re-enable client");
+    let _ = Command::new("ip")
+        .args([
+            "netns",
+            "exec",
+            &client_ns.0,
+            "ping",
+            "-n",
+            "-c",
+            "1",
+            "-W",
+            "2",
+            "-I",
+            "wg-client",
+            "10.67.0.1",
+        ])
+        .output()
+        .expect("trigger replacement handshake");
+    wait_until("re-enabled peer observation after a new handshake", || {
+        installation
+            .namespace
+            .device(&installation.scratch.netd_socket(), "wg0")
+            .peers
+            .iter()
+            .any(|peer| peer.public_key == client.public_key && peer.latest_handshake.is_some())
+    });
+    let (enabled_status, enabled_body, _) = http(
+        addr,
+        "GET",
+        "/api/v1/clients/telemetry",
+        &host,
+        None,
+        Some(&cookie),
+        None,
+        "",
+    );
+    assert_eq!(enabled_status, 200, "{enabled_body}");
+    let enabled_json: serde_json::Value = serde_json::from_str(&enabled_body).unwrap();
+    let enabled_row = enabled_json["clients"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["client_id"] == client.client_id.to_string())
+        .unwrap();
+    assert_eq!(enabled_row["enabled"], true);
+    assert_eq!(enabled_row["observation"], "present");
+    control.shutdown();
+    completion.wait().await.expect("HTTP worker drains");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

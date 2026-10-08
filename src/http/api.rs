@@ -13,6 +13,8 @@
 //! | `POST` | `/api/v1/clients/<id>/enrollment-links` | session | **required** | **exact** |
 //! | `DELETE` | `/api/v1/enrollment-links/<id>` | session | **required** | **exact** |
 //! | `POST` | `/api/v1/enroll/<id>/consume` | token | none | **exact** |
+//! | `GET` | `/api/v1/clients/telemetry` | session | none | — |
+//! | `GET` | `/api/v1/audit[/<timestamp>/<event-id>]` | session | none | — |
 //! | `GET` | `/healthz` | none | none | — |
 //!
 //! # Two pieces, split on purpose

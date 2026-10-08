@@ -23,8 +23,9 @@ use super::{
 use crate::{
     domain::{DesiredGeneration, DesiredState, InterfaceId, PrincipalId},
     product::model::{
-        AdvertisedEndpoint, AuditAction, AuditEvent, AuditEventId, AuditOutcome, AuditResourceKind,
-        ClientEnabled, ClientLabel, ClientProductSettings, EnrollmentCapabilityId,
+        AdvertisedEndpoint, AuditAction, AuditCursor, AuditEvent, AuditEventId, AuditOutcome,
+        AuditResourceKind, ClientEnabled, ClientLabel, ClientProductSettings,
+        EnrollmentCapabilityId,
     },
     state::{error::StateError, schema},
 };
@@ -394,6 +395,50 @@ impl StateStore {
             .collect::<Result<Vec<_>, _>>()
             .map_err(StateError::database)?;
 
+        raw.into_iter().map(decode_audit_row).collect()
+    }
+
+    /// Reads a newest-first audit page strictly older than the supplied stable
+    /// timestamp/event cursor. Audit rows are immutable, so concurrent inserts
+    /// cannot reorder an already-issued cursor.
+    pub fn audit_events_page(
+        &self,
+        limit: usize,
+        before: Option<AuditCursor>,
+    ) -> Result<Vec<AuditEvent>, StateError> {
+        let connection = self.lock()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT event_id, occurred_at, principal_id, action, resource_kind,
+                    resource_id, generation_before, generation_after, outcome
+             FROM audit_events
+             WHERE (?1 IS NULL OR occurred_at < ?1 OR (occurred_at = ?1 AND rowid <
+                    (SELECT rowid FROM audit_events WHERE event_id = ?2 AND occurred_at = ?1)))
+             ORDER BY occurred_at DESC, rowid DESC LIMIT ?3",
+            )
+            .map_err(StateError::database)?;
+        let cursor_time = before.map(|cursor| cursor.occurred_at);
+        let cursor_id = before.map(|cursor| cursor.event_id.to_string());
+        let raw = statement
+            .query_map(
+                rusqlite::params![cursor_time, cursor_id, limit.min(1_001) as i64],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, Option<i64>>(6)?,
+                        row.get::<_, Option<i64>>(7)?,
+                        row.get::<_, String>(8)?,
+                    ))
+                },
+            )
+            .map_err(StateError::database)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(StateError::database)?;
         raw.into_iter().map(decode_audit_row).collect()
     }
 }
