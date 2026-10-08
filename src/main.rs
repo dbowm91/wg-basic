@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 const DEFAULT_SOCKET: &str = "/run/wg-basic/netd.sock";
@@ -9,8 +9,17 @@ const DEFAULT_ADMIN_USERNAME: &str = "admin";
 #[derive(Parser)]
 #[command(name = "wg-basic", version, about = "Linux-native WireGuard appliance")]
 struct Cli {
+    /// Format for long-running operational events written to stderr.
+    #[arg(long, global = true, value_enum, default_value_t = CliLogFormat::Human)]
+    log_format: CliLogFormat,
     #[command(subcommand)]
     command: Option<Command>,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum CliLogFormat {
+    Human,
+    Json,
 }
 
 #[derive(Subcommand)]
@@ -209,6 +218,10 @@ enum NetworkCommand {
 
 fn main() {
     let cli = Cli::parse();
+    wg_basic::operational::set_format(match cli.log_format {
+        CliLogFormat::Human => wg_basic::operational::LogFormat::Human,
+        CliLogFormat::Json => wg_basic::operational::LogFormat::Json,
+    });
     #[cfg(target_os = "linux")]
     let result = run_linux(cli.command);
     #[cfg(not(target_os = "linux"))]
@@ -217,7 +230,7 @@ fn main() {
         Err("network service roles require Linux".into())
     };
     if let Err(message) = result {
-        eprintln!("wg-basic: {message}");
+        wg_basic::operational::command_failure(&message);
         std::process::exit(2);
     }
 }
@@ -404,6 +417,18 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
                 });
             }
             let report = wg_basic::doctor::DoctorReport::new(checks);
+            wg_basic::operational::emit(
+                "doctor.completed",
+                wg_basic::operational::Severity::Info,
+                "doctor",
+                "diagnose",
+                "report_ready",
+                None,
+                state_snapshot
+                    .as_ref()
+                    .map(|s| s.metadata.desired_generation.to_storage() as u64),
+                Some("checks"),
+            );
             if json {
                 println!(
                     "{}",
@@ -429,13 +454,34 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
                 signal_shutdown.store(true, std::sync::atomic::Ordering::Release)
             })
             .map_err(|_| "could not install graceful shutdown handler".to_owned())?;
-            eprintln!(
-                "wg-basic netd listening on {} (typed local protocol)",
-                server.socket_path().display()
+            wg_basic::operational::emit(
+                "netd.started",
+                wg_basic::operational::Severity::Info,
+                "netd",
+                "startup",
+                "ready",
+                None,
+                None,
+                Some("uds_listener"),
             );
-            server
+            let result = server
                 .run_until_shutdown(&shutdown)
-                .map_err(|_| "netd listener stopped after a runtime error".to_owned())
+                .map_err(|_| "netd listener stopped after a runtime error".to_owned());
+            wg_basic::operational::emit(
+                "netd.stopping",
+                wg_basic::operational::Severity::Info,
+                "netd",
+                "shutdown",
+                if result.is_ok() {
+                    "graceful"
+                } else {
+                    "runtime_error"
+                },
+                None,
+                None,
+                Some("uds_listener"),
+            );
+            result
         }
         Some(Command::Admin { action }) => run_admin_action(action),
         Some(Command::State { action }) => run_state_action(action),
@@ -1052,6 +1098,16 @@ fn run_state_action(action: StateCommand) -> Result<(), String> {
             let receipt = store
                 .backup(&destination)
                 .map_err(|error| error.to_string())?;
+            wg_basic::operational::emit(
+                "state.backup_completed",
+                wg_basic::operational::Severity::Info,
+                "operator",
+                "backup",
+                "verified",
+                None,
+                Some(receipt.generation.to_storage() as u64),
+                Some("promotion"),
+            );
             println!(
                 "backup complete: {} (generation {}, schema version {})",
                 receipt.destination.display(),
@@ -1069,6 +1125,16 @@ fn run_state_action(action: StateCommand) -> Result<(), String> {
             // this early check is a better error message, not the safety net.
             validate_candidate(&candidate).map_err(|error| error.to_string())?;
             let receipt = restore(&candidate, &state).map_err(|error| error.to_string())?;
+            wg_basic::operational::emit(
+                "state.restore_completed",
+                wg_basic::operational::Severity::Info,
+                "operator",
+                "restore",
+                "installed",
+                None,
+                Some(receipt.generation.to_storage() as u64),
+                Some("replacement"),
+            );
             println!(
                 "restored: {} (generation {}, schema version {})",
                 receipt.target.display(),
@@ -1398,26 +1464,44 @@ fn set_network_enabled(state: PathBuf, socket: PathBuf, enabled: bool) -> Result
         .map_err(|error| error.to_string())?;
     drop(store);
 
-    match ManagementRuntime::open(&state, &socket)
+    let outcome = match ManagementRuntime::open(&state, &socket)
         .and_then(|runtime| runtime.reconcile_after_commit(generation))
     {
-        Ok(receipt) if receipt.is_enforced() => println!(
-            "network {} committed at generation {} and enforced",
-            if enabled { "enable" } else { "disable" },
-            generation
-        ),
-        Ok(receipt) => println!(
-            "network {} committed at generation {} but not yet enforced ({:?}); check netd and rerun `wg-basic reconcile`",
-            if enabled { "enable" } else { "disable" },
-            generation,
-            receipt.enforcement
-        ),
-        Err(_) => println!(
-            "network {} committed at generation {} but reconciliation could not be confirmed; check netd and rerun `wg-basic reconcile`",
-            if enabled { "enable" } else { "disable" },
-            generation,
-        ),
-    }
+        Ok(receipt) if receipt.is_enforced() => {
+            println!(
+                "network {} committed at generation {} and enforced",
+                if enabled { "enable" } else { "disable" },
+                generation
+            );
+            "enforced"
+        }
+        Ok(receipt) => {
+            println!("network {} committed at generation {} but not yet enforced ({:?}); check netd and rerun `wg-basic reconcile`", if enabled { "enable" } else { "disable" }, generation, receipt.enforcement);
+            "degraded"
+        }
+        Err(_) => {
+            println!("network {} committed at generation {} but reconciliation could not be confirmed; check netd and rerun `wg-basic reconcile`", if enabled { "enable" } else { "disable" }, generation);
+            "unknown"
+        }
+    };
+    wg_basic::operational::emit(
+        if enabled {
+            "network.enabled"
+        } else {
+            "network.disabled"
+        },
+        if outcome == "enforced" {
+            wg_basic::operational::Severity::Info
+        } else {
+            wg_basic::operational::Severity::Warn
+        },
+        "operator",
+        if enabled { "enable" } else { "disable" },
+        outcome,
+        None,
+        Some(generation.to_storage() as u64),
+        Some("reconcile"),
+    );
     Ok(())
 }
 

@@ -10,6 +10,7 @@ pub mod firewall;
 #[cfg(target_os = "linux")]
 pub mod http;
 pub mod management;
+pub mod operational;
 pub mod product;
 #[cfg(target_os = "linux")]
 pub mod protocol;

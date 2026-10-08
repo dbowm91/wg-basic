@@ -8,6 +8,7 @@
 const PRODUCTION_SOURCES: &[(&str, &str)] = &[
     ("src/main.rs", include_str!("../src/main.rs")),
     ("src/lib.rs", include_str!("../src/lib.rs")),
+    ("src/operational.rs", include_str!("../src/operational.rs")),
     ("src/error.rs", include_str!("../src/error.rs")),
     ("src/wireguard.rs", include_str!("../src/wireguard.rs")),
     (
@@ -241,6 +242,29 @@ const PRODUCTION_SOURCES: &[(&str, &str)] = &[
         include_str!("../src/domain/state.rs"),
     ),
 ];
+
+#[test]
+fn operational_events_have_a_closed_secret_safe_schema() {
+    let events = include_str!("../src/operational.rs");
+    assert!(events.contains("event_code: &'static str"));
+    assert!(events.contains("role: &'static str"));
+    assert!(events.contains("operation: &'static str"));
+    assert!(events.contains("outcome: &'static str"));
+    assert!(events.contains("timestamp_unix_ms: u128"));
+    for forbidden in [
+        "password:",
+        "verifier:",
+        "token:",
+        "private_key:",
+        "payload:",
+        "backend_error:",
+    ] {
+        assert!(
+            !events.contains(forbidden),
+            "operational event schema must not grow a secret-bearing field {forbidden:?}"
+        );
+    }
+}
 
 /// The only production module permitted to spawn a process.
 const ONLY_PROCESS_MODULE: &str = "src/firewall/nft.rs";
@@ -1712,4 +1736,27 @@ fn the_long_running_roles_catch_a_supervisors_termination_signal() {
             "the `{arm}` role should exist and be one of the two that run forever"
         );
     }
+}
+
+#[test]
+fn service_hardening_contract_matches_netd_runtime_requirements() {
+    let contract = include_str!("../architecture/service-hardening.md");
+    assert!(contract.contains("/proc/sys/net/ipv4/ip_forward"));
+    assert!(contract.contains("ProtectKernelTunables=yes` is incompatible"));
+    assert!(contract.contains("MemoryMax=256M"));
+    assert!(contract.contains("MemoryMax=128M"));
+    assert!(contract.contains("RestrictAddressFamilies=AF_UNIX AF_NETLINK"));
+}
+
+#[test]
+fn bundled_sqlite_runtime_is_past_the_wal_reset_advisory_range() {
+    let version = rusqlite::version_number();
+    assert!(
+        version > 3_051_002,
+        "SQLite {version} must be newer than 3.51.2 for the WAL-reset advisory qualification"
+    );
+    assert!(
+        rusqlite::version().contains("3.53.2"),
+        "recorded bundled SQLite version changed; review the runtime security qualification"
+    );
 }

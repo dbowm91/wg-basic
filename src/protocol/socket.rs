@@ -121,7 +121,18 @@ impl SocketServer {
                 // A malformed or unauthorized peer is isolated to its connection;
                 // it must not terminate the long-lived network service.
                 Ok((stream, _)) => {
-                    let _ = self.handle_connection(stream);
+                    if self.handle_connection(stream).is_err() {
+                        crate::operational::emit(
+                            "netd.request_rejected",
+                            crate::operational::Severity::Warn,
+                            "netd",
+                            "request",
+                            "rejected",
+                            None,
+                            None,
+                            Some("uds_connection"),
+                        );
+                    }
                 }
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                     thread::sleep(ACCEPT_POLL)
@@ -457,6 +468,46 @@ mod tests {
         handle.join().unwrap().unwrap();
         assert!(started.elapsed() < IO_TIMEOUT + Duration::from_secs(1));
         drop(stream);
+    }
+
+    #[test]
+    fn authorized_slow_peer_blocks_one_at_a_time_service_for_at_most_io_timeout() {
+        let fixture = Fixture::new();
+        let path = fixture.socket();
+        let (shutdown, handle) =
+            start_server(path.clone(), AuthorizationPolicy::current_user_and_root());
+        let _slow = UnixStream::connect(&path).unwrap();
+        // Let the single accept loop take the authorized connection and block
+        // while it waits for the four-byte frame header.
+        thread::sleep(Duration::from_millis(50));
+
+        let mut ordinary = UnixStream::connect(&path).unwrap();
+        ordinary
+            .set_read_timeout(Some(Duration::from_secs(4)))
+            .unwrap();
+        let request = RequestEnvelope {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 700,
+            operation: RequestOperation::Ping,
+        };
+        let payload = serde_json::to_vec(&request).unwrap();
+        let started = std::time::Instant::now();
+        write_frame(&mut ordinary, &payload).unwrap();
+        let response: ResponseEnvelope =
+            serde_json::from_slice(&read_frame(&mut ordinary).unwrap()).unwrap();
+        let denial_window = started.elapsed();
+        assert_eq!(response.request_id, request.request_id);
+        assert!(
+            denial_window >= IO_TIMEOUT - Duration::from_millis(250),
+            "the queued request should wait for the authorized slow peer's timeout: {denial_window:?}"
+        );
+        assert!(
+            denial_window < IO_TIMEOUT + Duration::from_secs(1),
+            "the measured denial window must remain bounded by the 2s read timeout: {denial_window:?}"
+        );
+        eprintln!("authorized netd slow-peer denial window: {denial_window:?} (IO_TIMEOUT={IO_TIMEOUT:?})");
+        shutdown.store(true, Ordering::Release);
+        handle.join().unwrap().unwrap();
     }
 
     #[test]

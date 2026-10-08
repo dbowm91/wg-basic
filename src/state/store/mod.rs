@@ -51,7 +51,7 @@ use std::{
     sync::{Mutex, MutexGuard},
 };
 
-pub use auth::{PrincipalRecord, SessionRecord, StoredSession};
+pub use auth::{PrincipalRecord, SessionRecord, StoredSession, MAX_LIVE_SESSIONS_PER_PRINCIPAL};
 
 /// The authoritative unprivileged application-state store.
 pub struct StateStore {

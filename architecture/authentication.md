@@ -129,6 +129,11 @@ Lookup always hashes the presented token *before* it reaches a query. Expiry is
 inclusive: a session is already invalid on its expiry second, and an expired
 session is **deleted** on lookup rather than left to rot.
 
+`serve` removes expired sessions at startup. Successful issuance also runs in
+an immediate transaction that removes expired rows and caps each principal at
+32 live sessions, evicting the oldest by creation time and ID when needed.
+Neither housekeeping operation changes the desired network generation.
+
 Session lifetime is finite — twelve hours by default — with no remember-me mode.
 An unbounded session is a permanent credential.
 

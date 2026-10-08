@@ -364,7 +364,7 @@ impl Installation {
         let scratch = Scratch::new();
         let namespace = Namespace::new(label);
         let netd = Managed::netd(&namespace.0, &scratch);
-        wait_until("netd to listen", || netd.ready("listening"));
+        wait_until("netd to listen", || netd.ready("netd.started"));
 
         let store = Arc::new(StateStore::initialize(scratch.state()).expect("store"));
         set_password_at(scratch.state(), "admin", "an administrator password")
@@ -461,7 +461,7 @@ impl Installation {
     /// Restarts the backend against the same durable state.
     async fn restart_backend(&mut self) {
         let replacement = Managed::netd(&self.namespace.0, &self.scratch);
-        wait_until("netd to listen again", || replacement.ready("listening"));
+        wait_until("netd to listen again", || replacement.ready("netd.started"));
         let old = std::mem::replace(&mut self.netd, replacement);
         drop(old);
     }
@@ -525,7 +525,9 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
     let client_ns = Namespace::new("client");
     let client_scratch = Scratch::new();
     let client_netd = Managed::netd(&client_ns.0, &client_scratch);
-    wait_until("client netd to listen", || client_netd.ready("listening"));
+    wait_until("client netd to listen", || {
+        client_netd.ready("netd.started")
+    });
 
     run(&[
         "link", "add", "wgx1", "type", "veth", "peer", "name", "wgx2",
@@ -1340,7 +1342,7 @@ async fn authenticated_http_crud_applies_real_peer_lifecycle() {
     let scratch = Scratch::new();
     let namespace = Namespace::new("http");
     let netd = Managed::netd(&namespace.0, &scratch);
-    wait_until("netd to listen", || netd.ready("listening"));
+    wait_until("netd to listen", || netd.ready("netd.started"));
     let _store = StateStore::initialize(scratch.state()).expect("initialize state");
     set_password_at(scratch.state(), "admin", "an administrator password")
         .expect("admin provisioned");

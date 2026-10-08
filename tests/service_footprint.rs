@@ -502,13 +502,11 @@ fn the_management_surface_meets_its_footprint_and_latency_shape() {
             "127.0.0.1:0",
         ],
     );
-    let line = serve.await_log("wg-basic serve listening on");
+    let line = serve.await_log("serve.started");
     let addr: SocketAddr = line
-        .split("listening on")
-        .nth(1)
-        .expect("the startup line names the listener")
-        .trim()
-        .trim_start_matches("http://")
+        .split_whitespace()
+        .find_map(|part| part.strip_prefix("resource_id="))
+        .expect("the event names the listener")
         .parse()
         .expect("a parseable bound address");
     await_listener(addr, &serve);

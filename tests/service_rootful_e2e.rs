@@ -314,13 +314,11 @@ fn start_serve(scratch: &Scratch) -> (Managed, SocketAddr) {
             "127.0.0.1:0",
         ],
     );
-    let line = process.await_log("wg-basic serve listening on");
+    let line = process.await_log("serve.started");
     let addr = line
-        .split("listening on")
-        .nth(1)
-        .expect("the startup line names the listener")
-        .trim()
-        .trim_start_matches("http://")
+        .split_whitespace()
+        .find_map(|part| part.strip_prefix("resource_id="))
+        .expect("the event names the listener")
         .parse()
         .expect("a parseable bound address");
     (process, addr)
@@ -618,14 +616,14 @@ fn the_management_surface_reflects_real_network_state_in_both_directions() {
         &namespace.0,
         &["netd", "--socket", scratch.netd_socket().to_str().unwrap()],
     );
-    netd.await_log("wg-basic netd listening on");
+    netd.await_log("netd.started");
     await_netd(&scratch.netd_socket(), &netd);
 
     // First life: startup reconcile has a real interface to apply.
     let (mut serve, addr) = start_serve(&scratch);
     await_listener(addr, &serve);
 
-    let reconcile = serve.await_log("startup reconciliation");
+    let reconcile = serve.await_log("serve.reconcile");
     assert!(
         reconcile.contains("converged") || reconcile.contains("degraded"),
         "a managed installation must attempt a real reconcile: {reconcile}"
@@ -690,14 +688,14 @@ fn the_management_surface_reflects_real_network_state_in_both_directions() {
 
     let (mut restarted, second_addr) = start_serve(&scratch);
     await_listener(second_addr, &restarted);
-    let second_reconcile = restarted.await_log("startup reconciliation");
+    let second_reconcile = restarted.await_log("serve.reconcile");
     assert!(
         second_reconcile.contains("degraded"),
         "the backend is gone, so the reconcile must fail: {second_reconcile}"
     );
-    let readiness = restarted.await_log("readiness:");
+    let readiness = restarted.await_log("serve.started");
     assert!(
-        readiness.contains("degraded: network convergence"),
+        readiness.contains("outcome=degraded"),
         "a failed backend is degraded, not fatal: the listener is up and the \
          reason is named for the operator. {readiness}"
     );
@@ -764,7 +762,7 @@ fn the_management_role_survives_its_backend_disappearing_and_picks_it_up_again()
         &namespace.0,
         &["netd", "--socket", scratch.netd_socket().to_str().unwrap()],
     );
-    netd.await_log("wg-basic netd listening on");
+    netd.await_log("netd.started");
     await_netd(&scratch.netd_socket(), &netd);
 
     let (mut serve, addr) = start_serve(&scratch);
@@ -822,7 +820,7 @@ fn the_management_role_survives_its_backend_disappearing_and_picks_it_up_again()
         &namespace.0,
         &["netd", "--socket", scratch.netd_socket().to_str().unwrap()],
     );
-    again.await_log("wg-basic netd listening on");
+    again.await_log("netd.started");
     await_netd(&scratch.netd_socket(), &again);
 
     let recovered = browser.get("/api/v1/health");
@@ -900,7 +898,7 @@ fn no_key_material_reaches_the_management_surface() {
         &namespace.0,
         &["netd", "--socket", scratch.netd_socket().to_str().unwrap()],
     );
-    netd.await_log("wg-basic netd listening on");
+    netd.await_log("netd.started");
     await_netd(&scratch.netd_socket(), &netd);
 
     let (mut serve, addr) = start_serve(&scratch);

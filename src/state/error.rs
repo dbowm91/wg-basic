@@ -103,6 +103,9 @@ pub enum StateError {
 
     #[error("the selected tunnel prefix cannot serve another client address")]
     AddressPoolUnavailable,
+
+    #[error("this client already has the maximum number of live enrollment links")]
+    EnrollmentCapacityReached,
 }
 
 impl StateError {

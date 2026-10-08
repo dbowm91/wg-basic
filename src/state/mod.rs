@@ -54,9 +54,12 @@ pub use projection::{project, ClientVisibility, ProjectionError, ResolvedNetwork
 pub use schema::{recovery_snapshot_path, OpenIntent};
 pub use store::product::{
     ClientProductRecord, CommittedProductState, InterfaceProductState, PersistedProductState,
-    ProductAudit, ProductState,
+    ProductAudit, ProductState, ENROLLMENT_TERMINAL_RETENTION_SECONDS, MAX_AUDIT_EVENTS,
+    MAX_LIVE_ENROLLMENT_CAPABILITIES_PER_CLIENT,
 };
-pub use store::{PrincipalRecord, SessionRecord, StateStore, StoredSession};
+pub use store::{
+    PrincipalRecord, SessionRecord, StateStore, StoredSession, MAX_LIVE_SESSIONS_PER_PRINCIPAL,
+};
 
 /// Current Unix time in seconds, the same clock every stored timestamp uses.
 ///

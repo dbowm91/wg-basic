@@ -29,6 +29,9 @@ use crate::{
 };
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
 
+/// Maximum concurrently valid browser sessions for one local administrator.
+pub const MAX_LIVE_SESSIONS_PER_PRINCIPAL: i64 = 32;
+
 /// One persisted local administrator.
 ///
 /// `Debug` is written out by hand rather than derived: a derived `Debug` would
@@ -289,8 +292,36 @@ impl StateStore {
         session: &SessionRecord,
         digest: &SessionTokenDigest,
     ) -> Result<(), StateError> {
-        let connection = self.lock()?;
-        connection
+        let mut connection = self.lock()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(StateError::database)?;
+        transaction
+            .execute(
+                "DELETE FROM admin_sessions WHERE expires_at <= ?1",
+                [session.created_at],
+            )
+            .map_err(StateError::database)?;
+        let live: i64 = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM admin_sessions WHERE principal_id = ?1 AND expires_at > ?2",
+                params![session.principal_id.to_string(), session.created_at],
+                |row| row.get(0),
+            )
+            .map_err(StateError::database)?;
+        let evict = live.saturating_sub(MAX_LIVE_SESSIONS_PER_PRINCIPAL - 1);
+        if evict > 0 {
+            transaction
+                .execute(
+                    "DELETE FROM admin_sessions WHERE id IN (
+                        SELECT id FROM admin_sessions WHERE principal_id = ?1
+                        ORDER BY created_at ASC, id ASC LIMIT ?2
+                    )",
+                    params![session.principal_id.to_string(), evict],
+                )
+                .map_err(StateError::database)?;
+        }
+        transaction
             .execute(
                 "INSERT INTO admin_sessions
                      (id, principal_id, token_digest, csrf_token, created_at, expires_at)
@@ -305,7 +336,7 @@ impl StateStore {
                 ],
             )
             .map_err(StateError::database)?;
-        Ok(())
+        transaction.commit().map_err(StateError::database)
     }
 
     /// Resolves a session by the digest of a presented bearer token.

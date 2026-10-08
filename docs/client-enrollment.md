@@ -30,3 +30,8 @@ headers are emitted. The operator page displays a newly created link with its
 expiry and copy/revoke actions. The raw link is held in page memory only and is
 cleared when the client editor closes; deliver it over an approved private
 channel.
+
+Each client can hold at most eight live capabilities. Startup and capability
+creation prune consumed, revoked, and expired capability rows older than seven
+days. Their audit events remain, subject to the bounded 10,000-event audit
+retention policy documented in [product management](../architecture/product-management.md).
