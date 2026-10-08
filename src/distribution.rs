@@ -57,6 +57,8 @@ pub struct InstallMetadata {
     pub source_release: Option<String>,
     pub release_manifest_sha256: Option<String>,
     pub signing_key_id: Option<String>,
+    #[serde(default)]
+    pub last_doctor_disposition: Option<String>,
 }
 
 impl InstallMetadata {
@@ -84,6 +86,7 @@ impl InstallMetadata {
             source_release: None,
             release_manifest_sha256: None,
             signing_key_id: None,
+            last_doctor_disposition: None,
         }
     }
 
@@ -146,6 +149,16 @@ impl InstallMetadata {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "install metadata product material digest mismatch",
+            ));
+        }
+        if self
+            .last_doctor_disposition
+            .as_deref()
+            .is_some_and(|value| value != "pass")
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "install metadata contains an invalid doctor disposition",
             ));
         }
         Ok(())
@@ -435,8 +448,15 @@ pub fn install_status() -> Result<(), String> {
     }
     println!("state database: owned mode 0600");
     println!("runtime/socket: owned mode 0750/0660");
-    run_install_health_smoke()?;
-    println!("health:          doctor pass; /healthz returned HTTP 200");
+    check_health_endpoint()?;
+    println!(
+        "doctor (last install): {}",
+        receipt
+            .last_doctor_disposition
+            .as_deref()
+            .unwrap_or("unknown")
+    );
+    println!("health:          /healthz returned HTTP 200");
     Ok(())
 }
 
@@ -539,7 +559,7 @@ pub fn install_local(candidate: &Path) -> Result<(), String> {
         verify_owned_file(current_binary, expected, 0)
             .map_err(|_| "installed binary is foreign or modified")?;
     }
-    let metadata =
+    let mut metadata =
         InstallMetadata::new(version.to_owned(), target.to_owned(), binary_sha256.clone());
     if let Some(previous) = &old {
         for (path, digest) in [
@@ -690,6 +710,7 @@ pub fn install_local(candidate: &Path) -> Result<(), String> {
         symlink_metadata_exists(Path::new(SERVE_UNIT_PATH))?,
     )?;
     run_install_health_smoke()?;
+    metadata.last_doctor_disposition = Some("pass".into());
     write_metadata(system_dir, &metadata)
         .map_err(|_| "could not durably write the installation receipt")?;
     println!("wg-basic {} installed for {target}", version);
@@ -700,33 +721,84 @@ pub fn install_local(candidate: &Path) -> Result<(), String> {
 }
 
 fn run_install_health_smoke() -> Result<(), String> {
+    use eggup_service::{
+        ServiceId, ServiceManager, ServiceSpec, SystemExecutor, SystemdInstall, SystemdManager,
+        SystemdScope,
+    };
+    use std::time::Duration;
+
+    // Doctor deliberately refuses an immutable view while the management
+    // process has SQLite WAL sidecars open. Stop only serve, inspect the
+    // quiescent database, then restore the running state before HTTP smoke.
+    let install = SystemdInstall::new(
+        "wg-basic.service".into(),
+        SystemdScope::System,
+        SERVE_UNIT_PATH.into(),
+        SERVE_UNIT.as_bytes().to_vec(),
+        false,
+        false,
+        Duration::from_secs(15),
+    )
+    .map_err(|_| "invalid serve systemd definition")?;
+    let id = ServiceId::new("wg-basic.service").map_err(|_| "invalid serve service identity")?;
+    let spec = ServiceSpec::new(
+        id,
+        BINARY_PATH.into(),
+        vec![
+            "serve".into(),
+            "--state".into(),
+            STATE_PATH.into(),
+            "--socket".into(),
+            SOCKET_PATH.into(),
+        ],
+        None,
+    )
+    .map_err(|_| "invalid serve service specification")?;
+    let mut manager = SystemdManager::new(SystemExecutor::default(), install);
+    manager
+        .stop(&spec, Duration::from_secs(15))
+        .map_err(|_| "could not quiesce serve for read-only doctor inspection")?;
+
+    let report_result = (|| {
+        let doctor = eggup_core::run_bounded(
+            &eggup_core::CommandSpec::new(BINARY_PATH)
+                .args([
+                    "doctor",
+                    "--state",
+                    STATE_PATH,
+                    "--socket",
+                    SOCKET_PATH,
+                    "--json",
+                ])
+                .timeout(Duration::from_secs(15))
+                .max_output_bytes(32 * 1024),
+        )
+        .map_err(|_| "post-install doctor smoke failed")?;
+        let report: crate::doctor::DoctorReport = serde_json::from_slice(doctor.stdout())
+            .map_err(|_| "post-install doctor report was invalid")?;
+        if doctor.exit_code() != Some(0) || report.overall != crate::doctor::DoctorDisposition::Pass
+        {
+            return Err(format!(
+                "post-install doctor did not pass:\n{}",
+                report.render_human()
+            ));
+        }
+        Ok(())
+    })();
+    let restart_result = manager
+        .start(&spec, Duration::from_secs(20))
+        .map_err(|_| "could not restart serve after read-only doctor inspection");
+    report_result?;
+    restart_result?;
+    check_health_endpoint()
+}
+
+fn check_health_endpoint() -> Result<(), String> {
     use std::{
         io::{Read, Write},
         net::{SocketAddr, TcpStream},
         time::Duration,
     };
-    let doctor = eggup_core::run_bounded(
-        &eggup_core::CommandSpec::new(BINARY_PATH)
-            .args([
-                "doctor",
-                "--state",
-                STATE_PATH,
-                "--socket",
-                SOCKET_PATH,
-                "--json",
-            ])
-            .timeout(Duration::from_secs(15))
-            .max_output_bytes(32 * 1024),
-    )
-    .map_err(|_| "post-install doctor smoke failed")?;
-    let report: crate::doctor::DoctorReport = serde_json::from_slice(doctor.stdout())
-        .map_err(|_| "post-install doctor report was invalid")?;
-    if doctor.exit_code() != Some(0) || report.overall != crate::doctor::DoctorDisposition::Pass {
-        return Err(format!(
-            "post-install doctor did not pass:\n{}",
-            report.render_human()
-        ));
-    }
     let address = SocketAddr::from(([127, 0, 0, 1], 8000));
     let mut stream = TcpStream::connect_timeout(&address, Duration::from_secs(3))
         .map_err(|_| "post-install management health endpoint is unavailable")?;
