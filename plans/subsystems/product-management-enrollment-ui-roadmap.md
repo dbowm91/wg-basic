@@ -1,6 +1,6 @@
 # Product Management, Enrollment, and UI Roadmap
 
-Status: planned; M001 blocked on post-Phase-7 C001 closure
+Status: active; M001 closed, M002 unblocked
 
 Canonical references:
 
@@ -151,7 +151,7 @@ Research/planning may proceed before C001 closes.
 
 ## 5. M001 — Product model, schema v3, and generation-safe mutations
 
-Status: blocked on post-Phase-7 C001 strict closure.
+Status: closed. Evidence: `plans/closure/product-management/001-status.md`.
 
 Implementation plan:
 
@@ -180,7 +180,7 @@ Expected outcomes:
 
 ## 6. M002 — Authenticated server/client CRUD HTTP API
 
-Status: blocked on M001.
+Status: ready; M001 closed.
 
 Implementation plan:
 
@@ -582,8 +582,8 @@ Secret routes additionally assert:
 
 | Milestone | Status | Implementation plan | Hard blocker |
 |---|---|---|---|
-| M001 product model + mutations | blocked | `plans/implementation/product-management/001-product-model-and-generation-safe-mutations.md` | post-Phase-7 C001 |
-| M002 authenticated CRUD API | blocked | `plans/implementation/product-management/002-authenticated-product-crud-api.md` | M001 |
+| M001 product model + mutations | closed | `plans/implementation/product-management/001-product-model-and-generation-safe-mutations.md` | post-Phase-7 C001 (closed) |
+| M002 authenticated CRUD API | ready | `plans/implementation/product-management/002-authenticated-product-crud-api.md` | M001 (closed) |
 | M003 export/QR/enrollment | blocked | `plans/implementation/product-management/003-export-qr-and-one-time-enrollment.md` | M002 |
 | M004 telemetry/audit surface | blocked | `plans/implementation/product-management/004-live-telemetry-and-audit-surface.md` | M003 |
 | M005 embedded product UI/closure | blocked | `plans/implementation/product-management/005-embedded-product-ui-and-phase8-qualification.md` | M004 |

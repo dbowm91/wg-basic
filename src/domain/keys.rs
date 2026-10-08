@@ -1,4 +1,4 @@
-use crate::domain::{KeyError, PrivateKey, PublicKey};
+use super::{KeyError, PrivateKey, PublicKey};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use std::fmt;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};

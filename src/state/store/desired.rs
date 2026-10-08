@@ -71,13 +71,20 @@ impl StateStore {
             });
         }
 
-        let state = load_desired(&transaction)?;
+        let state = load_desired_for_transaction(&transaction)?;
         let next_state = update(&state.state)?;
         validate_desired_state(&next_state)?;
 
         let next_generation = current.next().ok_or(StateError::GenerationExhausted)?;
 
-        write_desired(&transaction, &next_state)?;
+        // Product rows are read before the desired rewrite and written back
+        // after it, because rewriting `clients`/`peers` cascades them away. A
+        // plain non-product commit must not be able to erase an operator's
+        // labels, enable bits, or DNS lists.
+        let product = super::product::read_product(&transaction)?;
+
+        write_desired_for_transaction(&transaction, &next_state)?;
+        super::product::write_product(&transaction, &product)?;
         transaction
             .execute(
                 "UPDATE installation SET desired_generation = ?1, updated_at = ?2 WHERE singleton = 1",
@@ -92,6 +99,32 @@ impl StateStore {
             state: next_state,
         })
     }
+}
+
+/// Reads the desired snapshot from inside an open write transaction.
+///
+/// Shared with the product writer so both read the same rows, at the same
+/// generation, under the same lock.
+pub(super) fn load_desired_for_transaction(
+    transaction: &Transaction<'_>,
+) -> Result<PersistedDesiredState, StateError> {
+    let generation = read_generation(transaction)?;
+    let state = read_desired(transaction)?;
+    Ok(PersistedDesiredState { generation, state })
+}
+
+/// Rewrites the desired snapshot inside an open write transaction.
+///
+/// Note for callers: this deletes and reinserts `clients` and `peers`, which
+/// cascades into `client_product_settings` and `client_dns_servers`. Every
+/// write path must therefore rewrite the product rows afterwards in the same
+/// transaction, or a purely non-product commit would silently erase an
+/// operator's labels and DNS lists.
+pub(super) fn write_desired_for_transaction(
+    transaction: &Transaction<'_>,
+    state: &DesiredState,
+) -> Result<(), StateError> {
+    write_desired(transaction, state)
 }
 
 fn load_desired(connection: &Connection) -> Result<PersistedDesiredState, StateError> {

@@ -14,10 +14,7 @@ const PRODUCTION_SOURCES: &[(&str, &str)] = &[
         "src/wireguard/backend.rs",
         include_str!("../src/wireguard/backend.rs"),
     ),
-    (
-        "src/wireguard/keys.rs",
-        include_str!("../src/wireguard/keys.rs"),
-    ),
+    ("src/domain/keys.rs", include_str!("../src/domain/keys.rs")),
     ("src/aggregate.rs", include_str!("../src/aggregate.rs")),
     (
         "src/protocol/mod.rs",
@@ -555,7 +552,7 @@ fn the_privileged_service_never_opens_the_state_database() {
         "src/firewall/service.rs",
         "src/wireguard.rs",
         "src/wireguard/backend.rs",
-        "src/wireguard/keys.rs",
+        "src/domain/keys.rs",
         "src/aggregate.rs",
     ] {
         let source = PRODUCTION_SOURCES

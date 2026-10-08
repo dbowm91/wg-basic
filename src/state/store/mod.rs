@@ -11,6 +11,10 @@
 //!
 //! - [`desired`] owns the desired snapshot — reading it, and committing a new
 //!   one as an atomic generation advance.
+//! - [`product`] owns Phase 8 product metadata and the audit trail, including
+//!   the one path that commits a desired mutation and its audit row together. It
+//!   and [`desired`] hand each other the in-transaction readers and writers,
+//!   because rewriting the desired snapshot cascades the product tables.
 //! - [`convergence`] owns reconciliation evidence: attempt start, attempt
 //!   result, and the guard that marks a generation converged.
 //! - [`auth`] owns administrator principals and server-side sessions. It stores
@@ -33,6 +37,7 @@
 mod auth;
 mod convergence;
 mod desired;
+pub(crate) mod product;
 mod sql;
 
 use super::{

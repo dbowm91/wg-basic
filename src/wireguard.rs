@@ -1,9 +1,11 @@
 use crate::domain::{InterfaceName, NetworkPrefix, PresharedKey, PrivateKey, PublicKey};
 mod backend;
-mod keys;
 
 pub use backend::WireGuardBackend;
-pub use keys::{derive_public_key, generate_keypair, WireGuardKeyPair};
+// Key generation itself is platform-independent and lives in `domain`, so the
+// unprivileged product service can generate identities on any host. This
+// re-export keeps the single obvious import path for kernel-facing callers.
+pub use crate::domain::{derive_public_key, generate_keypair, WireGuardKeyPair};
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 

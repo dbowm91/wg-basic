@@ -1,6 +1,6 @@
 # Product Management M001 — Product Model and Generation-Safe Mutations
 
-Status: blocked on post-Phase-7 C001 closure
+Status: closed. Evidence: `plans/closure/product-management/001-status.md`.
 
 Repository planning baseline: `3a1b6d3aa9c842088dc5d3e3d127d26990c5fde7`
 

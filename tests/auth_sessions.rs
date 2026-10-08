@@ -170,7 +170,7 @@ impl Drop for Fixture {
 }
 
 #[test]
-fn a_real_v1_database_upgrades_to_v2_and_preserves_desired_state() {
+fn a_real_v1_database_upgrades_to_head_and_preserves_desired_state() {
     let scratch = Scratch::new();
     scratch.version_1();
     seed_v1_installation(&scratch.db());
@@ -183,7 +183,11 @@ fn a_real_v1_database_upgrades_to_v2_and_preserves_desired_state() {
     // Opening through the production path performs the real migration and takes
     // the pre-migration recovery snapshot.
     let store = StateStore::open(scratch.db()).expect("the v1 database upgrades");
-    assert_eq!(store.schema_version().unwrap(), 2);
+    assert_eq!(
+        store.schema_version().unwrap(),
+        3,
+        "a v1 file upgrades all the way to head, not one step at a time"
+    );
 
     let after = store.installation_metadata().expect("metadata survives");
     assert_eq!(
@@ -236,7 +240,7 @@ fn the_upgrade_takes_a_recovery_snapshot_holding_the_v1_schema() {
         "the snapshot must hold the *pre-migration* schema"
     );
     // The live file has moved on; the snapshot has not.
-    assert_eq!(user_version_of(&scratch.db()), 2);
+    assert_eq!(user_version_of(&scratch.db()), 3);
 }
 
 #[test]

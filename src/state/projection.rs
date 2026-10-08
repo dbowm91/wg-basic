@@ -8,8 +8,9 @@
 //! are M002's responsibility, so nothing here is written into the wire types.
 
 use crate::domain::{
-    DesiredNetworkPolicy as DomainNetworkPolicy, DesiredState, InterfaceName, LinkLifecycle,
+    DesiredNetworkPolicy as DomainNetworkPolicy, DesiredState, InterfaceName, LinkLifecycle, PeerId,
 };
+use std::collections::BTreeSet;
 
 #[cfg(target_os = "linux")]
 use crate::{
@@ -32,6 +33,59 @@ pub enum ProjectionError {
     NonIpv4PolicyPrefix(String),
     #[error("interface {0} has no listen port but a present WireGuard configuration")]
     MissingListenPort(InterfaceName),
+}
+
+/// Which managed clients' peers are withheld from projected kernel intent.
+///
+/// Disabling a client is a *projection* decision, not a deletion: the client
+/// keeps its row, its key, and its address reservation, and only its peer
+/// disappears from the WireGuard configuration the kernel is asked to hold.
+/// Keeping this as an explicit set of peer identifiers -- rather than reading
+/// product state inside the projector -- is what keeps the projector pure and
+/// its inputs inspectable.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ClientVisibility {
+    /// Peers that belong to a disabled managed client.
+    disabled_peer_ids: BTreeSet<PeerId>,
+}
+
+impl ClientVisibility {
+    /// Every managed client's peer is projected. The pre-Phase-8 behaviour.
+    pub fn all_enabled() -> Self {
+        Self::default()
+    }
+
+    /// Withholds exactly the peers named here.
+    pub fn withholding(mut self, peer_ids: impl IntoIterator<Item = PeerId>) -> Self {
+        self.disabled_peer_ids.extend(peer_ids);
+        self
+    }
+
+    /// Builds the withheld set from the product snapshot's client records.
+    ///
+    /// A peer with no managed client is never withheld, so unmanaged peers keep
+    /// projecting exactly as they did before product semantics existed.
+    pub fn from_product(state: &DesiredState, product: &crate::state::ProductState) -> Self {
+        let disabled: Vec<crate::domain::ClientId> = product
+            .clients
+            .iter()
+            .filter(|(_, record)| !record.settings.enabled.is_enabled())
+            .map(|(client_id, _)| *client_id)
+            .collect();
+        let mut visibility = Self::default();
+        for interface in &state.interfaces {
+            for client in &interface.clients {
+                if disabled.contains(&client.id) {
+                    visibility.disabled_peer_ids.insert(client.peer_id);
+                }
+            }
+        }
+        visibility
+    }
+
+    fn projects(&self, peer_id: PeerId) -> bool {
+        !self.disabled_peer_ids.contains(&peer_id)
+    }
 }
 
 /// The kernel intent derived from one persisted snapshot.
@@ -58,13 +112,14 @@ pub struct ResolvedNetworkIntent {
 pub fn project(
     state: &DesiredState,
     installation_id: crate::domain::InstallationId,
+    visibility: &ClientVisibility,
 ) -> Result<ResolvedNetworkIntent, ProjectionError> {
     let mut interfaces = Vec::with_capacity(state.interfaces.len());
     let mut interface_names = Vec::with_capacity(state.interfaces.len());
 
     for interface in &state.interfaces {
         interface_names.push(interface.name.clone());
-        interfaces.push(project_interface(interface, installation_id)?);
+        interfaces.push(project_interface(interface, installation_id, visibility)?);
     }
 
     let network_policy = match &state.network_policy {
@@ -83,6 +138,7 @@ pub fn project(
 fn project_interface(
     interface: &crate::domain::DesiredInterface,
     installation_id: crate::domain::InstallationId,
+    visibility: &ClientVisibility,
 ) -> Result<DesiredManagedInterface, ProjectionError> {
     let present = interface.lifecycle == LinkLifecycle::Present;
     let listen_port = match interface.listen_port {
@@ -101,6 +157,10 @@ fn project_interface(
             peers: interface
                 .peers
                 .iter()
+                // A disabled managed client's peer is withheld from kernel
+                // intent while its row, key, and address stay in durable state.
+                // Re-enabling restores the identical peer rather than a new one.
+                .filter(|peer| visibility.projects(peer.id))
                 .map(|peer| DesiredManagedPeer {
                     public_key: peer.public_key.clone(),
                     allowed_ips: peer.allowed_ips.clone(),
@@ -260,8 +320,8 @@ mod tests {
     fn projection_is_deterministic_across_repeated_calls() {
         let state = state();
         let installation = crate::domain::InstallationId::new();
-        let first = project(&state, installation).unwrap();
-        let second = project(&state, installation).unwrap();
+        let first = project(&state, installation, &ClientVisibility::all_enabled()).unwrap();
+        let second = project(&state, installation, &ClientVisibility::all_enabled()).unwrap();
         assert_eq!(first, second);
         assert_eq!(first.interfaces.len(), 1);
         assert_eq!(first.interface_names.len(), 1);
@@ -269,7 +329,12 @@ mod tests {
 
     #[test]
     fn projected_interface_carries_exactly_the_kernel_shaped_intent() {
-        let intent = project(&state(), crate::domain::InstallationId::new()).unwrap();
+        let intent = project(
+            &state(),
+            crate::domain::InstallationId::new(),
+            &ClientVisibility::all_enabled(),
+        )
+        .unwrap();
         let interface = &intent.interfaces[0];
         assert_eq!(interface.interface, "wg0".parse().unwrap());
         assert_eq!(interface.admin_up, Some(true));
@@ -295,7 +360,12 @@ mod tests {
         state.interfaces[0].lifecycle = LinkLifecycle::Absent;
         state.interfaces[0].admin_up = None;
         state.network_policy = None;
-        let intent = project(&state, crate::domain::InstallationId::new()).unwrap();
+        let intent = project(
+            &state,
+            crate::domain::InstallationId::new(),
+            &ClientVisibility::all_enabled(),
+        )
+        .unwrap();
         assert!(intent.interfaces[0].wireguard.is_none());
         assert!(intent.network_policy.is_none());
     }
@@ -306,7 +376,11 @@ mod tests {
         state.network_policy.as_mut().unwrap().source_prefixes =
             vec![NetworkPrefix::new("2001:db8::/64".parse().unwrap())];
         assert!(matches!(
-            project(&state, crate::domain::InstallationId::new()),
+            project(
+                &state,
+                crate::domain::InstallationId::new(),
+                &ClientVisibility::all_enabled()
+            ),
             Err(ProjectionError::NonIpv4PolicyPrefix(_))
         ));
     }

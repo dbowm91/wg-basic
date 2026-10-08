@@ -45,12 +45,22 @@ pub use model::{
     AttemptDisposition, CommittedDesiredState, ConvergenceRecord, InstallationMetadata,
     PersistedDesiredState,
 };
-pub use projection::{ProjectionError, ResolvedNetworkIntent};
+#[cfg(target_os = "linux")]
+pub use projection::{project, ClientVisibility, ProjectionError, ResolvedNetworkIntent};
 pub use schema::OpenIntent;
+pub use store::product::{
+    ClientProductRecord, CommittedProductState, InterfaceProductState, PersistedProductState,
+    ProductAudit, ProductState,
+};
 pub use store::{PrincipalRecord, SessionRecord, StateStore, StoredSession};
 
-#[cfg(target_os = "linux")]
-pub use projection::project;
+/// Current Unix time in seconds, the same clock every stored timestamp uses.
+///
+/// Re-exported so the product service can stamp `created_at`/`updated_at`
+/// without reaching into the private schema module.
+pub(crate) fn now_seconds() -> i64 {
+    schema::now_seconds()
+}
 
 /// The default production state database path.
 ///

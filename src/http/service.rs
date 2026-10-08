@@ -323,6 +323,10 @@ fn response_for_worker_error(error: WorkerError) -> Response {
         WorkerError::Rejected | WorkerError::Unavailable | WorkerError::Storage => {
             response::unavailable()
         }
+        // A refused product command is the server's answer about durable state,
+        // not an outage and not a credential problem. It renders as a bounded
+        // internal error; M002 owns giving product refusals their own statuses.
+        WorkerError::Product(_) => response::internal_error(),
     }
 }
 

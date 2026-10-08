@@ -90,3 +90,19 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y iproute2 nftables iputils-ping
       - name: Qualify backup, restore, and a restored database driving real traffic
         run: sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo cargo test --locked --features linux-integration --test durable_backup -- --test-threads=1 --nocapture
+
+  product-management-rootful:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y iproute2 nftables
+      # Phase 8 M001: enabled state changes real kernel authorization, so the
+      # enable/disable/re-enable evidence needs a real device and a real backend,
+      # not a simulated one. This job also covers the degraded-enforcement claim,
+      # which can only be made by actually stopping the backend mid-commit.
+      - name: Qualify product management against a real WireGuard device
+        run: sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo cargo test --locked --features linux-integration --test product_management_rootful -- --test-threads=1 --nocapture

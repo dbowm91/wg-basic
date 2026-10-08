@@ -97,6 +97,9 @@ pub enum StateError {
 
     #[error("the database was busy")]
     Busy,
+
+    #[error("the selected tunnel prefix cannot serve another client address")]
+    AddressPoolUnavailable,
 }
 
 impl StateError {
