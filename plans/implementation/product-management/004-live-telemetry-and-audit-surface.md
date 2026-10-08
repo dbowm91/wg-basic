@@ -1,6 +1,6 @@
 # Product Management M004 — Live Telemetry and Audit Surface
 
-Status: active; Product Management M003 closed.
+Status: closed; Product Management M003 and M004 closed.
 
 Source roadmap:
 
