@@ -99,8 +99,18 @@ fn systemd_installation_ownership_reinstall_and_service_credentials() {
         output_text(&install),
         service_journal("wg-basic.service")
     );
+    let journal = service_journal("wg-basic.service");
+    assert!(
+        journal.contains("\"overall\": \"pass\""),
+        "fresh empty-state doctor preflight must pass:\n{journal}"
+    );
     let status = command(&["system", "status"]);
     assert!(status.status.success(), "{}", output_text(&status));
+    assert!(
+        String::from_utf8_lossy(&status.stdout).contains("doctor (last install): unknown"),
+        "status must not claim an unobserved result for pre-existing state: {}",
+        output_text(&status)
+    );
 
     let management_uid = management.uid.as_raw();
     let group = service_group.gid.as_raw();
