@@ -15,8 +15,8 @@ cargo +1.89.0 check --all-targets --locked
 The default unit/protocol suite does not require root or network namespace setup. The Linux WireGuard backend mutates only through typed requests to an existing device; the real-kernel integration test creates temporary namespaces and fixture links and requires root, `CAP_NET_ADMIN`, `iproute2`, `iputils-ping`, and kernel WireGuard support.
 
 The installed serve unit runs `doctor` as the management account before each
-start. It uses `--allow-warnings` because a fresh state has no convergence
-record until the service starts; required doctor failures still block startup.
+start. For a fresh empty installation, doctor treats network convergence as
+not required until an interface is configured.
 
 ## Local netd
 

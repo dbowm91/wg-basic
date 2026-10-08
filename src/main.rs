@@ -79,9 +79,6 @@ enum Command {
         socket: PathBuf,
         #[arg(long)]
         json: bool,
-        /// Treat warnings as successful for pre-start diagnostics whose checks may complete after startup.
-        #[arg(long)]
-        allow_warnings: bool,
         #[arg(long)]
         http_bind: Option<String>,
         #[arg(long)]
@@ -344,7 +341,6 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
             state,
             socket,
             json,
-            allow_warnings,
             http_bind,
             canonical_origin,
             allow_non_loopback,
@@ -482,13 +478,7 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
             } else {
                 print!("{}", report.render_human());
             }
-            let exit_code =
-                if allow_warnings && report.overall == wg_basic::doctor::DoctorDisposition::Warn {
-                    0
-                } else {
-                    report.exit_code()
-                };
-            std::process::exit(exit_code);
+            std::process::exit(report.exit_code());
         }
         Some(Command::Netd {
             socket,
@@ -690,12 +680,16 @@ fn doctor_state_checks(
             ),
             "none",
         ));
-        let converged = snapshot.convergence.last_converged_generation
-            == Some(snapshot.metadata.desired_generation);
+        let no_managed_interfaces = snapshot.desired.state.interfaces.is_empty();
+        let converged = no_managed_interfaces
+            || snapshot.convergence.last_converged_generation
+                == Some(snapshot.metadata.desired_generation);
         checks.push(DoctorCheck::new(
             Id::Convergence,
             if converged { D::Pass } else { D::Warn },
-            if converged {
+            if no_managed_interfaces {
+                "no managed interface is configured; network convergence is not required"
+            } else if converged {
                 "current desired generation has convergence evidence"
             } else {
                 "current desired generation lacks convergence evidence"

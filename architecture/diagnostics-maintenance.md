@@ -41,7 +41,7 @@ exits with `report.exit_code()`.
 | `Sqlite` | bundled SQLite ≥ 3.51.3 (WAL safety floor) | — | below floor | — |
 | `State` (×2 when decodable) | immutable ownership/integrity/schema checks passed; second check names schema, installation, desired generation | uninitialized (path missing) | ownership, schema, integrity, or typed-validation failure | live `-wal`/`-shm` sidecars (`Busy`: immutable mode refuses to ignore WAL) |
 | `Product` | desired + product snapshots decoded (counts interfaces/clients) | — | — | — (absent without snapshot) |
-| `Convergence` | `last_converged == desired` generation | current generation lacks convergence evidence | — | — |
+| `Convergence` | no managed interface is configured, or `last_converged == desired` generation | configured interfaces lack convergence evidence | — | — |
 | `RecoveryArtifacts` | no unsafe pre-migration snapshot | — | an artifact is present with unsafe path/owner/mode (never auto-deleted) | — |
 | `Netd` | `InspectCapabilities` answered and runtime dir safe + `CAP_NET_ADMIN` present | — | answered but runtime/capability checks failed | no safe capability response |
 | `NetworkOwnership` | aggregate plan has zero actions (converged), or no managed interface exists | owned drift repairable by normal reconciliation | ownership conflict / invalid intent / projection failure | plan unavailable, unexpected response, or no state snapshot |
