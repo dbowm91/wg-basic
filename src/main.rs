@@ -79,6 +79,9 @@ enum Command {
         socket: PathBuf,
         #[arg(long)]
         json: bool,
+        /// Treat warnings as successful for pre-start diagnostics whose checks may complete after startup.
+        #[arg(long)]
+        allow_warnings: bool,
         #[arg(long)]
         http_bind: Option<String>,
         #[arg(long)]
@@ -341,6 +344,7 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
             state,
             socket,
             json,
+            allow_warnings,
             http_bind,
             canonical_origin,
             allow_non_loopback,
@@ -478,7 +482,13 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
             } else {
                 print!("{}", report.render_human());
             }
-            std::process::exit(report.exit_code());
+            let exit_code =
+                if allow_warnings && report.overall == wg_basic::doctor::DoctorDisposition::Warn {
+                    0
+                } else {
+                    report.exit_code()
+                };
+            std::process::exit(exit_code);
         }
         Some(Command::Netd {
             socket,
