@@ -1,9 +1,10 @@
 # Management HTTP boundary and the bounded worker
 
 This document describes **current implemented behaviour**. Phase 7's service
-and security substrate is closed, and Phase 8 M001–M003 now expose the
-generation-safe product API, explicit config/QR export, and one-time enrollment.
-Telemetry, audit query, and the product UI remain later Phase 8 milestones.
+and security substrate is closed, and Phase 8 M001–M004 now expose the
+generation-safe product API, explicit config/QR export, one-time enrollment,
+fresh client telemetry, and bounded audit queries. The embedded product UI is
+the remaining Phase 8 milestone.
 
 Architecture decisions behind this boundary are recorded in
 [ADR-003](../plans/adr/003-management-http-auth-and-worker-boundary.md).

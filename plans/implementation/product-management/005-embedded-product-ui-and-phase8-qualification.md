@@ -1,6 +1,6 @@
 # Product Management M005 — Embedded Product UI and Phase 8 Qualification
 
-Status: blocked on Product Management M004 closure
+Status: active; Product Management M004 closed.
 
 Source roadmap:
 
