@@ -587,6 +587,91 @@ fn a_disabled_client_leaves_projected_intent_and_re_enabling_restores_the_same_p
 }
 
 #[test]
+fn whole_network_disable_preserves_configuration_and_enable_restores_same_intent() {
+    let Setup { store, .. } = setup(|_| {});
+    let service = service(&store);
+    let client = create(&service, "persistent-client");
+    let installation = store.installation_metadata().unwrap().installation_id;
+    let before_state = store.load().unwrap().state;
+    let before_product = store.load_product().unwrap().state;
+    let before = wg_basic::management::project_diagnostic_intent(
+        installation,
+        store.current_generation().unwrap(),
+        &before_state,
+        &before_product,
+    )
+    .unwrap()
+    .unwrap();
+    let interface_id = before.interface_id;
+
+    let disabled_generation = service
+        .set_network_enabled(store.current_generation().unwrap(), false)
+        .unwrap();
+    let disabled_state = store.load().unwrap().state;
+    let disabled_product = store.load_product().unwrap().state;
+    let disabled = wg_basic::management::project_diagnostic_intent(
+        installation,
+        disabled_generation,
+        &disabled_state,
+        &disabled_product,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(disabled.interface_id, interface_id);
+    assert_eq!(
+        disabled.desired_interface.lifecycle,
+        wg_basic::reconcile::LinkLifecycle::Absent
+    );
+    assert!(disabled.network_policy.is_none());
+    assert_eq!(
+        disabled_state, before_state,
+        "desired keys and address assignments remain intact"
+    );
+    assert_eq!(disabled_product.clients, before_product.clients);
+    assert_eq!(disabled_product.interfaces, before_product.interfaces);
+    assert_eq!(
+        disabled_product
+            .network_operational_enabled
+            .get(&interface_id),
+        Some(&false)
+    );
+
+    let enabled_generation = service
+        .set_network_enabled(disabled_generation, true)
+        .unwrap();
+    let enabled_state = store.load().unwrap().state;
+    let enabled_product = store.load_product().unwrap().state;
+    let enabled = wg_basic::management::project_diagnostic_intent(
+        installation,
+        enabled_generation,
+        &enabled_state,
+        &enabled_product,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(enabled.interface_id, before.interface_id);
+    assert_eq!(enabled.desired_interface, before.desired_interface);
+    assert_eq!(enabled.network_policy, before.network_policy);
+    assert_eq!(
+        enabled_product.clients[&client.client_id],
+        before_product.clients[&client.client_id]
+    );
+    assert_eq!(
+        enabled_product
+            .network_operational_enabled
+            .get(&interface_id),
+        Some(&true)
+    );
+    let audit = store.audit_events(20).unwrap();
+    assert!(audit
+        .iter()
+        .any(|event| event.action == wg_basic::product::AuditAction::NetworkDisable));
+    assert!(audit
+        .iter()
+        .any(|event| event.action == wg_basic::product::AuditAction::NetworkEnable));
+}
+
+#[test]
 fn disabling_one_client_leaves_the_others_and_their_addresses_alone() {
     let Setup {
         scratch: _scratch,

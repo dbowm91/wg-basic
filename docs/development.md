@@ -25,6 +25,13 @@ cargo run --locked -- netd --socket /tmp/wg-basic-runtime/netd.sock
 
 In another terminal, use `cargo run --locked -- doctor --state /tmp/wg-basic-runtime/state.db --socket /tmp/wg-basic-runtime/netd.sock` or `cargo run --locked -- serve --socket /tmp/wg-basic-runtime/netd.sock`. Doctor accepts `--json` and optional `--http-bind`, `--canonical-origin`, and `--allow-non-loopback` flags. Its exit code is 0 when all checks pass, 1 when warnings or unknowns need attention, and 2 for a required failure or invalid invocation. State inspection uses immutable read-only SQLite access and does not initialize or migrate a database; when WAL sidecars make an immutable view unsafe, it reports the state as unavailable. With configured product state, doctor asks netd for a typed aggregate plan and never applies it. Port availability that cannot be proven without binding is reported as unknown. `serve` is the unprivileged management service: it opens the durable state store on a dedicated bounded worker thread, attempts startup reconciliation, and serves the authenticated HTTP API (`--http-bind`, default `127.0.0.1:8000`) and embedded operator UI for login/session/health, server setup, client CRUD, config/QR export, one-time enrollment, live telemetry, and audit pages. Product mutations require the current `expected_generation`, the exact `Origin`, and the session CSRF token; their `200`/`201` versus `202` response distinguishes confirmed enforcement from a committed change still awaiting network application. The UI reports degraded disable/delete as not yet confirmed revoked. The unauthenticated `GET /healthz` remains a two-token liveness probe. For a separate management UID, start netd with `--allow-uid UID` and arrange socket group access. Both `netd` and `serve` exit on Ctrl-C; `netd` removes only the socket inode it created.
 
+`serve` holds `<state>.serve.lock` using a nonblocking kernel advisory lock for
+its full lifetime. A second `serve` for the same database exits before HTTP
+binding. The lock is released by process death; its safe PID/start text is
+informational only. Online backups use a shared `<state>.maintenance.lock`, so
+they can run while serve is active. Restore and purge take the exclusive
+maintenance lock.
+
 ## Local administrator credentials
 
 Provision or reset the local administrator from the terminal. The same
@@ -162,6 +169,26 @@ requires root, `iproute2`, and `nftables`:
 ```sh
 sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo \
   cargo test --locked --features linux-integration --test doctor_readonly -- --test-threads=1
+```
+
+## Operational maintenance fixtures
+
+The unprivileged `service_lease` suite starts the real serve process, proves a
+second process and restore are refused while its lock is held, then kills the
+owner and verifies restore/restart can proceed:
+
+```sh
+cargo test --locked --test service_lease -- --test-threads=1
+```
+
+The rootful fixture qualifies CLI disable/re-enable through a real WireGuard
+handshake, verifies disabled state survives management/backend restart, and
+proves purge needs disabled+converged state plus a no-op plan while preserving
+operator files:
+
+```sh
+sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo \
+  cargo test --locked --features linux-integration --test maintenance_rootful -- --test-threads=1
 ```
 
 ## Phase 7 service suites

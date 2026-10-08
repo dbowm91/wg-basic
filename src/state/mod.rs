@@ -29,14 +29,16 @@ mod inuse;
 mod model;
 mod projection;
 mod schema;
+mod service_lease;
 mod store;
 
 pub use backup::{
-    restore, retained_previous_path, validate_candidate, BackupDisposition, BackupReceipt,
-    RestoreReceipt,
+    restore, retained_previous_path, validate_candidate, verify_candidate_readonly,
+    BackupDisposition, BackupReceipt, CandidateVerification, RestoreReceipt,
 };
 pub use diagnostic::{inspect_readonly, RecoveryArtifactStatus, StateDiagnostic};
 pub use error::StateError;
+pub use service_lease::{LeaseError, MaintenanceLease, ServiceLease};
 // The identifiers themselves live in `crate::domain` so the privileged side can
 // derive an owner tag without depending on the state store. They are re-exported
 // here because that is where callers of the store expect to find them.
@@ -49,7 +51,7 @@ pub use model::{
 };
 #[cfg(target_os = "linux")]
 pub use projection::{project, ClientVisibility, ProjectionError, ResolvedNetworkIntent};
-pub use schema::OpenIntent;
+pub use schema::{recovery_snapshot_path, OpenIntent};
 pub use store::product::{
     ClientProductRecord, CommittedProductState, InterfaceProductState, PersistedProductState,
     ProductAudit, ProductState,

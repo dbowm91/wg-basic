@@ -17,8 +17,8 @@ use wg_basic::{
         PrivateKey, PublicKey, ResourcePresence,
     },
     state::{
-        restore, retained_previous_path, validate_candidate, AttemptDisposition, StateError,
-        StateStore, INITIAL_DESIRED_GENERATION,
+        restore, retained_previous_path, validate_candidate, verify_candidate_readonly,
+        AttemptDisposition, StateError, StateStore, INITIAL_DESIRED_GENERATION,
     },
 };
 
@@ -162,6 +162,23 @@ fn a_backup_is_a_consistent_snapshot_of_exactly_one_generation() {
     assert_eq!(receipt.schema_version, store.schema_version().unwrap());
     assert_eq!(receipt.destination, temp.path().join("second.db"));
 
+    let candidate_bytes = fs::read(&destination).unwrap();
+    let verified = verify_candidate_readonly(&destination).unwrap();
+    assert_eq!(verified.installation_id, receipt.installation_id);
+    assert_eq!(verified.generation, receipt.generation);
+    assert_eq!(verified.schema_version, receipt.schema_version);
+    assert!(verified.integrity_ok && verified.foreign_keys_ok);
+    assert!(!verified.would_migrate && !verified.too_new);
+    assert_eq!(fs::read(&destination).unwrap(), candidate_bytes);
+    for suffix in ["-wal", "-shm"] {
+        let sidecar = std::path::PathBuf::from(format!("{}{suffix}", destination.display()));
+        assert!(
+            !sidecar.exists(),
+            "read-only verification must not create {}",
+            sidecar.display()
+        );
+    }
+
     // The snapshot must open independently and report the same generation and
     // the same complete typed state, never a mix of two generations.
     let copy = StateStore::open(&destination).unwrap();
@@ -293,7 +310,11 @@ fn backup_artifacts_are_owner_only_and_leave_no_temporary_files() {
     );
     assert_eq!(
         artifacts_in(temp.path()),
-        vec!["backup.db".to_owned(), "state.db".to_owned()],
+        vec![
+            "backup.db".to_owned(),
+            "state.db".to_owned(),
+            "state.db.maintenance.lock".to_owned(),
+        ],
         "no staging artifact may survive a successful backup"
     );
 }
@@ -460,7 +481,12 @@ fn a_failed_restore_preserves_the_original_database() {
     );
     assert_eq!(
         artifacts_in(target.path()),
-        vec!["broken.db".to_owned(), "state.db".to_owned()],
+        vec![
+            "broken.db".to_owned(),
+            "state.db".to_owned(),
+            "state.db.maintenance.lock".to_owned(),
+            "state.db.serve.lock".to_owned(),
+        ],
         "a failed restore must clean its own staging artifact"
     );
 }

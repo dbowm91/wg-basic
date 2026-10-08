@@ -115,6 +115,41 @@ pub struct RestoreReceipt {
     pub previous_retained_at: Option<PathBuf>,
 }
 
+/// Secret-free verification of a candidate state database.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CandidateVerification {
+    pub path: PathBuf,
+    pub installation_id: InstallationId,
+    pub generation: DesiredGeneration,
+    pub schema_version: i64,
+    pub supported_schema_version: i64,
+    pub integrity_ok: bool,
+    pub foreign_keys_ok: bool,
+    pub would_migrate: bool,
+    pub too_new: bool,
+}
+
+/// Verifies the candidate without applying migrations or writing to it.
+pub fn verify_candidate_readonly(candidate: &Path) -> Result<CandidateVerification, StateError> {
+    verify_candidate(candidate)?;
+    let connection = open_read_only(candidate)?;
+    let schema_version = user_version(&connection)?;
+    let supported_schema_version = schema::supported_version();
+    let installation_id = read_installation_id(&connection)?;
+    let generation = read_generation(&connection)?;
+    Ok(CandidateVerification {
+        path: candidate.to_path_buf(),
+        installation_id,
+        generation,
+        schema_version,
+        supported_schema_version,
+        integrity_ok: true,
+        foreign_keys_ok: true,
+        would_migrate: schema_version < supported_schema_version,
+        too_new: schema_version > supported_schema_version,
+    })
+}
+
 impl StateStore {
     /// Writes a consistent snapshot of this store to `destination`.
     ///
@@ -123,6 +158,8 @@ impl StateStore {
     /// must not already exist: overwriting is refused rather than done
     /// unsafely, because the safe operation here is to choose a new path.
     pub fn backup(&self, destination: impl AsRef<Path>) -> Result<BackupReceipt, StateError> {
+        let _maintenance = super::MaintenanceLease::shared(self.path())
+            .map_err(|_| StateError::MaintenanceLeaseUnavailable)?;
         let destination = destination.as_ref();
         let connection = self.lock()?;
         let installation_id = read_installation_id(&connection)?;
@@ -181,6 +218,15 @@ impl StateStore {
             fs::set_permissions(&temporary, fs::Permissions::from_mode(SECRET_MODE))
                 .map_err(|_| StateError::Corrupt("backup permissions could not be narrowed"))?;
             sync_file(&temporary)?;
+            verify_candidate(&temporary)?;
+            if read_installation_id_from_file(&temporary)? != installation_id
+                || read_generation_from_file(&temporary)? != generation
+                || user_version(&open_read_only(&temporary)?)? != schema_version
+            {
+                return Err(StateError::Corrupt(
+                    "backup verification did not match its receipt",
+                ));
+            }
             promote(&temporary, destination)?;
             Ok(())
         })();
@@ -213,6 +259,10 @@ pub fn restore(
 ) -> Result<RestoreReceipt, StateError> {
     let candidate = candidate.as_ref();
     let target = target.as_ref();
+    let _lease = super::ServiceLease::acquire(target)
+        .map_err(|_| StateError::MaintenanceLeaseUnavailable)?;
+    let _maintenance = super::MaintenanceLease::exclusive(target)
+        .map_err(|_| StateError::MaintenanceLeaseUnavailable)?;
 
     if inuse::is_open_in_this_process(target) {
         return Err(StateError::TargetInUse);
@@ -375,6 +425,14 @@ fn verify_candidate(candidate: &Path) -> Result<(), StateError> {
         });
     }
 
+    for suffix in ["-wal", "-shm"] {
+        let mut sidecar = candidate.as_os_str().to_os_string();
+        sidecar.push(suffix);
+        if fs::symlink_metadata(PathBuf::from(sidecar)).is_ok() {
+            return Err(StateError::Busy);
+        }
+    }
+
     let connection = open_read_only(candidate)?;
     // `quick_check` is enough to reject a malformed or truncated file, and it
     // runs against the read-only handle so a candidate is never written.
@@ -457,10 +515,24 @@ fn verify_target_parent(target: &Path) -> Result<(), StateError> {
 
 /// Opens the candidate read-only, so validation can never modify it.
 fn open_read_only(path: &Path) -> Result<rusqlite::Connection, StateError> {
+    // A normal read-only open of a WAL-mode database can still create -wal and
+    // -shm sidecars. Immutable mode reads only the main file and guarantees
+    // inspection never changes the candidate or depends on live WAL state.
+    let uri_path = path.to_string_lossy();
+    let mut uri = String::from("file:");
+    for byte in uri_path.bytes() {
+        if byte.is_ascii_alphanumeric() || b"/:._-".contains(&byte) {
+            uri.push(byte as char);
+        } else {
+            uri.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    uri.push_str("?mode=ro&immutable=1");
     rusqlite::Connection::open_with_flags(
-        path,
+        uri,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
             | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | rusqlite::OpenFlags::SQLITE_OPEN_URI
             | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW,
     )
     .map_err(|_| StateError::DatabaseOpenFailed)
