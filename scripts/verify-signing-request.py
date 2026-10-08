@@ -71,7 +71,7 @@ def main() -> None:
             not isinstance(name, str)
             or not re.fullmatch(r"[A-Za-z0-9._+-]{1,200}", name)
             or name in expected
-            or not isinstance(size, int)
+            or type(size) is not int
             or size <= 0
             or not re.fullmatch(r"[0-9a-f]{64}", sha256)
         ):
@@ -104,7 +104,8 @@ def main() -> None:
     except (OSError, UnicodeError, json.JSONDecodeError):
         fail("release manifest is unreadable or invalid JSON")
     if (
-        manifest.get("product_id") != "wg-basic"
+        manifest.get("schema_version") != 1
+        or manifest.get("product_id") != "wg-basic"
         or manifest.get("release_id") != release_id
         or manifest.get("source_revision") != revision
     ):
@@ -128,6 +129,7 @@ def main() -> None:
             form.get("kind") != "direct"
             or form.get("install") != "wg-basic"
             or artifact.get("name") != name
+            or type(artifact.get("size")) is not int
             or name not in expected
             or (artifact.get("size"), artifact.get("sha256")) != expected[name]
             or f"{name}.sha256" not in expected
