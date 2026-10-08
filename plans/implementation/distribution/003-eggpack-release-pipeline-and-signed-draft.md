@@ -1,6 +1,6 @@
 # Distribution M003 — Eggpack Release Pipeline and Signed Draft Handoff
 
-Status: active — Eggpack identity seam unblocked at reviewed revision `d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628`.
+Status: closed — mechanically qualified; production signing/publication remains an external maintainer action.
 
 Source roadmap:
 
@@ -359,7 +359,7 @@ Record:
 
 ## 20. Blocker disposition (2026-10-08)
 
-The original blocker was resolved upstream. Eggpack revision `d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628` adds the explicit `v_prefixed_stable_semver` mode. Its runtime identity envelope preserves the exact source tag, source revision, and unprefixed manifest `release_id`, with source/tag peel verification and stable-tag grammar validation. See `plans/closure/distribution/003-unblock-review.md`. The corrective is satisfied; M003 is active. The M001 verifier and `vX.Y.Z` source tag convention remain unchanged.
+The original blocker was resolved upstream. Eggpack revision `d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628` adds the explicit `v_prefixed_stable_semver` mode. Its runtime identity envelope preserves the exact source tag, source revision, and unprefixed manifest `release_id`, with source/tag peel verification and stable-tag grammar validation. See `plans/closure/distribution/003-unblock-review.md`. The corrective is satisfied; the M001 verifier and `vX.Y.Z` source tag convention remain unchanged. M003 closure evidence is in `plans/closure/distribution/003-final-status.md`.
 
 ## 21. Version-check placement adjustment
 

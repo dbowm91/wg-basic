@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-08 (Phase 10 M001–M002 closed; M003 active after Eggpack identity seam resolution)
+Last planning reconciliation: 2026-10-08 (Phase 10 M001–M003 closed; M004 ready; M005 blocked)
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -42,7 +42,7 @@ The architecture separates:
 
 The privileged service does not expose arbitrary shell, command, file-write, sysctl-path, nft-script, or raw-netlink execution.
 
-Current production code state: **Network control and Phases 6–9 are strictly closed. The authenticated product API and embedded UI provide server setup, client lifecycle, config/QR export, one-time enrollment, live telemetry, bounded audit history, operational diagnostics, safe maintenance/recovery, and a proven old/new database rollback contract.** Phase 10 implementation is underway: M001 release identity/authenticity and M002 native system installation are strictly closed; M003 is active after the Eggpack identity-seam corrective closed upstream. M004 and M005 remain blocked in order. The selected distribution baseline is systemd/Linux x86_64+aarch64, Eggpack producer contracts, project-owned Minisign release authenticity, Eggup local transaction/service primitives, root-owned install/update metadata, and a crash-recoverable binary+database update journal.
+Current production code state: **Network control and Phases 6–9 are strictly closed. The authenticated product API and embedded UI provide server setup, client lifecycle, config/QR export, one-time enrollment, live telemetry, bounded audit history, operational diagnostics, safe maintenance/recovery, and a proven old/new database rollback contract.** Phase 10 implementation is underway: M001 release identity/authenticity, M002 native system installation, and M003 Eggpack producer/signing handoff are mechanically closed. M004 is ready; M005 remains blocked on M004. Production signing and publication remain external maintainer actions. The selected distribution baseline is systemd/Linux x86_64+aarch64, Eggpack producer contracts, project-owned Minisign release authenticity, Eggup local transaction/service primitives, root-owned install/update metadata, and a crash-recoverable binary+database update journal.
 
 ## 3. Eggstack reuse disposition
 
@@ -79,13 +79,12 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
-| Distribution/install/update | M003 Eggpack pipeline/signing handoff | active | `plans/implementation/distribution/003-eggpack-release-pipeline-and-signed-draft.md` | M001–M002 closed; Eggpack identity seam reviewed at `d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628` |
+| Distribution/install/update | M004 transactional self-update/rollback | ready | `plans/implementation/distribution/004-transactional-self-update-and-rollback.md` | M001–M003 closed; production update remains disabled until the production key is provisioned |
 
 ## 6. Blocked implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Hard blocker |
 |---|---|---|---|---|
-| Distribution/install/update | M004 transactional self-update/rollback | blocked | `plans/implementation/distribution/004-transactional-self-update-and-rollback.md` | Phase 10 M003 |
 | Distribution/install/update | M005 install/update/uninstall E2E + Phase 10 closure | blocked | `plans/implementation/distribution/005-install-update-uninstall-e2e-and-phase10-closure.md` | Phase 10 M004 |
 
 Production public-release readiness additionally requires maintainer provisioning of the real release signing trust root. Fixture signing is sufficient to implement and qualify the mechanics but MUST NOT be described as production signing.
@@ -100,6 +99,7 @@ Production public-release readiness additionally requires maintainer provisionin
 - Distribution M001 strict closure: `plans/closure/distribution/001-status.md` (implementation head `c4d4e87`; native target run `37782271310`; full CI run `37782271299`).
 - Distribution M002 strict closure: `plans/closure/distribution/002-status.md` (implementation head `d1813da`; systemd qualification and full CI run `37799075225`).
 - Distribution M003 historical blocked disposition: `plans/closure/distribution/003-status.md`; prerequisite re-review/unblock: `plans/closure/distribution/003-unblock-review.md`.
+- Distribution M003 mechanical closure: `plans/closure/distribution/003-final-status.md` (implementation head `568d568`; native target run `37853066003`; full CI run `37853066011`).
 
 - M001 strict closure: `plans/closure/network-control/001-status.md`.
 - M002 strict closure: `plans/closure/network-control/002-status.md`.
