@@ -67,7 +67,6 @@ in those projection types. See [product management](product-management.md).
 
 The following Phase 8 work is still absent:
 
-* **No product UI.** `/` remains the Phase 7 login shell and health readout.
 * **No direct TLS.** Phase 7 terminates none; the HTTPS story is a
   TLS-terminating reverse proxy in front of a loopback listener.
 * **No multi-user or roles.** Exactly one local administrator, no groups, no

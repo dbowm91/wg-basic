@@ -1,7 +1,8 @@
-//! Phase 8 M001 rootful evidence.
+//! Phase 8 rootful product evidence.
 //!
-//! M001 has no HTTP surface, so the claims that need a real kernel are made
-//! here, against a real `netd` inside a real network namespace:
+//! Product claims that need a real kernel are made here, against a real `netd`
+//! inside disposable network namespaces and, where applicable, through the
+//! authenticated management HTTP service:
 //!
 //! * a created client becomes a real WireGuard peer;
 //! * disabling that client removes the real peer from the device;
@@ -10,10 +11,10 @@
 //! * a backend outage *after* the commit is reported as committed-but-degraded,
 //!   and a later restart converges it.
 //!
-//! The last one is the reason this file exists at all. M001's central claim is
-//! that a database commit and a kernel apply are two different facts, and that a
-//! receipt can say so. A receipt can only be believed if a real outage produces
-//! one, so the outage is induced here rather than simulated.
+//! The outage case keeps durable commit and kernel application as separate
+//! observable facts. The M005 fixture additionally drives setup, client
+//! lifecycle, exports, enrollment, telemetry, and audit through the real HTTP
+//! route pipeline.
 //!
 //! # Where each process runs, and why
 //!
@@ -120,6 +121,11 @@ fn http(
 }
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
+const EMBEDDED_ASSET_BYTES: usize = include_str!("../src/http/assets/index.html").len()
+    + include_str!("../src/http/assets/app.css").len()
+    + include_str!("../src/http/assets/app.js").len()
+    + include_str!("../src/http/assets/enroll.html").len()
+    + include_str!("../src/http/assets/enroll.js").len();
 
 const BINARY: &str = env!("CARGO_BIN_EXE_wg-basic");
 
@@ -348,6 +354,13 @@ struct Installation {
 
 impl Installation {
     async fn start(label: &str, prefix: &str) -> Self {
+        let installation = Self::start_unconfigured(label).await;
+        let client = installation.client();
+        installation.setup(&client, prefix).await;
+        installation
+    }
+
+    async fn start_unconfigured(label: &str) -> Self {
         let scratch = Scratch::new();
         let namespace = Namespace::new(label);
         let netd = Managed::netd(&namespace.0, &scratch);
@@ -364,18 +377,15 @@ impl Installation {
 
         let worker = spawn(WorkerConfig::new(scratch.state(), scratch.netd_socket()))
             .expect("the worker starts");
-        let client: WorkerClient = worker.client().clone();
 
-        let installation = Self {
+        Self {
             scratch,
             namespace,
             netd,
             store,
             worker,
             principal,
-        };
-        installation.setup(&client, prefix).await;
-        installation
+        }
     }
 
     async fn setup(&self, client: &WorkerClient, prefix: &str) {
@@ -511,7 +521,7 @@ async fn a_created_client_becomes_a_real_kernel_peer() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn exported_client_config_establishes_a_real_kernel_handshake() {
     require_root("exported client handshake");
-    let installation = Installation::start("export", "10.67.0.0/24").await;
+    let installation = Installation::start_unconfigured("export").await;
     let client_ns = Namespace::new("client");
     let client_scratch = Scratch::new();
     let client_netd = Managed::netd(&client_ns.0, &client_scratch);
@@ -544,28 +554,234 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
     run(&["-n", &client_ns.0, "link", "set", "wgx2", "up"]);
 
     let management = installation.client();
-    let client = management
-        .create_client(ClientCreateCommand {
-            principal_id: installation.principal,
-            expected_generation: installation.store.current_generation().unwrap(),
-            interface_id: installation.interface_id(),
-            label: ClientLabel::new("exported-phone").unwrap(),
-            requested_address: None,
-            route_policy: Some(ClientRoutePolicy {
-                prefixes: vec!["10.67.0.1/32".parse().unwrap()],
-            }),
-            dns_servers: Vec::new(),
-            client_keepalive_seconds: None,
-        })
+    let api = AuthenticatedApi::new(
+        management.clone(),
+        Arc::new(OriginPolicy::loopback_only("127.0.0.1:0".parse().unwrap())),
+        Arc::new(LoginLimiter::new(
+            Bucket::per_second(100, 100),
+            Bucket::per_second(100, 100),
+            16,
+        )),
+    );
+    let http_server = Server::builder()
+        .runtime(
+            ManagementHttpConfig::new("127.0.0.1:0")
+                .unwrap()
+                .runtime_config()
+                .unwrap(),
+        )
+        .build()
+        .unwrap();
+    let handle = http_server
+        .start_with_service(ManagementService::new(api))
         .await
-        .expect("client with server route")
-        .client;
-    let config = management
-        .client_config(client.client_id)
-        .await
-        .expect("exported config");
-    let values = config
-        .expose()
+        .unwrap();
+    let addr = handle.local_addr();
+    let host = addr.to_string();
+    let origin = format!("http://{host}");
+    let (control, mut completion) = handle.into_parts();
+    let (ui_status, ui_body, ui_headers) = http(addr, "GET", "/", &host, None, None, None, "");
+    assert_eq!(ui_status, 200);
+    assert!(ui_body.contains("id=\"setup-form\""));
+    assert!(ui_body.contains("id=\"client-rows\""));
+    assert!(ui_headers.iter().any(|(name, value)| {
+        name.eq_ignore_ascii_case("content-security-policy")
+            && value == "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+    }));
+    let (login_status, _, login_headers) = http(
+        addr,
+        "POST",
+        "/api/v1/login",
+        &host,
+        Some(&origin),
+        None,
+        None,
+        r#"{"username":"admin","password":"an administrator password"}"#,
+    );
+    assert_eq!(login_status, 200);
+    let cookie = login_headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("set-cookie"))
+        .unwrap()
+        .1
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let (_, session_body, _) = http(
+        addr,
+        "GET",
+        "/api/v1/session",
+        &host,
+        None,
+        Some(&cookie),
+        None,
+        "",
+    );
+    let csrf = serde_json::from_str::<serde_json::Value>(&session_body).unwrap()["csrf_token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let setup_started = std::time::Instant::now();
+    let (_, unconfigured_body, _) = http(
+        addr,
+        "GET",
+        "/api/v1/server",
+        &host,
+        None,
+        Some(&cookie),
+        None,
+        "",
+    );
+    let unconfigured: serde_json::Value = serde_json::from_str(&unconfigured_body).unwrap();
+    assert!(unconfigured["server"].is_null());
+    let setup_body = r#"{"expected_generation":1,"interface_name":"wg0","tunnel_prefix":"10.67.0.0/24","server_address":"10.67.0.1","listen_port":51820,"advertised_endpoint":"198.18.0.1:51820","egress_interface":"lo","ipv4_forwarding_required":false,"masquerade":false,"default_client_route_policy":{"prefixes":["10.67.0.1/32"]}}"#;
+    let (setup_status, setup_reply, _) = http(
+        addr,
+        "POST",
+        "/api/v1/setup",
+        &host,
+        Some(&origin),
+        Some(&cookie),
+        Some(&csrf),
+        setup_body,
+    );
+    assert_eq!(setup_status, 200, "HTTP setup: {setup_reply}");
+    let setup_elapsed = setup_started.elapsed();
+    wait_until("HTTP setup to create the server WireGuard device", || {
+        installation.namespace.interface_exists("wg0")
+    });
+    let dashboard_read_started = std::time::Instant::now();
+    let (_, summary_body, _) = http(
+        addr,
+        "GET",
+        "/api/v1/server",
+        &host,
+        None,
+        Some(&cookie),
+        None,
+        "",
+    );
+    let summary: serde_json::Value = serde_json::from_str(&summary_body).unwrap();
+    let dashboard_read_elapsed = dashboard_read_started.elapsed();
+    let interface_id = summary["server"]["interface_id"].as_str().unwrap();
+    let create_body = format!(
+        r#"{{"expected_generation":{},"interface_id":"{interface_id}","label":"exported-phone","route_policy":{{"prefixes":["10.67.0.1/32"]}}}}"#,
+        summary["generation"].as_u64().unwrap()
+    );
+    let create_started = std::time::Instant::now();
+    let (create_status, create_reply, _) = http(
+        addr,
+        "POST",
+        "/api/v1/clients",
+        &host,
+        Some(&origin),
+        Some(&cookie),
+        Some(&csrf),
+        &create_body,
+    );
+    assert_eq!(create_status, 201, "HTTP create: {create_reply}");
+    let create_elapsed_including_reconcile = create_started.elapsed();
+    let created: serde_json::Value = serde_json::from_str(&create_reply).unwrap();
+    let client_id: wg_basic::domain::ClientId = created["data"]["client_id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let client_public_key =
+        PublicKey::new(created["data"]["public_key"].as_str().unwrap().to_owned()).unwrap();
+    let peer_id = created["data"]["peer_id"].as_str().unwrap().to_owned();
+    let (config_status, config_text, config_headers) = http(
+        addr,
+        "GET",
+        &format!("/api/v1/clients/{client_id}/config"),
+        &host,
+        None,
+        Some(&cookie),
+        None,
+        "",
+    );
+    assert_eq!(config_status, 200);
+    assert!(config_headers
+        .iter()
+        .any(|(name, value)| name.eq_ignore_ascii_case("cache-control") && value == "no-store"));
+    let (qr_status, qr_body, _) = http(
+        addr,
+        "GET",
+        &format!("/api/v1/clients/{client_id}/qr"),
+        &host,
+        None,
+        Some(&cookie),
+        None,
+        "",
+    );
+    assert_eq!(qr_status, 200);
+    assert!(qr_body.contains("<svg"));
+    let (link_status, link_body, _) = http(
+        addr,
+        "POST",
+        &format!("/api/v1/clients/{client_id}/enrollment-links"),
+        &host,
+        Some(&origin),
+        Some(&cookie),
+        Some(&csrf),
+        r#"{"expires_in_seconds":600}"#,
+    );
+    assert_eq!(link_status, 201, "enrollment link: {link_body}");
+    let link: serde_json::Value = serde_json::from_str(&link_body).unwrap();
+    let capability_id = link["capability_id"].as_str().unwrap();
+    let token = link["share_url"]
+        .as_str()
+        .unwrap()
+        .split_once("#token=")
+        .unwrap()
+        .1;
+    assert_eq!(
+        http(
+            addr,
+            "GET",
+            &format!("/enroll/{capability_id}"),
+            &host,
+            None,
+            None,
+            None,
+            ""
+        )
+        .0,
+        200
+    );
+    let consume_path = format!("/api/v1/enroll/{capability_id}/consume");
+    let consume_body = format!(r#"{{"token":"{token}"}}"#);
+    let (consume_status, enrollment_config, _) = http(
+        addr,
+        "POST",
+        &consume_path,
+        &host,
+        Some(&origin),
+        None,
+        None,
+        &consume_body,
+    );
+    assert_eq!(
+        consume_status, 200,
+        "first consume returns the exported config"
+    );
+    assert_eq!(
+        http(
+            addr,
+            "POST",
+            &consume_path,
+            &host,
+            Some(&origin),
+            None,
+            None,
+            &consume_body
+        )
+        .0,
+        410
+    );
+    assert_eq!(enrollment_config, config_text);
+    let values = config_text
         .lines()
         .filter_map(|line| line.split_once(" = "))
         .collect::<std::collections::HashMap<_, _>>();
@@ -689,60 +905,15 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
             .peers
             .iter()
             .any(|peer| {
-                peer.public_key == client.public_key
+                peer.public_key == client_public_key
                     && peer.latest_handshake.is_some()
                     && peer.rx_bytes.unwrap_or_default() > 0
                     && peer.tx_bytes.unwrap_or_default() > 0
             })
     });
 
-    let http_api = AuthenticatedApi::new(
-        management.clone(),
-        Arc::new(OriginPolicy::loopback_only("127.0.0.1:0".parse().unwrap())),
-        Arc::new(LoginLimiter::new(
-            Bucket::per_second(100, 100),
-            Bucket::per_second(100, 100),
-            16,
-        )),
-    );
-    let http_server = Server::builder()
-        .runtime(
-            ManagementHttpConfig::new("127.0.0.1:0")
-                .unwrap()
-                .runtime_config()
-                .unwrap(),
-        )
-        .build()
-        .unwrap();
-    let handle = http_server
-        .start_with_service(ManagementService::new(http_api))
-        .await
-        .unwrap();
-    let addr = handle.local_addr();
-    let host = addr.to_string();
-    let origin = format!("http://{host}");
-    let (control, mut completion) = handle.into_parts();
-    let (status, _, login_headers) = http(
-        addr,
-        "POST",
-        "/api/v1/login",
-        &host,
-        Some(&origin),
-        None,
-        None,
-        r#"{"username":"admin","password":"an administrator password"}"#,
-    );
-    assert_eq!(status, 200);
-    let cookie = login_headers
-        .iter()
-        .find(|(name, _)| name.eq_ignore_ascii_case("set-cookie"))
-        .unwrap()
-        .1
-        .split(';')
-        .next()
-        .unwrap()
-        .to_owned();
     let audit_rows_before = installation.store.audit_events(1_000).unwrap().len();
+    let telemetry_started = std::time::Instant::now();
     let (telemetry_status, telemetry_body, telemetry_headers) = http(
         addr,
         "GET",
@@ -753,6 +924,7 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
         None,
         "",
     );
+    let telemetry_elapsed = telemetry_started.elapsed();
     assert_eq!(telemetry_status, 200, "{telemetry_body}");
     assert_eq!(
         telemetry_headers
@@ -769,9 +941,9 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|row| row["client_id"] == client.client_id.to_string())
+        .find(|row| row["client_id"] == client_id.to_string())
         .unwrap();
-    assert_eq!(row["peer_id"], client.peer_id.to_string());
+    assert_eq!(row["peer_id"], peer_id);
     assert_eq!(row["observation"], "present");
     assert_eq!(row["drift"], false);
     assert_eq!(row["endpoint"], "198.18.0.2:51821");
@@ -791,7 +963,7 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
                 private_key: FieldUpdate::Keep,
                 listen_port: FieldUpdate::Keep,
                 peer: Some(PeerMutation::Remove {
-                    public_key: client.public_key.clone(),
+                    public_key: client_public_key.clone(),
                 }),
             },
         },
@@ -818,7 +990,7 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|row| row["client_id"] == client.client_id.to_string())
+        .find(|row| row["client_id"] == client_id.to_string())
         .unwrap();
     assert_eq!(missing_row["enabled"], true);
     assert_eq!(missing_row["observation"], "missing");
@@ -838,15 +1010,18 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
     assert!(!audit_body.contains("PrivateKey"));
     assert!(!audit_body.contains("PresharedKey"));
 
-    management
-        .set_client_enabled(SetClientEnabledCommand {
-            principal_id: installation.principal,
-            expected_generation: installation.store.current_generation().unwrap(),
-            client_id: client.client_id,
-            enabled: wg_basic::product::ClientEnabled::Disabled,
-        })
-        .await
-        .expect("disable client");
+    let generation = created["generation"].as_u64().unwrap();
+    let (disable_status, disable_body, _) = http(
+        addr,
+        "POST",
+        &format!("/api/v1/clients/{client_id}/disable"),
+        &host,
+        Some(&origin),
+        Some(&cookie),
+        Some(&csrf),
+        &format!(r#"{{"expected_generation":{generation}}}"#),
+    );
+    assert_eq!(disable_status, 200, "HTTP disable: {disable_body}");
     let (disabled_status, disabled_body, _) = http(
         addr,
         "GET",
@@ -863,7 +1038,7 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|row| row["client_id"] == client.client_id.to_string())
+        .find(|row| row["client_id"] == client_id.to_string())
         .unwrap();
     assert_eq!(disabled_row["enabled"], false);
     assert_eq!(disabled_row["observation"], "missing");
@@ -877,9 +1052,9 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
                 private_key: FieldUpdate::Keep,
                 listen_port: FieldUpdate::Keep,
                 peer: Some(PeerMutation::Add(DesiredWireGuardPeer {
-                    public_key: client.public_key.clone(),
+                    public_key: client_public_key.clone(),
                     preshared_key: None,
-                    allowed_ips: vec![NetworkPrefix::new(client.assigned_address)],
+                    allowed_ips: vec![address],
                     persistent_keepalive_seconds: None,
                     endpoint: None,
                 })),
@@ -926,22 +1101,28 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|row| row["client_id"] == client.client_id.to_string())
+        .find(|row| row["client_id"] == client_id.to_string())
         .unwrap();
     assert_eq!(drift_row["enabled"], false);
     assert_eq!(drift_row["observation"], "present");
     assert_eq!(drift_row["drift"], true);
     assert_eq!(drift_json["unassociated_peer_count"], 1);
 
-    management
-        .set_client_enabled(SetClientEnabledCommand {
-            principal_id: installation.principal,
-            expected_generation: installation.store.current_generation().unwrap(),
-            client_id: client.client_id,
-            enabled: wg_basic::product::ClientEnabled::Enabled,
-        })
-        .await
-        .expect("re-enable client");
+    let generation = serde_json::from_str::<serde_json::Value>(&disable_body).unwrap()
+        ["generation"]
+        .as_u64()
+        .unwrap();
+    let (enable_status, enable_body, _) = http(
+        addr,
+        "POST",
+        &format!("/api/v1/clients/{client_id}/enable"),
+        &host,
+        Some(&origin),
+        Some(&cookie),
+        Some(&csrf),
+        &format!(r#"{{"expected_generation":{generation}}}"#),
+    );
+    assert_eq!(enable_status, 200, "HTTP enable: {enable_body}");
     let _ = Command::new("ip")
         .args([
             "netns",
@@ -965,7 +1146,7 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
             .device(&installation.scratch.netd_socket(), "wg0")
             .peers
             .iter()
-            .any(|peer| peer.public_key == client.public_key && peer.latest_handshake.is_some())
+            .any(|peer| peer.public_key == client_public_key && peer.latest_handshake.is_some())
     });
     let (enabled_status, enabled_body, _) = http(
         addr,
@@ -983,10 +1164,65 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|row| row["client_id"] == client.client_id.to_string())
+        .find(|row| row["client_id"] == client_id.to_string())
         .unwrap();
     assert_eq!(enabled_row["enabled"], true);
     assert_eq!(enabled_row["observation"], "present");
+    let generation = serde_json::from_str::<serde_json::Value>(&enable_body).unwrap()["generation"]
+        .as_u64()
+        .unwrap();
+    let (delete_status, delete_body, _) = http(
+        addr,
+        "DELETE",
+        &format!("/api/v1/clients/{client_id}"),
+        &host,
+        Some(&origin),
+        Some(&cookie),
+        Some(&csrf),
+        &format!(r#"{{"expected_generation":{generation}}}"#),
+    );
+    assert_eq!(delete_status, 200, "HTTP delete: {delete_body}");
+    wait_until("HTTP delete to remove the real peer", || {
+        !installation
+            .namespace
+            .device_public_keys(&installation.scratch.netd_socket(), "wg0")
+            .contains(&client_public_key.expose().to_owned())
+    });
+    let (audit_status, final_audit, _) = http(
+        addr,
+        "GET",
+        "/api/v1/audit",
+        &host,
+        None,
+        Some(&cookie),
+        None,
+        "",
+    );
+    assert_eq!(audit_status, 200);
+    for action in [
+        "server_setup",
+        "client_create",
+        "client_disable",
+        "client_enable",
+        "client_delete",
+        "enrollment_capability_created",
+        "enrollment_capability_consumed",
+    ] {
+        assert!(
+            final_audit.contains(action),
+            "audit lacks {action}: {final_audit}"
+        );
+    }
+    assert!(!final_audit.contains("PrivateKey"));
+    assert!(!final_audit.contains("PresharedKey"));
+    assert!(!final_audit.contains(token));
+    eprintln!(
+        "Phase 8 product fixture measurements: setup={setup_elapsed:?}; \
+         safe server/dashboard read={dashboard_read_elapsed:?}; \
+         client create including reconcile={create_elapsed_including_reconcile:?}; \
+         live telemetry read={telemetry_elapsed:?}; \
+         embedded assets={EMBEDDED_ASSET_BYTES} bytes"
+    );
     control.shutdown();
     completion.wait().await.expect("HTTP worker drains");
 }

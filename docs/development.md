@@ -23,7 +23,7 @@ install -d -m 700 /tmp/wg-basic-runtime
 cargo run --locked -- netd --socket /tmp/wg-basic-runtime/netd.sock
 ```
 
-In another terminal, use `cargo run --locked -- doctor --socket ...` or `cargo run --locked -- serve --socket ...`. `serve` is the unprivileged management service: it opens the durable state store on a dedicated bounded worker thread, attempts startup reconciliation, and serves the authenticated HTTP API (`--http-bind`, default `127.0.0.1:8000`) for login/session/health, server setup, client CRUD, config/QR export, one-time enrollment, live telemetry, and audit pages. Product mutations require the current `expected_generation`, the exact `Origin`, and the session CSRF token; their `200`/`201` versus `202` response distinguishes confirmed enforcement from a committed change still awaiting network application. The unauthenticated `GET /healthz` remains a two-token liveness probe. The product UI is the remaining Phase 8 work. For a separate management UID, start netd with `--allow-uid UID` and arrange socket group access. Both `netd` and `serve` exit on Ctrl-C; `netd` removes only the socket inode it created.
+In another terminal, use `cargo run --locked -- doctor --socket ...` or `cargo run --locked -- serve --socket ...`. `serve` is the unprivileged management service: it opens the durable state store on a dedicated bounded worker thread, attempts startup reconciliation, and serves the authenticated HTTP API (`--http-bind`, default `127.0.0.1:8000`) and embedded operator UI for login/session/health, server setup, client CRUD, config/QR export, one-time enrollment, live telemetry, and audit pages. Product mutations require the current `expected_generation`, the exact `Origin`, and the session CSRF token; their `200`/`201` versus `202` response distinguishes confirmed enforcement from a committed change still awaiting network application. The UI reports degraded disable/delete as not yet confirmed revoked. The unauthenticated `GET /healthz` remains a two-token liveness probe. For a separate management UID, start netd with `--allow-uid UID` and arrange socket group access. Both `netd` and `serve` exit on Ctrl-C; `netd` removes only the socket inode it created.
 
 ## Local administrator credentials
 
@@ -130,8 +130,10 @@ sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo \
   cargo test --locked --features linux-integration --test durable_restart -- --test-threads=1
 ```
 
-Product management's real-kernel suite, including HTTP-driven setup/client
-creation, disable, re-enable, and delete:
+Product management's real-kernel suite, including HTTP-driven server setup and
+client creation, config/QR export, one-time enrollment consume/replay, a real
+exported-config handshake and traffic, telemetry/audit reads, disable,
+re-enable, and delete:
 
 ```sh
 sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo \

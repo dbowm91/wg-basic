@@ -1,7 +1,7 @@
 # Product management API
 
-This document describes behavior implemented by Phase 8 M001–M004. The product
-UI remains the final Phase 8 milestone.
+This document describes behavior implemented by Phase 8 M001–M005. Phase 8 is
+closed as the first user-facing product boundary.
 
 ## Authority and mutation path
 
@@ -77,6 +77,19 @@ It is never written to SQLite. At most 1,024 client rows are returned; an
 explicit `truncated` flag identifies larger installations. Audit pages contain
 at most 100 immutable events and use timestamp plus event ID to continue
 newest-first ordering.
+
+## Operator UI
+
+The embedded operator page is a buildless same-origin client of these routes.
+It provides login, first-server setup, server and client status, client
+create/edit/enable/disable/delete, explicit config/QR export, one-time link
+create/revoke, bounded visible-page telemetry refresh, and recent audit
+history. Mutations carry the generation from the latest API read; a `409`
+refreshes current state and asks the operator to review before trying again.
+Committed but not enforced mutations retain an explicit pending/degraded
+message, with disable/delete wording that does not claim access was revoked.
+Credential artifacts are loaded only after an operator action and are cleared
+from the dialog on close; the UI does not persist them in browser storage.
 
 ## Operational boundary
 

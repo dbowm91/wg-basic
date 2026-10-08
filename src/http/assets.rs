@@ -19,12 +19,11 @@
 //! small" but "keep it *plain*": what is committed is what is served, and a
 //! reader can diff a behavioural change without a toolchain.
 //!
-//! # What the shell is not
+//! # What the shell owns
 //!
-//! It authenticates and it shows health. It manages no peers, clients, or
-//! interfaces. Those are Phase 8, and a shell that grew CRUD would be Phase 8
-//! shipping without Phase 8's plan — the plan that is supposed to decide what
-//! peer management *means*, not the UI.
+//! It renders the operator workflows and consumes the authenticated API. It
+//! does not allocate addresses, validate durable changes, generate credentials,
+//! or call netd; those decisions remain behind the worker boundary.
 //!
 //! Each script's side effects are confined to its document: there is no
 //! timer, no global hook, and no event listener outside the two named DOM
@@ -46,13 +45,12 @@ pub const ENROLL_JS: &str = include_str!("assets/enroll.js");
 
 /// The total embedded payload, as a ceiling rather than an observation.
 ///
-/// 32 KiB is generous for what is here (~11 KiB today) and small enough that
-/// the whole shell is obviously bounded by a constant a reader can check. A
-/// bundled framework would blow through it, which is the intended signal.
+/// 32 KiB bounds the full management shell, including product forms and client
+/// actions, while keeping the complete same-origin UI small enough to review.
 pub const MAX_EMBEDDED_ASSET_BYTES: usize = 32 * 1024;
 
 /// The largest single embedded asset, as a ceiling.
-pub const MAX_EMBEDDED_ASSET_BYTES_EACH: usize = 16 * 1024;
+pub const MAX_EMBEDDED_ASSET_BYTES_EACH: usize = 24 * 1024;
 
 /// One embedded asset: where it is served, what it is, and what it contains.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -303,31 +301,30 @@ mod tests {
     }
 
     #[test]
-    fn the_shell_implements_no_phase_8_management() {
-        // The shell may authenticate and may show health. It may not offer peer,
-        // client, or interface management, and the absence has to be asserted
-        // rather than left to a reader of three small files.
-        for forbidden in [
-            "/api/v1/peers",
-            "/api/v1/clients",
-            "/api/v1/interfaces",
-            "createPeer",
-            "deletePeer",
-            "addClient",
-        ] {
-            for asset in INVENTORY {
-                assert!(
-                    !asset.body.contains(forbidden),
-                    "{}: contains {forbidden}; peer/client/interface management is Phase 8",
-                    asset.name
-                );
-            }
-        }
-        // It does use the three routes Phase 7 does publish.
+    fn the_shell_exposes_the_product_api_workflows() {
         assert!(APP_JS.contains("/api/v1/login"));
         assert!(APP_JS.contains("/api/v1/session"));
         assert!(APP_JS.contains("/api/v1/health"));
         assert!(APP_JS.contains("/api/v1/logout"));
+        for route in [
+            "/api/v1/server",
+            "/api/v1/setup",
+            "/api/v1/clients",
+            "/api/v1/clients/telemetry",
+            "/api/v1/audit",
+            "/enrollment-links/",
+        ] {
+            assert!(
+                APP_JS.contains(route),
+                "the operator shell must use {route}"
+            );
+        }
+        assert!(APP_JS.contains("expected_generation"));
+        assert!(APP_JS.contains("response.status === 409"));
+        assert!(APP_JS.contains("network access has not been confirmed revoked"));
+        assert!(APP_JS.contains("network application is pending or degraded"));
+        assert!(INDEX_HTML.contains("id=\"setup-form\""));
+        assert!(INDEX_HTML.contains("id=\"client-rows\""));
     }
 
     #[test]
@@ -349,24 +346,22 @@ mod tests {
     }
 
     #[test]
-    fn the_shell_has_no_timer_and_no_global_hook() {
-        // A page that runs on a timer is a page that keeps running after the
-        // operator closed it, and one whose behaviour is not visible in the
-        // source. Both scripts must be inert until the DOM is ready.
+    fn telemetry_polling_is_bounded_to_visible_authenticated_pages() {
+        assert!(APP_JS.contains("setInterval("));
+        assert!(APP_JS.contains("window.clearInterval"));
+        assert!(APP_JS.contains("!document.hidden && csrf"));
+        assert!(APP_JS.contains("visibilitychange"));
+        assert!(APP_JS.contains("7000"));
         for forbidden in [
-            "setInterval",
-            "setTimeout",
-            "addEventListener(\"load\"",
+            "setTimeout(",
             "eval(",
+            "console.log",
+            "localStorage",
+            "sessionStorage",
         ] {
-            for asset in INVENTORY {
-                assert!(
-                    !asset.body.contains(forbidden),
-                    "{}: contains {forbidden}",
-                    asset.name
-                );
-            }
+            assert!(!APP_JS.contains(forbidden), "app.js contains {forbidden}");
         }
+        assert!(!APP_JS.contains("document.cookie"));
     }
 
     #[test]
