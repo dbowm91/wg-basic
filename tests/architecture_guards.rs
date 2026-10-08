@@ -8,6 +8,7 @@
 const PRODUCTION_SOURCES: &[(&str, &str)] = &[
     ("src/main.rs", include_str!("../src/main.rs")),
     ("src/lib.rs", include_str!("../src/lib.rs")),
+    ("src/release.rs", include_str!("../src/release.rs")),
     ("src/operational.rs", include_str!("../src/operational.rs")),
     ("src/error.rs", include_str!("../src/error.rs")),
     ("src/wireguard.rs", include_str!("../src/wireguard.rs")),
@@ -391,6 +392,21 @@ fn production_control_paths_do_not_invoke_wg_wg_quick_or_ip() {
                 "{path} must not invoke {forbidden}: kernel control is typed, not shelled out"
             );
         }
+    }
+}
+
+#[test]
+fn minisign_fixture_private_key_is_not_embedded_in_shipped_sources() {
+    let fixture = include_str!("fixtures/release-auth/minisign.fixture.key");
+    let private_payload = fixture
+        .lines()
+        .nth(1)
+        .expect("fixture secret key contains one payload line");
+    for (path, source) in PRODUCTION_SOURCES {
+        assert!(
+            !shippable(source).contains(private_payload),
+            "test-only Minisign private material must not be compiled from {path}"
+        );
     }
 }
 

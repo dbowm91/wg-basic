@@ -26,6 +26,10 @@ cookie = "0.18"
 # feature of a transitive crate.
 getrandom = "0.3"
 ipnet = { version = "2.11", features = ["serde"] }
+eggpack-manifest = "=0.1.0"
+eggup-core = "=0.1.3"
+eggup-eggpack = "=0.1.3"
+minisign-verify = "=0.3.0"
 qrcodegen = "1.8.0"
 rusqlite = { version = "0.40", default-features = false, features = ["bundled", "backup"] }
 # SHA-256 session-token digests. The raw token never reaches SQLite.

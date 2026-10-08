@@ -1,0 +1,20 @@
+{
+  "aarch64-unknown-linux-gnu": {
+    "schema_version": 1,
+    "selector": { "kind": "direct" },
+    "interpreter": "python3",
+    "script": "scripts/release-smoke.py",
+    "timeout_ms": 120000,
+    "stdout_limit": 65536,
+    "stderr_limit": 65536
+  },
+  "x86_64-unknown-linux-gnu": {
+    "schema_version": 1,
+    "selector": { "kind": "direct" },
+    "interpreter": "python3",
+    "script": "scripts/release-smoke.py",
+    "timeout_ms": 120000,
+    "stdout_limit": 65536,
+    "stderr_limit": 65536
+  }
+}

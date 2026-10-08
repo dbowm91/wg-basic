@@ -1,0 +1,79 @@
+name: Distribution foundation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  release-contract:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.89.0
+      - name: Build pinned Eggpack validator
+        run: |
+          git clone --filter=blob:none https://github.com/eggstack/eggpack "$RUNNER_TEMP/eggpack"
+          git -C "$RUNNER_TEMP/eggpack" checkout --detach e5c81f28bd328d4aea41c3f061a0ed9944306262
+          cargo build --locked --manifest-path "$RUNNER_TEMP/eggpack/Cargo.toml" -p eggpack-cli --bin eggpack
+      - name: Validate the complete two-target producer input set
+        run: |
+          VERSION="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
+          "$RUNNER_TEMP/eggpack/target/debug/eggpack" ci _resolve-release \
+            --contract release/eggpack/distribution.toml \
+            --pack-config release/eggpack/pack.toml \
+            --build-bindings release/eggpack/build-bindings.toml \
+            --qualification-bindings release/eggpack/qualification-bindings.toml \
+            --selected linux-arm64,linux-x64 \
+            --tag "$VERSION" \
+            --source-revision "$GITHUB_SHA" \
+            --template release/eggpack/github-template.json \
+            --source-root . \
+            --output-plan "$RUNNER_TEMP/release-plan.json" \
+            --output-ci-plan "$RUNNER_TEMP/release-ci-plan.json" \
+            --output-github-policy "$RUNNER_TEMP/release-policy.json" \
+            --consumer-validators release/eggpack/consumer-validators.json
+
+  native-release-candidate:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+            zig_archive: zig-x86_64-linux-0.14.1.tar.xz
+            zig_sha256: 24aeeec8af16c381934a6cd7d95c807a8cb2cf7df9fa40d359aa884195c4716c
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            zig_archive: zig-aarch64-linux-0.14.1.tar.xz
+            zig_sha256: f7a654acc967864f7a050ddacfaa778c7504a0eca8d2b678839c21eea47c992b
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.89.0
+      - name: Provision pinned cargo-zigbuild and Zig
+        env:
+          ZIG_ARCHIVE: ${{ matrix.zig_archive }}
+          ZIG_SHA256: ${{ matrix.zig_sha256 }}
+        run: |
+          cargo install cargo-zigbuild --version 0.23.3 --locked
+          curl --fail --location --retry 3 "https://ziglang.org/download/0.14.1/$ZIG_ARCHIVE" --output "$RUNNER_TEMP/zig.tar.xz"
+          echo "$ZIG_SHA256  $RUNNER_TEMP/zig.tar.xz" | sha256sum --check --status
+          mkdir "$RUNNER_TEMP/zig"
+          tar -xJf "$RUNNER_TEMP/zig.tar.xz" -C "$RUNNER_TEMP/zig" --strip-components=1
+          echo "$RUNNER_TEMP/zig" >> "$GITHUB_PATH"
+      - name: Build the exact GNU target at the glibc 2.17 floor
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo zigbuild --locked --release --bin wg-basic --target "$TARGET.2.17"
+      - name: Execute and qualify the exact native artifact
+        env:
+          TARGET: ${{ matrix.target }}
+        run: python3 scripts/release-smoke.py "target/$TARGET/release/wg-basic"
