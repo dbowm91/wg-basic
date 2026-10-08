@@ -2,8 +2,9 @@
 
 This document describes **current implemented behavior** for every `wg-basic`
 subcommand in `src/main.rs`. Native system installation is implemented under
-M002 qualification; transactional self-update is **not implemented**. See
-[overview](overview.md) for status.
+M002 qualification; M004 update commands are implemented but fail closed
+while the production trust root is unprovisioned and qualification remains open.
+See [overview](overview.md) for status.
 
 Part of the [architecture overview](overview.md). Role internals live in
 [management-http](management-http.md) (`serve`, `reconcile`, `health`),

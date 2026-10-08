@@ -1,6 +1,6 @@
 # Distribution M004 — Transactional Self-Update and Rollback
 
-Status: active — M003 is mechanically closed; production update remains disabled until the production public key is provisioned.
+Status: active — M003 is mechanically closed. Transaction orchestration is implemented; strict closure remains blocked on production trust-root provisioning and rootful service, crash-window, rollback, and lifecycle qualification. The updater stays fail-closed until the production public key is provisioned.
 
 Source roadmap:
 
