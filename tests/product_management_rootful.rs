@@ -29,7 +29,10 @@
 
 #![cfg(all(target_os = "linux", feature = "linux-integration"))]
 
+use eggserve_server::Server;
 use std::{
+    io::{BufRead, BufReader, Read, Write},
+    net::{SocketAddr, TcpStream},
     os::unix::fs::PermissionsExt,
     path::PathBuf,
     process::{Child, Command, Stdio},
@@ -41,6 +44,10 @@ use std::{
 };
 use wg_basic::{
     domain::{ClientRoutePolicy, DesiredGeneration, InterfaceId, NetworkPrefix, PrincipalId},
+    http::{
+        AuthenticatedApi, Bucket, LoginLimiter, ManagementHttpConfig, ManagementService,
+        OriginPolicy,
+    },
     management::{set_password_at, spawn, WorkerClient, WorkerConfig, WorkerStartup},
     product::{
         ClientCreateCommand, ClientDeleteCommand, ClientLabel, ServerSetupCommand,
@@ -49,6 +56,64 @@ use wg_basic::{
     protocol::{RequestOperation, ResponseBody},
     state::StateStore,
 };
+
+fn http(
+    addr: SocketAddr,
+    method: &str,
+    path: &str,
+    host: &str,
+    origin: Option<&str>,
+    cookie: Option<&str>,
+    csrf: Option<&str>,
+    body: &str,
+) -> (u16, String, Vec<(String, String)>) {
+    let mut stream = TcpStream::connect(addr).expect("management listener");
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+        .unwrap();
+    let mut request = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n");
+    if let Some(origin) = origin {
+        request.push_str(&format!("Origin: {origin}\r\n"));
+    }
+    if let Some(cookie) = cookie {
+        request.push_str(&format!("Cookie: {cookie}\r\n"));
+    }
+    if let Some(csrf) = csrf {
+        request.push_str(&format!("x-wg-basic-csrf: {csrf}\r\n"));
+    }
+    if !body.is_empty() {
+        request.push_str(&format!(
+            "Content-Type: application/json\r\nContent-Length: {}\r\n",
+            body.len()
+        ));
+    }
+    request.push_str("\r\n");
+    request.push_str(body);
+    stream.write_all(request.as_bytes()).unwrap();
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    reader.read_line(&mut line).unwrap();
+    let status = line.split_whitespace().nth(1).unwrap().parse().unwrap();
+    let mut headers = Vec::new();
+    loop {
+        line.clear();
+        reader.read_line(&mut line).unwrap();
+        let line = line.trim_end();
+        if line.is_empty() {
+            break;
+        }
+        let (k, v) = line.split_once(':').unwrap();
+        headers.push((k.to_owned(), v.trim().to_owned()));
+    }
+    let length = headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+        .and_then(|(_, v)| v.parse().ok())
+        .unwrap_or(0);
+    let mut bytes = vec![0; length];
+    reader.read_exact(&mut bytes).unwrap();
+    (status, String::from_utf8(bytes).unwrap(), headers)
+}
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -420,6 +485,184 @@ async fn a_created_client_becomes_a_real_kernel_peer() {
             .device_public_keys(&installation.scratch.netd_socket(), "wg0");
         keys.len() == before.len() + 1 && keys.contains(&key)
     });
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn authenticated_http_crud_applies_real_peer_lifecycle() {
+    require_root("HTTP CRUD");
+    let scratch = Scratch::new();
+    let namespace = Namespace::new("http");
+    let netd = Managed::netd(&namespace.0, &scratch);
+    wait_until("netd to listen", || netd.ready("listening"));
+    let _store = StateStore::initialize(scratch.state()).expect("initialize state");
+    set_password_at(scratch.state(), "admin", "an administrator password")
+        .expect("admin provisioned");
+    let startup =
+        spawn(WorkerConfig::new(scratch.state(), scratch.netd_socket())).expect("worker starts");
+    let worker = startup.client().clone();
+    drop(startup);
+
+    let policy_bind: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let api = AuthenticatedApi::new(
+        worker,
+        Arc::new(OriginPolicy::loopback_only(policy_bind)),
+        Arc::new(LoginLimiter::new(
+            Bucket::per_second(1000, 1000),
+            Bucket::per_second(1000, 1000),
+            16,
+        )),
+    );
+    let server = Server::builder()
+        .runtime(
+            ManagementHttpConfig::new("127.0.0.1:0")
+                .unwrap()
+                .runtime_config()
+                .unwrap(),
+        )
+        .build()
+        .unwrap();
+    let handle = server
+        .start_with_service(ManagementService::new(api))
+        .await
+        .unwrap();
+    let addr = handle.local_addr();
+    let host = addr.to_string();
+    let origin = format!("http://{host}");
+    let (control, mut completion) = handle.into_parts();
+
+    let (code, login, headers) = http(
+        addr,
+        "POST",
+        "/api/v1/login",
+        &host,
+        Some(&origin),
+        None,
+        None,
+        r#"{"username":"admin","password":"an administrator password"}"#,
+    );
+    assert_eq!(code, 200, "{login}");
+    let cookie = headers
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case("set-cookie"))
+        .unwrap()
+        .1
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let (_, session, _) = http(
+        addr,
+        "GET",
+        "/api/v1/session",
+        &host,
+        None,
+        Some(&cookie),
+        None,
+        "",
+    );
+    let csrf = serde_json::from_str::<serde_json::Value>(&session).unwrap()["csrf_token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let setup_body = r#"{"expected_generation":1,"interface_name":"wg0","tunnel_prefix":"10.66.0.0/24","listen_port":51820,"advertised_endpoint":"vpn.example.test:51820","egress_interface":"lo","ipv4_forwarding_required":false,"masquerade":false,"default_client_route_policy":{"prefixes":["0.0.0.0/0"]}}"#;
+    let (code, setup, _) = http(
+        addr,
+        "POST",
+        "/api/v1/setup",
+        &host,
+        Some(&origin),
+        Some(&cookie),
+        Some(&csrf),
+        setup_body,
+    );
+    assert_eq!(code, 200, "setup: {setup}");
+    let setup: serde_json::Value = serde_json::from_str(&setup).unwrap();
+    let generation = setup["generation"].as_u64().unwrap();
+    let interface = setup["data"]["interface_id"].as_str().unwrap();
+    let create = format!(
+        r#"{{"expected_generation":{generation},"interface_id":"{interface}","label":"http-client"}}"#
+    );
+    let (code, created, _) = http(
+        addr,
+        "POST",
+        "/api/v1/clients",
+        &host,
+        Some(&origin),
+        Some(&cookie),
+        Some(&csrf),
+        &create,
+    );
+    assert_eq!(code, 201, "create: {created}");
+    let created: serde_json::Value = serde_json::from_str(&created).unwrap();
+    let client_id = created["data"]["client_id"].as_str().unwrap();
+    let key = created["data"]["public_key"].as_str().unwrap().to_owned();
+    wait_until("HTTP-created key to reach the device", || {
+        namespace
+            .device_public_keys(&scratch.netd_socket(), "wg0")
+            .contains(&key)
+    });
+
+    let generation = created["generation"].as_u64().unwrap();
+    let (code, disabled, _) = http(
+        addr,
+        "POST",
+        &format!("/api/v1/clients/{client_id}/disable"),
+        &host,
+        Some(&origin),
+        Some(&cookie),
+        Some(&csrf),
+        &format!(r#"{{"expected_generation":{generation}}}"#),
+    );
+    assert_eq!(code, 200, "disable: {disabled}");
+    wait_until("HTTP-disabled peer removal", || {
+        !namespace
+            .device_public_keys(&scratch.netd_socket(), "wg0")
+            .contains(&key)
+    });
+
+    let generation = serde_json::from_str::<serde_json::Value>(&disabled).unwrap()["generation"]
+        .as_u64()
+        .unwrap();
+    let (code, enabled, _) = http(
+        addr,
+        "POST",
+        &format!("/api/v1/clients/{client_id}/enable"),
+        &host,
+        Some(&origin),
+        Some(&cookie),
+        Some(&csrf),
+        &format!(r#"{{"expected_generation":{generation}}}"#),
+    );
+    assert_eq!(code, 200, "enable: {enabled}");
+    wait_until("HTTP-enabled peer restoration", || {
+        namespace
+            .device_public_keys(&scratch.netd_socket(), "wg0")
+            .contains(&key)
+    });
+
+    let generation = serde_json::from_str::<serde_json::Value>(&enabled).unwrap()["generation"]
+        .as_u64()
+        .unwrap();
+    let (code, deleted, _) = http(
+        addr,
+        "DELETE",
+        &format!("/api/v1/clients/{client_id}"),
+        &host,
+        Some(&origin),
+        Some(&cookie),
+        Some(&csrf),
+        &format!(r#"{{"expected_generation":{generation}}}"#),
+    );
+    assert_eq!(code, 200, "delete: {deleted}");
+    wait_until("HTTP-deleted peer removal", || {
+        !namespace
+            .device_public_keys(&scratch.netd_socket(), "wg0")
+            .contains(&key)
+    });
+
+    control.shutdown();
+    completion.wait().await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

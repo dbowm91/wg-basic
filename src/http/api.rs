@@ -232,6 +232,19 @@ impl RequestGuard {
         Ok(())
     }
 
+    pub(crate) fn check_json_content_type(
+        &self,
+        head: &RequestHead,
+    ) -> Result<(), RequestRejection> {
+        let content_type =
+            header(head, "content-type").ok_or(RequestRejection::ContentTypeNotAllowed)?;
+        if is_json(content_type) {
+            Ok(())
+        } else {
+            Err(RequestRejection::ContentTypeNotAllowed)
+        }
+    }
+
     /// The bearer token this request presents, if any.
     ///
     /// Only the cookie this deployment would have written is considered, so a
@@ -313,6 +326,11 @@ impl AuthenticatedApi {
     /// The limiter in force.
     pub fn limiter(&self) -> &LoginLimiter {
         &self.limiter
+    }
+
+    /// The bounded worker is the only state path available to HTTP handlers.
+    pub(crate) fn worker(&self) -> &WorkerClient {
+        &self.worker
     }
 
     /// Projects the management health snapshot from the worker.

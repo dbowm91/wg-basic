@@ -321,7 +321,7 @@ impl ClientEnabled {
 /// the desired client is kernel intent and is read by the reconciler, while
 /// this is operator-facing product state. Keeping them separate is what lets a
 /// label change avoid touching projected intent at all.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ClientProductSettings {
     pub label: ClientLabel,
     pub enabled: ClientEnabled,
@@ -340,7 +340,7 @@ pub struct ClientProductSettings {
 /// This is a projection and not a store record: it is assembled from the
 /// desired client, the peer, and the product settings. It has no private-key
 /// field, so every value built from it is secret-safe.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ProductClient {
     pub client_id: ClientId,
     pub peer_id: PeerId,
@@ -353,7 +353,7 @@ pub struct ProductClient {
 }
 
 /// Operator-facing summary of the managed server.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ProductServer {
     pub interface_id: InterfaceId,
     pub name: crate::domain::InterfaceName,

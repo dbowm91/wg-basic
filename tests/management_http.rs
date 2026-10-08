@@ -805,6 +805,228 @@ async fn logout_without_a_csrf_token_changes_nothing() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn authenticated_product_crud_uses_generation_cas_and_reports_degraded_commit() {
+    let scratch = Scratch::new();
+    let startup =
+        spawn(WorkerConfig::new(scratch.db(), scratch.absent_socket())).expect("worker starts");
+    let client = startup.client().clone();
+    client
+        .set_admin_password("admin".to_owned(), PASSWORD.to_owned())
+        .await
+        .expect("admin provisioned");
+    drop(startup);
+
+    let server = Server::builder()
+        .runtime(
+            ManagementHttpConfig::new("127.0.0.1:0")
+                .unwrap()
+                .runtime_config()
+                .unwrap(),
+        )
+        .build()
+        .unwrap();
+    let handle = server
+        .start_with_service(ManagementService::new(api_for(client)))
+        .await
+        .unwrap();
+    let addr = handle.local_addr();
+    let host = addr.to_string();
+    let origin = format!("http://{host}");
+    let (control, mut completion) = handle.into_parts();
+
+    let login_body = format!(r#"{{"username":"admin","password":"{PASSWORD}"}}"#);
+    let login = request_on(
+        addr,
+        &wire_with_body(
+            "POST",
+            "/api/v1/login",
+            &host,
+            &[
+                ("Origin", &origin),
+                ("Content-Type", "application/json"),
+                ("Content-Length", &login_body.len().to_string()),
+            ],
+            &login_body,
+        ),
+    );
+    assert_eq!(login.status, 200, "{login:?}");
+    let cookie = login
+        .header("set-cookie")
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let session = request_on(
+        addr,
+        &wire("GET", "/api/v1/session", &host, &[("Cookie", &cookie)]),
+    );
+    let csrf = serde_json::from_str::<serde_json::Value>(&session.body).unwrap()["csrf_token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let unsafe_request = |method: &str, path: &str, body: &str, with_csrf: bool| {
+        let length = body.len().to_string();
+        let mut headers = vec![
+            ("Cookie", cookie.as_str()),
+            ("Origin", origin.as_str()),
+            ("Content-Type", "application/json"),
+            ("Content-Length", length.as_str()),
+        ];
+        if with_csrf {
+            headers.push(("x-wg-basic-csrf", csrf.as_str()));
+        }
+        request_on(addr, &wire_with_body(method, path, &host, &headers, body))
+    };
+    for (method, path, body) in [
+        ("POST", "/api/v1/setup", "{}"),
+        ("POST", "/api/v1/clients", "{}"),
+    ] {
+        assert_eq!(
+            unsafe_request(method, path, body, false).status,
+            403,
+            "{method} {path} without CSRF"
+        );
+    }
+
+    let setup_body = r#"{"expected_generation":1,"interface_name":"wg0","tunnel_prefix":"10.77.0.0/24","listen_port":51820,"advertised_endpoint":"vpn.example.test:51820","egress_interface":"eth0","ipv4_forwarding_required":true,"masquerade":true,"default_client_route_policy":{"prefixes":["0.0.0.0/0"]}}"#;
+    let setup = unsafe_request("POST", "/api/v1/setup", setup_body, true);
+    assert_eq!(
+        setup.status, 202,
+        "a durable commit against the absent netd is degraded: {}",
+        setup.body
+    );
+    let setup_json: serde_json::Value = serde_json::from_str(&setup.body).unwrap();
+    let generation = setup_json["generation"].as_u64().unwrap();
+    let interface_id = setup_json["data"]["interface_id"].as_str().unwrap();
+
+    let stale = unsafe_request(
+        "POST",
+        "/api/v1/clients",
+        &format!(r#"{{"expected_generation":1,"interface_id":"{interface_id}","label":"phone"}}"#),
+        true,
+    );
+    assert_eq!(
+        stale.status, 409,
+        "stale generation must not commit: {stale:?}"
+    );
+
+    let create_body = format!(
+        r#"{{"expected_generation":{generation},"interface_id":"{interface_id}","label":"phone","dns_servers":["1.1.1.1"],"client_keepalive_seconds":25}}"#
+    );
+    let created = unsafe_request("POST", "/api/v1/clients", &create_body, true);
+    assert_eq!(
+        created.status, 202,
+        "committed client with unavailable backend is 202: {}",
+        created.body
+    );
+    assert!(
+        !created.body.to_lowercase().contains("private_key"),
+        "{}",
+        created.body
+    );
+    let created_json: serde_json::Value = serde_json::from_str(&created.body).unwrap();
+    let client_id = created_json["data"]["client_id"].as_str().unwrap();
+    let generation = created_json["generation"].as_u64().unwrap();
+
+    for (method, path, body) in [
+        (
+            "PATCH",
+            format!("/api/v1/clients/{client_id}"),
+            format!(r#"{{"expected_generation":{generation},"label":"blocked"}}"#),
+        ),
+        (
+            "POST",
+            format!("/api/v1/clients/{client_id}/disable"),
+            format!(r#"{{"expected_generation":{generation}}}"#),
+        ),
+        (
+            "POST",
+            format!("/api/v1/clients/{client_id}/enable"),
+            format!(r#"{{"expected_generation":{generation}}}"#),
+        ),
+        (
+            "DELETE",
+            format!("/api/v1/clients/{client_id}"),
+            format!(r#"{{"expected_generation":{generation}}}"#),
+        ),
+    ] {
+        assert_eq!(
+            unsafe_request(method, &path, &body, false).status,
+            403,
+            "{method} {path} without CSRF"
+        );
+    }
+
+    let listed = request_on(
+        addr,
+        &wire("GET", "/api/v1/clients", &host, &[("Cookie", &cookie)]),
+    );
+    assert_eq!(listed.status, 200);
+    assert_eq!(listed.header("cache-control"), Some("no-store"));
+    assert_eq!(listed.header("access-control-allow-origin"), None);
+    assert!(listed.body.contains(client_id));
+    let detail = request_on(
+        addr,
+        &wire(
+            "GET",
+            &format!("/api/v1/clients/{client_id}"),
+            &host,
+            &[("Cookie", &cookie)],
+        ),
+    );
+    assert_eq!(detail.status, 200);
+    assert!(detail.body.contains("phone"));
+
+    let patch = unsafe_request(
+        "PATCH",
+        &format!("/api/v1/clients/{client_id}"),
+        &format!(
+            r#"{{"expected_generation":{generation},"label":"phone updated","client_keepalive_seconds":null}}"#
+        ),
+        true,
+    );
+    assert_eq!(patch.status, 202);
+    let generation = serde_json::from_str::<serde_json::Value>(&patch.body).unwrap()["generation"]
+        .as_u64()
+        .unwrap();
+    let disabled = unsafe_request(
+        "POST",
+        &format!("/api/v1/clients/{client_id}/disable"),
+        &format!(r#"{{"expected_generation":{generation}}}"#),
+        true,
+    );
+    assert_eq!(disabled.status, 202);
+    let generation = serde_json::from_str::<serde_json::Value>(&disabled.body).unwrap()
+        ["generation"]
+        .as_u64()
+        .unwrap();
+    let enabled = unsafe_request(
+        "POST",
+        &format!("/api/v1/clients/{client_id}/enable"),
+        &format!(r#"{{"expected_generation":{generation}}}"#),
+        true,
+    );
+    assert_eq!(enabled.status, 202);
+    let generation = serde_json::from_str::<serde_json::Value>(&enabled.body).unwrap()
+        ["generation"]
+        .as_u64()
+        .unwrap();
+    let deleted = unsafe_request(
+        "DELETE",
+        &format!("/api/v1/clients/{client_id}"),
+        &format!(r#"{{"expected_generation":{generation}}}"#),
+        true,
+    );
+    assert_eq!(deleted.status, 202);
+    assert!(deleted.body.contains("\"revocation_confirmed\":false"));
+
+    control.shutdown();
+    completion.wait().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_cookie_profile_follows_the_canonical_origin_not_the_connection() {
     // The same code path, the same plain-HTTP transport, two configured origins.
     // Only the canonical origin differs, so only the cookie differs -- which is
