@@ -71,7 +71,7 @@ Runtime dependency adoption remains evidence-driven.
 | Management service/auth/security substrate | closed | `plans/subsystems/management-service-security-roadmap.md` + `plans/subsystems/management-service-post-phase7-reconciliation-addendum.md` | M001–M004 and post-Phase-7 C001 closed |
 | Product management/enrollment/UI | closed | `plans/subsystems/product-management-enrollment-ui-roadmap.md` | Phase 8 M001–M005 closed |
 | Operational hardening | closed | `plans/subsystems/operational-hardening-roadmap.md` | M001–M005 closed; Phase 9 closed |
-| Distribution/install/update | active | `plans/subsystems/distribution-install-update-roadmap.md` | M001–M002 closed; M003 active after upstream identity seam resolution; M004–M005 blocked in order |
+| Distribution/install/update | active | `plans/subsystems/distribution-install-update-roadmap.md` | M001–M003 closed; M004 active; M005 blocked on M004 closure |
 
 Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
 
@@ -79,7 +79,7 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
-| Distribution/install/update | M004 transactional self-update/rollback | active | `plans/implementation/distribution/004-transactional-self-update-and-rollback.md` | M001–M003 closed; production update remains disabled until the production key is provisioned |
+| Distribution/install/update | M004 transactional self-update/rollback | active | `plans/implementation/distribution/004-transactional-self-update-and-rollback.md` | M001–M003 closed; production update remains disabled until the production key is provisioned; rootful transaction/crash qualification remains outstanding |
 
 ## 6. Blocked implementation plans
 

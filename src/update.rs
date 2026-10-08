@@ -1680,15 +1680,8 @@ pub fn recover() -> Result<(), String> {
         );
     }
 
-    let candidate_may_have_started = matches!(
-        journal.phase,
-        UpdatePhase::BinaryCommitted
-            | UpdatePhase::CandidateStarted
-            | UpdatePhase::CandidateHealthy
-            | UpdatePhase::RollingBack
-            | UpdatePhase::RecoveryRequired
-    );
-    let needs_state_restore = current_digest == candidate_digest || candidate_may_have_started;
+    let needs_state_restore =
+        recovery_requires_state_restore(journal.phase, current_digest == candidate_digest);
     if needs_state_restore {
         validate_state_backup(&journal)?;
         ensure_runtime_old_binary(&journal)?;
@@ -1754,6 +1747,22 @@ pub fn recover() -> Result<(), String> {
         journal.transaction_id, journal.version_from
     );
     Ok(())
+}
+
+/// Whether recovery must restore the pre-update database before starting the
+/// old generation. The journal phase is authoritative even when Eggup already
+/// restored the old binary: a candidate may have migrated state before the
+/// updater was killed.
+fn recovery_requires_state_restore(phase: UpdatePhase, candidate_is_installed: bool) -> bool {
+    candidate_is_installed
+        || matches!(
+            phase,
+            UpdatePhase::BinaryCommitted
+                | UpdatePhase::CandidateStarted
+                | UpdatePhase::CandidateHealthy
+                | UpdatePhase::RollingBack
+                | UpdatePhase::RecoveryRequired
+        )
 }
 
 fn validate_transaction_directory(journal: &UpdateJournal) -> Result<(), String> {
@@ -1919,6 +1928,115 @@ mod tests {
             UpdatePhase::RolledBack,
             UpdatePhase::CandidateStarted
         ));
+    }
+
+    #[test]
+    fn recovery_restores_state_for_every_phase_that_may_follow_migration() {
+        for phase in [
+            UpdatePhase::BinaryCommitted,
+            UpdatePhase::CandidateStarted,
+            UpdatePhase::CandidateHealthy,
+            UpdatePhase::RollingBack,
+            UpdatePhase::RecoveryRequired,
+        ] {
+            assert!(recovery_requires_state_restore(phase, false), "{phase:?}");
+        }
+        for phase in [
+            UpdatePhase::Prepared,
+            UpdatePhase::BackupVerified,
+            UpdatePhase::ServicesStopped,
+            UpdatePhase::Committed,
+            UpdatePhase::RolledBack,
+        ] {
+            assert!(!recovery_requires_state_restore(phase, false), "{phase:?}");
+        }
+        // Eggup can restore the old binary before the outer journal advances;
+        // candidate identity still requires restoring state.
+        assert!(recovery_requires_state_restore(
+            UpdatePhase::ServicesStopped,
+            true
+        ));
+    }
+
+    #[test]
+    fn journal_writer_child_waits_for_kill() {
+        let Ok(path) = std::env::var("WGB_UPDATE_JOURNAL_KILL_FIXTURE") else {
+            return;
+        };
+        let phase = match std::env::var("WGB_UPDATE_JOURNAL_KILL_PHASE").as_deref() {
+            Ok("backup_verified") => UpdatePhase::BackupVerified,
+            Ok("services_stopped") => UpdatePhase::ServicesStopped,
+            Ok("binary_committed") => UpdatePhase::BinaryCommitted,
+            Ok("candidate_started") => UpdatePhase::CandidateStarted,
+            Ok("candidate_healthy") => UpdatePhase::CandidateHealthy,
+            _ => panic!("unknown child journal phase"),
+        };
+        let path = PathBuf::from(path);
+        let mut value = journal(path.parent().unwrap().join("rollback").as_path());
+        value.phase = phase;
+        write_journal_owned_by(&path, &value, nix::unistd::Uid::effective().as_raw()).unwrap();
+        loop {
+            std::thread::sleep(Duration::from_secs(60));
+        }
+    }
+
+    #[test]
+    fn killed_journal_writer_child_leaves_a_durable_candidate_healthy_phase() {
+        use std::{
+            os::unix::fs::PermissionsExt,
+            process::{Command, Stdio},
+            time::Instant,
+        };
+
+        let temp =
+            std::env::temp_dir().join(format!("wg-basic-update-kill-{}", uuid::Uuid::new_v4()));
+        let rollback = temp.join("rollback");
+        let transaction = rollback.join("test-transaction_1");
+        fs::create_dir_all(&transaction).unwrap();
+        fs::set_permissions(&temp, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::set_permissions(&rollback, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::set_permissions(&transaction, fs::Permissions::from_mode(0o700)).unwrap();
+        let journal_path = temp.join("update-journal.json");
+
+        for (phase_name, expected) in [
+            ("backup_verified", UpdatePhase::BackupVerified),
+            ("services_stopped", UpdatePhase::ServicesStopped),
+            ("binary_committed", UpdatePhase::BinaryCommitted),
+            ("candidate_started", UpdatePhase::CandidateStarted),
+            ("candidate_healthy", UpdatePhase::CandidateHealthy),
+        ] {
+            let mut child = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "update::tests::journal_writer_child_waits_for_kill",
+                    "--nocapture",
+                ])
+                .env("WGB_UPDATE_JOURNAL_KILL_FIXTURE", &journal_path)
+                .env("WGB_UPDATE_JOURNAL_KILL_PHASE", phase_name)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let observed = loop {
+                match read_journal_owned_by(&journal_path, nix::unistd::Uid::effective().as_raw()) {
+                    Ok(value) if value.phase == expected => break value,
+                    Ok(_) | Err(_) if Instant::now() < deadline => {
+                        std::thread::sleep(Duration::from_millis(10))
+                    }
+                    Ok(value) => panic!("child published unexpected phase: {:?}", value.phase),
+                    Err(error) => panic!("child did not durably publish its phase: {error}"),
+                }
+            };
+            child.kill().unwrap();
+            let _ = child.wait();
+            assert_eq!(
+                read_journal_owned_by(&journal_path, nix::unistd::Uid::effective().as_raw())
+                    .unwrap(),
+                observed
+            );
+        }
+        fs::remove_dir_all(temp).unwrap();
     }
 
     #[test]
