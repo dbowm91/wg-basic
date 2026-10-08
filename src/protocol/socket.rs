@@ -234,10 +234,11 @@ mod tests {
     use super::*;
     use crate::protocol::CapabilityState;
     use crate::protocol::{
-        request, ProtocolError, RequestOperation, ResponseBody, ResponseEnvelope, PROTOCOL_VERSION,
+        request, ProtocolError, RequestOperation, ResponseBody, ResponseEnvelope, MAX_FRAME_SIZE,
+        PROTOCOL_VERSION,
     };
     use std::{
-        io::Read,
+        io::{Read, Write},
         os::unix::fs::PermissionsExt,
         sync::{atomic::AtomicBool, Arc},
         time::Instant,
@@ -523,6 +524,33 @@ mod tests {
         assert!(!String::from_utf8_lossy(&response).contains("never echo me"));
         let pong = request(&path, RequestOperation::Ping, 5).unwrap();
         assert!(matches!(pong, ResponseBody::Pong { .. }));
+        shutdown.store(true, Ordering::Release);
+        handle.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn malformed_peer_burst_does_not_prevent_a_later_authorized_request() {
+        let fixture = Fixture::new();
+        let path = fixture.socket();
+        let (shutdown, handle) =
+            start_server(path.clone(), AuthorizationPolicy::current_user_and_root());
+
+        for index in 0..128_u32 {
+            let mut stream = UnixStream::connect(&path).unwrap();
+            match index % 3 {
+                0 => stream.write_all(&0_u32.to_be_bytes()).unwrap(),
+                1 => stream
+                    .write_all(&((MAX_FRAME_SIZE as u32) + 1).to_be_bytes())
+                    .unwrap(),
+                _ => write_frame(&mut stream, b"{ malformed json").unwrap(),
+            }
+            let mut response = Vec::new();
+            let _ = stream.read_to_end(&mut response);
+            assert!(response.is_empty(), "malformed input must not be reflected");
+        }
+
+        let response = request(&path, RequestOperation::Ping, 801).unwrap();
+        assert!(matches!(response, ResponseBody::Pong { .. }));
         shutdown.store(true, Ordering::Release);
         handle.join().unwrap().unwrap();
     }

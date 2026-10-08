@@ -320,6 +320,63 @@ fn a_stale_expected_generation_is_refused_and_commits_nothing() {
     );
 }
 
+#[test]
+fn concurrent_same_generation_creates_have_exactly_one_winner() {
+    let Setup {
+        store, principal, ..
+    } = setup(|_| {});
+    let reader = service(&store);
+    let server = reader.server().unwrap().unwrap();
+    let interface_id = server.interface_id;
+    let generation = store.current_generation().unwrap();
+    let address = IpAddr::V4(Ipv4Addr::new(10, 8, 0, 77));
+
+    let outcomes = std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for label in ["race-a", "race-b"] {
+            let store_ref = &store;
+            handles.push(scope.spawn(move || {
+                service(store_ref).create_client(ClientCreateCommand {
+                    principal_id: principal,
+                    expected_generation: generation,
+                    interface_id,
+                    label: ClientLabel::new(label).unwrap(),
+                    requested_address: Some(address),
+                    route_policy: None,
+                    dns_servers: Vec::new(),
+                    client_keepalive_seconds: None,
+                })
+            }));
+        }
+        handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+
+    assert_eq!(outcomes.iter().filter(|result| result.is_ok()).count(), 1);
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|result| matches!(
+                result,
+                Err(wg_basic::product::ProductError::State(
+                    StateError::StaleGeneration { .. }
+                ))
+            ))
+            .count(),
+        1,
+        "a same-generation loser must report StaleGeneration: {outcomes:?}"
+    );
+    let clients = service(&store).list_clients().unwrap();
+    assert_eq!(clients.len(), 1);
+    assert_eq!(clients[0].assigned_address.addr(), address);
+    assert_eq!(
+        store.current_generation().unwrap().to_storage(),
+        generation.to_storage() + 1
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Client creation
 // ---------------------------------------------------------------------------
