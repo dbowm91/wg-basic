@@ -426,13 +426,14 @@ fn real_v4_state_migrates_refuses_old_binary_and_rolls_back_with_v4_artifact() {
     );
     assert!(backup.exists());
 
+    // Starting candidate serve against the v4 file is the real migration path.
+    let (candidate_serve, candidate_addr) = start_serve(candidate, &state, &socket);
     let migrated = status_text(candidate, &state);
     assert!(migrated.contains("schema version:     5"), "{migrated}");
     assert!(migrated.contains(&installation_line));
     assert!(migrated.contains(&generation_line));
     assert!(state.with_file_name("state.db.pre-migration-v4").exists());
 
-    let (candidate_serve, candidate_addr) = start_serve(candidate, &state, &socket);
     let candidate_liveness = http(candidate_addr, "GET", "/healthz", &[], "");
     assert_eq!(candidate_liveness.status, 200);
     assert_eq!(
