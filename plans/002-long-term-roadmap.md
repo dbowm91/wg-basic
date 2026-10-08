@@ -265,7 +265,7 @@ Phase 7 deliberately stops before peer/client CRUD, QR/config export, and the fu
 
 ## 10. Phase 8 — Management API, UI, and enrollment
 
-Status: planned; M001 is blocked on post-Phase-7 C001 strict closure.
+Status: unblocked. Phase 8 research and planning are complete under ADR-004, and post-Phase-7 C001 is strictly closed, so M001 may begin on a green current-head baseline.
 
 Owned by:
 
@@ -302,7 +302,7 @@ Milestones:
 - M004 live telemetry + audit/status surface;
 - M005 embedded product UI + Phase 8 qualification.
 
-Phase 8 is fully researched/planned. Production implementation begins only after post-Phase-7 C001 restores a green deterministic current-head baseline.
+Phase 8 is fully researched/planned, and post-Phase-7 C001 restored the green deterministic current-head baseline it required. Production implementation proceeds milestone by milestone; M002–M005 stay ordered behind M001's closed contracts.
 
 This is the first user-facing product-capability closure boundary.
 
@@ -442,8 +442,8 @@ Before the first public production claim:
 | 5 firewall/forwarding/E2E | closed | network-control M005 | — |
 | 6 durable state/restart reconciliation | closed | `plans/subsystems/durable-state-restart-reconciliation-roadmap.md` | — |
 | 7 service/security substrate | closed | `plans/subsystems/management-service-security-roadmap.md` | — |
-| 8 management API/UI/enrollment | planned / M001 blocked | `plans/subsystems/product-management-enrollment-ui-roadmap.md` | post-Phase-7 C001 |
-| 9 operational hardening | proposed | future operations roadmap | Phase 8 |
+| 8 management API/UI/enrollment | active | `plans/subsystems/product-management-enrollment-ui-roadmap.md` | — |
+| 9 operational hardening | proposed | future operations roadmap | Phase 8 closed |
 | 10 distribution/update | proposed | future distribution roadmap | Phase 9 |
 | 11 IPv6/route-policy qualification | deferred | future roadmap | stable product baseline |
 | 12 advanced capabilities | deferred | separate future research | explicit product decision |
