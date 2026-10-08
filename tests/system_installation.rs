@@ -198,7 +198,7 @@ fn systemd_property(unit: &str, property: &str) -> String {
 
 fn service_journal(unit: &str) -> String {
     let output = Command::new("/usr/bin/journalctl")
-        .args(["-u", unit, "-n", "60", "--no-pager", "--output=cat"])
+        .args(["-u", unit, "-n", "240", "--no-pager", "--output=cat"])
         .output()
         .unwrap();
     String::from_utf8_lossy(&output.stdout).into_owned()
