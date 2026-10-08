@@ -108,6 +108,12 @@ fn wide_limiter() -> Arc<LoginLimiter> {
 }
 
 /// A limiter that is already empty.
+///
+/// Capacity 1 with a one-per-second refill on both the global and the peer
+/// bucket, so a caller can establish exhaustion with two `check` calls at one
+/// controlled instant and know the bucket is empty regardless of how long the
+/// machine takes to answer. Callers that want it *observably* exhausted drive
+/// those two calls themselves; constructing it is not exhaustion.
 fn spent_limiter() -> Arc<LoginLimiter> {
     Arc::new(LoginLimiter::new(
         Bucket::per_second(1, 1),
@@ -416,13 +422,38 @@ async fn limiter_before_hashing() {
 async fn a_throttled_login_does_not_answer_at_all() {
     // The refusal is an error, not a 503 masquerading as one: no `Set-Cookie`,
     // no body, nothing a client could mistake for a successful authentication.
+    //
+    // The exhaustion premise is *established*, not raced into existence. This
+    // test used to drain the bucket with a real successful login and then expect
+    // the next attempt to be refused -- which holds only while one Argon2id
+    // verification stays inside the one-second refill interval. On a loaded
+    // runner it does not, the token legitimately refills during the first
+    // request's own hashing, and the test fails against a limiter that is
+    // behaving exactly as specified.
+    //
+    // So the bucket is drained here at one controlled instant instead, with no
+    // Argon2 work anywhere near the request under test, and the gap between the
+    // drain and the call is microseconds of struct construction rather than a
+    // whole verification. The two properties stay separate and both are still
+    // proven here: the drain asserts the *token bucket* property at a single
+    // instant (capacity 1 admits exactly one attempt and refuses the next), and
+    // the login asserts the *rendering* property (a `Throttled` refusal is an
+    // error path with a bounded 429 and a `Retry-After`, never an answer).
     let scratch = Scratch::new();
     let client = worker_with_admin(&scratch).await;
-    let limiter = LoginLimiter::new(Bucket::per_second(1, 1), Bucket::per_second(1, 1), 16);
+    let limiter = spent_limiter();
+
+    let instant = std::time::Instant::now();
+    assert!(limiter.check(loopback(), instant).is_allowed(), "drain it");
+    assert!(
+        !limiter.check(loopback(), instant).is_allowed(),
+        "a capacity-1 bucket must refuse the attempt after the one it admitted"
+    );
+
     let api = AuthenticatedApi::new(
         client,
         Arc::new(OriginPolicy::loopback_only(loopback())),
-        Arc::new(limiter),
+        limiter,
     );
     let body = login_body();
     let request = head(
@@ -435,12 +466,19 @@ async fn a_throttled_login_does_not_answer_at_all() {
         ],
     );
 
-    assert!(api.login(&request, &body, loopback()).await.is_ok());
-    let second = api
+    let refused = api
         .login(&request, &body, loopback())
         .await
-        .expect_err("the second attempt in the same instant is throttled");
-    assert!(matches!(second, RequestRejection::Throttled { .. }));
+        .expect_err("a login against an exhausted bucket is refused, not answered");
+    assert!(matches!(refused, RequestRejection::Throttled { .. }));
+
+    // The rendering half: bounded, retryable, and carrying nothing a client
+    // could read as a successful authentication.
+    assert_eq!(refused.status().as_u16(), 429);
+    assert!(refused
+        .retry_after()
+        .is_some_and(|seconds| (1..=60).contains(&seconds)));
+    assert_eq!(refused.body(), "too many attempts");
 }
 
 // ---------------------------------------------------------------------------
