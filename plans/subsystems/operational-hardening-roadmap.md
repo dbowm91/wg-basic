@@ -1,6 +1,6 @@
 # Operational Hardening Roadmap
 
-Status: active; M001 in progress
+Status: active; M001 closed, M002 in progress
 
 Canonical references:
 
@@ -165,7 +165,7 @@ All implementation dependencies are hard.
 
 ## 5. M001 — Authoritative doctor and preflight
 
-Status: ready.
+Status: closed.
 
 Implementation plan:
 
@@ -195,7 +195,7 @@ No repair mode.
 
 ## 6. M002 — Operational state lifecycle and recovery UX
 
-Status: blocked on M001.
+Status: active; M001 is strictly closed.
 
 Implementation plan:
 
@@ -523,8 +523,8 @@ Never start the old binary against a migrated newer DB and call its fail-closed 
 
 | Milestone | Status | Implementation plan | Hard blocker |
 |---|---|---|---|
-| M001 authoritative doctor/preflight | ready | `plans/implementation/operational-hardening/001-authoritative-doctor-and-preflight.md` | — |
-| M002 maintenance/disable/purge/recovery | blocked | `plans/implementation/operational-hardening/002-maintenance-disable-purge-and-recovery.md` | M001 |
+| M001 authoritative doctor/preflight | closed | `plans/implementation/operational-hardening/001-authoritative-doctor-and-preflight.md` | closure: `plans/closure/operational-hardening/001-status.md` |
+| M002 maintenance/disable/purge/recovery | active | `plans/implementation/operational-hardening/002-maintenance-disable-purge-and-recovery.md` | M001 strictly closed |
 | M003 logging/housekeeping/runtime hardening | blocked | `plans/implementation/operational-hardening/003-logging-housekeeping-and-runtime-hardening.md` | M002 |
 | M004 abuse/security/dependency qualification | blocked | `plans/implementation/operational-hardening/004-abuse-security-and-dependency-qualification.md` | M003 |
 | M005 upgrade/rollback rehearsal/closure | blocked | `plans/implementation/operational-hardening/005-upgrade-rollback-rehearsal-and-phase9-closure.md` | M004 |
