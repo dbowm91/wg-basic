@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "owner": "dbowm91",
+  "repository": "wg-basic",
+  "title_prefix": "wg-basic ",
+  "body": "Draft binary release staged by Eggpack. Maintainer review and publication are required.",
+  "prerelease": false,
+  "token_env": "GITHUB_TOKEN",
+  "request_timeout_secs": 30,
+  "max_metadata_bytes": 1000000,
+  "max_list_pages": 16
+}

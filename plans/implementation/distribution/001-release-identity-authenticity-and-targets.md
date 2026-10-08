@@ -1,6 +1,21 @@
 # Distribution M001 — Release Identity, Authenticity, and Target Qualification
 
-Status: ready
+Status: active
+
+Implementation note (2026-10-08): release identity/target policy, a
+verify-before-parse Minisign seam, the Eggpack consumer adapter, and the
+Eggpack producer inputs are implemented. Both targets build at the glibc 2.17
+floor; x86_64 has native smoke evidence and aarch64 has cross-build/ELF evidence.
+M001 remains open for aarch64 native execution and hosted CI evidence before
+strict closure.
+
+Dependency graph qualification update (2026-10-08): an external fixture outside
+both workspaces resolved and compiled under Rust 1.89 with registry-only pins:
+`eggpack-manifest 0.1.0`, `eggup-core 0.1.3`, `eggup-acquisition 0.1.3`,
+`eggup-curl 0.1.2`, `eggup-eggpack 0.1.3`, `eggup-service 0.1.2`, and
+`minisign-verify 0.3.0`. All are MIT licensed. The fixture is at
+`/tmp/wg-basic-phase10-graph` for this implementation session; it is not a
+repository dependency source.
 
 Repository implementation baseline: `f5a32c0a6123467321b124182dfeb63e2e62118a`
 

@@ -7,7 +7,11 @@ const DEFAULT_SOCKET: &str = "/run/wg-basic/netd.sock";
 const DEFAULT_ADMIN_USERNAME: &str = "admin";
 
 #[derive(Parser)]
-#[command(name = "wg-basic", version, about = "Linux-native WireGuard appliance")]
+#[command(
+    name = "wg-basic",
+    version = wg_basic::release::PACKAGE_VERSION,
+    about = "Linux-native WireGuard appliance"
+)]
 struct Cli {
     /// Format for long-running operational events written to stderr.
     #[arg(long, global = true, value_enum, default_value_t = CliLogFormat::Human)]

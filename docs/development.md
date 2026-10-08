@@ -293,3 +293,24 @@ code:
 * **`Shutdown` is an ordinary queue entry.** After a saturated burst its
   confirmation can miss the five-second reply deadline. The thread is joined
   either way, so the database is always released; only the confirmation is late.
+
+## Release candidate qualification
+
+The Phase 10 foundation workflow validates the Eggpack producer inputs and
+builds each Linux GNU candidate with cargo-zigbuild 0.23.3 and Zig 0.14.1 at a
+glibc 2.17 floor. Each artifact runs `scripts/release-smoke.py` on a native
+runner. The smoke checks stable `--version`, `--help`, read-only `doctor --json`,
+ELF architecture, dynamic dependencies, and required GLIBC symbol versions.
+Local x86_64 qualification uses the same target command after installing those
+pinned tools:
+
+```sh
+cargo zigbuild --locked --release --bin wg-basic \
+  --target x86_64-unknown-linux-gnu.2.17
+python3 scripts/release-smoke.py \
+  target/x86_64-unknown-linux-gnu/release/wg-basic
+```
+
+The production signing key is not present in the repository. The committed
+Minisign key under `tests/fixtures/release-auth/` is test-only material and
+cannot authenticate a production release.

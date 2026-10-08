@@ -16,6 +16,7 @@ pub mod product;
 pub mod protocol;
 #[cfg(target_os = "linux")]
 pub mod reconcile;
+pub mod release;
 pub mod state;
 #[cfg(target_os = "linux")]
 pub mod wireguard;

@@ -1,0 +1,29 @@
+schema_version = 1
+
+[[targets]]
+target = "aarch64-unknown-linux-gnu"
+strategy = "cargo_zigbuild"
+host_os = "linux"
+host_arch = "aarch64"
+floor = { kind = "glibc", major = 2, minor = 17 }
+qualification = "native"
+support = "required"
+
+[targets.toolchain]
+rust = "stable"
+cargo_zigbuild = "0.23.3"
+zig = "0.14.1"
+
+[[targets]]
+target = "x86_64-unknown-linux-gnu"
+strategy = "cargo_zigbuild"
+host_os = "linux"
+host_arch = "x86_64"
+floor = { kind = "glibc", major = 2, minor = 17 }
+qualification = "native"
+support = "required"
+
+[targets.toolchain]
+rust = "stable"
+cargo_zigbuild = "0.23.3"
+zig = "0.14.1"

@@ -1,6 +1,6 @@
 # Distribution, Installation, Update, and Rollback Roadmap
 
-Status: planned; M001 ready
+Status: active; M001 implementation underway
 
 Canonical references:
 
@@ -124,7 +124,7 @@ All implementation dependencies are hard.
 
 ## 5. M001 — Signed release identity, target contract, and verifier
 
-Status: ready.
+Status: active (implementation in progress; strict closure evidence outstanding).
 
 Implementation plan:
 
@@ -573,7 +573,7 @@ A production release requires explicit maintainer authorization after:
 
 | Milestone | Status | Implementation plan | Hard blocker |
 |---|---|---|---|
-| M001 release identity/authenticity/targets | ready | `plans/implementation/distribution/001-release-identity-authenticity-and-targets.md` | — |
+| M001 release identity/authenticity/targets | active | `plans/implementation/distribution/001-release-identity-authenticity-and-targets.md` | Native target and glibc qualification remain |
 | M002 system install/service layout | blocked | `plans/implementation/distribution/002-system-install-and-service-layout.md` | M001 |
 | M003 Eggpack producer pipeline/signed draft | blocked | `plans/implementation/distribution/003-eggpack-release-pipeline-and-signed-draft.md` | M002 |
 | M004 transactional self-update/rollback | blocked | `plans/implementation/distribution/004-transactional-self-update-and-rollback.md` | M003 |
