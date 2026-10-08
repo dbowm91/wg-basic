@@ -1,6 +1,6 @@
 # Operational Hardening Roadmap
 
-Status: active; M001–M003 closed, M004 active, M005 blocked
+Status: active; M001–M004 closed, M005 active
 
 Canonical references:
 
@@ -245,7 +245,7 @@ Expected outcomes:
 
 ## 8. M004 — Abuse and security qualification
 
-Status: active; M003 is strictly closed.
+Status: closed; strict closure recorded at `plans/closure/operational-hardening/004-status.md`.
 
 Implementation plan:
 
@@ -271,7 +271,7 @@ Expected outcomes:
 
 ## 9. M005 — Upgrade/rollback rehearsal and Phase 9 closure
 
-Status: blocked on M004.
+Status: active; M004 is strictly closed.
 
 Implementation plan:
 
@@ -526,5 +526,5 @@ Never start the old binary against a migrated newer DB and call its fail-closed 
 | M001 authoritative doctor/preflight | closed | `plans/implementation/operational-hardening/001-authoritative-doctor-and-preflight.md` | closure: `plans/closure/operational-hardening/001-status.md` |
 | M002 maintenance/disable/purge/recovery | closed | `plans/implementation/operational-hardening/002-maintenance-disable-purge-and-recovery.md` | closure: `plans/closure/operational-hardening/002-status.md` |
 | M003 logging/housekeeping/runtime hardening | closed | `plans/implementation/operational-hardening/003-logging-housekeeping-and-runtime-hardening.md` | closure: `plans/closure/operational-hardening/003-status.md` |
-| M004 abuse/security/dependency qualification | active | `plans/implementation/operational-hardening/004-abuse-security-and-dependency-qualification.md` | M003 strictly closed |
-| M005 upgrade/rollback rehearsal/closure | blocked | `plans/implementation/operational-hardening/005-upgrade-rollback-rehearsal-and-phase9-closure.md` | M004 |
+| M004 abuse/security/dependency qualification | closed | `plans/implementation/operational-hardening/004-abuse-security-and-dependency-qualification.md` | closure: `plans/closure/operational-hardening/004-status.md` |
+| M005 upgrade/rollback rehearsal/closure | active | `plans/implementation/operational-hardening/005-upgrade-rollback-rehearsal-and-phase9-closure.md` | M004 strictly closed |

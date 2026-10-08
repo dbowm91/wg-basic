@@ -1,6 +1,6 @@
 # Operational Hardening M004 — Abuse, Security, and Dependency Qualification
 
-Status: active
+Status: closed
 
 Source roadmap:
 
