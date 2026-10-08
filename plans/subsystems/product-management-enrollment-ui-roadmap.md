@@ -1,6 +1,6 @@
 # Product Management, Enrollment, and UI Roadmap
 
-Status: active; M001–M004 closed, M005 active
+Status: closed; M001–M005 closed. Phase 8 is complete.
 
 Canonical references:
 
@@ -17,7 +17,7 @@ Predecessor state:
 
 - Phase 6 closed;
 - Phase 7 closed;
-- post-Phase-7 C001 ready to restore green deterministic HEAD.
+- post-Phase-7 C001 closed at `df1f9e7`; deterministic HEAD restored.
 
 ## 1. Purpose
 
@@ -263,7 +263,7 @@ Expected outcomes:
 
 ## 9. M005 — Embedded product UI and Phase 8 qualification
 
-Status: active; M004 closed.
+Status: closed. Evidence: `plans/closure/product-management/005-status.md`.
 
 Implementation plan:
 
@@ -586,4 +586,4 @@ Secret routes additionally assert:
 | M002 authenticated CRUD API | closed | `plans/implementation/product-management/002-authenticated-product-crud-api.md` | `plans/closure/product-management/002-status.md` |
 | M003 export/QR/enrollment | closed | `plans/implementation/product-management/003-export-qr-and-one-time-enrollment.md` | `plans/closure/product-management/003-status.md` |
 | M004 telemetry/audit surface | closed | `plans/implementation/product-management/004-live-telemetry-and-audit-surface.md` | `plans/closure/product-management/004-status.md` |
-| M005 embedded product UI/closure | active | `plans/implementation/product-management/005-embedded-product-ui-and-phase8-qualification.md` | M004 closed |
+| M005 embedded product UI/closure | closed | `plans/implementation/product-management/005-embedded-product-ui-and-phase8-qualification.md` | `plans/closure/product-management/005-status.md` |

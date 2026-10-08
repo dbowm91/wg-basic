@@ -1,10 +1,9 @@
 # Management HTTP boundary and the bounded worker
 
 This document describes **current implemented behaviour**. Phase 7's service
-and security substrate is closed, and Phase 8 M001–M004 now expose the
+and security substrate is closed, and Phase 8 M001–M005 expose the
 generation-safe product API, explicit config/QR export, one-time enrollment,
-fresh client telemetry, and bounded audit queries. The embedded product UI is
-the remaining Phase 8 milestone.
+fresh client telemetry, bounded audit queries, and the embedded product UI.
 
 Architecture decisions behind this boundary are recorded in
 [ADR-003](../plans/adr/003-management-http-auth-and-worker-boundary.md).
@@ -63,9 +62,7 @@ enforcement category. Ordinary server/client projections contain public
 configuration metadata and public keys only; private keys are not representable
 in those projection types. See [product management](product-management.md).
 
-## What Phase 8 still owns
-
-The following Phase 8 work is still absent:
+## What remains outside Phase 8
 
 * **No direct TLS.** Phase 7 terminates none; the HTTPS story is a
   TLS-terminating reverse proxy in front of a loopback listener.
