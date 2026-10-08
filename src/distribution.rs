@@ -154,7 +154,7 @@ impl InstallMetadata {
         if self
             .last_doctor_disposition
             .as_deref()
-            .is_some_and(|value| value != "pass")
+            .is_some_and(|value| !matches!(value, "pass" | "warn"))
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -710,7 +710,9 @@ pub fn install_local(candidate: &Path) -> Result<(), String> {
         symlink_metadata_exists(Path::new(SERVE_UNIT_PATH))?,
     )?;
     run_install_health_smoke()?;
-    metadata.last_doctor_disposition = Some("pass".into());
+    // The pre-start doctor runs before the first reconciliation has written
+    // convergence evidence, so a fresh installation correctly records warn.
+    metadata.last_doctor_disposition = Some("warn".into());
     write_metadata(system_dir, &metadata)
         .map_err(|_| "could not durably write the installation receipt")?;
     println!("wg-basic {} installed for {target}", version);
@@ -769,11 +771,18 @@ fn check_health_endpoint() -> Result<(), String> {
     use std::{
         io::{Read, Write},
         net::{SocketAddr, TcpStream},
-        time::Duration,
+        thread,
+        time::{Duration, Instant},
     };
     let address = SocketAddr::from(([127, 0, 0, 1], 8000));
-    let mut stream = TcpStream::connect_timeout(&address, Duration::from_secs(3))
-        .map_err(|_| "post-install management health endpoint is unavailable")?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut stream = loop {
+        match TcpStream::connect_timeout(&address, Duration::from_millis(500)) {
+            Ok(stream) => break stream,
+            Err(_) if Instant::now() < deadline => thread::sleep(Duration::from_millis(250)),
+            Err(_) => return Err("post-install management health endpoint is unavailable".into()),
+        }
+    };
     stream
         .set_read_timeout(Some(Duration::from_secs(3)))
         .map_err(|_| "could not bound management health read")?;
