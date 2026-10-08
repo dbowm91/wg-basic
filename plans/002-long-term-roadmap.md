@@ -11,6 +11,7 @@ Authoritative companions:
 - `plans/adr/002-durable-state-generations-and-ownership.md`
 - `plans/adr/003-management-http-auth-and-worker-boundary.md`
 - `plans/adr/004-product-management-enrollment-and-api-semantics.md`
+- `plans/adr/005-operational-hardening-maintenance-and-recovery.md`
 
 This roadmap orders wg-basic from a fresh repository to a small, production-credible Linux-native WireGuard appliance. Milestone-specific execution belongs in subsystem roadmaps and `plans/implementation/`.
 
@@ -308,19 +309,45 @@ This is the first user-facing product-capability closure boundary.
 
 ## 11. Phase 9 — Operational hardening
 
-Status: unblocked for research/planning; Phase 8 is strictly closed. No Phase 9 implementation plan is eligible until the operational-hardening subsystem roadmap is written and registered.
+Status: planned; M001 ready.
+
+Owned by:
+
+- `plans/subsystems/operational-hardening-roadmap.md`.
+
+Architecture decision:
+
+- `plans/adr/005-operational-hardening-maintenance-and-recovery.md`.
+
+Objective:
+
+Harden the complete IPv4 appliance for unattended Linux operation before distribution/update automation.
 
 Expected outcomes:
 
-- `doctor` with actionable diagnostics;
-- backup/restore operational drills and recovery UX over the Phase 6 substrate;
-- explicit network disable vs state purge;
-- service restart/crash recovery;
-- log retention/configuration;
-- resource-limit validation;
-- rate limiting and authentication abuse tests;
-- security review of privileged IPC and secret handling;
-- upgrade migration rehearsal.
+- authoritative read-only doctor/preflight with human + JSON output;
+- actual SQLite runtime/source identity and state/network drift diagnostics;
+- one management service per state DB through a crash-safe advisory lease;
+- durable whole-server network disable/re-enable;
+- explicit fail-closed state purge semantics;
+- backup verification and restore/recovery drills;
+- structured secret-safe stderr events with no in-binary log files;
+- bounded session/enrollment/audit housekeeping;
+- repeated crash/restart and resource-leak qualification;
+- documented systemd hardening/resource contract for Phase 10;
+- HTTP/UDS abuse and privileged-boundary security review;
+- pinned dependency-advisory checking;
+- real old-binary/new-schema migration and rollback rehearsal.
+
+Milestones:
+
+- M001 authoritative doctor and preflight;
+- M002 maintenance lease + network disable/purge + recovery UX;
+- M003 structured logging + housekeeping + crash/resource hardening;
+- M004 abuse/security/dependency qualification;
+- M005 upgrade/rollback rehearsal + Phase 9 closure.
+
+Phase 9 does not install systemd units or implement self-update; it produces the tested operational contracts Phase 10 will automate.
 
 ## 12. Phase 10 — Distribution, installation, update, and rollback
 
