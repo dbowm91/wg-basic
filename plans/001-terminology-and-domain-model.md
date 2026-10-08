@@ -600,7 +600,55 @@ It MUST NOT contain credentials, enrollment tokens, client configurations, raw r
 
 It is not an authoritative connected/disconnected state and MUST NOT be persisted as desired configuration.
 
-## 58. Status vocabulary for planning
+## 58. Doctor report
+
+A **doctor report** is a read-only, secret-safe diagnostic aggregation over wg-basic's state, runtime, network-control, and management configuration.
+
+Each check has a stable identifier, a disposition, bounded evidence, and actionable remediation.
+
+Doctor is not reconciliation and MUST NOT mutate merely because it detects drift.
+
+## 59. Service lease
+
+A **service lease** is the kernel-advisory process ownership primitive proving that one live management service owns one state database.
+
+The advisory lock is authoritative; any PID/text stored in the lease file is informational only.
+
+Process death releases the lease without trusting stale file contents.
+
+## 60. Operational network state
+
+**Operational network state** is the durable enabled/disabled state of the managed server as a whole.
+
+Disabled means the server/client configuration remains authoritative and recoverable while the managed interface/firewall projection is absent.
+
+It is distinct from an individual client's enabled state and from destructive state purge.
+
+## 61. State purge
+
+A **state purge** is the deliberate destruction of wg-basic's authoritative local state after proving the managed network is disabled, converged, and no owned network resources remain to reconcile.
+
+Purge is not uninstall.
+
+It never implies deletion of arbitrary operator-created backups.
+
+## 62. Operational event
+
+An **operational event** is a structured, secret-safe stderr record emitted by a long-running wg-basic role.
+
+It carries a stable event code and bounded context sufficient to diagnose lifecycle/reconciliation/security outcomes.
+
+Operational events are not the SQLite product audit trail and are not retained by wg-basic itself.
+
+## 63. Pre-update state snapshot
+
+A **pre-update state snapshot** is the explicit secret-bearing database backup owned by an update transaction before a candidate binary is allowed to migrate the live database.
+
+It is the rollback authority for returning to an older binary whose schema support may be lower than the candidate's.
+
+The automatic pre-migration snapshot remains separate defense-in-depth evidence.
+
+## 64. Status vocabulary for planning
 
 Planning uses:
 
