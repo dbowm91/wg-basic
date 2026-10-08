@@ -446,7 +446,6 @@ impl<'a> ProductService<'a> {
             return Err(ProductError::ServerNotConfigured);
         }
 
-        let allocation = allocation_context(&loaded.state, command.interface_id)?;
         let requested = match command.requested_address {
             Some(IpAddr::V4(v4)) => AddressRequest::Requested(v4),
             Some(IpAddr::V6(_)) => {
@@ -454,8 +453,6 @@ impl<'a> ProductService<'a> {
             }
             None => AddressRequest::Automatic,
         };
-        let address = allocation.allocate(requested)?;
-
         let client_id = ClientId::new();
         let peer_id = PeerId::new();
         let client_keypair = crate::domain::generate_keypair().map_err(ProductError::Key)?;
@@ -468,55 +465,81 @@ impl<'a> ProductService<'a> {
             .clone()
             .unwrap_or_else(|| loaded.state.client_routes.clone());
 
-        let committed = self.store.mutate_product(
-            command.expected_generation,
-            Some(command.principal_id),
-            |state, product| {
-                // The desired snapshot arrives by shared reference so the
-                // transaction owns the only mutable copy; the next state is
-                // built by editing a clone and returning it.
-                let mut next = state.clone();
-                let interface = next
-                    .interfaces
-                    .iter_mut()
-                    .find(|interface| interface.id == interface_id)
-                    .ok_or(StateError::Corrupt("interface vanished mid-transaction"))?;
+        let mut allocated_address = None;
+        let mut allocation_failure = None;
+        let committed = self
+            .store
+            .mutate_product(
+                command.expected_generation,
+                Some(command.principal_id),
+                |state, product| {
+                    // Address allocation shares the generation-checked transaction.
+                    // A stale writer must see StaleGeneration before it can observe
+                    // an address consumed by the winning writer.
+                    let allocation = match allocation_context(state, interface_id) {
+                        Ok(allocation) => allocation,
+                        Err(error) => return Err(error.into_state()),
+                    };
+                    let address = match allocation.allocate(requested) {
+                        Ok(address) => address,
+                        Err(error) => {
+                            allocation_failure = Some(error);
+                            return Err(ProductError::Allocation(error).into_state());
+                        }
+                    };
+                    allocated_address = Some(address);
+                    // The desired snapshot arrives by shared reference so the
+                    // transaction owns the only mutable copy; the next state is
+                    // built by editing a clone and returning it.
+                    let mut next = state.clone();
+                    let interface = next
+                        .interfaces
+                        .iter_mut()
+                        .find(|interface| interface.id == interface_id)
+                        .ok_or(StateError::Corrupt("interface vanished mid-transaction"))?;
 
-                if interface.peers.iter().any(|peer| peer.id == peer_id) {
-                    return Err(StateError::Corrupt("duplicate peer id"));
-                }
+                    if interface.peers.iter().any(|peer| peer.id == peer_id) {
+                        return Err(StateError::Corrupt("duplicate peer id"));
+                    }
 
-                interface.peers.push(DesiredPeer {
-                    id: peer_id,
-                    public_key: client_public.clone(),
-                    // Retained so the client can export its own configuration.
-                    // Never projected, never returned, never logged.
-                    private_key: Some(client_key.clone()),
-                    preshared_key: None,
-                    allowed_ips: vec![NetworkPrefix::new(host_v4(address))],
-                    // Server-side keepalive stays independent of the client's.
-                    persistent_keepalive_seconds: None,
-                    endpoint: None,
-                });
-                interface.clients.push(DesiredClient {
-                    id: client_id,
-                    peer_id,
-                    assigned_address: host_v4(address),
-                    route_policy: route_policy.clone(),
-                });
+                    interface.peers.push(DesiredPeer {
+                        id: peer_id,
+                        public_key: client_public.clone(),
+                        // Retained so the client can export its own configuration.
+                        // Never projected, never returned, never logged.
+                        private_key: Some(client_key.clone()),
+                        preshared_key: None,
+                        allowed_ips: vec![NetworkPrefix::new(host_v4(address))],
+                        // Server-side keepalive stays independent of the client's.
+                        persistent_keepalive_seconds: None,
+                        endpoint: None,
+                    });
+                    interface.clients.push(DesiredClient {
+                        id: client_id,
+                        peer_id,
+                        assigned_address: host_v4(address),
+                        route_policy: route_policy.clone(),
+                    });
 
-                let now = crate::state::now_seconds();
-                let mut record = ClientProductRecord::new(command.label.clone(), now);
-                record.dns_servers = command.dns_servers.clone();
-                record.settings.client_keepalive_seconds = command.client_keepalive_seconds;
-                product.clients.insert(client_id, record);
+                    let now = crate::state::now_seconds();
+                    let mut record = ClientProductRecord::new(command.label.clone(), now);
+                    record.dns_servers = command.dns_servers.clone();
+                    record.settings.client_keepalive_seconds = command.client_keepalive_seconds;
+                    product.clients.insert(client_id, record);
 
-                Ok((
-                    next,
-                    ProductAudit::client(AuditAction::ClientCreate, client_id),
-                ))
-            },
-        )?;
+                    Ok((
+                        next,
+                        ProductAudit::client(AuditAction::ClientCreate, client_id),
+                    ))
+                },
+            )
+            .map_err(|error| match allocation_failure {
+                Some(allocation_error) => ProductError::Allocation(allocation_error),
+                None => ProductError::State(error),
+            })?;
+        let address = allocated_address.ok_or(ProductError::State(StateError::Corrupt(
+            "client address allocation did not complete",
+        )))?;
 
         let client = committed
             .product

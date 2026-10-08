@@ -178,6 +178,33 @@ What is **not** claimed:
 
 Step 4 retains the previous database as `<state>.pre-restore`. If the restore turns out to be wrong, that file is still there.
 
+For a planned update or disaster-recovery exercise, retain an explicit backup
+outside the live state directory and verify it before stopping services:
+
+```sh
+wg-basic state backup /secure/wg-basic/pre-update-v4.db \
+  --state /var/lib/wg-basic/state.db
+wg-basic state verify /secure/wg-basic/pre-update-v4.db
+systemctl stop wg-basic-serve wg-basic-netd
+wg-basic state restore /secure/wg-basic/pre-update-v4.db \
+  --state /var/lib/wg-basic/state.db
+wg-basic doctor --state /var/lib/wg-basic/state.db \
+  --socket /run/wg-basic/netd.sock --json
+systemctl start wg-basic-netd wg-basic-serve
+wg-basic doctor --state /var/lib/wg-basic/state.db \
+  --socket /run/wg-basic/netd.sock --json
+```
+
+Run authenticated product and real client traffic checks after startup. The
+Phase 9 rehearsal executes these CLI backup/verify/restore operations with an
+immutable Phase 8 v4 database, then checks the restored v4 state with the
+read-only doctor before old service startup. The Phase 8 binary predates the
+doctor command; the current diagnostic reads v4 without migration and projects
+the v4 default network state as enabled. Once candidate startup migrates the
+database, candidate health, doctor, product, and client traffic are all checked
+again. See the [operations runbook](operations-runbook.md) for the complete
+failure-after-migration ordering.
+
 ## See also
 
 - [architecture/state-store.md](../architecture/state-store.md) — storage, schema, and the generation contract

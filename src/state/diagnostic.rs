@@ -80,7 +80,7 @@ pub fn inspect_readonly(path: &Path) -> Result<StateDiagnostic, StateError> {
     let metadata = sql::read_installation(&connection)?;
     let desired = desired::load_desired(&connection)?;
     validate_desired_state(&desired.state)?;
-    let product = product::read_product(&connection)?;
+    let product = product::read_product_at_schema(&connection, schema_version)?;
     let convergence = connection
         .query_row(
             "SELECT last_attempted_generation, last_converged_generation,
