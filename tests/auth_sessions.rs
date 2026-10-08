@@ -10,6 +10,7 @@
 //! behind the worker and deliberately adds no route; the HTTP surface is
 //! qualified for exactly one route until M003.
 
+use std::sync::Arc;
 use std::{
     fs,
     os::unix::fs::PermissionsExt,
@@ -18,12 +19,12 @@ use std::{
 };
 use wg_basic::{
     domain::{
-        check_password_policy, CsrfToken, PasswordVerifier, SessionToken, SessionTokenDigest,
-        ARGON2ID_PHC_PREFIX, ARGON2_ITERATIONS, ARGON2_MEMORY_KIB, ARGON2_PARALLELISM,
-        MIN_PASSWORD_BYTES,
+        check_password_policy, CsrfToken, PasswordVerifier, SessionId, SessionToken,
+        SessionTokenDigest, ARGON2ID_PHC_PREFIX, ARGON2_ITERATIONS, ARGON2_MEMORY_KIB,
+        ARGON2_PARALLELISM, MIN_PASSWORD_BYTES,
     },
     management::{spawn, AuthService, WorkerClient, WorkerConfig, WorkerStartup},
-    state::StateStore,
+    state::{SessionRecord, StateStore},
 };
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -630,6 +631,52 @@ fn a_csrf_token_is_issued_per_session_and_is_not_the_bearer() {
     );
     assert_ne!(first.csrf_token().expose_once(), first.token.expose_once());
     let _ = CsrfToken::generate().unwrap();
+}
+
+#[test]
+fn concurrent_session_issuance_is_capped_without_advancing_desired_generation() {
+    let scratch = Scratch::new();
+    let store = Arc::new(StateStore::initialize(scratch.db()).unwrap());
+    let auth = AuthService::new(&store);
+    auth.set_password("admin", PASSWORD).unwrap();
+    let principal = store.principal_by_username("admin").unwrap().unwrap();
+    let generation = store.current_generation().unwrap();
+
+    let writers = (0..48)
+        .map(|_| {
+            let store = store.clone();
+            let principal_id = principal.id;
+            std::thread::spawn(move || {
+                let token = SessionToken::generate().unwrap();
+                store
+                    .insert_session(
+                        &SessionRecord {
+                            id: SessionId::new(),
+                            principal_id,
+                            csrf_token: CsrfToken::generate().unwrap(),
+                            created_at: 100,
+                            expires_at: 10_000,
+                        },
+                        &token.digest(),
+                    )
+                    .unwrap();
+            })
+        })
+        .collect::<Vec<_>>();
+    for writer in writers {
+        writer.join().unwrap();
+    }
+
+    assert_eq!(
+        store.session_count().unwrap(),
+        wg_basic::state::MAX_LIVE_SESSIONS_PER_PRINCIPAL,
+        "serialized issuance never exceeds the live-session cap"
+    );
+    assert_eq!(
+        store.current_generation().unwrap(),
+        generation,
+        "authentication housekeeping is not desired network state"
+    );
 }
 
 #[test]

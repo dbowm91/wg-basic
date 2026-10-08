@@ -31,7 +31,7 @@
 use super::config::{HttpError, ManagementHttpConfig};
 use super::origin::{OriginConfigError, OriginPolicy};
 use super::ratelimit::{Bucket, LoginLimiter};
-use super::readiness::{Dependency, Readiness};
+use super::readiness::Readiness;
 use crate::management::{spawn, StartupReconcile, WorkerConfig, WorkerError};
 use eggserve_server::Server;
 use std::{future::Future, net::SocketAddr, path::PathBuf, sync::Arc};
@@ -251,12 +251,15 @@ pub async fn run_publishing(
             // Reported before returning so an operator sees the *classified*
             // reason, not only the underlying error. The reason reaches the log
             // and nowhere else -- there is no listener to serve it from.
-            eprintln!(
-                "wg-basic serve {}",
-                Readiness::Fatal {
-                    dependency: Dependency::Database
-                }
-                .describe()
+            crate::operational::emit(
+                "serve.degraded",
+                crate::operational::Severity::Error,
+                "serve",
+                "startup",
+                "database_unavailable",
+                None,
+                None,
+                Some("state_open"),
             );
             return Err(ServeError::State(error));
         }
@@ -280,25 +283,58 @@ pub async fn run_publishing(
 
     // 4. Report readiness, including the exposure mode an operator must be able
     //    to see from the log of a headless install.
-    eprintln!("wg-basic serve listening on http://{bound}");
-    eprintln!("wg-basic serve {}", config.origin.describe());
-    eprintln!("wg-basic serve readiness: {}", startup_readiness.describe());
-    eprintln!(
-        "wg-basic serve startup reconciliation: {}",
-        reconcile.as_str()
+    crate::operational::emit(
+        "serve.started",
+        crate::operational::Severity::Info,
+        "serve",
+        "startup",
+        if startup_readiness.is_degraded() {
+            "degraded"
+        } else if off_host {
+            "off_host"
+        } else {
+            "ready"
+        },
+        Some(("http_listener", &bound.to_string())),
+        reconcile.generation().map(|g| g.to_storage() as u64),
+        Some("reconcile"),
+    );
+    crate::operational::emit(
+        "serve.reconcile",
+        if startup_readiness.is_degraded() {
+            crate::operational::Severity::Warn
+        } else {
+            crate::operational::Severity::Info
+        },
+        "serve",
+        "startup_reconcile",
+        reconcile.as_str(),
+        None,
+        reconcile.generation().map(|g| g.to_storage() as u64),
+        Some("startup"),
     );
     if startup_readiness.is_degraded() {
-        eprintln!(
-            "wg-basic serve: the network is not converged; the management surface is up \
-             so this can be diagnosed and fixed"
+        crate::operational::emit(
+            "serve.degraded",
+            crate::operational::Severity::Warn,
+            "serve",
+            "startup_reconcile",
+            "not_converged",
+            None,
+            reconcile.generation().map(|g| g.to_storage() as u64),
+            Some("reconcile"),
         );
     }
     if off_host {
-        eprintln!(
-            "wg-basic serve: warning: bound to {bound}, which is reachable off-host. \
-             Phase 7 terminates no TLS; put a TLS-terminating reverse proxy in front \
-             of this, or the session cookie and every credential cross the network \
-             in the clear."
+        crate::operational::emit(
+            "serve.degraded",
+            crate::operational::Severity::Warn,
+            "serve",
+            "listener_policy",
+            "off_host_without_tls_termination",
+            None,
+            None,
+            Some("http_bind"),
         );
     }
 
@@ -322,6 +358,21 @@ pub async fn run_publishing(
         control.shutdown();
     }
     completion.wait().await?;
+
+    crate::operational::emit(
+        "serve.stopping",
+        crate::operational::Severity::Info,
+        "serve",
+        "shutdown",
+        if server_finished_first {
+            "server_ended"
+        } else {
+            "graceful"
+        },
+        None,
+        report.reconcile.generation().map(|g| g.to_storage() as u64),
+        Some("http"),
+    );
 
     // 7. Stop the worker and release the store. Done last and unconditionally, so
     //    a database close always follows a successful bind.

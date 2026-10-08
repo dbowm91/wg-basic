@@ -84,7 +84,13 @@ fn doctor_json_does_not_change_database_or_host_network_state() {
         .arg("--json")
         .output()
         .unwrap();
-    assert!(output.stderr.is_empty(), "doctor emitted unexpected stderr");
+    let operational_line = std::str::from_utf8(&output.stderr)
+        .expect("UTF-8 event")
+        .trim();
+    assert!(
+        operational_line.contains("doctor.completed"),
+        "doctor should emit only its bounded completion event: {operational_line}"
+    );
     let report: DoctorReport = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(output.status.code(), Some(report.exit_code()));
     assert!(report.checks.iter().any(|check| {

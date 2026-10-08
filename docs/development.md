@@ -105,6 +105,13 @@ cargo run --locked -- serve --http-bind 0.0.0.0:8000 \
 Startup prints the effective exposure mode to the service log, which is how a
 headless operator confirms which origin the surface believes it has.
 
+Long-running roles accept the global `--log-format human|json` option (default
+`human`). Operational events go to stderr; JSON mode emits one JSON object per
+line, while command results remain on stdout. The binary does not write log
+files or rotate logs; use the service manager/journald for retention. Event
+fields use bounded categories and omit credentials, tokens, key material, HTTP
+bodies, and backend error strings.
+
 Run Linux IPC integration coverage with:
 
 ```sh
@@ -217,6 +224,13 @@ Argon2 latency, serve and netd RSS, idle CPU, shell size — and asserts only on
 bounds that are properties of the design. It asserts a *floor* on login latency,
 because a login that got faster than a millisecond would mean the Argon2id
 parameters had been weakened, which Phase 7 forbids outright.
+
+Phase 9 adds `operational_events` for stderr format/secrecy, `runtime_stability`
+for bounded HTTP and state-row growth, and repeated real-process SIGKILL/restart
+cycles in `service_lease` and `service_e2e`. The existing
+`service_resource_limits` suite remains the source of exact HTTP admission and
+deadline boundaries. See [service hardening](../architecture/service-hardening.md)
+for the Phase 10 systemd contract.
 
 ### The rootful service fixture
 

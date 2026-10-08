@@ -146,6 +146,61 @@ fn create(service: &ProductService<'_>, label: &str) -> wg_basic::product::Produ
     client
 }
 
+#[test]
+fn enrollment_links_are_capped_and_old_terminal_rows_are_pruned_with_audit_retained() {
+    let installation = setup(|_| {});
+    let service = installation.service();
+    let client = create(&service, "enrollment housekeeping");
+    let generation = installation.store.current_generation().unwrap();
+
+    let revoked = service
+        .create_enrollment_link(installation.principal, client.client_id, 600)
+        .unwrap();
+    assert!(service
+        .revoke_enrollment_link(installation.principal, revoked.capability_id)
+        .unwrap());
+    let old_id = revoked.capability_id.to_string();
+    rusqlite::Connection::open(installation.store.path())
+        .unwrap()
+        .execute(
+            "UPDATE enrollment_capabilities SET created_at = 100, revoked_at = 100 WHERE capability_id = ?1",
+            [&old_id],
+        )
+        .unwrap();
+
+    let mut links = Vec::new();
+    for _ in 0..wg_basic::state::MAX_LIVE_ENROLLMENT_CAPABILITIES_PER_CLIENT {
+        links.push(
+            service
+                .create_enrollment_link(installation.principal, client.client_id, 600)
+                .unwrap(),
+        );
+    }
+    assert_eq!(
+        installation.store.enrollment_capability_count().unwrap(),
+        wg_basic::state::MAX_LIVE_ENROLLMENT_CAPABILITIES_PER_CLIENT,
+        "old revoked token rows are pruned before new links are added"
+    );
+    assert!(matches!(
+        service.create_enrollment_link(installation.principal, client.client_id, 600),
+        Err(wg_basic::product::ProductError::EnrollmentCapacityReached)
+    ));
+    assert_eq!(installation.store.current_generation().unwrap(), generation);
+    assert!(
+        installation
+            .store
+            .audit_events(100)
+            .unwrap()
+            .iter()
+            .any(
+                |event| event.resource_id.as_deref() == Some(old_id.as_str())
+                    && event.action == wg_basic::product::AuditAction::EnrollmentCapabilityRevoked
+            ),
+        "pruning terminal rows never erases their durable audit history"
+    );
+    drop(links);
+}
+
 // ---------------------------------------------------------------------------
 // Setup
 // ---------------------------------------------------------------------------

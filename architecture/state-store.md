@@ -102,6 +102,13 @@ generation and records a bounded audit event while retaining the server,
 clients, keys, addresses, and endpoint. Projection asks netd to remove the
 owned interface and firewall policy; enabling restores the same intent.
 
+Session storage is bounded to 32 live sessions per principal; expired sessions
+are pruned at serve startup and before successful issuance. Enrollment storage
+allows eight live capabilities per client and prunes terminal rows after seven
+days. Product audit history retains the newest 10,000 events, with deterministic
+timestamp/event-ID pruning in the same transaction as insertion. These retention
+operations do not independently advance DesiredGeneration.
+
 `serve` holds an advisory lock at `<state>.serve.lock` for its full lifetime.
 The kernel lock, not the file's PID text, proves ownership and is released on
 process death. Online backup takes a shared `<state>.maintenance.lock`; restore

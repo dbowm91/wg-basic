@@ -1076,8 +1076,8 @@ async fn expired_sessions_are_reclaimed_and_the_table_does_not_grow() {
         }
         assert_eq!(
             store.session_count().expect("a count runs"),
-            64,
-            "the fixture really did write 64 expired rows"
+            wg_basic::state::MAX_LIVE_SESSIONS_PER_PRINCIPAL,
+            "session insertion also applies the per-principal cap"
         );
     }
 
@@ -1085,12 +1085,16 @@ async fn expired_sessions_are_reclaimed_and_the_table_does_not_grow() {
         spawn(WorkerConfig::new(scratch.db(), scratch.absent_socket())).expect("the worker starts");
     let client = startup.client().clone();
 
-    // The sweep is what reclaims rows nobody came back for.
+    // Startup housekeeping has already swept rows nobody came back for; the
+    // explicit sweep is idempotent and therefore has no work left.
     let purged = client
         .purge_expired_sessions()
         .await
         .expect("the sweep answers");
-    assert_eq!(purged, 64, "every expired row is reclaimed");
+    assert_eq!(
+        purged, 0,
+        "startup housekeeping already reclaimed every expired row"
+    );
 
     let store = StateStore::open(scratch.db()).expect("the store opens");
     assert_eq!(

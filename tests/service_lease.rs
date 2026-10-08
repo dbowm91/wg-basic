@@ -1,13 +1,17 @@
 use std::{
     fs,
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use wg_basic::state::{ServiceLease, StateStore};
+use wg_basic::{
+    domain::{CsrfToken, SessionId, SessionToken},
+    management::set_password_at,
+    state::{ServiceLease, SessionRecord, StateStore},
+};
 
 const BINARY: &str = env!("CARGO_BIN_EXE_wg-basic");
 
@@ -68,12 +72,53 @@ fn wait_for_lease(state: &Path, child: &mut Child) {
     }
 }
 
+fn wait_for_listener(bind: &str, child: &mut Child) {
+    let address = bind.parse().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if TcpStream::connect_timeout(&address, Duration::from_millis(20)).is_ok() {
+            return;
+        }
+        if let Some(status) = child.try_wait().unwrap() {
+            panic!("serve exited before listening: {status}");
+        }
+        assert!(Instant::now() < deadline, "serve did not bind HTTP");
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn proc_entries(path: &str) -> usize {
+    fs::read_dir(path).unwrap().count()
+}
+
 #[test]
 fn serve_is_singleton_and_sigkill_releases_the_advisory_lease() {
     let temporary = TempDirectory::new();
     let state = temporary.0.join("state.db");
     let socket = temporary.0.join("netd.sock");
     drop(StateStore::initialize(&state).unwrap());
+    set_password_at(&state, "admin", "an administrator password").unwrap();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    {
+        let store = StateStore::open(&state).unwrap();
+        let principal = store.principal_by_username("admin").unwrap().unwrap();
+        store
+            .insert_session(
+                &SessionRecord {
+                    id: SessionId::new(),
+                    principal_id: principal.id,
+                    csrf_token: CsrfToken::generate().unwrap(),
+                    created_at: now - 7_200,
+                    expires_at: now - 3_600,
+                },
+                &SessionToken::generate().unwrap().digest(),
+            )
+            .unwrap();
+        assert_eq!(store.session_count().unwrap(), 1);
+    }
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     drop(listener);
@@ -81,6 +126,20 @@ fn serve_is_singleton_and_sigkill_releases_the_advisory_lease() {
 
     let mut first = ChildGuard(serve(&state, &socket, &bind));
     wait_for_lease(&state, &mut first.0);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let store = StateStore::open(&state).unwrap();
+        let count = store.session_count().unwrap();
+        drop(store);
+        if count == 0 {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "serve startup did not prune expired sessions"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
     let candidate = temporary.0.join("candidate.db");
     let store = StateStore::open(&state).unwrap();
     store.backup(&candidate).unwrap();
@@ -127,4 +186,32 @@ fn serve_is_singleton_and_sigkill_releases_the_advisory_lease() {
 
     let mut restarted = ChildGuard(serve(&state, &socket, &bind));
     wait_for_lease(&state, &mut restarted.0);
+    wait_for_listener(&bind, &mut restarted.0);
+    restarted.0.kill().unwrap();
+    restarted.0.wait().unwrap();
+    drop(restarted);
+
+    let file_descriptors = proc_entries("/proc/self/fd");
+    let threads = proc_entries("/proc/self/task");
+    for _ in 0..20 {
+        let port_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let cycle_bind = port_listener.local_addr().unwrap().to_string();
+        drop(port_listener);
+        let mut child = ChildGuard(serve(&state, &socket, &cycle_bind));
+        wait_for_lease(&state, &mut child.0);
+        wait_for_listener(&cycle_bind, &mut child.0);
+        child.0.kill().unwrap();
+        child.0.wait().unwrap();
+        drop(child);
+        assert!(!ServiceLease::is_held(&state).unwrap());
+    }
+    assert!(
+        proc_entries("/proc/self/fd") <= file_descriptors + 1,
+        "repeated serve crashes leaked file descriptors"
+    );
+    assert_eq!(
+        proc_entries("/proc/self/task"),
+        threads,
+        "repeated serve crashes leaked threads"
+    );
 }

@@ -104,16 +104,20 @@ impl<'a> ProductService<'a> {
         let capability_id = crate::product::EnrollmentCapabilityId::new();
         let created_at = crate::state::now_seconds();
         let expires_at = created_at.saturating_add(ttl_seconds as i64);
-        self.store
-            .create_enrollment_capability(
-                capability_id,
-                client_id,
-                &token.digest(),
-                principal_id,
-                created_at,
-                expires_at,
-            )
-            .map_err(ProductError::State)?;
+        match self.store.create_enrollment_capability(
+            capability_id,
+            client_id,
+            &token.digest(),
+            principal_id,
+            created_at,
+            expires_at,
+        ) {
+            Ok(()) => {}
+            Err(crate::state::StateError::EnrollmentCapacityReached) => {
+                return Err(ProductError::EnrollmentCapacityReached);
+            }
+            Err(error) => return Err(ProductError::State(error)),
+        }
         Ok(super::CreatedEnrollmentLink {
             capability_id,
             client_id,
@@ -874,6 +878,8 @@ pub enum ProductError {
     ClientPrivateKeyUnavailable,
     #[error("enrollment lifetime is outside the allowed bound")]
     InvalidEnrollmentLifetime,
+    #[error("this client already has the maximum number of live enrollment links")]
+    EnrollmentCapacityReached,
     #[error("operating system entropy could not create an enrollment token")]
     EnrollmentToken(#[from] super::EnrollmentTokenError),
     #[error("the client artifact could not be produced")]
@@ -930,6 +936,7 @@ impl ProductError {
             | ProductError::ClientPrivateKeyUnavailable
             | ProductError::Artifact(_)
             | ProductError::InvalidEnrollmentLifetime
+            | ProductError::EnrollmentCapacityReached
             | ProductError::EnrollmentToken(_) => {
                 StateError::Corrupt("client artifact material is unavailable")
             }

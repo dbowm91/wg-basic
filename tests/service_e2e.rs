@@ -49,6 +49,7 @@ use std::{
 };
 
 const BINARY: &str = env!("CARGO_BIN_EXE_wg-basic");
+static PROCESS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -204,6 +205,61 @@ impl Child_ {
             }
         }
     }
+
+    fn crash(&mut self) {
+        if self.child.try_wait().ok().flatten().is_none() {
+            self.child.kill().expect("SIGKILL the child");
+            self.child.wait().expect("reap the killed child");
+        }
+        if let Some(handle) = self.stderr_thread.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+#[test]
+fn netd_sigkill_reclaims_only_its_stale_socket_across_bounded_restart_cycles() {
+    let _serial = PROCESS_TEST_LOCK.lock().unwrap();
+    let scratch = Scratch::new();
+    let socket = scratch.netd_socket();
+    let descriptors = std::fs::read_dir("/proc/self/fd").unwrap().count();
+    let threads = std::fs::read_dir("/proc/self/task").unwrap().count();
+
+    for _ in 0..20 {
+        let mut netd = Child_::start(
+            "wg-basic netd",
+            &["netd", "--socket", socket.to_str().unwrap()],
+        );
+        await_socket(&socket, &netd);
+        netd.crash();
+        assert!(
+            socket.exists(),
+            "SIGKILL leaves the stale socket inode to qualify"
+        );
+
+        let mut restarted = Child_::start(
+            "wg-basic netd",
+            &["netd", "--socket", socket.to_str().unwrap()],
+        );
+        await_socket(&socket, &restarted);
+        assert!(
+            std::os::unix::net::UnixStream::connect(&socket).is_ok(),
+            "the restarted process owns a live listener, not the stale inode"
+        );
+        assert_eq!(restarted.stop(), Some(0));
+    }
+
+    assert!(
+        std::fs::read_dir("/proc/self/fd").unwrap().count() <= descriptors + 1,
+        "netd crash/restart cycles leaked file descriptors"
+    );
+    // Other cases in this integration-test binary run concurrently and own
+    // their own stderr reader threads. Allow that bounded test concurrency;
+    // repeated cycles in this case must not add a thread per child.
+    assert!(
+        std::fs::read_dir("/proc/self/task").unwrap().count() <= threads + 4,
+        "netd crash/restart cycles leaked stderr reader threads"
+    );
 }
 
 impl Drop for Child_ {
@@ -242,7 +298,7 @@ impl ServeProcess {
                 "127.0.0.1:0",
             ],
         );
-        let line = process.await_log("wg-basic serve listening on");
+        let line = process.await_log("serve.started");
         let addr = parse_bound_address(&line);
         Self { process, addr }
     }
@@ -270,12 +326,10 @@ impl ServeProcess {
 /// this test and the operator's log can never disagree about what was bound.
 fn parse_bound_address(line: &str) -> SocketAddr {
     let after = line
-        .split("listening on")
-        .nth(1)
-        .unwrap_or_else(|| panic!("unexpected startup line: {line:?}"));
+        .split_whitespace()
+        .find_map(|part| part.strip_prefix("resource_id="))
+        .unwrap_or_else(|| panic!("startup event lacks listener identity: {line:?}"));
     after
-        .trim()
-        .trim_start_matches("http://")
         .parse()
         .unwrap_or_else(|error| panic!("could not parse the bound address from {line:?}: {error}"))
 }
@@ -533,6 +587,7 @@ fn await_listener(addr: SocketAddr, child: &Child_, name: &str) {
 /// Steps 1 through 9 of the plan, in order, against real processes.
 #[test]
 fn the_required_service_flow_survives_a_real_serve_restart() {
+    let _serial = PROCESS_TEST_LOCK.lock().unwrap();
     let scratch = Scratch::new();
 
     // --- 1. Create the local administrator through the CLI. ---
@@ -571,13 +626,13 @@ fn the_required_service_flow_survives_a_real_serve_restart() {
     await_listener(serve.addr, &serve.process, "wg-basic serve");
 
     // The startup line the operator reads is the evidence the reconcile ran.
-    let reconcile_line = serve.process.await_log("startup reconciliation");
+    let reconcile_line = serve.process.await_log("serve.reconcile");
     assert!(
         reconcile_line.contains("nothing to apply"),
         "a fresh install has nothing to converge: {reconcile_line}"
     );
-    let readiness_line = serve.process.await_log("readiness: ready");
-    assert!(readiness_line.contains("ready"), "{readiness_line}");
+    let readiness_line = serve.process.await_log("serve.started");
+    assert!(readiness_line.contains("outcome=ready"), "{readiness_line}");
 
     // --- 3. Log in. ---
     let mut browser = serve.client();
@@ -657,7 +712,7 @@ fn the_required_service_flow_survives_a_real_serve_restart() {
     assert!(
         shutdown_log
             .iter()
-            .any(|line| line.contains("listening on")),
+            .any(|line| line.contains("serve.started")),
         "the first life really did serve"
     );
 
@@ -718,6 +773,7 @@ fn the_required_service_flow_survives_a_real_serve_restart() {
 /// appear.
 #[test]
 fn serve_does_not_spawn_or_elevate_netd() {
+    let _serial = PROCESS_TEST_LOCK.lock().unwrap();
     let scratch = Scratch::new();
     cli_ok(
         &[
@@ -795,6 +851,7 @@ fn serve_does_not_spawn_or_elevate_netd() {
 /// Host/Origin/CSRF checks only held in an in-process harness, these would fail.
 #[test]
 fn the_security_perimeter_holds_over_the_real_wire() {
+    let _serial = PROCESS_TEST_LOCK.lock().unwrap();
     let scratch = Scratch::new();
     cli_ok(
         &[
@@ -989,6 +1046,7 @@ fn child_processes_of(pid: u32) -> Vec<(u32, String)> {
 /// as a confusing connect failure in the middle of a flow test.
 #[test]
 fn the_under_test_binary_is_the_one_this_suite_exercises() {
+    let _serial = PROCESS_TEST_LOCK.lock().unwrap();
     let output = cli(&["--version"], None);
     assert!(
         output.status.success(),

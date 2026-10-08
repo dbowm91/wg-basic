@@ -78,6 +78,12 @@ explicit `truncated` flag identifies larger installations. Audit pages contain
 at most 100 immutable events and use timestamp plus event ID to continue
 newest-first ordering.
 
+Each client may have at most eight live enrollment capabilities. Startup and
+capability creation prune consumed, revoked, or expired capability rows older
+than seven days; their audit events remain. Audit storage retains the newest
+10,000 rows, deleting oldest rows deterministically by timestamp and event ID
+inside the writing transaction. Retention does not advance DesiredGeneration.
+
 ## Operator UI
 
 The embedded operator page is a buildless same-origin client of these routes.

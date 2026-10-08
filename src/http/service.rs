@@ -828,6 +828,18 @@ impl ManagementService {
 /// One literal per status class. The `Retry-After` is the only variable header,
 /// and it exists solely so a throttled client knows when to come back.
 fn refusal(rejection: RequestRejection) -> Response {
+    if matches!(rejection, RequestRejection::Throttled { .. }) {
+        crate::operational::emit(
+            "security.rate_limited",
+            crate::operational::Severity::Warn,
+            "serve",
+            "login",
+            "throttled",
+            None,
+            None,
+            Some("admission"),
+        );
+    }
     let built = super::api::build_response(
         rejection.status(),
         ResponseBody::Bytes(rejection.body().as_bytes().to_vec()),
@@ -1070,6 +1082,9 @@ fn product_error(error: WorkerError) -> Response {
         }
         WorkerError::Product(ProductFailure::ServerNotConfigured) => {
             product_status(409, "server not configured")
+        }
+        WorkerError::Product(ProductFailure::EnrollmentUnavailable) => {
+            product_status(409, "enrollment capacity reached")
         }
         WorkerError::Product(ProductFailure::StateUnavailable) => response::unavailable(),
         WorkerError::Product(ProductFailure::SecretUnavailable) => {

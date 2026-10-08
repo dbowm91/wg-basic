@@ -275,6 +275,7 @@ impl ProductFailure {
             | ProductError::ClientMissingAfterMutation(_)
             | ProductError::ServerMissingAfterSetup => Self::NotFound,
             ProductError::ClientPrivateKeyUnavailable => Self::SecretUnavailable,
+            ProductError::EnrollmentCapacityReached => Self::EnrollmentUnavailable,
             ProductError::Artifact(_) => Self::Invalid,
             ProductError::InvalidEnrollmentLifetime | ProductError::EnrollmentToken(_) => {
                 Self::Invalid
@@ -411,6 +412,14 @@ pub enum StartupReconcile {
 }
 
 impl StartupReconcile {
+    /// The generation observed during startup, if an interface was configured.
+    pub fn generation(&self) -> Option<DesiredGeneration> {
+        match self {
+            Self::NothingToApply | Self::Degraded { .. } => None,
+            Self::Converged { generation } => Some(*generation),
+        }
+    }
+
     /// Whether the service is serving while the network is not converged.
     pub fn is_degraded(&self) -> bool {
         matches!(self, Self::Degraded { .. })
@@ -881,6 +890,19 @@ fn run(
             return;
         }
     };
+
+    // Run bounded operational-row housekeeping on the worker-owned store,
+    // before reconciliation and before the HTTP listener can serve requests.
+    // These rows are not desired network state and do not advance generation.
+    let now = crate::state::now_seconds();
+    if let Err(error) = runtime
+        .store()
+        .purge_expired_sessions(now)
+        .and_then(|_| runtime.store().prune_terminal_enrollment_capabilities(now))
+    {
+        let _ = startup.send(StartupOutcome::Fatal(error.into()));
+        return;
+    }
 
     // ADR-002 requires an unconditional startup attempt. It is deliberately not
     // conditional on stored convergence evidence, and a degraded result is

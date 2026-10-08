@@ -113,7 +113,57 @@ impl ManagementRuntime {
         let Some(intent) = self.current_intent()? else {
             return Ok(None);
         };
-        self.apply_intent(&intent).map(Some)
+        let generation = intent.generation;
+        crate::operational::emit(
+            "reconcile.started",
+            crate::operational::Severity::Info,
+            "serve",
+            "reconcile",
+            "started",
+            Some(("interface", intent.desired_interface.interface.as_str())),
+            Some(generation.to_storage() as u64),
+            Some("aggregate_apply"),
+        );
+        match self.apply_intent(&intent) {
+            Ok(outcome) => {
+                crate::operational::emit(
+                    if outcome.converged {
+                        "reconcile.completed"
+                    } else {
+                        "reconcile.degraded"
+                    },
+                    if outcome.converged {
+                        crate::operational::Severity::Info
+                    } else {
+                        crate::operational::Severity::Warn
+                    },
+                    "serve",
+                    "reconcile",
+                    if outcome.converged {
+                        "converged"
+                    } else {
+                        "not_converged"
+                    },
+                    Some(("interface", intent.desired_interface.interface.as_str())),
+                    Some(outcome.applied_generation.to_storage() as u64),
+                    Some("aggregate_apply"),
+                );
+                Ok(Some(outcome))
+            }
+            Err(error) => {
+                crate::operational::emit(
+                    "reconcile.degraded",
+                    crate::operational::Severity::Warn,
+                    "serve",
+                    "reconcile",
+                    "attempt_failed",
+                    Some(("interface", intent.desired_interface.interface.as_str())),
+                    Some(generation.to_storage() as u64),
+                    Some("aggregate_apply"),
+                );
+                Err(error)
+            }
+        }
     }
 
     /// Applies one already-committed product mutation and reports the two

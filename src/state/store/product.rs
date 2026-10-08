@@ -32,6 +32,13 @@ use crate::{
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 use std::{collections::BTreeMap, net::IpAddr};
 
+/// Maximum simultaneously usable enrollment links for one client.
+pub const MAX_LIVE_ENROLLMENT_CAPABILITIES_PER_CLIENT: i64 = 8;
+/// Terminal link rows remain available for audit/debug correlation for seven days.
+pub const ENROLLMENT_TERMINAL_RETENTION_SECONDS: i64 = 7 * 24 * 60 * 60;
+/// Product audit is a bounded application history, not system-log retention.
+pub const MAX_AUDIT_EVENTS: i64 = 10_000;
+
 /// Product settings for one managed interface.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InterfaceProductState {
@@ -243,6 +250,20 @@ impl StateStore {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(StateError::database)?;
+        prune_terminal_enrollments(&transaction, created_at)?;
+        let live: i64 = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM enrollment_capabilities
+                 WHERE client_id = ?1 AND expires_at > ?2
+                   AND consumed_at IS NULL AND revoked_at IS NULL",
+                rusqlite::params![client_id.to_string(), created_at],
+                |row| row.get(0),
+            )
+            .map_err(StateError::database)?;
+        if live >= MAX_LIVE_ENROLLMENT_CAPABILITIES_PER_CLIENT {
+            transaction.commit().map_err(StateError::database)?;
+            return Err(StateError::EnrollmentCapacityReached);
+        }
         transaction.execute(
             "INSERT INTO enrollment_capabilities (capability_id, client_id, token_digest, creator_principal_id, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             rusqlite::params![capability_id.to_string(), client_id.to_string(), token_digest, principal_id.to_string(), created_at, expires_at],
@@ -260,6 +281,29 @@ impl StateStore {
             created_at,
         )?;
         transaction.commit().map_err(StateError::database)
+    }
+
+    /// Removes terminal enrollment rows older than the seven-day retention.
+    ///
+    /// Live links and recent terminal rows remain untouched. Their security
+    /// history is retained separately in product audit events.
+    pub fn prune_terminal_enrollment_capabilities(&self, now: i64) -> Result<usize, StateError> {
+        let mut connection = self.lock()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(StateError::database)?;
+        let removed = prune_terminal_enrollments(&transaction, now)?;
+        transaction.commit().map_err(StateError::database)?;
+        Ok(removed)
+    }
+
+    /// Counts all retained capability rows for bounded-growth diagnostics.
+    pub fn enrollment_capability_count(&self) -> Result<i64, StateError> {
+        self.lock()?
+            .query_row("SELECT COUNT(*) FROM enrollment_capabilities", [], |row| {
+                row.get(0)
+            })
+            .map_err(StateError::database)
     }
 
     /// Revokes an unused capability and appends the bounded audit event in the
@@ -803,6 +847,22 @@ fn insert_audit_event(
         )
         .map_err(StateError::database)?;
 
+    let audit_count: i64 = transaction
+        .query_row("SELECT COUNT(*) FROM audit_events", [], |row| row.get(0))
+        .map_err(StateError::database)?;
+    let excess = audit_count.saturating_sub(MAX_AUDIT_EVENTS);
+    if excess > 0 {
+        transaction
+            .execute(
+                "DELETE FROM audit_events WHERE event_id IN (
+                    SELECT event_id FROM audit_events WHERE event_id != ?1
+                    ORDER BY occurred_at ASC, event_id ASC LIMIT ?2
+                )",
+                rusqlite::params![event_id.to_string(), excess],
+            )
+            .map_err(StateError::database)?;
+    }
+
     Ok(AuditEvent {
         event_id,
         occurred_at,
@@ -814,6 +874,23 @@ fn insert_audit_event(
         generation_after,
         outcome,
     })
+}
+
+fn prune_terminal_enrollments(
+    transaction: &Transaction<'_>,
+    now: i64,
+) -> Result<usize, StateError> {
+    transaction
+        .execute(
+            "DELETE FROM enrollment_capabilities
+             WHERE created_at < ?1
+               AND (consumed_at IS NOT NULL OR revoked_at IS NOT NULL OR expires_at <= ?2)",
+            rusqlite::params![
+                now.saturating_sub(ENROLLMENT_TERMINAL_RETENTION_SECONDS),
+                now
+            ],
+        )
+        .map_err(StateError::database)
 }
 
 fn parse_action(value: &str) -> Option<AuditAction> {
@@ -853,4 +930,88 @@ fn parse_outcome(value: &str) -> Option<AuditOutcome> {
     ]
     .into_iter()
     .find(|outcome| outcome.as_str() == value)
+}
+
+#[cfg(test)]
+mod retention_tests {
+    use super::*;
+    use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
+
+    struct Scratch(PathBuf);
+    impl Scratch {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "wg-basic-audit-retention-{}-{}",
+                std::process::id(),
+                schema::now_seconds()
+            ));
+            let _ = fs::remove_dir_all(&path);
+            fs::create_dir(&path).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+            Self(path)
+        }
+    }
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn retention_never_deletes_new_event_and_pages_the_retained_boundary() {
+        let scratch = Scratch::new();
+        let store = StateStore::initialize(scratch.0.join("state.db")).unwrap();
+        let generation = store.current_generation().unwrap();
+        let mut connection = store.lock().unwrap();
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        let mut newest = None;
+        for timestamp in 1..=(MAX_AUDIT_EVENTS + 5) {
+            newest = Some(
+                insert_audit_event(
+                    &transaction,
+                    None,
+                    ProductAudit {
+                        action: AuditAction::ClientUpdate,
+                        resource_kind: AuditResourceKind::Client,
+                        resource_id: None,
+                    },
+                    None,
+                    None,
+                    timestamp,
+                )
+                .unwrap()
+                .event_id,
+            );
+        }
+        transaction.commit().unwrap();
+        drop(connection);
+
+        let count: i64 = store
+            .lock()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM audit_events", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, MAX_AUDIT_EVENTS);
+        assert_eq!(store.audit_events(1).unwrap()[0].event_id, newest.unwrap());
+        assert_eq!(store.current_generation().unwrap(), generation);
+
+        let mut cursor = None;
+        let mut ids = Vec::new();
+        loop {
+            let page = store.audit_events_page(1_000, cursor).unwrap();
+            if page.is_empty() {
+                break;
+            }
+            cursor = page.last().map(|event| AuditCursor {
+                occurred_at: event.occurred_at,
+                event_id: event.event_id,
+            });
+            ids.extend(page.into_iter().map(|event| event.event_id.to_string()));
+        }
+        let unique = ids.iter().collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(ids.len(), MAX_AUDIT_EVENTS as usize);
+        assert_eq!(unique.len(), ids.len(), "pages have no duplicates");
+    }
 }
