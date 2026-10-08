@@ -903,7 +903,7 @@ fn install_unit(
         .map_err(|_| "systemd refused the owned unit installation")?;
     manager
         .start(&spec, std::time::Duration::from_secs(20))
-        .map_err(|_| "systemd could not start the product service")?;
+        .map_err(|error| format!("systemd could not start the product service: {error}"))?;
     Ok(())
 }
 
