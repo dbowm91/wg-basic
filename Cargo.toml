@@ -79,6 +79,8 @@ all = { level = "warn", priority = -1 }
 # The production dependency set is unchanged by this section.
 [dev-dependencies]
 rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
+# M003 signing-handoff test only; it creates ephemeral keys and uses no production signer.
+minisign = "=0.10.0"
 
 [[bin]]
 name = "wg-basic"
