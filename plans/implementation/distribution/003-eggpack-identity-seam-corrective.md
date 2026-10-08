@@ -1,6 +1,6 @@
 # Distribution M003 Corrective — Separate Manifest Identity from Git Tag
 
-Status: prerequisite specification; implementation belongs to Eggpack
+Status: resolved upstream by Eggpack `d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628`; reviewed in `plans/closure/distribution/003-unblock-review.md`.
 
 Source plan and blocked closure:
 
