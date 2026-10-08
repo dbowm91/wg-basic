@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-08 (Phase 9 M001–M005 strictly closed; Phase 10 unblocked for research/planning)
+Last planning reconciliation: 2026-10-08 (Phase 10 researched/planned under ADR-006; M001 ready)
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -19,6 +19,7 @@ This file is the compact control surface for active wg-basic planning. Detailed 
 | `plans/adr/003-management-http-auth-and-worker-boundary.md` | accepted Phase 7 HTTP/auth/worker security architecture |
 | `plans/adr/004-product-management-enrollment-and-api-semantics.md` | accepted Phase 8 product mutation/enrollment/API architecture |
 | `plans/adr/005-operational-hardening-maintenance-and-recovery.md` | accepted Phase 9 diagnostics/maintenance/recovery/security architecture |
+| `plans/adr/006-distribution-install-authenticity-and-update.md` | accepted Phase 10 release/install/authenticity/update architecture |
 
 Authority order for implementation handoff:
 
@@ -41,7 +42,7 @@ The architecture separates:
 
 The privileged service does not expose arbitrary shell, command, file-write, sysctl-path, nft-script, or raw-netlink execution.
 
-Current production code state: **Network control and Phases 6–9 are strictly closed. The authenticated product API and embedded UI provide server setup, client lifecycle, config/QR export, one-time enrollment, live telemetry, and bounded audit history.** Phase 9 includes authoritative read-only doctor/preflight; singleton serve ownership; durable whole-network disable/enable, verified backup/restore, and fail-closed purge; secret-safe structured events and bounded housekeeping; crash/resource and abuse qualification; a pinned dependency advisory gate; and a real Phase 8→9 upgrade, rollback, clean-namespace recovery drill. Phase 10 distribution/install/update is unblocked for research/planning only and is not implemented.
+Current production code state: **Network control and Phases 6–9 are strictly closed. The authenticated product API and embedded UI provide server setup, client lifecycle, config/QR export, one-time enrollment, live telemetry, bounded audit history, operational diagnostics, safe maintenance/recovery, and a proven old/new database rollback contract.** Phase 10 is fully researched/planned but not implemented. The selected distribution baseline is systemd/Linux x86_64+aarch64, Eggpack producer contracts, project-owned Minisign release authenticity, Eggup local transaction/service primitives, root-owned install/update metadata, and a crash-recoverable binary+database update journal.
 
 ## 3. Eggstack reuse disposition
 
@@ -50,9 +51,9 @@ Current research and planning disposition:
 | Eggstack project | Disposition | Handoff note |
 |---|---|---|
 | EggServe | selected Phase 7 substrate | direct `eggserve-server` + `eggserve-primitives` H1 service; wg-basic owns routing/auth/CSRF/rate limits and embeds its own assets; no Tower/Axum in the baseline |
-| Eggup | planned downstream reuse | Phase 10 install/update/rollback and service lifecycle; integrity substrate only, release authenticity remains wg-basic/release-policy owned |
-| Eggpack | planned downstream reuse | Phase 10 producer-side deterministic release construction/draft release flow |
-| Eggfetch | no current runtime need | no ordinary outbound HTTP requirement in network control |
+| Eggup | selected Phase 10 substrate | Core owns staged/integrity/ownership-safe binary replacement; acquisition + preferred curl adapter own bounded download mechanics; Eggpack adapter projects signed manifest evidence; service crate owns systemd mechanics. wg-basic still owns authenticity, two-service/state transaction, health, journal, and recovery. |
+| Eggpack | selected Phase 10 producer substrate | canonical two-target release/build/qualification/manifest/bootstrap/draft-release contracts; no release signing or appliance service policy delegated to Eggpack |
+| Eggfetch | alternate Phase 10 update transport only | not selected in baseline because eggup-curl keeps the shipped link graph smaller; may replace curl only with recorded host-availability/footprint evidence |
 | Eggprobe | external/reference only for Phase 9 | useful generic DNS/TCP/TLS/route diagnostics, but wg-basic doctor requires authoritative local state/ownership/netd checks that Eggprobe does not own; no runtime dependency selected |
 | Eggress | out of scope | proxy transport unrelated to initial VPN appliance |
 | Eggsact | out of scope | coding-agent utility, not appliance runtime |
@@ -70,7 +71,7 @@ Runtime dependency adoption remains evidence-driven.
 | Management service/auth/security substrate | closed | `plans/subsystems/management-service-security-roadmap.md` + `plans/subsystems/management-service-post-phase7-reconciliation-addendum.md` | M001–M004 and post-Phase-7 C001 closed |
 | Product management/enrollment/UI | closed | `plans/subsystems/product-management-enrollment-ui-roadmap.md` | Phase 8 M001–M005 closed |
 | Operational hardening | closed | `plans/subsystems/operational-hardening-roadmap.md` | M001–M005 closed; Phase 9 closed |
-| Distribution/install/update | unblocked for research/planning | not yet written | Phase 10; no implementation plan or updater exists |
+| Distribution/install/update | planned | `plans/subsystems/distribution-install-update-roadmap.md` | M001 ready; M002–M005 blocked in order |
 
 Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
 
@@ -78,14 +79,20 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
-No implementation plan is currently active. Operational-hardening M001–M005 strictly closed in `plans/closure/operational-hardening/001-status.md` through `005-status.md`.
+| Distribution/install/update | M001 release identity/authenticity/targets | **ready** | `plans/implementation/distribution/001-release-identity-authenticity-and-targets.md` | Phase 9 strict closure at `f5a32c0` |
+
+M001 is the sole implementation-ready plan. It establishes release identity, the two Linux target contracts, native compatibility evidence, a verify-only detached-signature path, and the registry-only Eggup/Eggpack dependency graph. It MUST NOT install services or mutate a live installation.
 
 ## 6. Blocked implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Hard blocker |
 |---|---|---|---|---|
+| Distribution/install/update | M002 system install/service layout | blocked | `plans/implementation/distribution/002-system-install-and-service-layout.md` | Phase 10 M001 |
+| Distribution/install/update | M003 Eggpack pipeline/signing handoff | blocked | `plans/implementation/distribution/003-eggpack-release-pipeline-and-signed-draft.md` | Phase 10 M002 |
+| Distribution/install/update | M004 transactional self-update/rollback | blocked | `plans/implementation/distribution/004-transactional-self-update-and-rollback.md` | Phase 10 M003 |
+| Distribution/install/update | M005 install/update/uninstall E2E + Phase 10 closure | blocked | `plans/implementation/distribution/005-install-update-uninstall-e2e-and-phase10-closure.md` | Phase 10 M004 |
 
-No implementation plan is currently blocked. Phase 10 distribution/install/update is unblocked for research/planning after Phase 9 closure; implementation remains out of scope until a bounded plan is written.
+Production public-release readiness additionally requires maintainer provisioning of the real release signing trust root. Fixture signing is sufficient to implement and qualify the mechanics but MUST NOT be described as production signing.
 
 ## 7. Recently closed work
 
@@ -202,13 +209,15 @@ If later implementation evidence reveals a material architecture contradiction, 
 
 Phase 9 research/planning is complete under ADR-005 and `plans/subsystems/operational-hardening-roadmap.md`. The selected baseline is an authoritative read-only doctor, crash-safe service lease, durable whole-server network state, fail-closed purge, structured stderr events, bounded operational-row housekeeping, adversarial HTTP/UDS qualification, and a binary+database rollback rehearsal using Phase 8 closure `e8fd6b1` as the old-version baseline.
 
+Phase 10 research/planning is complete under ADR-006 and `plans/subsystems/distribution-install-update-roadmap.md`. The selected baseline is two native Linux GNU targets, a signed Eggpack ReleaseManifest with project-owned Minisign trust, native systemd installation, Eggup-owned local binary mechanics, wg-basic-owned two-service/database orchestration, a root-owned crash-recovery journal, and state-preserving uninstall. The production private signing key remains outside repository/ordinary CI authority; implementation may use fixture signing but public-release readiness requires maintainer provisioning of the real trust root.
+
 ## 13. Closure handoff
 
 M001–M005, network-control C001, durable-state M001–M004, and durable-state post-Phase-6 C001 are closed and their strict evidence is recorded. **Phase 6 remains closed.** Phase 7 M001, M002, M003, and M004 are all closed; **Phase 7 is closed at `d5d5ca9`** and Phase 8 is unblocked.
 
 Phase 7 M004 closed strictly at `d5d5ca9`. The milestone delivered a self-contained embedded operator shell (12,723 bytes, compiled in, no document root, no external origin, no CSP concession), a deterministic `serve` lifecycle, sessions qualified across a real process restart over real cookies, four-way readiness differentiation, and end-to-end plus abuse/resource qualification against real processes and a real network backend. Two defects were corrected that the code alone would not have shown: `serve` died from `SIGTERM` without draining, because `ctrlc`'s `termination` feature was not enabled and only its handler covers a supervisor's signal; and `ManagementHealth::netd_reachable` could not distinguish a dead backend from an installation that had simply not applied anything yet, so an authenticated live read-only probe was added while the unauthenticated probe was deliberately left unable to dial the privileged backend. The rootful service fixture drives the management HTTP surface against a real `netd` inside a disposable namespace and qualifies real convergence in both directions — `ok` when converged, `degraded` when the backend is gone. Measured footprint is 13.34 MiB combined against the long-term 30 MiB engineering signal, with 0 idle CPU ticks for both roles over a two-second window; nothing was weakened to meet the signal, and the Argon2id parameters remain at the M002 policy, asserted with a latency *floor* so they cannot be traded for speed. No high or medium finding remains open. No historical closure record was edited.
 
-Phase 8 M005 closed at implementation head `8b20a7c`, completing the first user-facing product boundary. The buildless embedded UI consumes the authenticated API for setup, client lifecycle, explicit credential exports, one-time link actions, live telemetry, and audit. The combined Linux-integration suite and six-test product rootful suite passed; the rootful product case configures a real client from HTTP-exported values, proves a kernel handshake and traffic, then drives disable, re-enable, and delete through HTTP. The five embedded assets total 29,811 bytes. The release footprint measured 13.54 MiB combined serve/netd RSS and zero idle CPU ticks over two seconds; no high, medium, or low finding remains open. Phase 9 M001–M005 are now strictly closed with the upgrade/rollback and clean-target recovery evidence at `plans/closure/operational-hardening/005-status.md`. Phase 10 is unblocked for research/planning only; update/install behavior remains unimplemented.
+Phase 8 M005 closed at implementation head `8b20a7c`, completing the first user-facing product boundary. The buildless embedded UI consumes the authenticated API for setup, client lifecycle, explicit credential exports, one-time link actions, live telemetry, and audit. The combined Linux-integration suite and six-test product rootful suite passed; the rootful product case configures a real client from HTTP-exported values, proves a kernel handshake and traffic, then drives disable, re-enable, and delete through HTTP. The five embedded assets total 29,811 bytes. The release footprint measured 13.54 MiB combined serve/netd RSS and zero idle CPU ticks over two seconds; no high, medium, or low finding remains open. Phase 9 M001–M005 are now strictly closed with the upgrade/rollback and clean-target recovery evidence at `plans/closure/operational-hardening/005-status.md`. Phase 10 research/planning is complete under ADR-006; M001 is ready, while update/install behavior remains unimplemented.
 
 At each future closure, update:
 
@@ -218,6 +227,7 @@ At each future closure, update:
 - `plans/subsystems/management-service-security-roadmap.md` milestone table;
 - `plans/subsystems/product-management-enrollment-ui-roadmap.md` milestone table;
 - `plans/subsystems/operational-hardening-roadmap.md` milestone table;
+- `plans/subsystems/distribution-install-update-roadmap.md` milestone table;
 - this registry;
 - current architecture/operator docs.
 
