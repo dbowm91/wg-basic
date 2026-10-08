@@ -48,7 +48,7 @@ pub(super) fn read_interface_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<In
 }
 
 /// Reads the singleton installation row, including the current generation.
-pub(super) fn read_installation(
+pub(crate) fn read_installation(
     connection: &Connection,
 ) -> Result<InstallationMetadata, StateError> {
     let row = connection

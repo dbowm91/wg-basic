@@ -96,12 +96,11 @@ impl ManagementRuntime {
         // kernel is asked to hold, so the product snapshot is read here rather
         // than projected from desired state alone.
         let product = self.store.load_product()?;
-        let visibility = ClientVisibility::from_product(&persisted.state, &product.state);
-        build_intent(
+        project_diagnostic_intent(
             metadata.installation_id,
             persisted.generation,
             &persisted.state,
-            &visibility,
+            &product.state,
         )
     }
 
@@ -489,6 +488,20 @@ fn build_intent(
         desired,
         resolved.network_policy,
     )))
+}
+
+/// Projects a coherent read-only state snapshot into the exact typed intent
+/// sent to netd. Doctor uses this to request a plan without opening the
+/// migrating management store or applying anything.
+#[cfg(target_os = "linux")]
+pub fn project_diagnostic_intent(
+    installation_id: InstallationId,
+    generation: DesiredGeneration,
+    state: &DesiredState,
+    product: &ProductState,
+) -> Result<Option<InstallationNetworkIntent>, ManagementError> {
+    let visibility = ClientVisibility::from_product(state, product);
+    build_intent(installation_id, generation, state, &visibility)
 }
 
 #[cfg(not(target_os = "linux"))]

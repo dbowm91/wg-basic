@@ -549,7 +549,7 @@ pub fn validate_product(state: &DesiredState, product: &ProductState) -> Result<
 // Reading
 // ---------------------------------------------------------------------------
 
-pub(super) fn read_product(connection: &Connection) -> Result<ProductState, StateError> {
+pub(crate) fn read_product(connection: &Connection) -> Result<ProductState, StateError> {
     let mut interfaces = BTreeMap::new();
     {
         let mut statement = connection

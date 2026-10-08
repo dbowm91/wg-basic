@@ -7,6 +7,21 @@ use serde::{Deserialize, Serialize};
 
 const MAX_TEXT: usize = 240;
 
+/// Returns whether an SQLite `major.minor.patch` version meets a minimum.
+pub fn sqlite_version_at_least(version: &str, minimum: (u32, u32, u32)) -> bool {
+    let mut parts = version.split('.');
+    let Some(major) = parts.next().and_then(|part| part.parse::<u32>().ok()) else {
+        return false;
+    };
+    let Some(minor) = parts.next().and_then(|part| part.parse::<u32>().ok()) else {
+        return false;
+    };
+    let Some(patch) = parts.next().and_then(|part| part.parse::<u32>().ok()) else {
+        return false;
+    };
+    (major, minor, patch) >= minimum
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DoctorDisposition {
@@ -25,6 +40,10 @@ pub enum DoctorCheckId {
     WireGuard,
     Rtnetlink,
     Nftables,
+    ListenPort,
+    Product,
+    Convergence,
+    RecoveryArtifacts,
     ServiceLease,
     HttpPolicy,
     Forwarding,
@@ -144,5 +163,30 @@ mod tests {
             "restore a verified backup",
         )]);
         assert_eq!(report.exit_code(), 2);
+    }
+
+    #[test]
+    fn sqlite_runtime_floor_parses_numeric_components() {
+        assert!(sqlite_version_at_least("3.51.3", (3, 51, 3)));
+        assert!(sqlite_version_at_least("3.53.2", (3, 51, 3)));
+        assert!(!sqlite_version_at_least("3.51.2", (3, 51, 3)));
+        assert!(!sqlite_version_at_least("3.x.9", (3, 51, 3)));
+        assert!(!sqlite_version_at_least("3.51", (3, 51, 3)));
+    }
+
+    #[test]
+    fn report_json_is_one_secret_free_serialized_value() {
+        let report = DoctorReport::new(vec![DoctorCheck::new(
+            DoctorCheckId::State,
+            DoctorDisposition::Pass,
+            "state is safe",
+            "schema 4",
+            "none",
+        )]);
+        let json = serde_json::to_string(&report).unwrap();
+        assert_eq!(serde_json::from_str::<DoctorReport>(&json).unwrap(), report);
+        assert!(!json.contains("private_key"));
+        assert!(!json.contains("session"));
+        assert!(!json.contains("enrollment"));
     }
 }

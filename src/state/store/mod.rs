@@ -36,9 +36,9 @@
 
 mod auth;
 mod convergence;
-mod desired;
+pub(crate) mod desired;
 pub(crate) mod product;
-mod sql;
+pub(crate) mod sql;
 
 use super::{
     error::StateError,

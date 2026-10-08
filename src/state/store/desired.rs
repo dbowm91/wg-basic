@@ -127,7 +127,7 @@ pub(super) fn write_desired_for_transaction(
     write_desired(transaction, state)
 }
 
-fn load_desired(connection: &Connection) -> Result<PersistedDesiredState, StateError> {
+pub(crate) fn load_desired(connection: &Connection) -> Result<PersistedDesiredState, StateError> {
     let generation = read_generation(connection)?;
     let state = read_desired(connection)?;
     Ok(PersistedDesiredState { generation, state })
