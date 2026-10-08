@@ -31,7 +31,7 @@ pub const SYSUSERS: &str = "# Managed by wg-basic. Local changes prevent owned r
 
 pub const NETD_UNIT: &str = "[Unit]\nDescription=wg-basic privileged network service\nAfter=local-fs.target\nStartLimitIntervalSec=60s\nStartLimitBurst=5\n\n[Service]\nType=simple\nUser=wg-basic-netd\nGroup=wg-basic\nExecStart=/usr/local/bin/wg-basic netd --socket /run/wg-basic/netd.sock --allow-user wg-basic\nRuntimeDirectory=wg-basic\nRuntimeDirectoryMode=0750\nRuntimeDirectoryUser=wg-basic-netd\nRuntimeDirectoryGroup=wg-basic\nCapabilityBoundingSet=CAP_NET_ADMIN\nAmbientCapabilities=CAP_NET_ADMIN\nNoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\nRestrictAddressFamilies=AF_UNIX AF_NETLINK\nReadWritePaths=/run/wg-basic /proc/sys/net/ipv4/ip_forward\nLimitCORE=0\nTasksMax=32\nMemoryMax=128M\nRestart=on-failure\nRestartSec=2s\n\n[Install]\nWantedBy=multi-user.target\n";
 
-pub const SERVE_UNIT: &str = "[Unit]\nDescription=wg-basic management service\nRequires=wg-basic-netd.service\nAfter=wg-basic-netd.service network-online.target\nWants=network-online.target\nStartLimitIntervalSec=60s\nStartLimitBurst=5\n\n[Service]\nType=simple\nUser=wg-basic\nGroup=wg-basic\nExecStartPre=/usr/local/bin/wg-basic state init --state /var/lib/wg-basic/state.db\nExecStart=/usr/local/bin/wg-basic serve --state /var/lib/wg-basic/state.db --socket /run/wg-basic/netd.sock\nNoNewPrivileges=yes\nCapabilityBoundingSet=\nAmbientCapabilities=\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\nRestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\nReadWritePaths=/var/lib/wg-basic /run/wg-basic\nStateDirectory=wg-basic\nStateDirectoryMode=0700\nLimitCORE=0\nTasksMax=64\nMemoryMax=256M\nRestart=on-failure\nRestartSec=2s\n\n[Install]\nWantedBy=multi-user.target\n";
+pub const SERVE_UNIT: &str = "[Unit]\nDescription=wg-basic management service\nRequires=wg-basic-netd.service\nAfter=wg-basic-netd.service network-online.target\nWants=network-online.target\nStartLimitIntervalSec=60s\nStartLimitBurst=5\n\n[Service]\nType=simple\nUser=wg-basic\nGroup=wg-basic\nExecStartPre=/usr/local/bin/wg-basic state init --state /var/lib/wg-basic/state.db\nExecStartPre=/usr/local/bin/wg-basic doctor --state /var/lib/wg-basic/state.db --socket /run/wg-basic/netd.sock --json\nExecStart=/usr/local/bin/wg-basic serve --state /var/lib/wg-basic/state.db --socket /run/wg-basic/netd.sock\nNoNewPrivileges=yes\nCapabilityBoundingSet=\nAmbientCapabilities=\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\nRestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\nReadWritePaths=/var/lib/wg-basic /run/wg-basic\nStateDirectory=wg-basic\nStateDirectoryMode=0700\nLimitCORE=0\nTasksMax=64\nMemoryMax=256M\nRestart=on-failure\nRestartSec=2s\n\n[Install]\nWantedBy=multi-user.target\n";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InstallMetadata {
@@ -727,9 +727,9 @@ fn run_install_health_smoke() -> Result<(), String> {
     };
     use std::time::Duration;
 
-    // Doctor deliberately refuses an immutable view while the management
-    // process has SQLite WAL sidecars open. Stop only serve, inspect the
-    // quiescent database, then restore the running state before HTTP smoke.
+    // The service's ExecStartPre runs doctor as the management UID against a
+    // quiescent database. Restarting serve reruns that check without weakening
+    // the state ownership rules or running it as root.
     let install = SystemdInstall::new(
         "wg-basic.service".into(),
         SystemdScope::System,
@@ -759,37 +759,9 @@ fn run_install_health_smoke() -> Result<(), String> {
         .stop(&spec, Duration::from_secs(15))
         .map_err(|_| "could not quiesce serve for read-only doctor inspection")?;
 
-    let report_result = (|| {
-        let doctor = eggup_core::run_bounded(
-            &eggup_core::CommandSpec::new(BINARY_PATH)
-                .args([
-                    "doctor",
-                    "--state",
-                    STATE_PATH,
-                    "--socket",
-                    SOCKET_PATH,
-                    "--json",
-                ])
-                .timeout(Duration::from_secs(15))
-                .max_output_bytes(32 * 1024),
-        )
-        .map_err(|_| "post-install doctor smoke failed")?;
-        let report: crate::doctor::DoctorReport = serde_json::from_slice(doctor.stdout())
-            .map_err(|_| "post-install doctor report was invalid")?;
-        if doctor.exit_code() != Some(0) || report.overall != crate::doctor::DoctorDisposition::Pass
-        {
-            return Err(format!(
-                "post-install doctor did not pass:\n{}",
-                report.render_human()
-            ));
-        }
-        Ok(())
-    })();
-    let restart_result = manager
+    manager
         .start(&spec, Duration::from_secs(20))
-        .map_err(|_| "could not restart serve after read-only doctor inspection");
-    report_result?;
-    restart_result?;
+        .map_err(|_| "doctor preflight or serve restart failed")?;
     check_health_endpoint()
 }
 
