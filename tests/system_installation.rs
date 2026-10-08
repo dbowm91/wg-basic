@@ -39,6 +39,10 @@ fn systemd_installation_ownership_reinstall_and_service_credentials() {
         "use a clean disposable Linux VM"
     );
 
+    if !Path::new("/etc/sysusers.d").exists() {
+        fs::create_dir("/etc/sysusers.d").unwrap();
+        fs::set_permissions("/etc/sysusers.d", fs::Permissions::from_mode(0o755)).unwrap();
+    }
     assert!(!Path::new("/etc/sysusers.d/wg-basic.conf").exists());
     assert!(!Path::new("/var/lib/wg-basic").exists());
     fs::write(

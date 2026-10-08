@@ -458,13 +458,14 @@ pub fn install_local(candidate: &Path) -> Result<(), String> {
     for directory in [
         "/usr/local/bin",
         "/etc/systemd/system",
-        "/etc/sysusers.d",
+        "/etc",
         "/var/lib",
         "/run",
     ] {
         verify_root_directory(Path::new(directory))
             .map_err(|_| "a canonical system destination parent is unsafe")?;
     }
+    ensure_system_directory(Path::new("/etc/sysusers.d"), 0o755)?;
     let candidate_meta =
         fs::symlink_metadata(candidate).map_err(|_| "candidate is not readable")?;
     if !candidate_meta.file_type().is_file() || candidate_meta.mode() & 0o111 == 0 {
@@ -892,6 +893,26 @@ fn verify_root_directory(path: &Path) -> io::Result<()> {
             io::ErrorKind::PermissionDenied,
             "system directory is not a safe root-owned directory",
         ));
+    }
+    Ok(())
+}
+
+fn ensure_system_directory(path: &Path, mode: u32) -> Result<(), String> {
+    if !symlink_metadata_exists(path)? {
+        fs::create_dir(path).map_err(|_| "could not create a system definition directory")?;
+        fs::set_permissions(path, fs::Permissions::from_mode(mode))
+            .map_err(|_| "could not secure a system definition directory")?;
+        File::open(path)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|_| "could not persist a system definition directory")?;
+        File::open(path.parent().ok_or("invalid system definition directory")?)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|_| "could not persist system definition directory entry")?;
+    }
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|_| "system definition directory cannot be inspected")?;
+    if !metadata.file_type().is_dir() || metadata.uid() != 0 || metadata.mode() & 0o022 != 0 {
+        return Err("system definition directory ownership or mode is unsafe".into());
     }
     Ok(())
 }
