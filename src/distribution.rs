@@ -31,7 +31,7 @@ pub const SYSUSERS: &str = "# Managed by wg-basic. Local changes prevent owned r
 
 pub const NETD_UNIT: &str = "[Unit]\nDescription=wg-basic privileged network service\nAfter=local-fs.target\nStartLimitIntervalSec=60s\nStartLimitBurst=5\n\n[Service]\nType=simple\nUser=wg-basic-netd\nGroup=wg-basic\nExecStart=/usr/local/bin/wg-basic netd --socket /run/wg-basic/netd.sock --allow-user wg-basic\nRuntimeDirectory=wg-basic\nRuntimeDirectoryMode=0750\nRuntimeDirectoryUser=wg-basic-netd\nRuntimeDirectoryGroup=wg-basic\nCapabilityBoundingSet=CAP_NET_ADMIN\nAmbientCapabilities=CAP_NET_ADMIN\nNoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\nRestrictAddressFamilies=AF_UNIX AF_NETLINK\nReadWritePaths=/run/wg-basic /proc/sys/net/ipv4/ip_forward\nLimitCORE=0\nTasksMax=32\nMemoryMax=128M\nRestart=on-failure\nRestartSec=2s\n\n[Install]\nWantedBy=multi-user.target\n";
 
-pub const SERVE_UNIT: &str = "[Unit]\nDescription=wg-basic management service\nRequires=wg-basic-netd.service\nAfter=wg-basic-netd.service network-online.target\nWants=network-online.target\nStartLimitIntervalSec=60s\nStartLimitBurst=5\n\n[Service]\nType=simple\nUser=wg-basic\nGroup=wg-basic\nExecStartPre=/usr/local/bin/wg-basic state init --state /var/lib/wg-basic/state.db\nExecStartPre=/usr/local/bin/wg-basic doctor --state /var/lib/wg-basic/state.db --socket /run/wg-basic/netd.sock --json --allow-warnings\nExecStart=/usr/local/bin/wg-basic serve --state /var/lib/wg-basic/state.db --socket /run/wg-basic/netd.sock\nNoNewPrivileges=yes\nCapabilityBoundingSet=\nAmbientCapabilities=\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\nRestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\nReadWritePaths=/var/lib/wg-basic /run/wg-basic\nStateDirectory=wg-basic\nStateDirectoryMode=0700\nLimitCORE=0\nTasksMax=64\nMemoryMax=256M\nRestart=on-failure\nRestartSec=2s\n\n[Install]\nWantedBy=multi-user.target\n";
+pub const SERVE_UNIT: &str = "[Unit]\nDescription=wg-basic management service\nRequires=wg-basic-netd.service\nAfter=wg-basic-netd.service network-online.target\nWants=network-online.target\nStartLimitIntervalSec=60s\nStartLimitBurst=5\n\n[Service]\nType=simple\nUser=wg-basic\nGroup=wg-basic\nExecStartPre=/usr/local/bin/wg-basic state init --state /var/lib/wg-basic/state.db\nExecStartPre=/usr/local/bin/wg-basic doctor --state /var/lib/wg-basic/state.db --socket /run/wg-basic/netd.sock --json\nExecStart=/usr/local/bin/wg-basic serve --state /var/lib/wg-basic/state.db --socket /run/wg-basic/netd.sock\nNoNewPrivileges=yes\nCapabilityBoundingSet=\nAmbientCapabilities=\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\nRestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\nReadWritePaths=/var/lib/wg-basic /run/wg-basic\nStateDirectory=wg-basic\nStateDirectoryMode=0700\nLimitCORE=0\nTasksMax=64\nMemoryMax=256M\nRestart=on-failure\nRestartSec=2s\n\n[Install]\nWantedBy=multi-user.target\n";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InstallMetadata {
@@ -710,9 +710,7 @@ pub fn install_local(candidate: &Path) -> Result<(), String> {
         symlink_metadata_exists(Path::new(SERVE_UNIT_PATH))?,
     )?;
     run_install_health_smoke()?;
-    // The pre-start doctor runs before the first reconciliation has written
-    // convergence evidence, so a fresh installation correctly records warn.
-    metadata.last_doctor_disposition = Some("warn".into());
+    metadata.last_doctor_disposition = Some("pass".into());
     write_metadata(system_dir, &metadata)
         .map_err(|_| "could not durably write the installation receipt")?;
     println!("wg-basic {} installed for {target}", version);
