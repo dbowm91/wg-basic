@@ -1,6 +1,6 @@
 # Product Management, Enrollment, and UI Roadmap
 
-Status: active; M001 closed, M002 unblocked
+Status: active; M001–M002 closed, M003 ready
 
 Canonical references:
 
@@ -180,7 +180,7 @@ Expected outcomes:
 
 ## 6. M002 — Authenticated server/client CRUD HTTP API
 
-Status: ready; M001 closed.
+Status: closed. Evidence: `plans/closure/product-management/002-status.md`.
 
 Implementation plan:
 
@@ -209,7 +209,7 @@ Expected outcomes:
 
 ## 7. M003 — Standard export, QR, and one-time enrollment
 
-Status: blocked on M002.
+Status: ready; M002 closed.
 
 Implementation plan:
 

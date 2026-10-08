@@ -1,6 +1,6 @@
 # Product Management M002 — Authenticated Product CRUD API
 
-Status: blocked on Product Management M001 closure
+Status: closed. Evidence: `plans/closure/product-management/002-status.md`.
 
 Source roadmap:
 
