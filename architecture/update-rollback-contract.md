@@ -2,20 +2,21 @@
 
 This contract is Phase 9 output for Phase 10. It describes the required
 transaction around a candidate binary and the authoritative SQLite database.
-The CLI now exposes `update --check`, `update`, and `update recover`, and the
-library contains bounded release-discovery, signature-before-projection,
-candidate-integrity, and durable-journal primitives. The production trust root
-is still unprovisioned, `update --check` fails before network access, and the
-mutating update/recovery transaction is not enabled. No automatic updater is
-available to operators.
+The CLI exposes `update --check`, `update`, and `update recover`. The updater
+contains bounded release discovery, signature-before-projection, candidate
+integrity validation, durable journaling, service lifecycle, state backup and
+restore, health gating, and crash recovery. The production trust root is still
+unprovisioned, so `update --check` and `update` fail before network access.
+The implementation remains under M004 qualification and is unavailable to
+operators until the trust root and required transaction tests are qualified.
 
 The M001 verify-only release foundation is strictly closed and implemented in
 `src/release.rs`: stable version policy, the two canonical GNU target mappings,
 Minisign verification, and Eggpack ReleaseManifest projection after signature
-verification. M004's bounded transport layer composes those primitives but is
-not callable from the production CLI until a trust root is provisioned. The
-production public trust root is not provisioned. No binary installation,
-service mutation, or live update is currently available.
+verification. M004's updater composes those primitives, but production release operations
+remain fail-closed until a trust root is provisioned. M004 rootful lifecycle,
+crash-window, and rollback qualification is still required before update is
+available to operators.
 
 ## Transaction rule
 

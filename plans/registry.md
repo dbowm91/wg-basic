@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-08 (Phase 10 M001–M003 closed; M004 ready; M005 blocked)
+Last planning reconciliation: 2026-10-08 (Phase 10 M001–M003 closed; M004 active; M005 blocked)
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -42,7 +42,7 @@ The architecture separates:
 
 The privileged service does not expose arbitrary shell, command, file-write, sysctl-path, nft-script, or raw-netlink execution.
 
-Current production code state: **Network control and Phases 6–9 are strictly closed. The authenticated product API and embedded UI provide server setup, client lifecycle, config/QR export, one-time enrollment, live telemetry, bounded audit history, operational diagnostics, safe maintenance/recovery, and a proven old/new database rollback contract.** Phase 10 implementation is underway: M001 release identity/authenticity, M002 native system installation, and M003 Eggpack producer/signing handoff are mechanically closed. M004 is ready; M005 remains blocked on M004. Production signing and publication remain external maintainer actions. The selected distribution baseline is systemd/Linux x86_64+aarch64, Eggpack producer contracts, project-owned Minisign release authenticity, Eggup local transaction/service primitives, root-owned install/update metadata, and a crash-recoverable binary+database update journal.
+Current production code state: **Network control and Phases 6–9 are strictly closed. The authenticated product API and embedded UI provide server setup, client lifecycle, config/QR export, one-time enrollment, live telemetry, bounded audit history, operational diagnostics, safe maintenance/recovery, and a proven old/new database rollback contract.** Phase 10 implementation is underway: M001 release identity/authenticity, M002 native system installation, and M003 Eggpack producer/signing handoff are mechanically closed. M004 is active, with transaction code implemented but rootful qualification and production trust-root provisioning outstanding; M005 remains blocked on M004 closure. Production signing and publication remain external maintainer actions. The selected distribution baseline is systemd/Linux x86_64+aarch64, Eggpack producer contracts, project-owned Minisign release authenticity, Eggup local transaction/service primitives, root-owned install/update metadata, and a crash-recoverable binary+database update journal.
 
 ## 3. Eggstack reuse disposition
 

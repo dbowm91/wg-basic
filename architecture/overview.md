@@ -61,7 +61,7 @@ Two invariants shape everything:
 | `src/main.rs` CLI roles | `serve`, `netd`, `reconcile`, `health`, `doctor`, `admin`, `state`, `network`, `system install/status` command surface | [cli-roles](cli-roles.md) |
 | `tests/` + fixtures | unprivileged suites, rootful namespace fixtures, static architecture guards, upgrade rehearsal | [testing-qualification](testing-qualification.md) |
 | service contract | product-owned systemd service definitions and hardening profile | [service-hardening](service-hardening.md) |
-| update contract | binary+database transaction rule, rollback order, crash-window matrix (contract only — no updater shipped) | [update-rollback-contract](update-rollback-contract.md) |
+| update contract | current M004 transaction implementation, binary+database rollback order, crash-window matrix, and qualification status | [update-rollback-contract](update-rollback-contract.md) |
 
 ## Tools and capabilities (operator view)
 
@@ -92,10 +92,11 @@ Two invariants shape everything:
 
 Network control, durable state/restart reconciliation (Phases 6),
 management/auth substrate (Phase 7), product/enrollment/UI (Phase 8), and
-operational hardening (Phase 9) are closed. Transactional self-update is **not
-implemented**. Phase 10 installation is under M002 implementation and
-qualification; M001 release identity/authenticity/target qualification is
-strictly closed. Implementation status lives in
+operational hardening (Phase 9) are closed. Phase 10 M001–M003 are mechanically
+closed. M004 transaction implementation is active and unqualified; production
+updates remain unavailable until the trust root is provisioned and lifecycle
+qualification passes. M005 remains blocked on M004 closure. Implementation
+status lives in
 [the planning registry](../plans/registry.md).
 
 ## Full deep-dive index
