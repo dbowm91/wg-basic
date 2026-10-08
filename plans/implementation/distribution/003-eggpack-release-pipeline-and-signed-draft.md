@@ -360,3 +360,7 @@ Record:
 ## 20. Blocker disposition (2026-10-08)
 
 The original blocker was resolved upstream. Eggpack revision `d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628` adds the explicit `v_prefixed_stable_semver` mode. Its runtime identity envelope preserves the exact source tag, source revision, and unprefixed manifest `release_id`, with source/tag peel verification and stable-tag grammar validation. See `plans/closure/distribution/003-unblock-review.md`. The corrective is satisfied; M003 is active. The M001 verifier and `vX.Y.Z` source tag convention remain unchanged.
+
+## 21. Version-check placement adjustment
+
+The pinned Eggpack reusable renderer has no product-owned source-version hook in its resolve job. The package-version/candidate-version check therefore runs as the required per-target consumer validator after candidate qualification and before the required gate, aggregate/finalization, and draft staging. It compares the source `Cargo.toml` version, candidate `--version`, and runtime Eggpack `release_id`. A mismatch prevents aggregation and staging. This preserves fail-closed publication behavior while allowing the two native target jobs to finish first; no candidate bytes are published or installed by those jobs.
