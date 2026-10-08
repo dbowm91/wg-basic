@@ -1607,42 +1607,73 @@ pub fn recover() -> Result<(), String> {
         return Err("update journal changed while acquiring the transaction lock".into());
     }
     validate_transaction_directory(&journal)?;
-    let current_digest = installed_binary_digest()?;
+    if journal.phase == UpdatePhase::Committed || journal.phase == UpdatePhase::RolledBack {
+        let expected_version = if journal.phase == UpdatePhase::Committed {
+            &journal.version_to
+        } else {
+            &journal.version_from
+        };
+        let expected_binary = if journal.phase == UpdatePhase::Committed {
+            &journal.candidate_sha256
+        } else {
+            &journal.old_binary_sha256
+        };
+        let receipt = match crate::distribution::validate_owned_installation() {
+            Ok(receipt) => receipt,
+            Err(_) => {
+                stop_owned_services()?;
+                return Err("terminal update receipt is invalid; services remain stopped".into());
+            }
+        };
+        let current_digest = match installed_binary_digest() {
+            Ok(digest) => digest,
+            Err(_) => {
+                stop_owned_services()?;
+                return Err("terminal update binary is unsafe; services remain stopped".into());
+            }
+        };
+        let expected_digest = match parse_digest(expected_binary) {
+            Ok(digest) => digest,
+            Err(_) => {
+                stop_owned_services()?;
+                return Err("terminal update digest is invalid; services remain stopped".into());
+            }
+        };
+        if receipt.version != *expected_version
+            || receipt.binary_sha256 != *expected_binary
+            || current_digest != expected_digest
+        {
+            stop_owned_services()?;
+            return Err(
+                "terminal release identity does not match installed bytes; services remain stopped"
+                    .into(),
+            );
+        }
+        println!(
+            "update transaction {} is already {}",
+            journal.transaction_id,
+            if journal.phase == UpdatePhase::Committed {
+                "committed"
+            } else {
+                "rolled back"
+            }
+        );
+        return Ok(());
+    }
+
+    // An interrupted transaction must not leave a possibly unknown generation
+    // serving while its bytes and recovery artifacts are classified.
+    stop_owned_services()?;
+    let current_digest = match installed_binary_digest() {
+        Ok(digest) => digest,
+        Err(_) => {
+            mark_recovery_required(journal_path);
+            return Err("installed binary is unsafe; services remain stopped".into());
+        }
+    };
     let old_digest = parse_digest(&journal.old_binary_sha256)?;
     let candidate_digest = parse_digest(&journal.candidate_sha256)?;
-
-    if journal.phase == UpdatePhase::Committed {
-        let receipt = crate::distribution::validate_owned_installation()?;
-        if receipt.version != journal.version_to
-            || receipt.binary_sha256 != journal.candidate_sha256
-            || current_digest != candidate_digest
-        {
-            stop_owned_services()?;
-            return Err("committed release identity does not match installed bytes; services remain stopped".into());
-        }
-        println!(
-            "update transaction {} is already committed",
-            journal.transaction_id
-        );
-        return Ok(());
-    }
-    if journal.phase == UpdatePhase::RolledBack {
-        let receipt = crate::distribution::validate_owned_installation()?;
-        if receipt.version != journal.version_from
-            || receipt.binary_sha256 != journal.old_binary_sha256
-            || current_digest != old_digest
-        {
-            stop_owned_services()?;
-            return Err("rolled-back release identity does not match installed bytes; services remain stopped".into());
-        }
-        println!(
-            "update transaction {} is already rolled back",
-            journal.transaction_id
-        );
-        return Ok(());
-    }
     if current_digest != old_digest && current_digest != candidate_digest {
-        stop_owned_services()?;
         mark_recovery_required(journal_path);
         return Err(
             "installed binary matches neither journaled generation; services remain stopped".into(),
@@ -1661,7 +1692,6 @@ pub fn recover() -> Result<(), String> {
     if needs_state_restore {
         validate_state_backup(&journal)?;
         ensure_runtime_old_binary(&journal)?;
-        stop_owned_services()?;
         if journal.phase != UpdatePhase::RollingBack {
             journal = advance_journal(journal_path, &journal, UpdatePhase::RollingBack)
                 .map_err(|_| "could not persist recovery rollback phase")?;
