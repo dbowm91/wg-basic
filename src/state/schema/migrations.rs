@@ -129,7 +129,7 @@ pub(super) fn recovery_snapshot(
 }
 
 /// The deterministic location of the pre-migration recovery snapshot.
-pub(super) fn recovery_snapshot_path(database: &Path, from_version: i64) -> PathBuf {
+pub(crate) fn recovery_snapshot_path(database: &Path, from_version: i64) -> PathBuf {
     let parent = database.parent().unwrap_or_else(|| Path::new("."));
     let name = database
         .file_name()

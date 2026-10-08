@@ -254,7 +254,7 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
             canonical_origin,
             allow_non_loopback,
         }) => {
-            let mut checks = doctor_state_checks(&state);
+            let (mut checks, state_snapshot) = doctor_state_checks(&state);
             match request(&socket, RequestOperation::InspectCapabilities, 2) {
                 Ok(ResponseBody::Capabilities(snapshot)) => {
                     let netd_ready =
@@ -282,20 +282,6 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
                         ),
                         if netd_ready { "none" } else { "review netd privilege and runtime-directory ownership/mode" },
                     ));
-                    checks.push(wg_basic::doctor::DoctorCheck::new(
-                        wg_basic::doctor::DoctorCheckId::WireGuard,
-                        capability_disposition(snapshot.wireguard_control),
-                        "WireGuard Generic Netlink probe",
-                        format!("netd capability snapshot: {:?}", snapshot.wireguard_control),
-                        "verify kernel WireGuard support and netd permissions if unavailable",
-                    ));
-                    checks.push(wg_basic::doctor::DoctorCheck::new(
-                        wg_basic::doctor::DoctorCheckId::Nftables,
-                        capability_disposition(snapshot.nftables),
-                        "nftables probe",
-                        format!("netd capability snapshot: {:?}", snapshot.nftables),
-                        "verify nftables availability and netd execution policy if unavailable",
-                    ));
                 }
                 _ => checks.push(wg_basic::doctor::DoctorCheck::new(
                     wg_basic::doctor::DoctorCheckId::Netd,
@@ -305,49 +291,31 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
                     "start netd and verify its socket path and peer permissions",
                 )),
             }
-            checks.push(wg_basic::doctor::DoctorCheck::new(
-                wg_basic::doctor::DoctorCheckId::Rtnetlink,
-                wg_basic::doctor::DoctorDisposition::Unknown,
-                "RTNETLINK read-only observation was not requested",
-                "the capability protocol does not currently expose a harmless link observation without desired state",
-                "no host-state mutation was attempted",
-            ));
+            if let Some(snapshot) = state_snapshot.as_ref() {
+                append_network_plan_checks(&mut checks, &socket, snapshot);
+                append_forwarding_check(&mut checks, snapshot);
+            } else {
+                checks.push(wg_basic::doctor::DoctorCheck::new(
+                    wg_basic::doctor::DoctorCheckId::NetworkOwnership,
+                    wg_basic::doctor::DoctorDisposition::Unknown,
+                    "managed network ownership has not been inspected",
+                    "a validated state snapshot is unavailable",
+                    "resolve the state diagnostic first, then rerun doctor",
+                ));
+                checks.push(wg_basic::doctor::DoctorCheck::new(
+                    wg_basic::doctor::DoctorCheckId::Forwarding,
+                    wg_basic::doctor::DoctorDisposition::Unknown,
+                    "forwarding requirement is unknown",
+                    "the state snapshot is unavailable",
+                    "resolve the state diagnostic first, then rerun doctor",
+                ));
+            }
             checks.push(wg_basic::doctor::DoctorCheck::new(
                 wg_basic::doctor::DoctorCheckId::ServiceLease,
                 wg_basic::doctor::DoctorDisposition::Unknown,
                 "service singleton lease is not available in this milestone",
                 "serve lease support is implemented in Phase 9 M002",
                 "ensure only one serve process uses this state database",
-            ));
-            checks.push(match std::fs::read_to_string("/proc/sys/net/ipv4/ip_forward") {
-                Ok(value) if value.trim() == "1" => wg_basic::doctor::DoctorCheck::new(
-                    wg_basic::doctor::DoctorCheckId::Forwarding,
-                    wg_basic::doctor::DoctorDisposition::Pass,
-                    "IPv4 forwarding is enabled",
-                    "read-only kernel setting is 1",
-                    "none",
-                ),
-                Ok(_) => wg_basic::doctor::DoctorCheck::new(
-                    wg_basic::doctor::DoctorCheckId::Forwarding,
-                    wg_basic::doctor::DoctorDisposition::Unknown,
-                    "IPv4 forwarding is disabled",
-                    "read-only kernel setting is 0; the product snapshot is unavailable",
-                    "check whether this installation routes traffic, then enable forwarding through host configuration if required",
-                ),
-                Err(_) => wg_basic::doctor::DoctorCheck::new(
-                    wg_basic::doctor::DoctorCheckId::Forwarding,
-                    wg_basic::doctor::DoctorDisposition::Unknown,
-                    "IPv4 forwarding state could not be read",
-                    "the expected procfs setting is unavailable",
-                    "run doctor on the Linux host that owns the WireGuard network",
-                ),
-            });
-            checks.push(wg_basic::doctor::DoctorCheck::new(
-                wg_basic::doctor::DoctorCheckId::NetworkOwnership,
-                wg_basic::doctor::DoctorDisposition::Unknown,
-                "managed network ownership has not been inspected",
-                "the diagnostic did not issue a plan-only aggregate network request",
-                "review network ownership with the normal read-only network inspection tools",
             ));
             if let Some(bind) = http_bind {
                 use wg_basic::http::ServeConfig;
@@ -482,9 +450,12 @@ fn run_admin_action(action: AdminAction) -> Result<(), String> {
 /// Performs only read-only checks. In particular this deliberately avoids
 /// `StateStore::open`, whose normal contract is to apply pending migrations.
 #[cfg(target_os = "linux")]
-fn doctor_state_checks(path: &std::path::Path) -> Vec<wg_basic::doctor::DoctorCheck> {
-    use rusqlite::OpenFlags;
-    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+fn doctor_state_checks(
+    path: &std::path::Path,
+) -> (
+    Vec<wg_basic::doctor::DoctorCheck>,
+    Option<wg_basic::state::StateDiagnostic>,
+) {
     use wg_basic::doctor::{DoctorCheck, DoctorCheckId as Id, DoctorDisposition as D};
 
     let mut checks = Vec::new();
@@ -495,11 +466,7 @@ fn doctor_state_checks(path: &std::path::Path) -> Vec<wg_basic::doctor::DoctorCh
     });
     let (version_text, source_id) =
         version.unwrap_or_else(|_| ("unknown".into(), "unavailable".into()));
-    let supported = version_text
-        .split('.')
-        .map(|part| part.parse::<u32>().unwrap_or(0))
-        .collect::<Vec<_>>();
-    let sqlite_ok = supported.as_slice() >= &[3, 51, 3];
+    let sqlite_ok = wg_basic::doctor::sqlite_version_at_least(&version_text, (3, 51, 3));
     checks.push(DoctorCheck::new(
         Id::Sqlite,
         if sqlite_ok { D::Pass } else { D::Fail },
@@ -516,142 +483,385 @@ fn doctor_state_checks(path: &std::path::Path) -> Vec<wg_basic::doctor::DoctorCh
         },
     ));
 
-    let result = (|| -> Result<(i64, String), &'static str> {
-        let metadata = std::fs::symlink_metadata(path)
-            .map_err(|_| "state file does not exist or cannot be inspected")?;
-        if !metadata.file_type().is_file() {
-            return Err("state path is not a regular non-symlink file");
-        }
-        let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
-        let parent_meta =
-            std::fs::metadata(parent).map_err(|_| "state parent cannot be inspected")?;
-        let uid = std::fs::metadata("/proc/self")
-            .map_err(|_| "effective uid cannot be inspected")?
-            .uid();
-        if metadata.uid() != uid
-            || metadata.permissions().mode() & 0o077 != 0
-            || parent_meta.uid() != uid
-            || parent_meta.permissions().mode() & 0o022 != 0
-        {
-            return Err("state ownership or permissions are broader than the store policy");
-        }
-        let wal_path = sidecar_path(path, "-wal");
-        let shm_path = sidecar_path(path, "-shm");
-        if wal_path.exists() || shm_path.exists() {
-            return Err(
-                "SQLite WAL sidecars are present; safe immutable inspection is unavailable",
-            );
-        }
-        let uri = immutable_sqlite_uri(path)?;
-        let connection = rusqlite::Connection::open_with_flags(
-            uri,
-            OpenFlags::SQLITE_OPEN_READ_ONLY
-                | OpenFlags::SQLITE_OPEN_NOFOLLOW
-                | OpenFlags::SQLITE_OPEN_URI,
-        )
-        .map_err(|_| "state database could not be opened in immutable read-only mode")?;
-        let quick: String = connection
-            .query_row("PRAGMA quick_check", [], |row| row.get(0))
-            .map_err(|_| "SQLite quick_check could not complete")?;
-        if quick != "ok" {
-            return Err("SQLite quick_check reported an integrity failure");
-        }
-        let fk: i64 = connection
-            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
-                row.get(0)
-            })
-            .map_err(|_| "foreign-key check could not complete")?;
-        if fk != 0 {
-            return Err("SQLite foreign-key check reported inconsistent rows");
-        }
-        let schema: i64 = connection
-            .query_row("PRAGMA user_version", [], |row| row.get(0))
-            .map_err(|_| "schema version could not be read")?;
-        if !(1..=4).contains(&schema) {
-            return Err("schema version is unsupported by this binary");
-        }
-        if wal_path.exists() || shm_path.exists() {
-            return Err(
-                "SQLite WAL sidecars appeared during inspection; result is not authoritative",
-            );
-        }
-        Ok((schema, quick))
-    })();
-    checks.push(match result {
-        Ok((schema, _)) => DoctorCheck::new(
+    let inspection = wg_basic::state::inspect_readonly(path);
+    let snapshot = inspection.as_ref().ok();
+    let missing = std::fs::symlink_metadata(path)
+        .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound);
+    let busy = matches!(&inspection, Err(wg_basic::state::StateError::Busy));
+    checks.push(match snapshot {
+        Some(_) => DoctorCheck::new(
             Id::State,
             D::Pass,
-            "state file passed read-only safety and integrity checks",
-            format!("schema {schema}; SQLite quick_check and foreign-key check passed"),
+            "state file passed immutable ownership, integrity, and schema checks",
+            "quick_check, foreign-key check, and typed snapshot validation passed",
             "none",
         ),
-        Err(reason) if reason == "state file does not exist or cannot be inspected" => {
-            DoctorCheck::new(
-                Id::State,
-                D::Warn,
-                "state database is not initialized",
-                reason,
-                "initialize the state database with the documented setup flow",
-            )
-        }
-        Err(reason) if reason.starts_with("SQLite WAL sidecars") => DoctorCheck::new(
+        None if missing => DoctorCheck::new(
+            Id::State,
+            D::Warn,
+            "state database is not initialized",
+            "configured path does not exist",
+            "initialize the state database with the documented setup flow",
+        ),
+        None if busy => DoctorCheck::new(
             Id::State,
             D::Unknown,
-            "state database integrity was not inspected",
-            reason,
-            "stop the service before offline inspection, or rerun doctor when no WAL sidecars exist",
+            "state has live WAL sidecars and cannot be inspected immutably",
+            "immutable inspection refuses to ignore WAL contents",
+            "stop the management service and rerun doctor",
         ),
-        Err(reason) => DoctorCheck::new(
+        None => DoctorCheck::new(
             Id::State,
             D::Fail,
-            "state database failed a read-only safety check",
-            reason,
-            "correct the path/ownership or restore a verified backup",
+            "state database failed a read-only safety or validation check",
+            "path ownership, schema, integrity, or typed state validation failed",
+            "correct state ownership or restore a verified backup",
         ),
     });
-    checks
+    if let Some(snapshot) = snapshot.as_ref() {
+        checks.push(DoctorCheck::new(
+            Id::State,
+            D::Pass,
+            "authoritative state decoded and validated read-only",
+            format!(
+                "schema {}; installation {}; desired generation {}",
+                snapshot.schema_version,
+                snapshot.metadata.installation_id,
+                snapshot.metadata.desired_generation
+            ),
+            "none",
+        ));
+        checks.push(DoctorCheck::new(
+            Id::Product,
+            D::Pass,
+            "desired and product snapshots decoded and validated",
+            format!(
+                "{} managed interface(s); {} client(s)",
+                snapshot.desired.state.interfaces.len(),
+                snapshot.product.clients.len()
+            ),
+            "none",
+        ));
+        let converged = snapshot.convergence.last_converged_generation
+            == Some(snapshot.metadata.desired_generation);
+        checks.push(DoctorCheck::new(
+            Id::Convergence,
+            if converged { D::Pass } else { D::Warn },
+            if converged {
+                "current desired generation has convergence evidence"
+            } else {
+                "current desired generation lacks convergence evidence"
+            },
+            format!(
+                "desired {}; attempted {:?}; converged {:?}; outcome {}",
+                snapshot.metadata.desired_generation,
+                snapshot.convergence.last_attempted_generation,
+                snapshot.convergence.last_converged_generation,
+                snapshot
+                    .convergence
+                    .last_outcome
+                    .as_deref()
+                    .unwrap_or("none")
+            ),
+            if converged {
+                "none"
+            } else {
+                "start netd and management service, then inspect the reconcile result"
+            },
+        ));
+        let unsafe_artifact = snapshot
+            .recovery_artifacts
+            .iter()
+            .any(|artifact| artifact.present && !artifact.safe);
+        let artifacts = snapshot
+            .recovery_artifacts
+            .iter()
+            .filter(|artifact| artifact.present)
+            .map(|artifact| format!("v{}", artifact.source_schema))
+            .collect::<Vec<_>>()
+            .join(", ");
+        checks.push(DoctorCheck::new(
+            Id::RecoveryArtifacts,
+            if unsafe_artifact { D::Fail } else { D::Pass },
+            if unsafe_artifact { "a recovery artifact has unsafe path, owner, or mode" } else { "automatic recovery artifacts are safe" },
+            if artifacts.is_empty() { "no pre-migration snapshots found".to_owned() } else { format!("pre-migration snapshots: {artifacts}") },
+            if unsafe_artifact { "inspect the specific pre-migration snapshot and restore safe ownership/mode without deleting it" } else { "none" },
+        ));
+    }
+    (checks, inspection.ok())
 }
 
 #[cfg(target_os = "linux")]
-fn capability_disposition(
-    state: wg_basic::protocol::CapabilityState,
-) -> wg_basic::doctor::DoctorDisposition {
-    match state {
-        wg_basic::protocol::CapabilityState::Available => wg_basic::doctor::DoctorDisposition::Pass,
-        wg_basic::protocol::CapabilityState::Unavailable => {
-            wg_basic::doctor::DoctorDisposition::Fail
+fn append_network_plan_checks(
+    checks: &mut Vec<wg_basic::doctor::DoctorCheck>,
+    socket: &std::path::Path,
+    snapshot: &wg_basic::state::StateDiagnostic,
+) {
+    use wg_basic::doctor::{DoctorCheck, DoctorCheckId as Id, DoctorDisposition as D};
+    use wg_basic::protocol::{RequestOperation, ResponseBody};
+
+    let intent = match wg_basic::management::project_diagnostic_intent(
+        snapshot.metadata.installation_id,
+        snapshot.desired.generation,
+        &snapshot.desired.state,
+        &snapshot.product,
+    ) {
+        Ok(intent) => intent,
+        Err(_) => {
+            checks.push(DoctorCheck::new(
+                Id::NetworkOwnership,
+                D::Fail,
+                "desired network intent could not be projected",
+                "typed desired/product state failed projection validation",
+                "correct the desired network configuration before applying it",
+            ));
+            return;
         }
-        wg_basic::protocol::CapabilityState::Unknown => {
-            wg_basic::doctor::DoctorDisposition::Unknown
+    };
+    let Some(intent) = intent else {
+        for (id, name) in [
+            (Id::NetworkOwnership, "network ownership"),
+            (Id::Rtnetlink, "RTNETLINK"),
+            (Id::WireGuard, "WireGuard"),
+            (Id::Nftables, "nftables"),
+        ] {
+            checks.push(DoctorCheck::new(
+                id,
+                D::Pass,
+                format!("{name} probe is not required for an empty installation"),
+                "no managed network interface is configured",
+                "none",
+            ));
+        }
+        return;
+    };
+
+    let interface = intent.desired_interface.interface.clone();
+    let intended_port = intent
+        .desired_interface
+        .wireguard
+        .as_ref()
+        .map(|wireguard| wireguard.listen_port);
+    match wg_basic::protocol::request(
+        socket,
+        RequestOperation::PlanInstallationNetworkIntent { intent },
+        3,
+    ) {
+        Ok(ResponseBody::InstallationNetworkPlanned(plan)) => {
+            append_plan_outcome(checks, &plan);
+            checks.push(DoctorCheck::new(
+                Id::Rtnetlink,
+                D::Pass,
+                "bounded RTNETLINK observation completed through the aggregate plan",
+                "plan-only request observed managed link/address/route state",
+                "none",
+            ));
+            checks.push(DoctorCheck::new(
+                Id::Nftables,
+                D::Pass,
+                "read-only nftables plan completed",
+                "the aggregate planner completed its table observation without applying",
+                "none",
+            ));
+        }
+        Err(error) => {
+            let protocol_error = error
+                .get_ref()
+                .and_then(|source| source.downcast_ref::<wg_basic::protocol::ProtocolError>())
+                .copied();
+            let conflict = protocol_error == Some(wg_basic::protocol::ProtocolError::Conflict);
+            let invalid = protocol_error == Some(wg_basic::protocol::ProtocolError::InvalidInput);
+            checks.push(DoctorCheck::new(
+                Id::NetworkOwnership,
+                if conflict || invalid { D::Fail } else { D::Unknown },
+                if conflict {
+                    "network plan found an ownership conflict"
+                } else if invalid {
+                    "network plan rejected the desired state"
+                } else {
+                    "network plan could not complete"
+                },
+                match protocol_error {
+                    Some(wg_basic::protocol::ProtocolError::Conflict) => "netd returned a typed ownership conflict",
+                    Some(wg_basic::protocol::ProtocolError::InvalidInput) => "netd refused the typed desired intent",
+                    Some(wg_basic::protocol::ProtocolError::UnsupportedBackend) => "a required backend is unsupported",
+                    Some(wg_basic::protocol::ProtocolError::PermissionDenied | wg_basic::protocol::ProtocolError::Unauthorized) => "netd denied the diagnostic peer",
+                    _ => "no classified plan result was received",
+                },
+                if conflict {
+                    "inspect and resolve the foreign network resource manually; doctor did not mutate it"
+                } else if invalid {
+                    "correct the desired network state and rerun doctor"
+                } else {
+                    "check netd availability and permissions, then rerun doctor"
+                },
+            ));
+            for id in [Id::Rtnetlink, Id::Nftables] {
+                checks.push(DoctorCheck::new(
+                    id,
+                    D::Unknown,
+                    "read-only backend probe did not complete",
+                    "aggregate plan request returned no successful plan",
+                    "resolve the network plan issue and rerun doctor",
+                ));
+            }
+        }
+        _ => checks.push(DoctorCheck::new(
+            Id::NetworkOwnership,
+            D::Unknown,
+            "netd returned an unexpected plan response",
+            "response did not match the requested aggregate plan operation",
+            "check protocol compatibility and rerun doctor",
+        )),
+    }
+    match wg_basic::protocol::request(
+        socket,
+        RequestOperation::ObserveWireGuardDevice { interface },
+        4,
+    ) {
+        Ok(ResponseBody::WireGuardDevice(device)) => {
+            checks.push(DoctorCheck::new(
+                Id::WireGuard,
+                D::Pass,
+                "WireGuard Generic Netlink observation succeeded",
+                format!(
+                    "managed interface observed; listen port {:?}",
+                    device.listen_port
+                ),
+                "none",
+            ));
+            append_listen_port_check(checks, intended_port, device.listen_port);
+        }
+        _ => {
+            checks.push(DoctorCheck::new(
+                Id::WireGuard,
+                D::Unknown,
+                "WireGuard device observation is unavailable",
+                "the interface is absent or the Generic Netlink probe did not complete",
+                "check netd and kernel WireGuard support; ownership planning remains read-only",
+            ));
+            append_listen_port_check(checks, intended_port, None);
         }
     }
 }
 
 #[cfg(target_os = "linux")]
-fn sidecar_path(path: &std::path::Path, suffix: &str) -> std::path::PathBuf {
-    let mut value = path.as_os_str().to_owned();
-    value.push(suffix);
-    value.into()
-}
-
-/// Builds a percent-encoded immutable URI so inspection neither creates WAL
-/// shared-memory files nor writes database metadata. Existing WAL sidecars are
-/// refused by the caller because immutable mode intentionally ignores them.
-#[cfg(target_os = "linux")]
-fn immutable_sqlite_uri(path: &std::path::Path) -> Result<String, &'static str> {
-    use std::os::unix::ffi::OsStrExt;
-    let absolute = std::path::absolute(path).map_err(|_| "path could not be made absolute")?;
-    let mut uri = String::from("file:");
-    for byte in absolute.as_os_str().as_bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(*byte, b'/' | b'-' | b'_' | b'.' | b'~') {
-            uri.push(char::from(*byte));
+fn append_plan_outcome(
+    checks: &mut Vec<wg_basic::doctor::DoctorCheck>,
+    plan: &wg_basic::protocol::InstallationNetworkPlanBody,
+) {
+    use wg_basic::doctor::{DoctorCheck, DoctorCheckId as Id, DoctorDisposition as D};
+    let interface_actions = plan.interface_plan.actions.len();
+    let firewall_actions = plan.firewall_plan.actions.len();
+    let changed = interface_actions + firewall_actions > 0;
+    checks.push(DoctorCheck::new(
+        Id::NetworkOwnership,
+        if changed { D::Warn } else { D::Pass },
+        if changed {
+            "owned network drift is repairable by normal reconciliation"
         } else {
-            uri.push('%');
-            uri.push_str(&format!("{byte:02X}"));
-        }
-    }
-    uri.push_str("?mode=ro&immutable=1");
-    Ok(uri)
+            "managed network state is converged"
+        },
+        format!(
+            "{} interface action(s); {} firewall action(s); no apply was requested",
+            interface_actions, firewall_actions
+        ),
+        if changed {
+            "run the normal management reconciliation after reviewing the planned changes"
+        } else {
+            "none"
+        },
+    ));
+}
+
+#[cfg(target_os = "linux")]
+fn append_listen_port_check(
+    checks: &mut Vec<wg_basic::doctor::DoctorCheck>,
+    intended: Option<u16>,
+    observed: Option<u16>,
+) {
+    use wg_basic::doctor::{DoctorCheck, DoctorCheckId as Id, DoctorDisposition as D};
+    let (disposition, summary, evidence, remediation) = match (intended, observed) {
+        (Some(wanted), Some(actual)) if wanted == actual => (
+            D::Pass,
+            "owned WireGuard interface uses the configured listen port",
+            format!("configured and observed UDP port {wanted}"),
+            "none",
+        ),
+        (Some(wanted), Some(actual)) => (
+            D::Warn,
+            "managed listen port differs from desired state",
+            format!("configured UDP port {wanted}; observed {actual}"),
+            "review the desired configuration and reconcile through wg-basic",
+        ),
+        (Some(wanted), None) => (
+            D::Unknown,
+            "listen-port availability is ambiguous",
+            format!("configured UDP port {wanted}; no active managed interface was observed"),
+            "check other host UDP/WireGuard users manually; doctor did not bind or mutate the port",
+        ),
+        _ => (
+            D::Unknown,
+            "no configured listen port was available to check",
+            "desired state has no active WireGuard listen-port value".to_owned(),
+            "review server configuration if this installation should expose WireGuard",
+        ),
+    };
+    checks.push(DoctorCheck::new(
+        Id::ListenPort,
+        disposition,
+        summary,
+        evidence,
+        remediation,
+    ));
+}
+
+#[cfg(target_os = "linux")]
+fn append_forwarding_check(
+    checks: &mut Vec<wg_basic::doctor::DoctorCheck>,
+    snapshot: &wg_basic::state::StateDiagnostic,
+) {
+    use wg_basic::doctor::{DoctorCheck, DoctorCheckId as Id, DoctorDisposition as D};
+    let required = snapshot
+        .desired
+        .state
+        .network_policy
+        .as_ref()
+        .is_some_and(|policy| policy.ipv4_forwarding_required);
+    let value = std::fs::read_to_string("/proc/sys/net/ipv4/ip_forward");
+    let (disposition, summary, evidence, remediation) = match (required, value) {
+        (false, Ok(setting)) => (
+            D::Pass,
+            "IPv4 forwarding is not required by desired state",
+            format!("read-only procfs value {}", setting.trim()),
+            "none",
+        ),
+        (true, Ok(setting)) if setting.trim() == "1" => (
+            D::Pass,
+            "required IPv4 forwarding is enabled",
+            "read-only procfs value 1".to_owned(),
+            "none",
+        ),
+        (true, Ok(_)) => (
+            D::Fail,
+            "desired network policy requires IPv4 forwarding, but it is disabled",
+            "read-only procfs value 0".to_owned(),
+            "enable IPv4 forwarding through host configuration; doctor did not write the setting",
+        ),
+        (_, Err(_)) => (
+            D::Unknown,
+            "IPv4 forwarding state could not be read",
+            "the expected procfs setting is unavailable".to_owned(),
+            "run doctor on the Linux host that owns the WireGuard network",
+        ),
+    };
+    checks.push(DoctorCheck::new(
+        Id::Forwarding,
+        disposition,
+        summary,
+        evidence,
+        remediation,
+    ));
 }
 
 /// Reads a password from standard input, trimming exactly one trailing newline.
@@ -893,7 +1103,7 @@ mod tests {
             .map(|entry| entry.unwrap().file_name())
             .collect::<Vec<_>>();
 
-        let checks = doctor_state_checks(&path);
+        let (checks, _snapshot) = doctor_state_checks(&path);
         let state = checks
             .iter()
             .find(|check| check.id == wg_basic::doctor::DoctorCheckId::State)

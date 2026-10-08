@@ -23,6 +23,7 @@
 //! restrictive filesystem permissions. This is not a sanitized export.
 
 mod backup;
+mod diagnostic;
 mod error;
 mod inuse;
 mod model;
@@ -34,6 +35,7 @@ pub use backup::{
     restore, retained_previous_path, validate_candidate, BackupDisposition, BackupReceipt,
     RestoreReceipt,
 };
+pub use diagnostic::{inspect_readonly, RecoveryArtifactStatus, StateDiagnostic};
 pub use error::StateError;
 // The identifiers themselves live in `crate::domain` so the privileged side can
 // derive an owner tag without depending on the state store. They are re-exported

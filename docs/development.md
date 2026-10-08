@@ -23,7 +23,7 @@ install -d -m 700 /tmp/wg-basic-runtime
 cargo run --locked -- netd --socket /tmp/wg-basic-runtime/netd.sock
 ```
 
-In another terminal, use `cargo run --locked -- doctor --socket ...` or `cargo run --locked -- serve --socket ...`. Doctor accepts `--state`, `--json`, and optional `--http-bind` / origin-policy flags. Its exit code is 0 for pass, 1 for warning/unknown, and 2 for a required failure; state inspection is read-only and does not initialize or migrate a database. `serve` is the unprivileged management service: it opens the durable state store on a dedicated bounded worker thread, attempts startup reconciliation, and serves the authenticated HTTP API (`--http-bind`, default `127.0.0.1:8000`) and embedded operator UI for login/session/health, server setup, client CRUD, config/QR export, one-time enrollment, live telemetry, and audit pages. Product mutations require the current `expected_generation`, the exact `Origin`, and the session CSRF token; their `200`/`201` versus `202` response distinguishes confirmed enforcement from a committed change still awaiting network application. The UI reports degraded disable/delete as not yet confirmed revoked. The unauthenticated `GET /healthz` remains a two-token liveness probe. For a separate management UID, start netd with `--allow-uid UID` and arrange socket group access. Both `netd` and `serve` exit on Ctrl-C; `netd` removes only the socket inode it created.
+In another terminal, use `cargo run --locked -- doctor --state /tmp/wg-basic-runtime/state.db --socket /tmp/wg-basic-runtime/netd.sock` or `cargo run --locked -- serve --socket /tmp/wg-basic-runtime/netd.sock`. Doctor accepts `--json` and optional `--http-bind`, `--canonical-origin`, and `--allow-non-loopback` flags. Its exit code is 0 when all checks pass, 1 when warnings or unknowns need attention, and 2 for a required failure or invalid invocation. State inspection uses immutable read-only SQLite access and does not initialize or migrate a database; when WAL sidecars make an immutable view unsafe, it reports the state as unavailable. With configured product state, doctor asks netd for a typed aggregate plan and never applies it. Port availability that cannot be proven without binding is reported as unknown. `serve` is the unprivileged management service: it opens the durable state store on a dedicated bounded worker thread, attempts startup reconciliation, and serves the authenticated HTTP API (`--http-bind`, default `127.0.0.1:8000`) and embedded operator UI for login/session/health, server setup, client CRUD, config/QR export, one-time enrollment, live telemetry, and audit pages. Product mutations require the current `expected_generation`, the exact `Origin`, and the session CSRF token; their `200`/`201` versus `202` response distinguishes confirmed enforcement from a committed change still awaiting network application. The UI reports degraded disable/delete as not yet confirmed revoked. The unauthenticated `GET /healthz` remains a two-token liveness probe. For a separate management UID, start netd with `--allow-uid UID` and arrange socket group access. Both `netd` and `serve` exit on Ctrl-C; `netd` removes only the socket inode it created.
 
 ## Local administrator credentials
 
@@ -150,6 +150,19 @@ sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo \
 `durable_restart` is a process-level fixture: it runs the real `wg-basic netd` binary and the real `wg-basic reconcile` management role as separate child processes against a temporary on-disk SQLite file, disposable namespaces, real RTNETLINK, and real nftables. It proves restart recovery rather than in-process reconstruction, so it depends on a built `wg-basic` executable and leaves its `netd` children to be reaped by the harness. CI runs these as the `durable-owner`, `durable-restart`, and `durable-backup` jobs.
 
 The `-E env ... CARGO_HOME=...` form exists because `sudo` resets `HOME`, and Cargo needs a writable home to resolve the toolchain and registry cache when the tests are run as root.
+
+## Doctor read-only namespace fixture
+
+The doctor fixture first uses an empty installation in the ordinary test suite,
+then creates a configured-but-unapplied installation in a disposable network
+namespace. It asserts that the real doctor command plans repair without applying
+it and that database, link, route, and nftables snapshots are unchanged. It
+requires root, `iproute2`, and `nftables`:
+
+```sh
+sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo \
+  cargo test --locked --features linux-integration --test doctor_readonly -- --test-threads=1
+```
 
 ## Phase 7 service suites
 

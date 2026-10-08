@@ -1006,6 +1006,41 @@ fn the_admin_cli_offers_no_argv_or_environment_secret_path() {
     );
 }
 
+#[test]
+fn doctor_uses_only_immutable_state_reads_and_plan_operations() {
+    let main = code_only(source_of("src/main.rs"));
+    let doctor_dispatch = main
+        .split_once("Some(Command::Doctor")
+        .expect("doctor command is registered")
+        .1
+        .split_once("Some(Command::Netd")
+        .expect("doctor dispatch ends before netd role")
+        .0;
+    let doctor_helpers = main
+        .split_once("fn doctor_state_checks")
+        .expect("doctor state inspection exists")
+        .1
+        .split_once("fn read_password_from_stdin")
+        .expect("doctor helpers are a bounded source region")
+        .0;
+    let doctor_code = format!("{doctor_dispatch}\n{doctor_helpers}");
+    for forbidden in [
+        "ApplyInstallationNetworkIntent",
+        "ApplyManagedInterface",
+        "ApplyNetworkPolicy",
+        "StateStore::open",
+        "Command::new",
+        "std::process::Command",
+    ] {
+        assert!(
+            !doctor_code.contains(forbidden),
+            "doctor must not contain mutating or process-execution path {forbidden}"
+        );
+    }
+    assert!(doctor_code.contains("PlanInstallationNetworkIntent"));
+    assert!(doctor_code.contains("inspect_readonly"));
+}
+
 // ---------------------------------------------------------------------------
 // M003: the authenticated perimeter
 // ---------------------------------------------------------------------------
