@@ -449,9 +449,9 @@ Eggstack reuse is contract-driven.
 | Primitive | Current disposition | Reason |
 |---|---|---|
 | EggServe | preferred candidate | hardened Rust HTTP/static runtime; suitable downstream service boundary |
-| Eggup | planned for Phase 10 | verified staging/replacement/rollback/service lifecycle |
-| Eggpack | planned for Phase 10 | producer-side deterministic release construction |
-| Eggfetch | not currently needed | no ordinary outbound HTTP requirement in core control plane |
+| Eggup | selected Phase 10 substrate | Core for local binary transaction, acquisition/curl for bounded fetch, Eggpack adapter for manifest projection, service crate for systemd mechanics; wg-basic retains authenticity/state/health/journal policy |
+| Eggpack | selected Phase 10 producer substrate | canonical target/build/qualification/manifest/bootstrap/draft-release contracts; signing remains project-owned |
+| Eggfetch | alternate Phase 10 transport only | baseline selects eggup-curl for smaller shipped dependency footprint; switch requires measured host/footprint evidence |
 | Eggprobe | not currently needed | does not own authoritative WireGuard/nftables mutation |
 | Eggress | not currently needed | proxy transport is outside product scope |
 | Eggsact | not currently needed | deterministic agent tooling is unrelated to runtime appliance |
@@ -501,6 +501,6 @@ Before the first public production claim:
 | 7 service/security substrate | closed | `plans/subsystems/management-service-security-roadmap.md` | — |
 | 8 management API/UI/enrollment | closed | `plans/subsystems/product-management-enrollment-ui-roadmap.md` | — |
 | 9 operational hardening | closed | `plans/subsystems/operational-hardening-roadmap.md` | — |
-| 10 distribution/update | unblocked for research/planning | future distribution roadmap | Phase 9 closed; bounded roadmap/plan still needed |
+| 10 distribution/update | planned / M001 ready | `plans/subsystems/distribution-install-update-roadmap.md` | — |
 | 11 IPv6/route-policy qualification | deferred | future roadmap | stable product baseline |
 | 12 advanced capabilities | deferred | separate future research | explicit product decision |
