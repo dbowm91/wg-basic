@@ -2,6 +2,7 @@
 """Exercise the product wrapper without network or host mutation."""
 
 import os
+import hashlib
 import subprocess
 import tempfile
 from pathlib import Path
@@ -37,6 +38,7 @@ def main() -> None:
             "set -eu\n"
             "cat > \"$1/wg-basic\" <<'CANDIDATE'\n"
             "#!/bin/sh\n"
+            "if [ \"$1\" = --version ]; then echo 'wg-basic 1.2.3'; exit 0; fi\n"
             f"printf '%s\\n' \"$*\" >> '{installs}'\n"
             "CANDIDATE\n"
             "chmod 755 \"$1/wg-basic\"\n"
@@ -65,6 +67,44 @@ def main() -> None:
         observed = installs.read_text(encoding="utf-8").strip()
         if not observed.startswith("system install --candidate "):
             raise RuntimeError("installer did not delegate to `system install`")
+
+        candidate = root / "preverified-candidate"
+        candidate.write_text(
+            "#!/bin/sh\n"
+            "if [ \"$1\" = --version ]; then echo 'wg-basic 1.2.3'; exit 0; fi\n"
+            f"printf '%s\\n' \"$*\" >> '{installs}'\n",
+            encoding="utf-8",
+        )
+        candidate.chmod(0o755)
+        urls.write_text("", encoding="utf-8")
+        installs.write_text("", encoding="utf-8")
+        result = subprocess.run(
+            [
+                "sh",
+                str(ROOT / "release/eggpack/install.sh"),
+                "--version",
+                "1.2.3",
+                "--candidate",
+                str(candidate),
+                "--sha256",
+                hashlib.sha256(candidate.read_bytes()).hexdigest(),
+                "--size",
+                str(candidate.stat().st_size),
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        if result.returncode:
+            raise RuntimeError(f"preverified installer path failed: {result.stderr.strip()}")
+        if urls.read_text(encoding="utf-8"):
+            raise RuntimeError("preverified candidate path performed network access")
+        if not installs.read_text(encoding="utf-8").strip().startswith(
+            "system install --candidate "
+        ):
+            raise RuntimeError("preverified candidate was not delegated to `system install`")
         print("release installer wrapper passed mocked exact-version delegation")
 
 

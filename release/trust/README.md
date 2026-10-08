@@ -13,12 +13,29 @@ the downloaded script bytes; HTTPS and an embedded checksum do not authenticate
 the script or manifest.
 
 A high-assurance installation must obtain the production public key
-independently, download `install.sh` and its detached `.minisig`, verify the
-signature before execution, then verify the signed release manifest before
-using its artifact metadata. That path is not available until the production
-trust root has been provisioned and a production-signed draft has been
-qualified. The key in `tests/fixtures/release-auth/` is test-only and must never
-be used for a public release.
+independently, verify the `install.sh` detached signature before execution,
+verify the signed release manifest, and pass its selected artifact's exact
+size and SHA-256 to the wrapper with a local candidate. That path is not
+available until the production trust root has been provisioned and a
+production-signed draft has been qualified. The key in
+`tests/fixtures/release-auth/` is test-only and must never be used for a public
+release.
+
+After independently verifying the script and manifest signatures and
+downloading the selected manifest artifact, the high-assurance form is:
+
+```sh
+chmod 700 ./wg-basic
+sudo sh ./install.sh --version X.Y.Z --candidate ./wg-basic \
+  --sha256 '<selected artifact SHA-256 from the verified manifest>' \
+  --size '<selected artifact size from the verified manifest>'
+```
+
+The wrapper copies the candidate into a private root-owned directory, checks
+its exact size, digest, and version there, then delegates to
+`wg-basic system install`. It makes no network request in this mode. The
+operator must take the digest and size from the target record in the verified
+manifest.
 
 ## Maintainer signing handoff
 
