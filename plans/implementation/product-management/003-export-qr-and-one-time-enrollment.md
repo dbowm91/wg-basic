@@ -1,6 +1,6 @@
 # Product Management M003 — Export, QR, and One-Time Enrollment
 
-Status: blocked on Product Management M002 closure
+Status: ready
 
 Source roadmap:
 
