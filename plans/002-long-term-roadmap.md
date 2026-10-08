@@ -226,7 +226,7 @@ Phase 6 implementation is complete. Post-Phase-6 corrective work was tracked in 
 
 ## 9. Phase 7 — Service/security substrate
 
-Status: closed at `d5d5ca9`; M001–M004 strictly closed. The separate post-Phase-7 C001 corrective is active only to restore deterministic green current-head CI and does not reopen Phase 7 architecture.
+Status: closed. M001–M004 strictly closed at `d5d5ca9`; the separate post-Phase-7 C001 corrective also closed at `df1f9e7` and does not reopen Phase 7 architecture.
 
 Owned by:
 
@@ -265,7 +265,7 @@ Phase 7 deliberately stops before peer/client CRUD, QR/config export, and the fu
 
 ## 10. Phase 8 — Management API, UI, and enrollment
 
-Status: unblocked. Phase 8 research and planning are complete under ADR-004, and post-Phase-7 C001 is strictly closed, so M001 may begin on a green current-head baseline.
+Status: closed. Phase 8 M001–M005 are strictly closed; M005 implementation head is `8b20a7c` and Phase 8 closure is recorded at `e8fd6b1`.
 
 Owned by:
 
@@ -302,13 +302,13 @@ Milestones:
 - M004 live telemetry + audit/status surface;
 - M005 embedded product UI + Phase 8 qualification.
 
-Phase 8 is fully researched/planned, and post-Phase-7 C001 restored the green deterministic current-head baseline it required. Production implementation proceeds milestone by milestone; M002–M005 stay ordered behind M001's closed contracts.
+Phase 8 implementation is complete. The product boundary now includes authenticated setup/client lifecycle, config/QR export, one-time enrollment, live telemetry, audit history, and the embedded buildless UI; the rootful product fixture qualifies the exported-client handshake and lifecycle end to end.
 
 This is the first user-facing product-capability closure boundary.
 
 ## 11. Phase 9 — Operational hardening
 
-Status: blocked on Phase 8.
+Status: unblocked for research/planning; Phase 8 is strictly closed. No Phase 9 implementation plan is eligible until the operational-hardening subsystem roadmap is written and registered.
 
 Expected outcomes:
 
@@ -442,8 +442,8 @@ Before the first public production claim:
 | 5 firewall/forwarding/E2E | closed | network-control M005 | — |
 | 6 durable state/restart reconciliation | closed | `plans/subsystems/durable-state-restart-reconciliation-roadmap.md` | — |
 | 7 service/security substrate | closed | `plans/subsystems/management-service-security-roadmap.md` | — |
-| 8 management API/UI/enrollment | active | `plans/subsystems/product-management-enrollment-ui-roadmap.md` | — |
-| 9 operational hardening | proposed | future operations roadmap | Phase 8 closed |
+| 8 management API/UI/enrollment | closed | `plans/subsystems/product-management-enrollment-ui-roadmap.md` | — |
+| 9 operational hardening | ready to plan | future operations roadmap | — |
 | 10 distribution/update | proposed | future distribution roadmap | Phase 9 |
 | 11 IPv6/route-policy qualification | deferred | future roadmap | stable product baseline |
 | 12 advanced capabilities | deferred | separate future research | explicit product decision |
