@@ -313,6 +313,288 @@ where
     Ok(receipt)
 }
 
+#[allow(dead_code)] // Used by the M004 mutating transaction orchestration.
+fn stop_owned_services() -> Result<(), String> {
+    use eggup_service::{LifecycleState, Ownership, ServiceManager};
+    for endpoint in [
+        service_endpoint("wg-basic.service", true)?,
+        service_endpoint("wg-basic-netd.service", false)?,
+    ] {
+        let snapshot = endpoint
+            .0
+            .inspect(&endpoint.1)
+            .map_err(|_| "could not inspect product services before stop")?;
+        if snapshot.ownership != Ownership::Owned
+            || !matches!(
+                snapshot.state,
+                LifecycleState::Running | LifecycleState::Stopped
+            )
+        {
+            return Err("product service ownership or lifecycle is ambiguous".into());
+        }
+    }
+    stop_owned_service(service_endpoint("wg-basic.service", true)?)?;
+    stop_owned_service(service_endpoint("wg-basic-netd.service", false)?)
+}
+
+#[allow(dead_code)] // Used by the M004 mutating transaction orchestration.
+fn start_owned_services() -> Result<(), String> {
+    start_owned_service(service_endpoint("wg-basic-netd.service", false)?)?;
+    start_owned_service(service_endpoint("wg-basic.service", true)?)
+}
+
+fn service_endpoint(
+    name: &str,
+    management: bool,
+) -> Result<
+    (
+        eggup_service::SystemdManager<eggup_service::SystemExecutor>,
+        eggup_service::ServiceSpec,
+    ),
+    String,
+> {
+    use eggup_service::{
+        ServiceId, ServiceSpec, SystemExecutor, SystemdInstall, SystemdManager, SystemdScope,
+    };
+    let (path, definition, args) = if management {
+        (
+            crate::distribution::SERVE_UNIT_PATH,
+            crate::distribution::SERVE_UNIT,
+            vec![
+                "serve".to_owned(),
+                "--state".to_owned(),
+                crate::distribution::STATE_PATH.to_owned(),
+                "--socket".to_owned(),
+                crate::distribution::SOCKET_PATH.to_owned(),
+            ],
+        )
+    } else {
+        (
+            crate::distribution::NETD_UNIT_PATH,
+            crate::distribution::NETD_UNIT,
+            vec![
+                "netd".to_owned(),
+                "--socket".to_owned(),
+                crate::distribution::SOCKET_PATH.to_owned(),
+                "--allow-user".to_owned(),
+                "wg-basic".to_owned(),
+            ],
+        )
+    };
+    let install = SystemdInstall::new(
+        name.to_owned(),
+        SystemdScope::System,
+        path.into(),
+        definition.as_bytes().to_vec(),
+        false,
+        false,
+        Duration::from_secs(20),
+    )
+    .map_err(|_| "invalid product service definition")?;
+    let spec = ServiceSpec::new(
+        ServiceId::new(name).map_err(|_| "invalid product service id")?,
+        crate::distribution::BINARY_PATH.into(),
+        args,
+        None,
+    )
+    .map_err(|_| "invalid product service specification")?;
+    Ok((
+        SystemdManager::new(SystemExecutor::default(), install),
+        spec,
+    ))
+}
+
+fn stop_owned_service(
+    (mut manager, spec): (
+        eggup_service::SystemdManager<eggup_service::SystemExecutor>,
+        eggup_service::ServiceSpec,
+    ),
+) -> Result<(), String> {
+    use eggup_service::{LifecycleState, Ownership, ServiceManager};
+    let before = manager
+        .inspect(&spec)
+        .map_err(|_| "could not inspect product service before stop")?;
+    if before.ownership != Ownership::Owned {
+        return Err("product service registration is not owned".into());
+    }
+    if before.state == LifecycleState::Running {
+        manager
+            .stop(&spec, Duration::from_secs(30))
+            .map_err(|_| "could not stop product service")?;
+    }
+    let after = manager
+        .inspect(&spec)
+        .map_err(|_| "could not confirm product service stop")?;
+    if after.ownership != Ownership::Owned || after.state != LifecycleState::Stopped {
+        return Err("product service did not stop cleanly".into());
+    }
+    Ok(())
+}
+
+fn start_owned_service(
+    (mut manager, spec): (
+        eggup_service::SystemdManager<eggup_service::SystemExecutor>,
+        eggup_service::ServiceSpec,
+    ),
+) -> Result<(), String> {
+    use eggup_service::{LifecycleState, Ownership, ServiceManager};
+    let before = manager
+        .inspect(&spec)
+        .map_err(|_| "could not inspect product service before start")?;
+    if before.ownership != Ownership::Owned {
+        return Err("product service registration is not owned".into());
+    }
+    if before.state != LifecycleState::Running {
+        manager
+            .start(&spec, Duration::from_secs(30))
+            .map_err(|_| "could not start product service")?;
+    }
+    let after = manager
+        .inspect(&spec)
+        .map_err(|_| "could not confirm product service start")?;
+    if after.ownership != Ownership::Owned || after.state != LifecycleState::Running {
+        return Err("product service did not start cleanly".into());
+    }
+    Ok(())
+}
+
+#[allow(dead_code)] // Used by the M004 candidate-health callback.
+fn validate_candidate_health() -> Result<(), String> {
+    use eggup_service::{LifecycleState, Ownership, ServiceManager};
+    for endpoint in [
+        service_endpoint("wg-basic-netd.service", false)?,
+        service_endpoint("wg-basic.service", true)?,
+    ] {
+        let snapshot = endpoint
+            .0
+            .inspect(&endpoint.1)
+            .map_err(|_| "could not inspect product service health")?;
+        if snapshot.ownership != Ownership::Owned || snapshot.state != LifecycleState::Running {
+            return Err("candidate product service is not owned and running".into());
+        }
+    }
+    let doctor = run_as_management(&[
+        "doctor",
+        "--state",
+        crate::distribution::STATE_PATH,
+        "--socket",
+        crate::distribution::SOCKET_PATH,
+        "--json",
+        "--allow-warnings",
+    ])?;
+    if !doctor.success() {
+        return Err("candidate doctor reported a required failure".into());
+    }
+    let report: crate::doctor::DoctorReport = serde_json::from_slice(doctor.stdout())
+        .map_err(|_| "candidate doctor report is invalid")?;
+    if matches!(
+        report.overall,
+        crate::doctor::DoctorDisposition::Fail | crate::doctor::DoctorDisposition::Unknown
+    ) || report
+        .checks
+        .iter()
+        .any(|check| check.disposition == crate::doctor::DoctorDisposition::Fail)
+    {
+        return Err("candidate doctor did not pass required checks".into());
+    }
+    let health = run_as_management(&[
+        "health",
+        "--state",
+        crate::distribution::STATE_PATH,
+        "--socket",
+        crate::distribution::SOCKET_PATH,
+    ])?;
+    if !health.success() {
+        return Err("candidate management health command failed".into());
+    }
+    let health: serde_json::Value = serde_json::from_slice(health.stdout())
+        .map_err(|_| "candidate management health projection is invalid")?;
+    if !health_projection_healthy(&health) {
+        return Err("candidate management state or backend is not healthy".into());
+    }
+    if health_endpoint_token()? != "ok" {
+        return Err("candidate /healthz is not healthy".into());
+    }
+    Ok(())
+}
+
+fn health_projection_healthy(value: &serde_json::Value) -> bool {
+    value
+        .get("database_healthy")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+        && value
+            .get("netd_reachable")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true)
+        && value.get("installation_id").is_some_and(|id| !id.is_null())
+        && value.get("convergence").and_then(serde_json::Value::as_str) == Some("converged")
+}
+
+fn run_as_management(arguments: &[&str]) -> Result<eggup_core::CommandOutput, String> {
+    let runuser = ["/usr/sbin/runuser", "/sbin/runuser"]
+        .into_iter()
+        .find(|candidate| {
+            let path = Path::new(candidate);
+            fs::symlink_metadata(path).is_ok_and(|metadata| {
+                metadata.file_type().is_file()
+                    && metadata.uid() == 0
+                    && metadata.mode() & 0o022 == 0
+                    && metadata.mode() & 0o111 != 0
+            })
+        })
+        .ok_or("safe runuser executable is unavailable")?;
+    let output = eggup_core::run_bounded(
+        &eggup_core::CommandSpec::new(runuser)
+            .args(["--user", "wg-basic", "--", crate::distribution::BINARY_PATH])
+            .args(arguments.iter().copied())
+            .timeout(Duration::from_secs(60))
+            .max_output_bytes(64 * 1024),
+    )
+    .map_err(|_| "could not run a bounded management health command")?;
+    Ok(output)
+}
+
+fn health_endpoint_token() -> Result<String, String> {
+    use std::{
+        io::{Read, Write},
+        net::{SocketAddr, TcpStream},
+        thread,
+        time::Instant,
+    };
+    let address = SocketAddr::from(([127, 0, 0, 1], 8000));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut stream = loop {
+        match TcpStream::connect_timeout(&address, Duration::from_millis(500)) {
+            Ok(stream) => break stream,
+            Err(_) if Instant::now() < deadline => thread::sleep(Duration::from_millis(250)),
+            Err(_) => return Err("candidate /healthz endpoint is unavailable".into()),
+        }
+    };
+    stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .map_err(|_| "could not bound candidate health response")?;
+    stream
+        .write_all(b"GET /healthz HTTP/1.1\r\nHost: 127.0.0.1:8000\r\nConnection: close\r\n\r\n")
+        .map_err(|_| "candidate health request failed")?;
+    let mut response = [0; 4096];
+    let count = stream
+        .read(&mut response)
+        .map_err(|_| "candidate health response failed")?;
+    let response = std::str::from_utf8(&response[..count])
+        .map_err(|_| "candidate health response was invalid")?;
+    let (headers, body) = response
+        .split_once("\r\n\r\n")
+        .ok_or("candidate health response was incomplete")?;
+    if !headers.starts_with("HTTP/1.1 200") && !headers.starts_with("HTTP/1.0 200") {
+        return Err("candidate health endpoint returned a non-success status".into());
+    }
+    if body != "ok" && body != "degraded" {
+        return Err("candidate health endpoint returned an invalid liveness token".into());
+    }
+    Ok(body.to_owned())
+}
+
 fn metadata_limits() -> FetchLimits {
     FetchLimits::new(
         256 * 1024,
@@ -748,6 +1030,25 @@ mod tests {
             UpdatePhase::RolledBack,
             UpdatePhase::CandidateStarted
         ));
+    }
+
+    #[test]
+    fn product_health_projection_requires_database_backend_identity_and_convergence() {
+        let healthy = serde_json::json!({
+            "database_healthy": true,
+            "netd_reachable": true,
+            "installation_id": "fixture-installation",
+            "convergence": "converged"
+        });
+        assert!(health_projection_healthy(&healthy));
+        for altered in [
+            serde_json::json!({"database_healthy": false, "netd_reachable": true, "installation_id": "x", "convergence": "converged"}),
+            serde_json::json!({"database_healthy": true, "netd_reachable": false, "installation_id": "x", "convergence": "converged"}),
+            serde_json::json!({"database_healthy": true, "netd_reachable": true, "installation_id": null, "convergence": "converged"}),
+            serde_json::json!({"database_healthy": true, "netd_reachable": true, "installation_id": "x", "convergence": "pending"}),
+        ] {
+            assert!(!health_projection_healthy(&altered));
+        }
     }
 
     #[test]
