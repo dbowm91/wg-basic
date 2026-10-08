@@ -355,6 +355,25 @@ impl ManagementRuntime {
             },
         }
     }
+
+    /// Makes one fresh, read-only WireGuard device observation for the worker.
+    /// HTTP never sees the protocol response or talks to netd directly.
+    #[cfg(target_os = "linux")]
+    pub fn observe_wireguard_device(
+        &self,
+        interface: crate::domain::InterfaceName,
+    ) -> Result<crate::wireguard::ObservedWireGuardDevice, ManagementError> {
+        let response = crate::protocol::request(
+            &self.socket,
+            RequestOperation::ObserveWireGuardDevice { interface },
+            u64::MAX - 1,
+        )
+        .map_err(classify_io)?;
+        match response {
+            ResponseBody::WireGuardDevice(device) => Ok(device),
+            _ => Err(ManagementError::UnexpectedResponse),
+        }
+    }
 }
 
 fn request_id(generation: DesiredGeneration) -> u64 {

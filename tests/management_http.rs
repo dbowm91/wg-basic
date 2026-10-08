@@ -1221,6 +1221,34 @@ async fn authenticated_product_crud_uses_generation_cas_and_reports_degraded_com
     assert_eq!(detail.status, 200);
     assert!(detail.body.contains("phone"));
 
+    let audit_count_before: i64 = rusqlite::Connection::open(scratch.db())
+        .unwrap()
+        .query_row("SELECT count(*) FROM audit_events", [], |row| row.get(0))
+        .unwrap();
+    let telemetry = request_on(
+        addr,
+        &wire(
+            "GET",
+            "/api/v1/clients/telemetry",
+            &host,
+            &[("Cookie", &cookie)],
+        ),
+    );
+    assert_eq!(
+        telemetry.status, 503,
+        "netd outage is a bounded telemetry failure: {}",
+        telemetry.body
+    );
+    assert_eq!(telemetry.header("cache-control"), Some("no-store"));
+    let audit_count_after: i64 = rusqlite::Connection::open(scratch.db())
+        .unwrap()
+        .query_row("SELECT count(*) FROM audit_events", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        audit_count_before, audit_count_after,
+        "live reads do not persist telemetry or audit rows"
+    );
+
     let patch = unsafe_request(
         "PATCH",
         &format!("/api/v1/clients/{client_id}"),
@@ -1263,6 +1291,52 @@ async fn authenticated_product_crud_uses_generation_cas_and_reports_degraded_com
     );
     assert_eq!(deleted.status, 202);
     assert!(deleted.body.contains("\"revocation_confirmed\":false"));
+
+    let audit_db = rusqlite::Connection::open(scratch.db()).unwrap();
+    let now = now_seconds();
+    for offset in 0..105 {
+        audit_db.execute(
+            "INSERT INTO audit_events (event_id, occurred_at, principal_id, action, resource_kind, resource_id, generation_before, generation_after, outcome) VALUES (?1, ?2, NULL, 'client_update', 'client', NULL, 1, 2, 'committed')",
+            rusqlite::params![uuid::Uuid::new_v4().to_string(), now + offset],
+        ).unwrap();
+    }
+    drop(audit_db);
+    let first_page = request_on(
+        addr,
+        &wire("GET", "/api/v1/audit", &host, &[("Cookie", &cookie)]),
+    );
+    assert_eq!(first_page.status, 200, "{}", first_page.body);
+    assert_eq!(first_page.header("cache-control"), Some("no-store"));
+    let page_json: serde_json::Value = serde_json::from_str(&first_page.body).unwrap();
+    assert_eq!(page_json["events"].as_array().unwrap().len(), 100);
+    assert!(page_json["next_cursor"].is_object());
+    let timestamps = page_json["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|event| event["occurred_at"].as_i64().unwrap())
+        .collect::<Vec<_>>();
+    assert!(timestamps.windows(2).all(|pair| pair[0] >= pair[1]));
+    assert!(!first_page.body.contains("PrivateKey"));
+    assert!(!first_page.body.contains("token_digest"));
+    let cursor = &page_json["next_cursor"];
+    let cursor_path = format!(
+        "/api/v1/audit/{}/{}",
+        cursor["occurred_at"].as_i64().unwrap(),
+        cursor["event_id"].as_str().unwrap()
+    );
+    let second_page = request_on(
+        addr,
+        &wire("GET", &cursor_path, &host, &[("Cookie", &cookie)]),
+    );
+    assert_eq!(second_page.status, 200, "{}", second_page.body);
+    let second_json: serde_json::Value = serde_json::from_str(&second_page.body).unwrap();
+    assert!(second_json["events"].as_array().unwrap().len() <= 100);
+    assert!(second_json["next_cursor"].is_null());
+    assert!(
+        second_json["events"][0]["occurred_at"].as_i64().unwrap()
+            < cursor["occurred_at"].as_i64().unwrap()
+    );
 
     control.shutdown();
     completion.wait().await.unwrap();

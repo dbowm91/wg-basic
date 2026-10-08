@@ -52,7 +52,8 @@ use super::{
 use crate::{
     domain::{DesiredGeneration, PrincipalId},
     product::{
-        ClientCreateCommand, ClientDeleteCommand, ClientUpdateCommand, CreatedEnrollmentLink,
+        AuditCursor, AuditPage, ClientCreateCommand, ClientDeleteCommand, ClientObservationStatus,
+        ClientTelemetry, ClientTelemetrySnapshot, ClientUpdateCommand, CreatedEnrollmentLink,
         EnrollmentCapabilityId, EnrollmentToken, ProductClient, ProductMutationReceipt,
         ProductServer, ProductService, SecretArtifact, ServerSetupCommand, SetClientEnabledCommand,
     },
@@ -134,6 +135,15 @@ pub enum WorkerCommand {
     ProductSnapshot {
         reply: oneshot::Sender<Result<ProductSnapshotReply, ProductFailure>>,
     },
+    /// Fresh live observation mapped to stable product client IDs.
+    ClientTelemetry {
+        reply: oneshot::Sender<Result<ClientTelemetrySnapshot, ProductFailure>>,
+    },
+    /// One bounded secret-safe audit page.
+    AuditPage {
+        before: Option<AuditCursor>,
+        reply: oneshot::Sender<Result<AuditPage, ProductFailure>>,
+    },
     /// Configure the one managed server.
     SetupServer {
         command: ServerSetupCommand,
@@ -194,6 +204,11 @@ pub struct ProductSnapshotReply {
     pub server: Option<ProductServer>,
     pub clients: Vec<ProductClient>,
 }
+
+/// Maximum number of per-client observations returned in one response.
+pub const CLIENT_TELEMETRY_LIMIT: usize = 1_024;
+/// Maximum number of audit events in one page.
+pub const AUDIT_PAGE_LIMIT: usize = 100;
 
 /// The result of configuring the managed server.
 ///
@@ -569,6 +584,19 @@ impl WorkerClient {
         self.product_reply(answer).await
     }
 
+    pub async fn client_telemetry(&self) -> Result<ClientTelemetrySnapshot, WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::ClientTelemetry { reply }).await?;
+        self.product_reply(answer).await
+    }
+
+    pub async fn audit_page(&self, before: Option<AuditCursor>) -> Result<AuditPage, WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::AuditPage { before, reply })
+            .await?;
+        self.product_reply(answer).await
+    }
+
     /// Renders one client configuration through the state-owning worker.
     pub async fn client_config(
         &self,
@@ -908,6 +936,115 @@ fn product_snapshot(runtime: &ManagementRuntime) -> Result<ProductSnapshotReply,
     })
 }
 
+/// Observes exactly once and maps kernel public keys onto durable product IDs.
+fn client_telemetry(
+    runtime: &ManagementRuntime,
+) -> Result<ClientTelemetrySnapshot, ProductFailure> {
+    let service = ProductService::new(runtime.store());
+    let clients = service
+        .list_clients()
+        .map_err(|_| ProductFailure::StateUnavailable)?;
+    let server = service
+        .server()
+        .map_err(|_| ProductFailure::StateUnavailable)?;
+    let observed_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let Some(server) = server else {
+        return Ok(ClientTelemetrySnapshot {
+            observed_at_unix_seconds: observed_at,
+            clients: Vec::new(),
+            unassociated_peer_count: 0,
+            truncated: false,
+        });
+    };
+    let observed = runtime
+        .observe_wireguard_device(server.name)
+        .map_err(|_| ProductFailure::StateUnavailable)?;
+    let (clients, unassociated_peer_count, truncated) =
+        project_client_telemetry(clients, &observed, observed_at);
+    Ok(ClientTelemetrySnapshot {
+        observed_at_unix_seconds: observed_at,
+        clients,
+        unassociated_peer_count,
+        truncated,
+    })
+}
+
+fn project_client_telemetry(
+    clients: Vec<ProductClient>,
+    observed: &crate::wireguard::ObservedWireGuardDevice,
+    observed_at: u64,
+) -> (Vec<ClientTelemetry>, usize, bool) {
+    let by_key = observed
+        .peers
+        .iter()
+        .map(|peer| (peer.public_key.clone(), peer))
+        .collect::<std::collections::HashMap<_, _>>();
+    let known_keys = clients
+        .iter()
+        .map(|client| client.public_key.clone())
+        .collect::<std::collections::HashSet<_>>();
+    let unassociated_peer_count = observed
+        .peers
+        .iter()
+        .filter(|peer| !known_keys.contains(&peer.public_key))
+        .count();
+    let truncated = clients.len() > CLIENT_TELEMETRY_LIMIT;
+    let clients = clients
+        .into_iter()
+        .take(CLIENT_TELEMETRY_LIMIT)
+        .map(|client| {
+            let peer = by_key.get(&client.public_key).copied();
+            let enabled = client.settings.enabled.is_enabled();
+            let present = peer.is_some();
+            let latest = peer.and_then(|peer| peer.latest_handshake.map(|value| value.as_secs()));
+            ClientTelemetry {
+                client_id: client.client_id,
+                peer_id: client.peer_id,
+                enabled,
+                observation: if present {
+                    ClientObservationStatus::Present
+                } else {
+                    ClientObservationStatus::Missing
+                },
+                drift: enabled != present,
+                endpoint: peer.and_then(|peer| peer.endpoint),
+                latest_handshake_unix_seconds: latest,
+                latest_handshake_age_seconds: latest.map(|time| observed_at.saturating_sub(time)),
+                rx_bytes: peer.and_then(|peer| peer.rx_bytes),
+                tx_bytes: peer.and_then(|peer| peer.tx_bytes),
+            }
+        })
+        .collect();
+    (clients, unassociated_peer_count, truncated)
+}
+
+/// Reads one secret-safe bounded audit page from durable history.
+fn audit_page(
+    runtime: &ManagementRuntime,
+    before: Option<AuditCursor>,
+) -> Result<AuditPage, ProductFailure> {
+    let mut events = runtime
+        .store()
+        .audit_events_page(AUDIT_PAGE_LIMIT + 1, before)
+        .map_err(|_| ProductFailure::StateUnavailable)?;
+    let next_cursor = if events.len() > AUDIT_PAGE_LIMIT {
+        events.truncate(AUDIT_PAGE_LIMIT);
+        events.last().map(|event| AuditCursor {
+            occurred_at: event.occurred_at,
+            event_id: event.event_id,
+        })
+    } else {
+        None
+    };
+    Ok(AuditPage {
+        events,
+        next_cursor,
+    })
+}
+
 /// A product command can fail before its commit or after it.
 ///
 /// The two are different facts and are kept apart: a pre-commit failure means
@@ -1025,6 +1162,12 @@ fn serve(runtime: ManagementRuntime, receiver: &mut mpsc::Receiver<WorkerCommand
             WorkerCommand::ProductSnapshot { reply } => {
                 let _ = reply.send(product_snapshot(&runtime));
             }
+            WorkerCommand::ClientTelemetry { reply } => {
+                let _ = reply.send(client_telemetry(&runtime));
+            }
+            WorkerCommand::AuditPage { before, reply } => {
+                let _ = reply.send(audit_page(&runtime, before));
+            }
             WorkerCommand::SetupServer { command, reply } => {
                 let service = ProductService::new(runtime.store());
                 let _ = reply.send(
@@ -1140,6 +1283,46 @@ mod tests {
     use super::*;
     use crate::state::StateStore;
     use std::{fs, os::unix::fs::PermissionsExt};
+
+    #[test]
+    fn telemetry_projection_caps_a_maximum_sized_backend_snapshot() {
+        let key = crate::domain::PublicKey::new(
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".to_owned(),
+        )
+        .unwrap();
+        let clients = (0..4_096)
+            .map(|_| ProductClient {
+                client_id: crate::domain::ClientId::new(),
+                peer_id: crate::domain::PeerId::new(),
+                interface_id: crate::domain::InterfaceId::new(),
+                public_key: key.clone(),
+                assigned_address: "10.8.0.2/32".parse().unwrap(),
+                settings: crate::product::ClientProductSettings {
+                    label: crate::product::ClientLabel::new("fixture").unwrap(),
+                    enabled: crate::product::ClientEnabled::Enabled,
+                    client_keepalive_seconds: None,
+                    created_at: 0,
+                    updated_at: 0,
+                },
+                route_policy: Default::default(),
+                dns_servers: Vec::new(),
+            })
+            .collect();
+        let observed = crate::wireguard::ObservedWireGuardDevice {
+            interface: "wg0".parse().unwrap(),
+            public_key: None,
+            listen_port: None,
+            peers: Vec::new(),
+        };
+        let (telemetry, unassociated, truncated) =
+            project_client_telemetry(clients, &observed, 1_800_000_000);
+        assert_eq!(telemetry.len(), CLIENT_TELEMETRY_LIMIT);
+        assert_eq!(unassociated, 0);
+        assert!(truncated);
+        assert!(telemetry
+            .iter()
+            .all(|row| row.drift && row.observation == ClientObservationStatus::Missing));
+    }
 
     struct TempDir {
         path: PathBuf,

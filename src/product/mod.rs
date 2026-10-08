@@ -4,7 +4,7 @@
 //! It exists so that configuration-mutating routes never touch SQLite, never
 //! generate key material, and never decide for themselves what "committed"
 //! means. Everything here is callable without HTTP in sight -- which is what
-//! lets M001 qualify product behaviour before M002 exposes any of it.
+//! lets product behaviour stay independent of HTTP routing.
 
 pub mod allocator;
 pub mod enrollment;
@@ -21,9 +21,10 @@ pub use export::{
     render_config, render_qr_svg, ArtifactError, ClientConfigMaterial, SecretArtifact,
 };
 pub use model::{
-    AdvertisedEndpoint, AdvertisedEndpointError, AuditAction, AuditEvent, AuditEventId,
-    AuditOutcome, AuditResourceKind, ClientEnabled, ClientLabel, ClientLabelError,
-    ClientProductSettings, DegradedCategory, EnforcementState, EnrollmentCapabilityId,
+    AdvertisedEndpoint, AdvertisedEndpointError, AuditAction, AuditCursor, AuditEvent,
+    AuditEventId, AuditOutcome, AuditPage, AuditResourceKind, ClientEnabled, ClientLabel,
+    ClientLabelError, ClientObservationStatus, ClientProductSettings, ClientTelemetry,
+    ClientTelemetrySnapshot, DegradedCategory, EnforcementState, EnrollmentCapabilityId,
     ProductClient, ProductMutationReceipt, ProductServer, MAX_ADVERTISED_HOST_BYTES,
     MAX_CLIENT_LABEL_BYTES,
 };

@@ -523,7 +523,7 @@ impl fmt::Display for AuditOutcome {
 }
 
 /// One secret-safe audit row.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct AuditEvent {
     pub event_id: AuditEventId,
     pub occurred_at: i64,
@@ -534,6 +534,53 @@ pub struct AuditEvent {
     pub generation_before: Option<DesiredGeneration>,
     pub generation_after: Option<DesiredGeneration>,
     pub outcome: AuditOutcome,
+}
+
+/// Stable cursor for audit pages, ordered by timestamp and insertion order.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AuditCursor {
+    pub occurred_at: i64,
+    pub event_id: AuditEventId,
+}
+
+/// One bounded newest-first audit page.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct AuditPage {
+    pub events: Vec<AuditEvent>,
+    pub next_cursor: Option<AuditCursor>,
+}
+
+/// Whether a managed client peer appears in the current kernel observation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClientObservationStatus {
+    Present,
+    Missing,
+}
+
+/// Fresh, non-persistent peer telemetry joined to stable product IDs.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ClientTelemetry {
+    pub client_id: ClientId,
+    pub peer_id: PeerId,
+    pub enabled: bool,
+    pub observation: ClientObservationStatus,
+    pub drift: bool,
+    pub endpoint: Option<std::net::SocketAddr>,
+    /// Absolute Unix seconds from the WireGuard kernel's last-handshake value.
+    pub latest_handshake_unix_seconds: Option<u64>,
+    pub latest_handshake_age_seconds: Option<u64>,
+    pub rx_bytes: Option<u64>,
+    pub tx_bytes: Option<u64>,
+}
+
+/// Bounded response for one live device observation.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ClientTelemetrySnapshot {
+    pub observed_at_unix_seconds: u64,
+    pub clients: Vec<ClientTelemetry>,
+    pub unassociated_peer_count: usize,
+    pub truncated: bool,
 }
 
 /// Why kernel enforcement is not confirmed, in bounded categories.

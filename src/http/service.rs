@@ -105,6 +105,10 @@ pub enum Route {
     Session,
     /// Authenticated management health.
     ApiHealth,
+    /// Authenticated, fresh client peer observation.
+    ClientTelemetry,
+    /// Bounded audit query with an optional stable cursor.
+    Audit(Option<crate::product::AuditCursor>),
     /// The embedded operator shell document.
     Shell,
     /// One embedded stylesheet or script, matched from a closed table.
@@ -159,9 +163,13 @@ impl Route {
     /// method here would set the precedent that methods are added implicitly.
     fn accepts(&self, method: &str) -> bool {
         match self {
-            Self::Healthz | Self::Session | Self::ApiHealth | Self::Shell | Self::Asset => {
-                method == "GET"
-            }
+            Self::Healthz
+            | Self::Session
+            | Self::ApiHealth
+            | Self::ClientTelemetry
+            | Self::Audit(_)
+            | Self::Shell
+            | Self::Asset => method == "GET",
             Self::Login | Self::Logout => method == "POST",
             Self::Product(route, _) => match route {
                 ProductRoute::Server => method == "GET",
@@ -205,6 +213,8 @@ pub fn route(path: &str) -> Route {
         LOGOUT_PATH => Route::Logout,
         SESSION_PATH => Route::Session,
         API_HEALTH_PATH => Route::ApiHealth,
+        "/api/v1/clients/telemetry" => Route::ClientTelemetry,
+        "/api/v1/audit" => Route::Audit(None),
         SHELL_PATH => Route::Shell,
         // An embedded asset is matched exactly by its own lookup, which is a
         // closed table -- so there is no prefix rule here that
@@ -219,6 +229,20 @@ pub fn route(path: &str) -> Route {
 
 fn product_route(path: &str) -> Option<Route> {
     let pieces: Vec<_> = path.split('/').collect();
+    if let ["", "api", "v1", "audit", timestamp, event_id] = pieces.as_slice() {
+        let occurred_at = timestamp.parse::<i64>().ok()?;
+        if occurred_at < 0 || occurred_at.to_string() != *timestamp {
+            return None;
+        }
+        let event_id = crate::product::AuditEventId::from_str(event_id).ok()?;
+        if event_id.to_string() != *pieces[5] {
+            return None;
+        }
+        return Some(Route::Audit(Some(crate::product::AuditCursor {
+            occurred_at,
+            event_id,
+        })));
+    }
     if let ["", "enroll", raw] = pieces.as_slice() {
         let id = crate::product::EnrollmentCapabilityId::from_str(raw).ok()?;
         return (id.to_string() == *raw).then_some(Route::EnrollmentLanding(id));
@@ -363,6 +387,24 @@ impl ManagementService {
                 }
                 match self.api.health().await {
                     Ok(response) => response,
+                    Err(error) => response_for_worker_error(error),
+                }
+            }
+            Route::ClientTelemetry => {
+                if self.api.authenticate(head).await.is_none() {
+                    return refusal(RequestRejection::NotAuthenticated);
+                }
+                match self.api.worker().client_telemetry().await {
+                    Ok(snapshot) => json_response(eggserve_primitives::StatusCode::OK, &snapshot),
+                    Err(_) => response::unavailable(),
+                }
+            }
+            Route::Audit(cursor) => {
+                if self.api.authenticate(head).await.is_none() {
+                    return refusal(RequestRejection::NotAuthenticated);
+                }
+                match self.api.worker().audit_page(cursor).await {
+                    Ok(page) => json_response(eggserve_primitives::StatusCode::OK, &page),
                     Err(error) => response_for_worker_error(error),
                 }
             }
@@ -1049,6 +1091,8 @@ mod tests {
         assert_eq!(route("/api/v1/logout"), Route::Logout);
         assert_eq!(route("/api/v1/session"), Route::Session);
         assert_eq!(route("/api/v1/health"), Route::ApiHealth);
+        assert_eq!(route("/api/v1/clients/telemetry"), Route::ClientTelemetry);
+        assert_eq!(route("/api/v1/audit"), Route::Audit(None));
         assert_eq!(
             route("/api/v1/server"),
             Route::Product(ProductRoute::Server, None)
@@ -1100,6 +1144,8 @@ mod tests {
             Route::Logout,
             Route::Session,
             Route::ApiHealth,
+            Route::ClientTelemetry,
+            Route::Audit(None),
             Route::Shell,
             Route::Asset,
             Route::Unknown,
@@ -1122,6 +1168,8 @@ mod tests {
         assert!(Route::Healthz.accepts("GET"));
         assert!(Route::Session.accepts("GET"));
         assert!(Route::ApiHealth.accepts("GET"));
+        assert!(Route::ClientTelemetry.accepts("GET"));
+        assert!(Route::Audit(None).accepts("GET"));
         assert!(Route::Login.accepts("POST"));
         assert!(Route::Logout.accepts("POST"));
 
@@ -1131,6 +1179,8 @@ mod tests {
             Route::Healthz,
             Route::Session,
             Route::ApiHealth,
+            Route::ClientTelemetry,
+            Route::Audit(None),
             Route::Login,
             Route::Logout,
         ] {
@@ -1172,6 +1222,30 @@ mod tests {
             "/api/v1/network-policy",
         ] {
             assert_eq!(route(target), Route::Unknown, "{target} must not exist");
+        }
+    }
+
+    #[test]
+    fn audit_cursor_route_is_canonical_and_exact() {
+        let event_id = crate::product::AuditEventId::new();
+        let path = format!("/api/v1/audit/1791420000/{event_id}");
+        assert_eq!(
+            route(&path),
+            Route::Audit(Some(crate::product::AuditCursor {
+                occurred_at: 1_791_420_000,
+                event_id,
+            }))
+        );
+        for path in [
+            format!("/api/v1/audit/01791420000/{event_id}"),
+            format!("/api/v1/audit/-1/{event_id}"),
+            format!("/api/v1/audit/1791420000/{}/extra", event_id),
+            format!(
+                "/api/v1/audit/1791420000/{}",
+                event_id.to_string().to_uppercase()
+            ),
+        ] {
+            assert_eq!(route(&path), Route::Unknown, "{path} must not match");
         }
     }
 
