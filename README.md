@@ -1,17 +1,64 @@
 # wg-basic
 
-wg-basic is a Linux-native WireGuard appliance in active development, focused on straightforward client management without requiring a container runtime. The repository contains a typed local `netd` protocol and Linux backends for kernel WireGuard, link/address/route reconciliation, and bounded IPv4 firewall/forwarding/NAT policy.
+Linux-native WireGuard appliance in one small Rust binary. Unprivileged
+`serve` owns the SQLite desired state and the management HTTP surface;
+privileged `netd` applies it to the kernel through typed local-IPC
+operations. The database is authoritative, kernel state is reconciled
+from it, and `netd` never opens the database.
 
-The executable has separate `serve` and `netd` roles. `serve` runs the unprivileged management service — a bounded worker owning the durable state store plus an embedded EggServe HTTP surface — `netd` exposes authorized typed operations, `reconcile` applies the durable desired generation through authorized `netd`, `health` reports convergence without contacting it, and `doctor` emits a read-only diagnostic report in human or JSON form. Doctor reports SQLite runtime identity, state-file safety, netd capabilities/reachability, managed-network ownership, forwarding requirements, service lease, and optional HTTP policy with explicit pass, warning, failure, or unknown results. The kernel network-control foundation is implemented and qualified in Linux namespaces, and a hardened SQLite store persists authoritative desired state with a monotonic desired generation. Startup reconciliation is implemented and qualified at the process level: a restart re-derives kernel state from the database, repairs drift in owned resources, and fails closed when an ownership marker is lost or changed. The database can also be backed up, validated, and restored offline, and a restored database drives ordinary startup reconciliation. Local administrator credentials and server-side sessions exist behind the management worker: Argon2id with a 19 MiB work factor, opaque 256-bit session tokens stored only as SHA-256 digests, and finite expiry with revocation on password reset. They are provisioned with `wg-basic admin set-password --password-stdin` and inspected with `wg-basic admin status`. The authenticated HTTP surface includes login/session/health, one-time server setup, and generation-safe managed-client CRUD. Every request must present an allowed `Host` (the DNS-rebinding defence), unsafe methods must carry the exact configured `Origin` plus the session CSRF token, no CORS header is emitted on any route, and login attempts are rate limited before Argon2 runs.
+## Quickstart
 
-Phase 7 is closed. `serve` is the canonical long-running service role with a deterministic lifecycle — it stops on `SIGTERM`, drains in-flight requests, stops its worker, closes the database, and exits `0`. Sessions are server-side state, so a non-expired session survives a restart while logout and a password reset still invalidate it. The self-contained product UI is embedded in the binary with no document root, external origin, or build step; its same-origin assets use the existing strict CSP. `/healthz` reports readiness as exactly `ok` or `degraded`; the authenticated `/api/v1/health` adds a live read-only backend probe.
+Needs Rust 1.89.0 (pinned by `rust-toolchain.toml`) and loopback only —
+no root, no namespaces:
 
-**Phase 8 is closed as the first user-facing product boundary.** The authenticated product API and embedded UI support server setup, client lifecycle, config/QR exports, one-time enrollment, live telemetry, and audit history. Ordinary responses omit private key material, every mutation uses generation compare-and-swap, and the UI reports when a durable change is still pending enforcement. Config and QR responses are no-store; enrollment uses 256-bit digest-only tokens delivered in URL fragments and consumed once, with a 10-minute default expiry. Phase 7 terminates no TLS — the HTTPS profile is a TLS-terminating reverse proxy in front of a loopback listener, and a directly exposed non-loopback listener is an unsafe opt-in that warns on startup. Installation and update are not implemented.
+```sh
+cargo build --locked
+install -d -m 700 /tmp/wg-basic-runtime
+printf '%s\n' 'a strong administrator password' | \
+  cargo run --locked -- admin set-password --password-stdin \
+    --state /tmp/wg-basic-runtime/state.db
+cargo run --locked -- serve \
+  --state /tmp/wg-basic-runtime/state.db \
+  --socket /tmp/wg-basic-runtime/netd.sock
+```
 
-**Phase 9 is closed as the operational-readiness boundary.** It adds authoritative doctor/preflight, singleton service ownership, durable network maintenance, verified backup/restore and guarded purge, bounded secret-safe operational logging/retention, abuse/dependency qualification, and a real Phase 8-to-9 migration/rollback rehearsal. The binary and database remain a compatibility pair; automated installation and update are not implemented. Phase 10 is unblocked for research and planning under the tested [update/rollback contract](architecture/update-rollback-contract.md).
+In another terminal, check liveness, log in, and read back the session:
 
-The state database contains WireGuard private and preshared keys. It is secret-bearing and is created owner-only, and so is every backup of it. See [architecture/state-store.md](architecture/state-store.md), [architecture/startup-recovery.md](architecture/startup-recovery.md), [architecture/management-http.md](architecture/management-http.md), [architecture/authentication.md](architecture/authentication.md), [docs/state-backup-restore.md](docs/state-backup-restore.md), [docs/operations-runbook.md](docs/operations-runbook.md), and [architecture/update-rollback-contract.md](architecture/update-rollback-contract.md) for the operator procedures and Phase 10 transaction contract.
+```sh
+curl -s http://127.0.0.1:8000/healthz
+curl -s -c cookies.txt http://127.0.0.1:8000/api/v1/login \
+  -H 'Host: 127.0.0.1:8000' \
+  -H 'Origin: http://127.0.0.1:8000' \
+  -H 'Content-Type: application/json' \
+  --data '{"username":"admin","password":"a strong administrator password"}'
+curl -s http://127.0.0.1:8000/api/v1/session -b cookies.txt \
+  -H 'Host: 127.0.0.1:8000' \
+  -H 'Origin: http://127.0.0.1:8000'
+```
 
-The real-kernel integration tests need root, `CAP_NET_ADMIN`, kernel WireGuard support, `iproute2`, and `iputils-ping`; the network-control, durable-ownership, durable-restart, durable-backup, and management-service end-to-end tests also need nftables. Run the product fixture with `sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo cargo test --locked --features linux-integration --test product_management_rootful -- --test-threads=1`; it drives authenticated setup, client lifecycle, exports, enrollment, telemetry, and audit through HTTP around a real WireGuard client handshake. The management-service child-process fixture is `service_rootful_e2e`; the other rootful targets include `network_control_e2e`, `durable_owner`, `durable_restart`, and `durable_backup`, each with `-- --test-threads=1`. The unprivileged service suites (`management_http`, `authenticated_api`, `service_session_restart`, `service_resource_limits`, `service_e2e`, `service_footprint`) run with plain `cargo test --locked`. Footprint and latency figures are measured with `cargo test --release --locked --test service_footprint -- --nocapture`. CI runs the namespace fixtures on rootful Linux runners.
+Then open `http://127.0.0.1:8000/` for the operator UI, and stop `serve`
+with Ctrl-C (it drains, closes the database, and exits `0`).
 
-See [architecture/overview.md](architecture/overview.md) for implemented boundaries and [plans/registry.md](plans/registry.md) for implementation status.
+`healthz` reports `degraded` here because no privileged `netd` is
+running — expected for the loopback demo. Real networking needs `netd`
+as root plus server setup; see
+[local netd](docs/development.md#local-netd) and
+[client enrollment](docs/client-enrollment.md).
+
+## Status
+
+Network control, durable state/restart reconciliation, management/auth,
+product/enrollment/UI, and operational hardening are implemented and
+qualified in Linux namespaces. Installation and transactional
+self-update are **not implemented** (planned; see
+[plans/registry.md](plans/registry.md)).
+
+## Docs
+
+| Document | Covers |
+|---|---|
+| [docs/development.md](docs/development.md) | Gates, local `netd`/`serve`, credentials, test fixtures |
+| [docs/operations-runbook.md](docs/operations-runbook.md) | Backup, recovery, disable/purge |
+| [docs/state-backup-restore.md](docs/state-backup-restore.md) | Backup/restore/verify mechanics |
+| [docs/client-enrollment.md](docs/client-enrollment.md) | Config/QR export, one-time enrollment links |
+| [architecture/overview.md](architecture/overview.md) | System design and component index |
