@@ -8,7 +8,7 @@ Roadmap: `plans/subsystems/distribution-install-update-roadmap.md`
 
 Repository baseline: M002 closure at `d1813da` (M003 activation recorded at `d140be9`).
 
-Final disposition commit/head: `712f60d742b3154f369039355f2f3dd56964f863`.
+Final inspected implementation baseline: `d140be9` (no M003 product changes). The blocked disposition and this record were committed and pushed after that baseline.
 
 ## Requirement-to-evidence matrix
 
