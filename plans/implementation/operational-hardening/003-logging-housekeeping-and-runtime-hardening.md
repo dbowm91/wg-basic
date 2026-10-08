@@ -1,6 +1,6 @@
 # Operational Hardening M003 — Structured Logging, Housekeeping, and Runtime Hardening
 
-Status: blocked on Operational Hardening M002 closure
+Status: active
 
 Source roadmap:
 

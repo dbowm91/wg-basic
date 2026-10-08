@@ -195,7 +195,7 @@ No repair mode.
 
 ## 6. M002 — Operational state lifecycle and recovery UX
 
-Status: active; M001 is strictly closed.
+Status: closed; M001 and M002 are strictly closed.
 
 Implementation plan:
 
@@ -221,7 +221,7 @@ Expected outcomes:
 
 ## 7. M003 — Structured logging, housekeeping, crash and resource hardening
 
-Status: blocked on M002.
+Status: active; M002 is strictly closed.
 
 Implementation plan:
 
@@ -524,7 +524,7 @@ Never start the old binary against a migrated newer DB and call its fail-closed 
 | Milestone | Status | Implementation plan | Hard blocker |
 |---|---|---|---|
 | M001 authoritative doctor/preflight | closed | `plans/implementation/operational-hardening/001-authoritative-doctor-and-preflight.md` | closure: `plans/closure/operational-hardening/001-status.md` |
-| M002 maintenance/disable/purge/recovery | active | `plans/implementation/operational-hardening/002-maintenance-disable-purge-and-recovery.md` | M001 strictly closed |
-| M003 logging/housekeeping/runtime hardening | blocked | `plans/implementation/operational-hardening/003-logging-housekeeping-and-runtime-hardening.md` | M002 |
+| M002 maintenance/disable/purge/recovery | closed | `plans/implementation/operational-hardening/002-maintenance-disable-purge-and-recovery.md` | closure: `plans/closure/operational-hardening/002-status.md` |
+| M003 logging/housekeeping/runtime hardening | active | `plans/implementation/operational-hardening/003-logging-housekeeping-and-runtime-hardening.md` | M002 strictly closed |
 | M004 abuse/security/dependency qualification | blocked | `plans/implementation/operational-hardening/004-abuse-security-and-dependency-qualification.md` | M003 |
 | M005 upgrade/rollback rehearsal/closure | blocked | `plans/implementation/operational-hardening/005-upgrade-rollback-rehearsal-and-phase9-closure.md` | M004 |

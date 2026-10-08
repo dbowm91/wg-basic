@@ -1,6 +1,6 @@
 # Operational Hardening M002 — Maintenance Lease, Network Disable/Purge, and Recovery UX
 
-Status: active
+Status: closed
 
 Source roadmap:
 
