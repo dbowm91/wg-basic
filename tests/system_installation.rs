@@ -93,7 +93,12 @@ fn systemd_installation_ownership_reinstall_and_service_credentials() {
     fs::remove_file("/usr/local/bin/wg-basic").unwrap();
 
     let install = command(&["system", "install", "--candidate", BINARY]);
-    assert!(install.status.success(), "{}", output_text(&install));
+    assert!(
+        install.status.success(),
+        "{}\n{}",
+        output_text(&install),
+        service_journal("wg-basic.service")
+    );
     let status = command(&["system", "status"]);
     assert!(status.status.success(), "{}", output_text(&status));
 
@@ -189,6 +194,14 @@ fn systemd_property(unit: &str, property: &str) -> String {
         .unwrap();
     assert!(output.status.success(), "{}", output_text(&output));
     String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+fn service_journal(unit: &str) -> String {
+    let output = Command::new("/usr/bin/journalctl")
+        .args(["-u", unit, "-n", "60", "--no-pager"])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
 fn run_as_service_user(uid: u32, gid: u32, args: &[&str]) -> std::process::Output {
