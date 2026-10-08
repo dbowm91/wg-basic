@@ -463,7 +463,7 @@ pub fn install_local(candidate: &Path) -> Result<(), String> {
         "/run",
     ] {
         verify_root_directory(Path::new(directory))
-            .map_err(|_| "a canonical system destination parent is unsafe")?;
+            .map_err(|_| format!("canonical system destination parent {directory} is unsafe"))?;
     }
     ensure_system_directory(Path::new("/etc/sysusers.d"), 0o755)?;
     let candidate_meta =
