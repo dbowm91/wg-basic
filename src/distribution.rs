@@ -462,8 +462,9 @@ pub fn install_local(candidate: &Path) -> Result<(), String> {
         "/var/lib",
         "/run",
     ] {
-        verify_root_directory(Path::new(directory))
-            .map_err(|_| format!("canonical system destination parent {directory} is unsafe"))?;
+        verify_root_directory(Path::new(directory)).map_err(|error| {
+            format!("canonical system destination parent {directory} is unsafe: {error}")
+        })?;
     }
     ensure_system_directory(Path::new("/etc/sysusers.d"), 0o755)?;
     let candidate_meta =
@@ -891,7 +892,11 @@ fn verify_root_directory(path: &Path) -> io::Result<()> {
     if !metadata.file_type().is_dir() || metadata.uid() != 0 || metadata.mode() & 0o022 != 0 {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            "system directory is not a safe root-owned directory",
+            format!(
+                "expected root-owned non-writable directory, observed uid={} mode={:o}",
+                metadata.uid(),
+                metadata.mode() & 0o7777
+            ),
         ));
     }
     Ok(())
