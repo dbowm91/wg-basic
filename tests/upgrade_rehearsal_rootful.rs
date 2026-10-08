@@ -472,6 +472,59 @@ fn start_network_pair(server: &Namespace, client: &Namespace) {
     run_ip(&["-n", &client.0, "link", "set", "wgu-cli", "up"]);
 }
 
+fn start_recovery_network_pair(server: &Namespace, client: &Namespace) {
+    run_ip(&[
+        "link",
+        "add",
+        "wgu-rec-srv",
+        "type",
+        "veth",
+        "peer",
+        "name",
+        "wgu-rec-cli",
+    ]);
+    run_ip(&["link", "set", "wgu-rec-srv", "netns", &server.0]);
+    run_ip(&["link", "set", "wgu-rec-cli", "netns", &client.0]);
+    run_ip(&[
+        "-n",
+        &server.0,
+        "link",
+        "set",
+        "wgu-rec-srv",
+        "name",
+        "wgu-srv",
+    ]);
+    run_ip(&[
+        "-n",
+        &client.0,
+        "link",
+        "set",
+        "wgu-rec-cli",
+        "name",
+        "wgu-cli",
+    ]);
+    run_ip(&[
+        "-n",
+        &server.0,
+        "addr",
+        "add",
+        "198.18.77.1/24",
+        "dev",
+        "wgu-srv",
+    ]);
+    run_ip(&[
+        "-n",
+        &client.0,
+        "addr",
+        "add",
+        "198.18.77.2/24",
+        "dev",
+        "wgu-cli",
+    ]);
+    run_ip(&["-n", &server.0, "link", "set", "wgu-srv", "up"]);
+    run_ip(&["-n", &client.0, "link", "set", "wgu-cli", "up"]);
+}
+
 fn seed_from_old_api(
     old: &str,
     state: &Path,
@@ -733,4 +786,92 @@ fn v4_product_traffic_rolls_back_and_reupgrades_as_one_transaction() {
     assert_doctor_has_no_required_failure(&candidate_doctor, "candidate-v5");
     drop(candidate_client_netd);
     drop(candidate_netd);
+
+    // Operator disaster-recovery drill on a clean state path and fresh
+    // namespaces: restore the explicit v4 backup, doctor before service start,
+    // then verify startup reconcile, login, products, and new client traffic.
+    let recovery_server_ns = Namespace::new("recovery-server");
+    let recovery_client_ns = Namespace::new("recovery-client");
+    start_recovery_network_pair(&recovery_server_ns, &recovery_client_ns);
+    let recovery_state = scratch.0.join("recovery-state.db");
+    let mut recovery_admin = Command::new(old)
+        .args(["admin", "set-password", "--password-stdin", "--state"])
+        .arg(&recovery_state)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    recovery_admin
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(format!("{PASSWORD}\n").as_bytes())
+        .unwrap();
+    let recovery_admin_output = recovery_admin.wait_with_output().unwrap();
+    assert!(
+        recovery_admin_output.status.success(),
+        "recovery target initialization: {}",
+        String::from_utf8_lossy(&recovery_admin_output.stderr)
+    );
+    let recovery_restore = Command::new(old)
+        .args(["state", "restore", "--state"])
+        .arg(&recovery_state)
+        .arg(&backup)
+        .output()
+        .unwrap();
+    assert!(
+        recovery_restore.status.success(),
+        "clean-target restore: {}",
+        String::from_utf8_lossy(&recovery_restore.stderr)
+    );
+    checkpoint_state(&recovery_state);
+    let recovery_socket = scratch.0.join("recovery-netd.sock");
+    let recovery_client_socket = scratch.0.join("recovery-client-netd.sock");
+    let recovery_netd = start_netd(old, &recovery_server_ns, &recovery_socket);
+    let prestart_doctor = Command::new(candidate)
+        .args(["doctor", "--state"])
+        .arg(&recovery_state)
+        .args(["--socket"])
+        .arg(&recovery_socket)
+        .args(["--json"])
+        .output()
+        .unwrap();
+    assert_doctor_has_no_required_failure(&prestart_doctor, "clean-target pre-start");
+
+    let (recovery_serve, recovery_addr) = start_serve(old, &recovery_state, &recovery_socket);
+    let (recovery_cookie, _recovery_csrf) = authenticate(recovery_addr);
+    let recovery_clients = http(
+        recovery_addr,
+        "GET",
+        "/api/v1/clients",
+        &[("Cookie", &recovery_cookie)],
+        "",
+    );
+    assert_eq!(recovery_clients.status, 200, "{}", recovery_clients.body);
+    let recovery_clients_json: serde_json::Value =
+        serde_json::from_str(&recovery_clients.body).unwrap();
+    let recovery_ids: Vec<&str> = recovery_clients_json["clients"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|client| client["client_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        recovery_ids,
+        client_ids.iter().map(String::as_str).collect::<Vec<_>>()
+    );
+    assert_healthy_service(recovery_addr, &recovery_cookie);
+    let recovered_config = config_text(recovery_addr, &recovery_cookie, &first_client_id);
+    assert_eq!(recovered_config, old_config);
+    let recovery_client_netd = start_netd(old, &recovery_client_ns, &recovery_client_socket);
+    install_client(
+        &recovery_client_ns,
+        &recovery_client_socket,
+        &recovered_config,
+    );
+    require_handshake(&recovery_client_ns, &recovery_client_socket);
+    drop(recovery_serve);
+    drop(recovery_client_netd);
+    drop(recovery_netd);
 }
