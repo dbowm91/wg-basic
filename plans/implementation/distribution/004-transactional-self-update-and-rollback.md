@@ -1,6 +1,6 @@
 # Distribution M004 — Transactional Self-Update and Rollback
 
-Status: ready — Distribution M003 is mechanically closed; production update remains disabled until the production public key is provisioned.
+Status: active — M003 is mechanically closed; production update remains disabled until the production public key is provisioned.
 
 Source roadmap:
 

@@ -136,6 +136,21 @@ enum Command {
         #[command(subcommand)]
         action: SystemCommand,
     },
+    /// Fail-closed authenticated update commands (available after M004 qualification).
+    Update {
+        #[command(subcommand)]
+        action: UpdateCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum UpdateCommand {
+    /// Read-only check for a newer authenticated stable release.
+    Check,
+    /// Install the selected newer authenticated stable release.
+    Run,
+    /// Recover an interrupted update transaction.
+    Recover,
 }
 
 #[derive(Subcommand)]
@@ -329,6 +344,28 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
             }
             SystemCommand::Status => wg_basic::distribution::install_status(),
         },
+        Some(Command::Update { action }) => {
+            match action {
+                UpdateCommand::Check => wg_basic::update::check(),
+                UpdateCommand::Run => {
+                    if nix::unistd::Uid::effective().is_root() {
+                        wg_basic::update::apply()
+                    } else {
+                        Err(
+                            "system update requires effective root; no automatic sudo is performed"
+                                .into(),
+                        )
+                    }
+                }
+                UpdateCommand::Recover => {
+                    if nix::unistd::Uid::effective().is_root() {
+                        wg_basic::update::recover()
+                    } else {
+                        Err("update recovery requires effective root; no automatic sudo is performed".into())
+                    }
+                }
+            }
+        }
         Some(Command::Health { state, socket }) => {
             let runtime = wg_basic::management::ManagementRuntime::open(&state, &socket)
                 .map_err(|error| error.to_string())?;

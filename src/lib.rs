@@ -20,6 +20,7 @@ pub mod protocol;
 pub mod reconcile;
 pub mod release;
 pub mod state;
+pub mod update;
 #[cfg(target_os = "linux")]
 pub mod wireguard;
 
