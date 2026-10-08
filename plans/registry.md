@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-08 (Phase 10 M001–M002 closed; M003 blocked by Eggpack identity seam)
+Last planning reconciliation: 2026-10-08 (Phase 10 M001–M002 closed; M003 active after Eggpack identity seam resolution)
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -42,7 +42,7 @@ The architecture separates:
 
 The privileged service does not expose arbitrary shell, command, file-write, sysctl-path, nft-script, or raw-netlink execution.
 
-Current production code state: **Network control and Phases 6–9 are strictly closed. The authenticated product API and embedded UI provide server setup, client lifecycle, config/QR export, one-time enrollment, live telemetry, bounded audit history, operational diagnostics, safe maintenance/recovery, and a proven old/new database rollback contract.** Phase 10 implementation is underway: M001 release identity/authenticity and M002 native system installation are strictly closed; M003 is ready. M004 and M005 remain blocked in order. The selected distribution baseline is systemd/Linux x86_64+aarch64, Eggpack producer contracts, project-owned Minisign release authenticity, Eggup local transaction/service primitives, root-owned install/update metadata, and a crash-recoverable binary+database update journal.
+Current production code state: **Network control and Phases 6–9 are strictly closed. The authenticated product API and embedded UI provide server setup, client lifecycle, config/QR export, one-time enrollment, live telemetry, bounded audit history, operational diagnostics, safe maintenance/recovery, and a proven old/new database rollback contract.** Phase 10 implementation is underway: M001 release identity/authenticity and M002 native system installation are strictly closed; M003 is active after the Eggpack identity-seam corrective closed upstream. M004 and M005 remain blocked in order. The selected distribution baseline is systemd/Linux x86_64+aarch64, Eggpack producer contracts, project-owned Minisign release authenticity, Eggup local transaction/service primitives, root-owned install/update metadata, and a crash-recoverable binary+database update journal.
 
 ## 3. Eggstack reuse disposition
 
@@ -71,7 +71,7 @@ Runtime dependency adoption remains evidence-driven.
 | Management service/auth/security substrate | closed | `plans/subsystems/management-service-security-roadmap.md` + `plans/subsystems/management-service-post-phase7-reconciliation-addendum.md` | M001–M004 and post-Phase-7 C001 closed |
 | Product management/enrollment/UI | closed | `plans/subsystems/product-management-enrollment-ui-roadmap.md` | Phase 8 M001–M005 closed |
 | Operational hardening | closed | `plans/subsystems/operational-hardening-roadmap.md` | M001–M005 closed; Phase 9 closed |
-| Distribution/install/update | active | `plans/subsystems/distribution-install-update-roadmap.md` | M001–M002 closed; M003 blocked on Eggpack identity seam; M004–M005 blocked in order |
+| Distribution/install/update | active | `plans/subsystems/distribution-install-update-roadmap.md` | M001–M002 closed; M003 active after upstream identity seam resolution; M004–M005 blocked in order |
 
 Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
 
@@ -79,14 +79,12 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
-
-No Phase 10 implementation plan is currently ready or active. M001 and M002 are strictly closed. M003 is blocked because the pinned Eggpack producer cannot express the M001 consumer's manifest release ID independently from the exact source tag. M004 and M005 remain blocked in dependency order; no other Phase 10 plan is eligible.
+| Distribution/install/update | M003 Eggpack pipeline/signing handoff | active | `plans/implementation/distribution/003-eggpack-release-pipeline-and-signed-draft.md` | M001–M002 closed; Eggpack identity seam reviewed at `d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628` |
 
 ## 6. Blocked implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Hard blocker |
 |---|---|---|---|---|
-| Distribution/install/update | M003 Eggpack pipeline/signing handoff | blocked | `plans/implementation/distribution/003-eggpack-release-pipeline-and-signed-draft.md` | Eggpack identity seam corrective: `plans/implementation/distribution/003-eggpack-identity-seam-corrective.md` |
 | Distribution/install/update | M004 transactional self-update/rollback | blocked | `plans/implementation/distribution/004-transactional-self-update-and-rollback.md` | Phase 10 M003 |
 | Distribution/install/update | M005 install/update/uninstall E2E + Phase 10 closure | blocked | `plans/implementation/distribution/005-install-update-uninstall-e2e-and-phase10-closure.md` | Phase 10 M004 |
 
@@ -101,7 +99,7 @@ Production public-release readiness additionally requires maintainer provisionin
 - Operational-hardening M005 strict closure and **Phase 9 closure**: `plans/closure/operational-hardening/005-status.md` (implementation head `6a9f354`; CI run `37741533304`).
 - Distribution M001 strict closure: `plans/closure/distribution/001-status.md` (implementation head `c4d4e87`; native target run `37782271310`; full CI run `37782271299`).
 - Distribution M002 strict closure: `plans/closure/distribution/002-status.md` (implementation head `d1813da`; systemd qualification and full CI run `37799075225`).
-- Distribution M003 blocked disposition: `plans/closure/distribution/003-status.md` (Eggpack producer/consumer release identity mismatch; no M003 implementation qualification claimed).
+- Distribution M003 historical blocked disposition: `plans/closure/distribution/003-status.md`; prerequisite re-review/unblock: `plans/closure/distribution/003-unblock-review.md`.
 
 - M001 strict closure: `plans/closure/network-control/001-status.md`.
 - M002 strict closure: `plans/closure/network-control/002-status.md`.

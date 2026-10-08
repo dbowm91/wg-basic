@@ -1,6 +1,6 @@
 # Distribution M003 — Eggpack Release Pipeline and Signed Draft Handoff
 
-Status: blocked — Eggpack producer contract cannot emit the consumer-required stable release ID while preserving the exact `vX.Y.Z` Git tag.
+Status: active — Eggpack identity seam unblocked at reviewed revision `d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628`.
 
 Source roadmap:
 
@@ -359,8 +359,4 @@ Record:
 
 ## 20. Blocker disposition (2026-10-08)
 
-Implementation stopped at the producer/consumer contract seam, as required by §18. The pinned Eggpack revision `e5c81f28bd328d4aea41c3f061a0ed9944306262` and the adjacent clean Eggpack checkout at `3ef806fedc9d7683948e5678ec0d3c7b78c06f0e` both resolve a runtime release plan with the exact Git tag as `release_id`. Their CLI documentation and tests explicitly preserve this behavior. M001's production consumer accepts stable SemVer `X.Y.Z` as the manifest release ID and rejects the tag spelling `vX.Y.Z`. Therefore a generated M003 manifest cannot currently pass the required M001 consumer agreement fixture.
-
-Do not strip `v` only in wg-basic workflow code: that would make the workflow reinterpret Eggpack's resolved identity and break the producer contract's source/tag binding. Do not weaken M001's consumer or change the required `vX.Y.Z` Git tag convention in this milestone. The narrow prerequisite is an Eggpack contract that carries the exact Git tag/source binding separately from a product-selected manifest release ID, with CLI/schema support and tests proving both identities remain bound through build, finalization, and draft staging. Track that prerequisite in `plans/implementation/distribution/003-eggpack-identity-seam-corrective.md`.
-
-No target build, generated workflow, staged draft, fixture signature handoff, or consumer-agreement fixture is claimed. Exploratory local workflow/policy edits were discarded. M004 and M005 remain blocked because their hard predecessor closures are absent; there are no other eligible Phase 10 plans. The closure record `plans/closure/distribution/003-status.md` records this blocked disposition and the evidence reviewed.
+The original blocker was resolved upstream. Eggpack revision `d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628` adds the explicit `v_prefixed_stable_semver` mode. Its runtime identity envelope preserves the exact source tag, source revision, and unprefixed manifest `release_id`, with source/tag peel verification and stable-tag grammar validation. See `plans/closure/distribution/003-unblock-review.md`. The corrective is satisfied; M003 is active. The M001 verifier and `vX.Y.Z` source tag convention remain unchanged.

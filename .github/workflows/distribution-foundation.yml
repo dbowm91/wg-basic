@@ -19,25 +19,19 @@ jobs:
       - name: Build pinned Eggpack validator
         run: |
           git clone --filter=blob:none https://github.com/eggstack/eggpack "$RUNNER_TEMP/eggpack"
-          git -C "$RUNNER_TEMP/eggpack" checkout --detach e5c81f28bd328d4aea41c3f061a0ed9944306262
+          git -C "$RUNNER_TEMP/eggpack" checkout --detach d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628
           cargo build --locked --manifest-path "$RUNNER_TEMP/eggpack/Cargo.toml" -p eggpack-cli --bin eggpack
-      - name: Validate the complete two-target producer input set
+      - name: Check generated Eggpack workflow drift
         run: |
-          VERSION="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
-          "$RUNNER_TEMP/eggpack/target/debug/eggpack" ci _resolve-release \
+          python3 scripts/gen-release-workflow-shape.py
+          git diff --exit-code -- release/eggpack/workflow-shape.json
+          "$RUNNER_TEMP/eggpack/target/debug/eggpack" ci check \
+            --workflow-shape release/eggpack/workflow-shape.json \
             --contract release/eggpack/distribution.toml \
-            --pack-config release/eggpack/pack.toml \
-            --build-bindings release/eggpack/build-bindings.toml \
-            --qualification-bindings release/eggpack/qualification-bindings.toml \
-            --selected linux-arm64,linux-x64 \
-            --tag "$VERSION" \
-            --source-revision "$GITHUB_SHA" \
-            --template release/eggpack/github-template.json \
-            --source-root . \
-            --output-plan "$RUNNER_TEMP/release-plan.json" \
-            --output-ci-plan "$RUNNER_TEMP/release-ci-plan.json" \
-            --output-github-policy "$RUNNER_TEMP/release-policy.json" \
-            --consumer-validators release/eggpack/consumer-validators.json
+            --github-policy release/eggpack/github-policy.json \
+            --workflow .github/workflows/release-eggpack.yml
+      - name: Exercise product installer delegation
+        run: python3 scripts/test-release-installer.py
 
   native-release-candidate:
     strategy:

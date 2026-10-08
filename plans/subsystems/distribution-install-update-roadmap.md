@@ -1,6 +1,6 @@
 # Distribution, Installation, Update, and Rollback Roadmap
 
-Status: active; M001–M002 closed, M003 blocked on an Eggpack producer identity prerequisite
+Status: active; M001–M002 closed, M003 active after Eggpack producer identity prerequisite resolved upstream
 
 Canonical references:
 
@@ -177,7 +177,7 @@ Expected outcomes:
 
 ## 7. M003 — Eggpack producer pipeline and signed draft release
 
-Status: blocked; M002 is strictly closed, but Eggpack currently binds manifest `release_id` to the exact `vX.Y.Z` Git tag, which conflicts with M001's required `X.Y.Z` manifest identity. See `plans/closure/distribution/003-status.md` and `plans/implementation/distribution/003-eggpack-identity-seam-corrective.md`.
+Status: active; Eggpack's explicit `v_prefixed_stable_semver` identity mode resolves the prior blocker at reviewed revision `d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628`. The historical blocked disposition is retained in `plans/closure/distribution/003-status.md`; see the unblock review at `plans/closure/distribution/003-unblock-review.md`.
 
 Implementation plan:
 
@@ -575,6 +575,6 @@ A production release requires explicit maintainer authorization after:
 |---|---|---|---|
 | M001 release identity/authenticity/targets | closed | `plans/implementation/distribution/001-release-identity-authenticity-and-targets.md` | `plans/closure/distribution/001-status.md` |
 | M002 system install/service layout | closed | `plans/implementation/distribution/002-system-install-and-service-layout.md` | `plans/closure/distribution/002-status.md` |
-| M003 Eggpack producer pipeline/signed draft | blocked | `plans/implementation/distribution/003-eggpack-release-pipeline-and-signed-draft.md` | Eggpack must bind source tag separately from manifest release ID; see corrective |
+| M003 Eggpack producer pipeline/signed draft | active | `plans/implementation/distribution/003-eggpack-release-pipeline-and-signed-draft.md` | Identity seam resolved upstream; exact producer qualification and signing handoff in progress |
 | M004 transactional self-update/rollback | blocked | `plans/implementation/distribution/004-transactional-self-update-and-rollback.md` | M003 |
 | M005 lifecycle E2E/Phase 10 closure | blocked | `plans/implementation/distribution/005-install-update-uninstall-e2e-and-phase10-closure.md` | M004 |
