@@ -222,7 +222,7 @@ migration. It is run by the dedicated `upgrade-rehearsal` CI job.
 
 ## Phase 7 service suites
 
-Phase 7 added six unprivileged suites and one rootful fixture. The unprivileged
+Phase 7 added eight unprivileged suites and one rootful fixture. The unprivileged
 ones need nothing but a loopback socket and run with the ordinary suite:
 
 | Suite                            | What it qualifies |
@@ -230,7 +230,7 @@ ones need nothing but a loopback socket and run with the ordinary suite:
 | `management_http`                | real EggServe over real TCP: routing, perimeter, security headers |
 | `authenticated_api`              | pure request policy: `Host`, `Origin`, `Sec-Fetch-*`, CSRF, cookie, limiter |
 | `auth_sessions`                  | real migration v1→v2, Argon2id cost, session persistence |
-| `architecture_guards`            | 43 static invariants over the shipped source |
+| `architecture_guards`            | 47 static invariants over the shipped source |
 | `service_session_restart`        | §5: sessions across a real `serve` restart, over real cookies |
 | `service_resource_limits`        | §7: connection, in-flight, worker-queue, body, timeout, and shutdown saturation |
 | `service_e2e`                    | §6: real `admin`, `netd`, and `serve` child processes over a real socket |

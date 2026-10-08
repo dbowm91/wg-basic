@@ -52,11 +52,10 @@ Targets with `linux-integration` only compile/run under
 
 ## Architecture-guard categories
 
-`docs/development.md` describes `tests/architecture_guards.rs` as 43 static
-invariants; the file currently contains 47 `#[test]` functions (including the
-comment-stripper self-test and runtime checks such as secret redaction and the
-bundled-SQLite version). They are cheap source-text assertions that run in the
-ordinary suite. By category:
+`tests/architecture_guards.rs` currently contains 47 `#[test]` functions
+(including the comment-stripper self-test and runtime checks such as
+secret redaction and the bundled-SQLite version). They are cheap
+source-text assertions that run in the ordinary suite. By category:
 
 | Category | What is pinned |
 |---|---|
