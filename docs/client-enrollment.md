@@ -5,6 +5,8 @@ WireGuard configuration or request a local SVG QR encoding of that exact
 configuration. Both artifact responses are marked `Cache-Control: no-store`;
 the config response is an attachment. A client without an allowed route policy
 cannot be exported because it would produce an unusable `AllowedIPs` setting.
+The embedded operator page offers these exports from the client editor only
+after an explicit action. Closing the editor clears its displayed artifact.
 
 For an in-person or separately delivered share, create an enrollment link with
 `POST /api/v1/clients/<client-id>/enrollment-links`. The request requires the
@@ -24,4 +26,7 @@ per-peer/global limiter runs before the worker looks up a capability.
 Create and revoke actions are in the secret-safe audit trail. The token and
 configuration are never audit fields. The public enrollment page and consume
 response use the service's no-store and no-referrer security headers. No CORS
-headers are emitted.
+headers are emitted. The operator page displays a newly created link with its
+expiry and copy/revoke actions. The raw link is held in page memory only and is
+cleared when the client editor closes; deliver it over an approved private
+channel.

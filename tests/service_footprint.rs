@@ -572,7 +572,13 @@ fn the_management_surface_meets_its_footprint_and_latency_shape() {
 
     // --- The embedded shell. ---
     let mut shell_bytes = 0usize;
-    for path in ["/", "/assets/app.css", "/assets/app.js"] {
+    for path in [
+        "/",
+        "/assets/app.css",
+        "/assets/app.js",
+        "/enroll",
+        "/assets/enroll.js",
+    ] {
         let reply = client.get(path);
         assert_eq!(reply.status, 200, "{path} must be served");
         shell_bytes += reply.body.len();
@@ -592,7 +598,7 @@ fn the_management_surface_meets_its_footprint_and_latency_shape() {
          (engineering signal: <{TOTAL_FOOTPRINT_SIGNAL_MIB} MiB)\n\
          idle CPU over {idle_window:?}: serve {serve_cpu_ticks} ticks, \
          netd {netd_cpu_ticks} ticks\n\
-         embedded shell, all three documents:     {shell_bytes} bytes\n\
+         embedded shell, all five assets:         {shell_bytes} bytes\n\
          worker queue capacity:                  {}\n\
          ===================================================\n",
         kib_to_mib(serve_rss),

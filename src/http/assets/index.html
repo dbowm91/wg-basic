@@ -1,25 +1,4 @@
 <!doctype html>
-<!--
-  The operator shell.
-
-  Embedded in the wg-basic binary at compile time. There is no document root on
-  disk, no template engine, and no build step: `src/http/assets.rs` holds this
-  file with include_str!.
-
-  Two properties of this file are load-bearing rather than stylistic:
-
-  1. There is no inline script and no inline style. The Content-Security-Policy
-     the service sends is `default-src 'self'; object-src 'none'; base-uri
-     'none'; frame-ancestors 'none'; form-action 'self'`, and a page that needs
-     'unsafe-inline' to work is a page whose CSP was negotiated rather than
-     chosen. The script and the stylesheet are separate same-origin routes, so
-     the policy needs no concession.
-
-  2. There is no external origin anywhere: no CDN, no web font, no analytics, no
-     image host. An architecture guard fails if any embedded asset contains a
-     scheme-prefixed URL, because the first asset to reach out is the first asset
-     to report this appliance's operator to a third party.
--->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -31,80 +10,89 @@
   </head>
   <body>
     <main>
-      <header>
-        <h1>wg-basic</h1>
-        <p class="subtitle">Local appliance management</p>
+      <header class="topbar">
+        <div><h1>wg-basic</h1><p class="subtitle">Private network management</p></div>
+        <button type="button" class="secondary" id="logout" hidden>Sign out</button>
       </header>
 
-      <p id="banner" role="alert" hidden></p>
+      <p id="banner" role="alert" aria-live="polite" hidden></p>
 
       <section id="login-pane">
         <h2>Sign in</h2>
         <form id="login-form" autocomplete="on">
           <label for="username">Username</label>
-          <input
-            type="text"
-            id="username"
-            name="username"
-            autocomplete="username"
-            autocapitalize="none"
-            autocorrect="off"
-            spellcheck="false"
-            required
-          />
-
+          <input type="text" id="username" autocomplete="username" autocapitalize="none" required />
           <label for="password">Password</label>
-          <input
-            type="password"
-            id="password"
-            name="password"
-            autocomplete="current-password"
-            required
-          />
-
-          <button type="submit" id="sign-in">Sign in</button>
+          <input type="password" id="password" autocomplete="current-password" required />
+          <button type="submit">Sign in</button>
         </form>
-        <p class="note">
-          The administrator password is set from the terminal with
-          <code>wg-basic admin set-password --password-stdin</code>. There is no
-          recovery link here, deliberately: a reachable reset path would be a
-          reachable unauthenticated path to a credential.
-        </p>
+        <p class="note">Set or reset the administrator password locally with <code>wg-basic admin set-password --password-stdin</code>.</p>
       </section>
 
-      <section id="console-pane" hidden>
-        <h2>Session</h2>
-        <dl>
-          <dt>Principal</dt>
-          <dd id="principal">—</dd>
-          <dt>Session</dt>
-          <dd id="session">—</dd>
-          <dt>Expires</dt>
-          <dd id="expires">—</dd>
-        </dl>
-        <p>
-          <button type="button" class="secondary" id="logout">Sign out</button>
-        </p>
+      <section id="setup-pane" hidden>
+        <h2>Set up your server</h2>
+        <p>Create the server that clients will connect to. Administrator access is managed locally from the terminal.</p>
+        <form id="setup-form" class="form-grid">
+          <label>Tunnel IPv4 range <input name="tunnel_prefix" value="10.77.0.0/24" required /></label>
+          <label>Listen port <input name="listen_port" type="number" value="51820" min="1" max="65535" required /></label>
+          <label>Public endpoint <input name="advertised_endpoint" value="vpn.example.com:51820" required /></label>
+          <details class="advanced">
+            <summary>Advanced network settings</summary>
+            <label>Interface name <input name="interface_name" value="wg0" required maxlength="15" /></label>
+            <label>Server VPN address <input name="server_address" value="10.77.0.1" required /></label>
+            <label>Internet egress interface <input name="egress_interface" value="eth0" required /></label>
+            <label>Client routes <input name="routes" value="10.77.0.0/24" required /><span class="help">Comma separated. Use 0.0.0.0/0 to route all IPv4 traffic through this server.</span></label>
+            <label class="check"><input name="ipv4_forwarding_required" type="checkbox" checked /> Enable IPv4 forwarding</label>
+            <label class="check"><input name="masquerade" type="checkbox" checked /> Masquerade client internet traffic</label>
+          </details>
+          <button type="submit">Save server settings</button>
+        </form>
       </section>
 
-      <section id="health-pane" hidden>
-        <h2>Appliance</h2>
-        <dl>
-          <dt>netd</dt>
-          <dd id="netd-state">—</dd>
-          <dt>Convergence</dt>
-          <dd id="convergence">—</dd>
-          <dt>Desired generation</dt>
-          <dd id="desired-generation">—</dd>
-        </dl>
-        <p class="note">
-          Peer, client, and interface management is not part of this release.
-          Read-only views of them arrive with Phase 8; this surface proves the
-          session, the worker, and the health projection work end to end.
-        </p>
-      </section>
+      <div id="app-pane" hidden>
+        <section id="health-pane">
+          <div class="section-heading"><h2>Server</h2><button type="button" class="secondary" id="refresh">Refresh</button></div>
+          <div id="health-summary" class="cards"></div>
+          <p id="health-note" class="note" role="status"></p>
+        </section>
+
+        <section id="clients-pane">
+          <div class="section-heading"><h2>Clients</h2><button type="button" id="new-client">Add client</button></div>
+          <form id="create-form" class="inline-form" hidden>
+            <label>Client name <input name="label" maxlength="128" required /></label>
+            <label>DNS servers <input name="dns_servers" placeholder="1.1.1.1, 1.0.0.1" /></label>
+            <button type="submit">Create client</button><button type="button" class="secondary" id="cancel-create">Cancel</button>
+          </form>
+          <div class="table-wrap"><table><thead><tr><th>Client</th><th>VPN address</th><th>State</th><th>Last handshake</th><th>Traffic</th><th>Actions</th></tr></thead><tbody id="client-rows"></tbody></table></div>
+          <p id="empty-clients" class="note" hidden>No clients yet. Add a client to create its first connection.</p>
+        </section>
+
+        <section id="audit-pane">
+          <div class="section-heading"><h2>Recent activity</h2><button type="button" class="secondary" id="more-audit" hidden>Older events</button></div>
+          <ol id="audit-list" class="audit-list"></ol>
+          <p id="empty-audit" class="note" hidden>No activity recorded yet.</p>
+        </section>
+      </div>
+
+      <dialog id="client-dialog" aria-labelledby="dialog-title">
+        <div class="section-heading"><h2 id="dialog-title">Edit client</h2><button type="button" class="secondary close-dialog">Close</button></div>
+        <form id="edit-form" class="form-grid">
+          <input type="hidden" name="client_id" />
+          <label>Client name <input name="label" maxlength="128" required /></label>
+          <label>VPN address <input name="address" required /></label>
+          <label>Client routes <input name="routes" /></label>
+          <label>DNS servers <input name="dns_servers" /></label>
+          <label>Keepalive seconds <input name="client_keepalive_seconds" type="number" min="1" max="65535" /></label>
+          <button type="submit">Save changes</button>
+        </form>
+        <div class="artifact-actions">
+          <button type="button" data-artifact="config">Download config</button>
+          <button type="button" data-artifact="qr">Show QR code</button>
+          <button type="button" data-artifact="share">Create one-time link</button>
+        </div>
+        <div id="artifact" hidden></div>
+      </dialog>
     </main>
-
     <script src="/assets/app.js"></script>
   </body>
 </html>

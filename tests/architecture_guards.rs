@@ -1286,7 +1286,7 @@ fn a_failed_login_lookup_always_spends_one_argon2_verification() {
 }
 
 // ---------------------------------------------------------------------------
-// M004: the embedded asset shell
+// M005: the embedded product UI shell
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1434,10 +1434,7 @@ fn the_shell_goes_through_the_same_single_seal_point() {
 }
 
 #[test]
-fn the_shell_offers_no_phase_8_management() {
-    // Peer, client, and interface management are Phase 8. The absence is
-    // asserted rather than left to a reader of three small files, because the
-    // tempting next commit is "add a peer list" and it would be a small one.
+fn the_shell_uses_product_routes_without_exposing_internal_operations() {
     for name in [
         "src/http/assets/index.html",
         "src/http/assets/app.css",
@@ -1446,12 +1443,11 @@ fn the_shell_offers_no_phase_8_management() {
         let body = source_of(name);
         for forbidden in [
             "/api/v1/peers",
-            "/api/v1/clients",
             "/api/v1/interfaces",
-            "createPeer",
-            "deletePeer",
-            "addClient",
-            "generateKeys",
+            "wg-quick",
+            "localStorage",
+            "sessionStorage",
+            "console.log",
         ] {
             assert!(
                 !body.contains(forbidden),
@@ -1459,11 +1455,23 @@ fn the_shell_offers_no_phase_8_management() {
             );
         }
     }
-    // The shell's own data comes only from the routes Phase 7 publishes.
+    // The shell uses the typed product, telemetry, and audit API. It never
+    // calls the worker or netd directly.
     let js = source_of("src/http/assets/app.js");
-    for allowed in ["/api/v1/login", "/api/v1/logout", "/api/v1/session"] {
+    for allowed in [
+        "/api/v1/login",
+        "/api/v1/logout",
+        "/api/v1/session",
+        "/api/v1/server",
+        "/api/v1/setup",
+        "/api/v1/clients",
+        "/api/v1/clients/telemetry",
+        "/api/v1/audit",
+    ] {
         assert!(js.contains(allowed), "the shell should use {allowed}");
     }
+    assert!(js.contains("expected_generation"));
+    assert!(js.contains("visibilitychange"));
 }
 
 #[test]
