@@ -595,6 +595,16 @@ pub fn validate_product(state: &DesiredState, product: &ProductState) -> Result<
 // ---------------------------------------------------------------------------
 
 pub(crate) fn read_product(connection: &Connection) -> Result<ProductState, StateError> {
+    read_product_at_schema(connection, schema::supported_version())
+}
+
+/// Reads product state from a known schema without migrating it. Schema v4
+/// predates the durable operational switch, whose migration backfills `true`;
+/// diagnostics can therefore project that same default for immutable v4 reads.
+pub(crate) fn read_product_at_schema(
+    connection: &Connection,
+    schema_version: i64,
+) -> Result<ProductState, StateError> {
     let mut interfaces = BTreeMap::new();
     {
         let mut statement = connection
@@ -684,7 +694,7 @@ pub(crate) fn read_product(connection: &Connection) -> Result<ProductState, Stat
     }
 
     let mut network_operational_enabled = BTreeMap::new();
-    {
+    if schema_version >= 5 {
         let mut statement = connection
             .prepare("SELECT interface_id, operational_enabled FROM network_operational_state")
             .map_err(StateError::database)?;
@@ -705,6 +715,8 @@ pub(crate) fn read_product(connection: &Connection) -> Result<ProductState, Stat
             };
             network_operational_enabled.insert(id, enabled);
         }
+    } else {
+        network_operational_enabled.extend(interfaces.keys().copied().map(|id| (id, true)));
     }
     Ok(ProductState {
         interfaces,

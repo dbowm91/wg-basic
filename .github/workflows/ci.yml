@@ -17,6 +17,48 @@ jobs:
       - name: Audit the committed dependency lockfile
         run: cargo audit
 
+  upgrade-rehearsal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Build immutable Phase 8 binary with its own lockfile
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/wg-basic-phase8" e8fd6b1212491576f3c6bdd7468591a97d5aaf3c
+          cargo build --release --locked --manifest-path "$RUNNER_TEMP/wg-basic-phase8/Cargo.toml" --target-dir "$RUNNER_TEMP/wg-basic-phase8-target" --bin wg-basic
+      - name: Build labeled candidate binary
+        run: cargo build --release --locked --target-dir "$RUNNER_TEMP/wg-basic-candidate-target" --bin wg-basic
+      - name: Rehearse v4 migration, old-binary refusal, compatible restore, and re-upgrade
+        env:
+          WGB_OLD_BINARY: ${{ runner.temp }}/wg-basic-phase8-target/release/wg-basic
+          WGB_CANDIDATE_BINARY: ${{ runner.temp }}/wg-basic-candidate-target/release/wg-basic
+        run: cargo test --locked --test upgrade_rehearsal -- --ignored --nocapture
+
+  upgrade-rehearsal-rootful:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y iproute2 iputils-ping
+      - name: Build immutable Phase 8 binary with its own lockfile
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/wg-basic-phase8" e8fd6b1212491576f3c6bdd7468591a97d5aaf3c
+          cargo build --release --locked --manifest-path "$RUNNER_TEMP/wg-basic-phase8/Cargo.toml" --target-dir "$RUNNER_TEMP/wg-basic-phase8-target" --bin wg-basic
+      - name: Build labeled candidate binary
+        run: cargo build --release --locked --target-dir "$RUNNER_TEMP/wg-basic-candidate-target" --bin wg-basic
+      - name: Rehearse real v4 product traffic, failure, rollback, and re-upgrade
+        run: sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo CARGO_TARGET_DIR="$RUNNER_TEMP/wg-basic-upgrade-rootful-target" WGB_OLD_BINARY="$RUNNER_TEMP/wg-basic-phase8-target/release/wg-basic" WGB_CANDIDATE_BINARY="$RUNNER_TEMP/wg-basic-candidate-target/release/wg-basic" cargo test --locked --features linux-integration --test upgrade_rehearsal_rootful -- --ignored --nocapture --test-threads=1
+
   rust:
     runs-on: ubuntu-latest
     steps:

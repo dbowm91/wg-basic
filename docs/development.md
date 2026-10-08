@@ -198,6 +198,28 @@ sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo \
   cargo test --locked --features linux-integration --test maintenance_rootful -- --test-threads=1
 ```
 
+## Phase 9 old/new upgrade rehearsal
+
+CI builds the immutable Phase 8 baseline (`e8fd6b1`) with its own lockfile and
+builds the candidate into a separate target directory. The rootful rehearsal
+uses disposable namespaces and a temporary state directory to exercise v4
+product creation, real WireGuard traffic, explicit backup verification,
+candidate migration/failed health, v4 restore, doctor, old-service recovery,
+and candidate re-upgrade:
+
+```sh
+sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo \
+  CARGO_TARGET_DIR=/tmp/wg-basic-upgrade-rootful-target \
+  WGB_OLD_BINARY=/path/to/phase8/wg-basic \
+  WGB_CANDIDATE_BINARY=/path/to/candidate/wg-basic \
+  cargo test --locked --features linux-integration \
+    --test upgrade_rehearsal_rootful -- --ignored --nocapture --test-threads=1
+```
+
+The unprivileged companion test covers v4 product/session/enrollment/audit
+preservation, config hashes, old-binary refusal, explicit restore and repeated
+migration. It is run by the dedicated `upgrade-rehearsal` CI job.
+
 ## Phase 7 service suites
 
 Phase 7 added six unprivileged suites and one rootful fixture. The unprivileged
