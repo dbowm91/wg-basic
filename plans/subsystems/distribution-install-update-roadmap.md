@@ -1,6 +1,6 @@
 # Distribution, Installation, Update, and Rollback Roadmap
 
-Status: active; M001 implementation underway
+Status: active; M001 closed and M002 ready
 
 Canonical references:
 
@@ -124,7 +124,7 @@ All implementation dependencies are hard.
 
 ## 5. M001 — Signed release identity, target contract, and verifier
 
-Status: active (implementation in progress; strict closure evidence outstanding).
+Status: closed at `plans/closure/distribution/001-status.md`.
 
 Implementation plan:
 
@@ -150,7 +150,7 @@ Expected outcomes:
 
 ## 6. M002 — Native system installation and systemd services
 
-Status: blocked on M001.
+Status: ready; M001 is strictly closed.
 
 Implementation plan:
 
@@ -273,9 +273,9 @@ Canonical release targets:
 | linux-x64 | `x86_64-unknown-linux-gnu` | cargo-zigbuild, declared glibc floor | native x86_64 Linux |
 | linux-arm64 | `aarch64-unknown-linux-gnu` | cargo-zigbuild, declared glibc floor | native aarch64 Linux |
 
-Initial floor candidate: glibc 2.17, subject to M001 proving the complete binary actually executes against that floor.
+Qualified floor: glibc 2.17, proven for both native target artifacts by M001.
 
-If a dependency/toolchain prevents truthful 2.17 support, M001 must raise the declared floor to the lowest version actually qualified rather than retaining a copied Eggstack number.
+If a future dependency/toolchain prevents truthful 2.17 support, the producer contract must raise the declared floor to the lowest version actually qualified rather than retaining a copied value.
 
 ## 11. Release contract direction
 
@@ -573,8 +573,8 @@ A production release requires explicit maintainer authorization after:
 
 | Milestone | Status | Implementation plan | Hard blocker |
 |---|---|---|---|
-| M001 release identity/authenticity/targets | active | `plans/implementation/distribution/001-release-identity-authenticity-and-targets.md` | Native target and glibc qualification remain |
-| M002 system install/service layout | blocked | `plans/implementation/distribution/002-system-install-and-service-layout.md` | M001 |
+| M001 release identity/authenticity/targets | closed | `plans/implementation/distribution/001-release-identity-authenticity-and-targets.md` | `plans/closure/distribution/001-status.md` |
+| M002 system install/service layout | ready | `plans/implementation/distribution/002-system-install-and-service-layout.md` | M001 closed |
 | M003 Eggpack producer pipeline/signed draft | blocked | `plans/implementation/distribution/003-eggpack-release-pipeline-and-signed-draft.md` | M002 |
 | M004 transactional self-update/rollback | blocked | `plans/implementation/distribution/004-transactional-self-update-and-rollback.md` | M003 |
 | M005 lifecycle E2E/Phase 10 closure | blocked | `plans/implementation/distribution/005-install-update-uninstall-e2e-and-phase10-closure.md` | M004 |

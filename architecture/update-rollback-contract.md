@@ -4,7 +4,7 @@ This contract is Phase 9 output for Phase 10. It describes the required
 transaction around a candidate binary and the authoritative SQLite database;
 wg-basic does not yet implement an automatic updater.
 
-The verify-only release foundation is implemented in `src/release.rs`: stable
+The M001 verify-only release foundation is strictly closed and implemented in `src/release.rs`: stable
 version policy, the two canonical GNU target mappings, Minisign verification,
 and Eggpack ReleaseManifest projection after signature verification. The
 production public trust root is not provisioned. This code performs no release

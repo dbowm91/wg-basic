@@ -1,6 +1,6 @@
 # Distribution M002 — System Install and Service Layout
 
-Status: blocked on Distribution M001 closure
+Status: ready
 
 Source roadmap:
 
@@ -15,7 +15,7 @@ Primary class: installation / service ownership / privilege separation
 
 Hard dependency:
 
-- Distribution M001 strict closure.
+- Distribution M001 strict closure at `plans/closure/distribution/001-status.md`.
 
 ## 1. Objective
 
