@@ -1,6 +1,6 @@
 # Management Service Post-Phase-7 Reconciliation Addendum
 
-Status: active; C001 ready
+Status: closed; C001 closed. Evidence: `plans/closure/management-service/c001-status.md`.
 
 Canonical references:
 
@@ -102,7 +102,7 @@ Preserve:
 
 ### C001 — Deterministic limiter evidence and Phase 8 readiness reconciliation
 
-Status: ready.
+Status: closed. Evidence: `plans/closure/management-service/c001-status.md`.
 
 Implementation plan:
 

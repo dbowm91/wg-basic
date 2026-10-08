@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-08 (Phase 8 M004 closed; M005 active)
+Last planning reconciliation: 2026-10-08 (Phase 8 M001–M005 closed)
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -40,7 +40,7 @@ The architecture separates:
 
 The privileged service does not expose arbitrary shell, command, file-write, sysctl-path, nft-script, or raw-netlink execution.
 
-Current production code state: **Network control, Phase 6 durable state, and Phase 7 management/auth/service substrate are strictly closed. Phase 8 M001–M004 are strictly closed; authenticated server/client CRUD, standard config and QR export, one-time enrollment, live telemetry, and audit queries are implemented. M005 product UI is active.** The service retains its bounded SQLite worker, Argon2id local-admin credentials, opaque revocable sessions, Host/Origin/CSRF enforcement, login throttling, embedded self-contained assets, and graceful supervisor shutdown.
+Current production code state: **Network control, Phase 6 durable state, Phase 7 management/auth/service substrate, and Phase 8 M001–M005 are strictly closed. The authenticated product API and embedded UI provide server setup, client lifecycle, config/QR export, one-time enrollment, live telemetry, and bounded audit history.** The service retains its bounded SQLite worker, Argon2id local-admin credentials, opaque revocable sessions, Host/Origin/CSRF enforcement, login throttling, embedded self-contained assets, and graceful supervisor shutdown.
 
 ## 3. Eggstack reuse disposition
 
@@ -67,7 +67,7 @@ Runtime dependency adoption remains evidence-driven.
 | Linux network-control foundation | closed | `plans/subsystems/network-control-roadmap.md` + `plans/subsystems/network-control-post-foundation-reconciliation-addendum.md` | M001–M005 and C001 closed |
 | Durable state/restart reconciliation | closed | `plans/subsystems/durable-state-restart-reconciliation-roadmap.md` + `plans/subsystems/durable-state-post-phase6-reconciliation-addendum.md` | Phase 6 complete; M001–M004 and post-Phase-6 C001 closed |
 | Management service/auth/security substrate | closed | `plans/subsystems/management-service-security-roadmap.md` + `plans/subsystems/management-service-post-phase7-reconciliation-addendum.md` | M001–M004 and post-Phase-7 C001 closed |
-| Product management/enrollment/UI | active | `plans/subsystems/product-management-enrollment-ui-roadmap.md` | M001–M004 closed; M005 active |
+| Product management/enrollment/UI | closed | `plans/subsystems/product-management-enrollment-ui-roadmap.md` | Phase 8 M001–M005 closed |
 | Distribution/install/update | proposed | not yet written | Phase 10; blocked behind Phase 9 operational hardening |
 
 Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
@@ -76,9 +76,9 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
-| Management service post-Phase-7 reconciliation | C001 deterministic limiter evidence + Phase 8 readiness reconciliation | **closed** | `plans/implementation/management-service/c001-post-phase7-ci-and-phase8-readiness.md` | Phase 7 M001–M004 strict closure |
+| Management service post-Phase-7 reconciliation | C001 deterministic limiter evidence + Phase 8 readiness reconciliation | **closed** | `plans/implementation/management-service/c001-post-phase7-ci-and-phase8-readiness.md` | `plans/closure/management-service/c001-status.md` |
 
-C001 and Phase 8 M001–M004 are strictly closed. M005 is the sole active implementation plan.
+C001 and Phase 8 M001–M005 are strictly closed. No active or eligible implementation plan remains. Phase 10 distribution planning remains proposed behind Phase 9 operational hardening.
 
 Phase 8 planning is complete under ADR-004 and `plans/subsystems/product-management-enrollment-ui-roadmap.md`. M002 applied the perimeter to every unsafe product route and selected explicit 8 KiB JSON mutation bounds. Other inherited constraints remain:
 
@@ -95,9 +95,9 @@ Phase 8 planning is complete under ADR-004 and `plans/subsystems/product-managem
 | Product management/enrollment/UI | M002 authenticated product CRUD API | **closed** | `plans/implementation/product-management/002-authenticated-product-crud-api.md` | Phase 8 M001; `plans/closure/product-management/002-status.md` |
 | Product management/enrollment/UI | M003 export + QR + one-time enrollment | **closed** | `plans/implementation/product-management/003-export-qr-and-one-time-enrollment.md` | `plans/closure/product-management/003-status.md` |
 | Product management/enrollment/UI | M004 live telemetry + audit surface | **closed** | `plans/implementation/product-management/004-live-telemetry-and-audit-surface.md` | `plans/closure/product-management/004-status.md` |
-| Product management/enrollment/UI | M005 embedded product UI + Phase 8 qualification | **active** | `plans/implementation/product-management/005-embedded-product-ui-and-phase8-qualification.md` | Phase 8 M004 closed |
+| Product management/enrollment/UI | M005 embedded product UI + Phase 8 qualification | **closed** | `plans/implementation/product-management/005-embedded-product-ui-and-phase8-qualification.md` | `plans/closure/product-management/005-status.md` |
 
-Phase 8 M001–M004 are implemented and closed. M005 is active.
+Phase 8 M001–M005 are implemented and closed.
 
 ## 7. Recently closed work
 
@@ -120,6 +120,8 @@ Phase 8 M001–M004 are implemented and closed. M005 is active.
 - Product-management M001 strict closure: `plans/closure/product-management/001-status.md`.
 - Product-management M002 strict closure: `plans/closure/product-management/002-status.md` (head `cf0717e`).
 - Product-management M003 strict closure: `plans/closure/product-management/003-status.md` (implementation head `37c0ff7`).
+- Product-management M004 strict closure: `plans/closure/product-management/004-status.md` (implementation head `d629103`).
+- Product-management M005 strict closure and **Phase 8 closure**: `plans/closure/product-management/005-status.md` (implementation head `8b20a7c`).
 
 ## 8. M005 and C001 closure and downstream handoff
 
@@ -209,6 +211,8 @@ If later implementation evidence reveals a material architecture contradiction, 
 M001–M005, network-control C001, durable-state M001–M004, and durable-state post-Phase-6 C001 are closed and their strict evidence is recorded. **Phase 6 remains closed.** Phase 7 M001, M002, M003, and M004 are all closed; **Phase 7 is closed at `d5d5ca9`** and Phase 8 is unblocked.
 
 Phase 7 M004 closed strictly at `d5d5ca9`. The milestone delivered a self-contained embedded operator shell (12,723 bytes, compiled in, no document root, no external origin, no CSP concession), a deterministic `serve` lifecycle, sessions qualified across a real process restart over real cookies, four-way readiness differentiation, and end-to-end plus abuse/resource qualification against real processes and a real network backend. Two defects were corrected that the code alone would not have shown: `serve` died from `SIGTERM` without draining, because `ctrlc`'s `termination` feature was not enabled and only its handler covers a supervisor's signal; and `ManagementHealth::netd_reachable` could not distinguish a dead backend from an installation that had simply not applied anything yet, so an authenticated live read-only probe was added while the unauthenticated probe was deliberately left unable to dial the privileged backend. The rootful service fixture drives the management HTTP surface against a real `netd` inside a disposable namespace and qualifies real convergence in both directions — `ok` when converged, `degraded` when the backend is gone. Measured footprint is 13.34 MiB combined against the long-term 30 MiB engineering signal, with 0 idle CPU ticks for both roles over a two-second window; nothing was weakened to meet the signal, and the Argon2id parameters remain at the M002 policy, asserted with a latency *floor* so they cannot be traded for speed. No high or medium finding remains open. No historical closure record was edited.
+
+Phase 8 M005 closed at implementation head `8b20a7c`, completing the first user-facing product boundary. The buildless embedded UI consumes the authenticated API for setup, client lifecycle, explicit credential exports, one-time link actions, live telemetry, and audit. The combined Linux-integration suite and six-test product rootful suite passed; the rootful product case configures a real client from HTTP-exported values, proves a kernel handshake and traffic, then drives disable, re-enable, and delete through HTTP. The five embedded assets total 29,811 bytes. The release footprint measured 13.54 MiB combined serve/netd RSS and zero idle CPU ticks over two seconds; no high, medium, or low finding remains open. Phase 9 operational hardening remains downstream; no distribution implementation plan is eligible yet.
 
 At each future closure, update:
 

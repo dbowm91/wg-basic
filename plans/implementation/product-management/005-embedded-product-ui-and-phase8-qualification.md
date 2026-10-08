@@ -1,6 +1,6 @@
 # Product Management M005 — Embedded Product UI and Phase 8 Qualification
 
-Status: active; Product Management M004 closed.
+Status: closed. Evidence: `plans/closure/product-management/005-status.md`.
 
 Source roadmap:
 

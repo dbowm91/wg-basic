@@ -1,6 +1,6 @@
 # Durable State M002 — Durable Ownership and Generation-Aware Aggregate Reconciliation
 
-Status: blocked on Durable State M001 closure
+Status: closed. Closure record: `plans/closure/durable-state/002-status.md`.
 
 Source roadmap:
 
