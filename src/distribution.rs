@@ -834,6 +834,35 @@ fn read_metadata(directory: &Path) -> Result<Option<InstallMetadata>, String> {
     Ok(Some(receipt))
 }
 
+/// Read the installation receipt and revalidate every product-owned file
+/// without requiring the services to be running or mutating host state.
+pub fn validate_owned_installation() -> Result<InstallMetadata, String> {
+    let receipt = read_metadata(Path::new(SYSTEM_DIR))?
+        .ok_or_else(|| "wg-basic system installation is not registered".to_owned())?;
+    verify_owned_file(Path::new(BINARY_PATH), &receipt.binary_sha256, 0)
+        .map_err(|_| "installed executable is modified or unsafe")?;
+    verify_owned_file(Path::new(NETD_UNIT_PATH), &receipt.netd_unit_sha256, 0)
+        .map_err(|_| "netd unit is modified or unsafe")?;
+    verify_owned_file(Path::new(SERVE_UNIT_PATH), &receipt.serve_unit_sha256, 0)
+        .map_err(|_| "serve unit is modified or unsafe")?;
+    verify_owned_file(Path::new(SYSUSERS_PATH), &receipt.sysusers_sha256, 0)
+        .map_err(|_| "sysusers definition is modified or unsafe")?;
+    let output = eggup_core::run_bounded(
+        &eggup_core::CommandSpec::new(BINARY_PATH)
+            .arg("--version")
+            .timeout(std::time::Duration::from_secs(5))
+            .max_output_bytes(1024),
+    )
+    .map_err(|_| "installed executable identity check failed")?;
+    if !output.success()
+        || !output.stderr().is_empty()
+        || output.stdout() != format!("wg-basic {}\n", receipt.version).as_bytes()
+    {
+        return Err("installed executable version does not match its receipt".into());
+    }
+    Ok(receipt)
+}
+
 fn install_definition(
     path: &Path,
     contents: &[u8],

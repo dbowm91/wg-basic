@@ -502,6 +502,10 @@ pub fn require_production_key() -> Result<&'static str, String> {
 /// `update --check`: read-only and fail-closed until the production trust root
 /// is provisioned. No network request is made in this state.
 pub fn check() -> Result<(), String> {
+    let install = crate::distribution::validate_owned_installation()?;
+    if install.version != crate::release::PACKAGE_VERSION {
+        return Err("installed version does not match updater binary identity".into());
+    }
     let public_key = require_production_key()?;
     let transport = system_transport()?;
     let _ = check_with(&transport, public_key)?;
@@ -704,12 +708,13 @@ mod tests {
 
     #[test]
     fn update_operations_refuse_without_a_production_key() {
-        assert!(check()
+        assert!(require_production_key()
             .unwrap_err()
             .contains("production Minisign trust root"));
         assert!(apply()
             .unwrap_err()
             .contains("production Minisign trust root"));
+        assert!(check().is_err());
     }
 
     #[test]
