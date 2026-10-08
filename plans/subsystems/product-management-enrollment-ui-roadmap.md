@@ -1,6 +1,6 @@
 # Product Management, Enrollment, and UI Roadmap
 
-Status: active; M001–M002 closed, M003 ready
+Status: active; M001–M002 closed, M003 active
 
 Canonical references:
 
@@ -209,7 +209,7 @@ Expected outcomes:
 
 ## 7. M003 — Standard export, QR, and one-time enrollment
 
-Status: ready; M002 closed.
+Status: active; M002 closed.
 
 Implementation plan:
 

@@ -26,7 +26,7 @@
 //! shipping without Phase 8's plan — the plan that is supposed to decide what
 //! peer management *means*, not the UI.
 //!
-//! The two scripts' side effects are confined to the document: there is no
+//! Each script's side effects are confined to its document: there is no
 //! timer, no global hook, and no event listener outside the two named DOM
 //! elements the page provides. [`Asset::mutates_the_document`] states that as a
 //! claim the guard tests restate, so it cannot rot silently.
@@ -41,6 +41,8 @@ pub const APP_CSS: &str = include_str!("assets/app.css");
 
 /// The script, served at `/assets/app.js`.
 pub const APP_JS: &str = include_str!("assets/app.js");
+pub const ENROLL_HTML: &str = include_str!("assets/enroll.html");
+pub const ENROLL_JS: &str = include_str!("assets/enroll.js");
 
 /// The total embedded payload, as a ceiling rather than an observation.
 ///
@@ -94,13 +96,27 @@ pub const INVENTORY: &[Asset] = &[
         body: APP_JS,
         mutates_the_document: true,
     },
+    Asset {
+        path: "/enroll",
+        content_type: "text/html; charset=utf-8",
+        name: "enroll.html",
+        body: ENROLL_HTML,
+        mutates_the_document: true,
+    },
+    Asset {
+        path: "/assets/enroll.js",
+        content_type: "text/javascript; charset=utf-8",
+        name: "enroll.js",
+        body: ENROLL_JS,
+        mutates_the_document: true,
+    },
 ];
 
 /// Looks up an asset by its exact path.
 ///
 /// `None` for anything else, including a path with a trailing slash, a
 /// percent-encoded variant, or a query string. The lookup is a linear scan over
-/// three entries, which is cheaper than the prefix matching it replaces and
+/// the small fixed inventory, which is cheaper than the prefix matching it replaces and
 /// cannot be made to walk off the end of a directory.
 pub fn asset(path: &str) -> Option<&'static Asset> {
     INVENTORY.iter().find(|asset| asset.path == path)

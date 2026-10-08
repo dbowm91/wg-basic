@@ -1,6 +1,6 @@
 # Product Management M003 — Export, QR, and One-Time Enrollment
 
-Status: ready
+Status: active
 
 Source roadmap:
 

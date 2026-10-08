@@ -111,6 +111,9 @@ pub enum Route {
     Asset,
     /// Authenticated product endpoint with an optional canonical client id.
     Product(ProductRoute, Option<ClientId>),
+    EnrollmentLanding(crate::product::EnrollmentCapabilityId),
+    EnrollmentConsume(crate::product::EnrollmentCapabilityId),
+    EnrollmentRevoke(crate::product::EnrollmentCapabilityId),
     /// A path this surface does not have.
     Unknown,
 }
@@ -121,8 +124,11 @@ pub enum ProductRoute {
     Setup,
     Clients,
     Client,
+    Config,
+    Qr,
     Enable,
     Disable,
+    EnrollmentLinks,
 }
 
 impl Route {
@@ -141,6 +147,8 @@ impl Route {
                         | ProductRoute::Disable,
                     _
                 )
+                | Self::Product(ProductRoute::EnrollmentLinks, _)
+                | Self::EnrollmentConsume(_)
         )
     }
 
@@ -162,7 +170,12 @@ impl Route {
                 }
                 ProductRoute::Clients => method == "GET" || method == "POST",
                 ProductRoute::Client => method == "GET" || method == "PATCH" || method == "DELETE",
+                ProductRoute::Config | ProductRoute::Qr => method == "GET",
+                ProductRoute::EnrollmentLinks => method == "POST",
             },
+            Self::EnrollmentLanding(_) => method == "GET",
+            Self::EnrollmentConsume(_) => method == "POST",
+            Self::EnrollmentRevoke(_) => method == "DELETE",
             Self::Unknown => false,
         }
     }
@@ -194,7 +207,7 @@ pub fn route(path: &str) -> Route {
         API_HEALTH_PATH => Route::ApiHealth,
         SHELL_PATH => Route::Shell,
         // An embedded asset is matched exactly by its own lookup, which is a
-        // closed table of three entries -- so there is no prefix rule here that
+        // closed table -- so there is no prefix rule here that
         // could match more than it should.
         path if super::assets::asset(path).is_some() => Route::Asset,
         "/api/v1/server" => Route::Product(ProductRoute::Server, None),
@@ -206,6 +219,18 @@ pub fn route(path: &str) -> Route {
 
 fn product_route(path: &str) -> Option<Route> {
     let pieces: Vec<_> = path.split('/').collect();
+    if let ["", "enroll", raw] = pieces.as_slice() {
+        let id = crate::product::EnrollmentCapabilityId::from_str(raw).ok()?;
+        return (id.to_string() == *raw).then_some(Route::EnrollmentLanding(id));
+    }
+    if let ["", "api", "v1", "enroll", raw, "consume"] = pieces.as_slice() {
+        let id = crate::product::EnrollmentCapabilityId::from_str(raw).ok()?;
+        return (id.to_string() == *raw).then_some(Route::EnrollmentConsume(id));
+    }
+    if let ["", "api", "v1", "enrollment-links", raw] = pieces.as_slice() {
+        let id = crate::product::EnrollmentCapabilityId::from_str(raw).ok()?;
+        return (id.to_string() == *raw).then_some(Route::EnrollmentRevoke(id));
+    }
     if pieces.len() < 5 || pieces[1..4] != ["api", "v1", "clients"] {
         return None;
     }
@@ -220,6 +245,13 @@ fn product_route(path: &str) -> Option<Route> {
         }
         ["", "api", "v1", "clients", _, "disable"] => {
             Some(Route::Product(ProductRoute::Disable, Some(id)))
+        }
+        ["", "api", "v1", "clients", _, "config"] => {
+            Some(Route::Product(ProductRoute::Config, Some(id)))
+        }
+        ["", "api", "v1", "clients", _, "qr"] => Some(Route::Product(ProductRoute::Qr, Some(id))),
+        ["", "api", "v1", "clients", _, "enrollment-links"] => {
+            Some(Route::Product(ProductRoute::EnrollmentLinks, Some(id)))
         }
         _ => None,
     }
@@ -345,6 +377,74 @@ impl ManagementService {
                 }
                 let principal_id = session.session.principal_id;
                 self.product(route, id, principal_id, body, head).await
+            }
+            Route::EnrollmentLanding(_) => match super::assets::response_body("/enroll") {
+                Some(body) => response::build(
+                    super::assets::status(),
+                    super::assets::content_type("/enroll"),
+                    body,
+                ),
+                None => response::not_found(),
+            },
+            Route::EnrollmentRevoke(id) => {
+                let Some(session) = self.api.authenticate(head).await else {
+                    return refusal(RequestRejection::NotAuthenticated);
+                };
+                if let Err(rejection) = guard.check_csrf(head, &session) {
+                    return refusal(rejection);
+                }
+                match self
+                    .api
+                    .worker()
+                    .revoke_enrollment_link(session.session.principal_id, id)
+                    .await
+                {
+                    Ok(true) => json_response(
+                        eggserve_primitives::StatusCode::OK,
+                        &serde_json::json!({"revoked":true}),
+                    ),
+                    Ok(false) => response::not_found(),
+                    Err(error) => response_for_worker_error(error),
+                }
+            }
+            Route::EnrollmentConsume(id) => {
+                if let Err(error) = guard.check_json_content_type(head) {
+                    return refusal(error);
+                }
+                if body.len() > super::api::ENROLLMENT_BODY_LIMIT {
+                    return refusal(RequestRejection::BodyTooLarge);
+                }
+                match self.api.admit_enrollment(peer) {
+                    super::Admission::Refused {
+                        retry_after_seconds,
+                    } => {
+                        return refusal(RequestRejection::Throttled {
+                            retry_after_seconds,
+                        })
+                    }
+                    super::Admission::Allowed { .. } => {}
+                }
+                #[derive(serde::Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct ConsumeBody {
+                    token: String,
+                }
+                let Some(input): Option<ConsumeBody> = parse_json(body) else {
+                    return product_status(410, "enrollment unavailable");
+                };
+                let token = match crate::product::EnrollmentToken::parse(input.token) {
+                    Ok(token) => token,
+                    Err(_) => return product_status(410, "enrollment unavailable"),
+                };
+                match self.api.worker().consume_enrollment(id, token).await {
+                    Ok(Some(config)) => response::build(
+                        eggserve_primitives::StatusCode::OK,
+                        "text/plain; charset=utf-8",
+                        ResponseBody::Bytes(config.into_bytes()),
+                    ),
+                    Ok(None) => product_status(410, "enrollment unavailable"),
+                    Err(error) => response_for_worker_error(error),
+                }
             }
             // The shell and its two assets. Unauthenticated, because a login
             // frame nobody can reach is not a login frame -- and empty of
@@ -583,6 +683,70 @@ impl ManagementService {
                     }
                 }
             }
+            Config | Qr => {
+                let Some(id) = id else {
+                    return response::not_found();
+                };
+                let config = match self.api.worker().client_config(id).await {
+                    Ok(config) => config,
+                    Err(error) => return product_error(error),
+                };
+                if route == Config {
+                    let mut answer = response::build(
+                        eggserve_primitives::StatusCode::OK,
+                        "text/plain; charset=utf-8",
+                        ResponseBody::Bytes(config.into_bytes()),
+                    );
+                    headers::with_attachment(&mut answer, &format!("wg-client-{id}.conf"));
+                    answer
+                } else {
+                    match crate::product::render_qr_svg(config.expose()) {
+                        Ok(svg) => response::build(
+                            eggserve_primitives::StatusCode::OK,
+                            "image/svg+xml",
+                            ResponseBody::Bytes(svg.into_bytes()),
+                        ),
+                        Err(_) => product_status(422, "artifact unavailable"),
+                    }
+                }
+            }
+            EnrollmentLinks => {
+                let Some(id) = id else {
+                    return response::not_found();
+                };
+                #[derive(serde::Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct LinkBody {
+                    #[serde(default)]
+                    expires_in_seconds: Option<u64>,
+                }
+                let Some(input): Option<LinkBody> = parse_json(body) else {
+                    return product_status(422, "invalid request");
+                };
+                let ttl = input
+                    .expires_in_seconds
+                    .unwrap_or(crate::product::DEFAULT_ENROLLMENT_TTL_SECONDS);
+                match self
+                    .api
+                    .worker()
+                    .create_enrollment_link(principal_id, id, ttl)
+                    .await
+                {
+                    Ok(link) => {
+                        let token = link.token.expose_once();
+                        let share_url = format!(
+                            "{}/enroll/{}#token={token}",
+                            self.api.canonical_origin(),
+                            link.capability_id
+                        );
+                        json_response(
+                            eggserve_primitives::StatusCode::CREATED,
+                            &serde_json::json!({"capability_id":link.capability_id,"share_url":share_url,"expires_at":link.expires_at}),
+                        )
+                    }
+                    Err(error) => product_error(error),
+                }
+            }
             Enable | Disable => {
                 let Some(id) = id else {
                     return response::not_found();
@@ -669,11 +833,13 @@ impl Service for ManagementService {
         match matched {
             matched if request_has_body(matched, head.method().as_str()) => {
                 RequestBodyPolicy::Buffer {
-                    max_bytes: if matches!(matched, Route::Login) {
+                    max_bytes: (if matches!(matched, Route::Login) {
                         LOGIN_BODY_LIMIT
+                    } else if matches!(matched, Route::EnrollmentConsume(_)) {
+                        super::api::ENROLLMENT_BODY_LIMIT
                     } else {
                         PRODUCT_BODY_LIMIT
-                    } as u64,
+                    }) as u64,
                 }
             }
             _ => RequestBodyPolicy::Reject,
@@ -693,6 +859,8 @@ impl Service for ManagementService {
         let matched = route(head.target().path());
         let body_limit = if matches!(matched, Route::Login) {
             LOGIN_BODY_LIMIT
+        } else if matches!(matched, Route::EnrollmentConsume(_)) {
+            super::api::ENROLLMENT_BODY_LIMIT
         } else {
             PRODUCT_BODY_LIMIT
         };
@@ -862,6 +1030,9 @@ fn product_error(error: WorkerError) -> Response {
             product_status(409, "server not configured")
         }
         WorkerError::Product(ProductFailure::StateUnavailable) => response::unavailable(),
+        WorkerError::Product(ProductFailure::SecretUnavailable) => {
+            product_status(409, "artifact unavailable")
+        }
         other => response_for_worker_error(other),
     }
 }
@@ -982,6 +1153,10 @@ mod tests {
         assert_eq!(
             route(&format!("/api/v1/clients/{id}/enable")),
             Route::Product(ProductRoute::Enable, Some(ClientId::from_str(&id).unwrap()))
+        );
+        assert_eq!(
+            route(&format!("/api/v1/clients/{id}/config")),
+            Route::Product(ProductRoute::Config, Some(ClientId::from_str(&id).unwrap()))
         );
         for target in [
             format!("/api/v1/clients/{id}/"),

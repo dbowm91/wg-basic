@@ -1,0 +1,27 @@
+# Client configuration and enrollment
+
+An authenticated administrator can download a managed client's standard
+WireGuard configuration or request a local SVG QR encoding of that exact
+configuration. Both artifact responses are marked `Cache-Control: no-store`;
+the config response is an attachment. A client without an allowed route policy
+cannot be exported because it would produce an unusable `AllowedIPs` setting.
+
+For an in-person or separately delivered share, create an enrollment link with
+`POST /api/v1/clients/<client-id>/enrollment-links`. The request requires the
+administrator session, exact configured `Origin`, and CSRF token. An optional
+`expires_in_seconds` selects a lifetime from 1 second through 24 hours; the
+default is 600 seconds. The response contains the capability ID, expiry, and a
+share URL whose 256-bit URL-safe token exists after `#token=` only. The raw
+token is never stored: SQLite retains its SHA-256 digest.
+
+The recipient opens the link in a browser. The embedded page does not consume a
+capability on GET; its script reads the fragment, removes it from browser
+history, and sends a small same-origin JSON POST. The first correct consume
+returns the config once. Wrong, expired, revoked, deleted-client, and already
+consumed capabilities return the same unavailable response. A separate
+per-peer/global limiter runs before the worker looks up a capability.
+
+Create and revoke actions are in the secret-safe audit trail. The token and
+configuration are never audit fields. The public enrollment page and consume
+response use the service's no-store and no-referrer security headers. No CORS
+headers are emitted.

@@ -43,7 +43,10 @@ use std::{
     thread,
 };
 use wg_basic::{
-    domain::{ClientRoutePolicy, DesiredGeneration, InterfaceId, NetworkPrefix, PrincipalId},
+    domain::{
+        ClientRoutePolicy, DesiredGeneration, InterfaceId, InterfaceName, NetworkPrefix,
+        PresharedKey, PrincipalId, PrivateKey, PublicKey,
+    },
     http::{
         AuthenticatedApi, Bucket, LoginLimiter, ManagementHttpConfig, ManagementService,
         OriginPolicy,
@@ -55,6 +58,7 @@ use wg_basic::{
     },
     protocol::{RequestOperation, ResponseBody},
     state::StateStore,
+    wireguard::{DesiredWireGuardPeer, FieldUpdate, PeerMutation, WireGuardDevicePatch},
 };
 
 fn http(
@@ -183,6 +187,23 @@ impl Namespace {
                 .map(|peer| peer.public_key.expose().to_owned())
                 .collect(),
             _ => Vec::new(),
+        }
+    }
+
+    fn device(
+        &self,
+        socket: &std::path::Path,
+        interface: &str,
+    ) -> wg_basic::wireguard::ObservedWireGuardDevice {
+        match wg_basic::protocol::request(
+            socket,
+            RequestOperation::ObserveWireGuardDevice {
+                interface: interface.parse().unwrap(),
+            },
+            9002,
+        ) {
+            Ok(ResponseBody::WireGuardDevice(device)) => device,
+            other => panic!("expected WireGuard observation, got {other:?}"),
         }
     }
 
@@ -367,7 +388,7 @@ impl Installation {
                 server_address: None,
                 listen_port: 51820,
                 advertised_endpoint: wg_basic::product::AdvertisedEndpoint::new(
-                    "vpn.example.com",
+                    "198.18.0.1",
                     51820,
                 )
                 .unwrap(),
@@ -484,6 +505,195 @@ async fn a_created_client_becomes_a_real_kernel_peer() {
             .namespace
             .device_public_keys(&installation.scratch.netd_socket(), "wg0");
         keys.len() == before.len() + 1 && keys.contains(&key)
+    });
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exported_client_config_establishes_a_real_kernel_handshake() {
+    require_root("exported client handshake");
+    let installation = Installation::start("export", "10.67.0.0/24").await;
+    let client_ns = Namespace::new("client");
+    let client_scratch = Scratch::new();
+    let client_netd = Managed::netd(&client_ns.0, &client_scratch);
+    wait_until("client netd to listen", || client_netd.ready("listening"));
+
+    run(&[
+        "link", "add", "wgx1", "type", "veth", "peer", "name", "wgx2",
+    ]);
+    run(&["link", "set", "wgx1", "netns", &installation.namespace.0]);
+    run(&["link", "set", "wgx2", "netns", &client_ns.0]);
+    run(&[
+        "-n",
+        &installation.namespace.0,
+        "addr",
+        "add",
+        "198.18.0.1/24",
+        "dev",
+        "wgx1",
+    ]);
+    run(&[
+        "-n",
+        &client_ns.0,
+        "addr",
+        "add",
+        "198.18.0.2/24",
+        "dev",
+        "wgx2",
+    ]);
+    run(&["-n", &installation.namespace.0, "link", "set", "wgx1", "up"]);
+    run(&["-n", &client_ns.0, "link", "set", "wgx2", "up"]);
+
+    let management = installation.client();
+    let client = management
+        .create_client(ClientCreateCommand {
+            principal_id: installation.principal,
+            expected_generation: installation.store.current_generation().unwrap(),
+            interface_id: installation.interface_id(),
+            label: ClientLabel::new("exported-phone").unwrap(),
+            requested_address: None,
+            route_policy: Some(ClientRoutePolicy {
+                prefixes: vec!["10.67.0.1/32".parse().unwrap()],
+            }),
+            dns_servers: Vec::new(),
+            client_keepalive_seconds: None,
+        })
+        .await
+        .expect("client with server route")
+        .client;
+    let config = management
+        .client_config(client.client_id)
+        .await
+        .expect("exported config");
+    let values = config
+        .expose()
+        .lines()
+        .filter_map(|line| line.split_once(" = "))
+        .collect::<std::collections::HashMap<_, _>>();
+    let address = values["Address"]
+        .parse::<NetworkPrefix>()
+        .expect("config address");
+    let private_key = PrivateKey::new(values["PrivateKey"].to_owned()).expect("config key");
+    let server_public_key = PublicKey::new(values["PublicKey"].to_owned()).expect("config peer");
+    let endpoint = values["Endpoint"]
+        .parse::<std::net::SocketAddr>()
+        .unwrap_or_else(|error| {
+            panic!(
+                "invalid exported endpoint {:?}: {error}",
+                values["Endpoint"]
+            )
+        });
+    let allowed_ips = values["AllowedIPs"]
+        .split(", ")
+        .map(|ip| {
+            ip.parse::<NetworkPrefix>().unwrap_or_else(|error| {
+                panic!(
+                    "invalid exported route {ip:?} from {:?}: {error}",
+                    values["AllowedIPs"]
+                )
+            })
+        })
+        .collect();
+    let preshared_key = values
+        .get("PresharedKey")
+        .map(|value| PresharedKey::new((*value).to_owned()).unwrap());
+    let keepalive = values
+        .get("PersistentKeepalive")
+        .map(|value| value.parse::<u16>().unwrap());
+    run(&[
+        "-n",
+        &client_ns.0,
+        "link",
+        "add",
+        "wg-client",
+        "type",
+        "wireguard",
+    ]);
+    run(&[
+        "-n",
+        &client_ns.0,
+        "addr",
+        "add",
+        &address.to_string(),
+        "dev",
+        "wg-client",
+    ]);
+    run(&["-n", &client_ns.0, "link", "set", "wg-client", "up"]);
+    let interface: InterfaceName = "wg-client".parse().unwrap();
+    let reply = wg_basic::protocol::request(
+        &client_scratch.netd_socket(),
+        RequestOperation::ApplyWireGuardDevice {
+            interface: interface.clone(),
+            patch: WireGuardDevicePatch {
+                private_key: FieldUpdate::Set(private_key),
+                listen_port: FieldUpdate::Set(51821),
+                peer: Some(PeerMutation::Add(DesiredWireGuardPeer {
+                    public_key: server_public_key,
+                    preshared_key,
+                    allowed_ips,
+                    persistent_keepalive_seconds: keepalive,
+                    endpoint: Some(endpoint),
+                })),
+            },
+        },
+        9003,
+    )
+    .expect("configure client from exported values");
+    assert!(
+        matches!(reply, ResponseBody::WireGuardApplied(_)),
+        "{reply:?}"
+    );
+    run(&[
+        "-n",
+        &client_ns.0,
+        "route",
+        "add",
+        "10.67.0.1/32",
+        "dev",
+        "wg-client",
+    ]);
+    let ping = Command::new("ip")
+        .args([
+            "netns",
+            "exec",
+            &client_ns.0,
+            "ping",
+            "-n",
+            "-c",
+            "1",
+            "-W",
+            "2",
+            "-I",
+            "wg-client",
+            "10.67.0.1",
+        ])
+        .output()
+        .expect("ping");
+    let _ = ping; // A local firewall may refuse ICMP; the WireGuard UDP exchange is authoritative here.
+    let observed_client = client_ns.device(&client_scratch.netd_socket(), "wg-client");
+    let exported_peer = observed_client
+        .peers
+        .first()
+        .expect("exported peer is installed");
+    assert_eq!(exported_peer.endpoint, Some(endpoint));
+    assert_eq!(
+        exported_peer.allowed_ips,
+        vec!["10.67.0.1/32".parse().unwrap()]
+    );
+    assert!(exported_peer.latest_handshake.is_some());
+    assert!(exported_peer.rx_bytes.unwrap_or_default() > 0);
+    assert!(exported_peer.tx_bytes.unwrap_or_default() > 0);
+    wait_until("the exported client handshake and traffic counters", || {
+        installation
+            .namespace
+            .device(&installation.scratch.netd_socket(), "wg0")
+            .peers
+            .iter()
+            .any(|peer| {
+                peer.public_key == client.public_key
+                    && peer.latest_handshake.is_some()
+                    && peer.rx_bytes.unwrap_or_default() > 0
+                    && peer.tx_bytes.unwrap_or_default() > 0
+            })
     });
 }
 

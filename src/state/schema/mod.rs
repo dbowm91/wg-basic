@@ -334,7 +334,7 @@ mod tests {
             .unwrap();
         assert_eq!(user_version, migrations::supported_version());
         assert_eq!(
-            user_version, 3,
+            user_version, 4,
             "a fresh database is created at the current head, never behind it"
         );
 
@@ -383,7 +383,7 @@ mod tests {
             StateStore::open(temp.db()),
             Err(StateError::SchemaTooNew {
                 found: 9999,
-                supported: 3
+                supported: 4
             })
         ));
     }
@@ -661,7 +661,7 @@ mod tests {
         );
 
         migrations::apply_migrations(&mut connection, MIGRATIONS).unwrap();
-        assert_eq!(user_version_of(&connection), 3);
+        assert_eq!(user_version_of(&connection), 4);
 
         // Every version the upgrade ran through must actually have created its
         // schema.
@@ -672,6 +672,7 @@ mod tests {
             "client_product_settings",
             "client_dns_servers",
             "audit_events",
+            "enrollment_capabilities",
         ] {
             let exists: i64 = connection
                 .query_row(
@@ -693,7 +694,7 @@ mod tests {
         assert_eq!(stored_identity, identity.to_string());
         connection.close().unwrap();
 
-        // The production opener must accept the migrated file: version 3 is one
+        // The production opener must accept the migrated file: version 4 is one
         // this binary actually supports, so refusing it would be a false alarm.
         StateStore::open(temp.db())
             .expect("a migrated database must open through the production path");
@@ -736,10 +737,10 @@ mod tests {
         let temp = TempDir::new();
         historical_v1(&temp);
 
-        // The production list stops at version 3, so a database stamped 4 comes
+        // The production list stops at version 4, so a database stamped 5 comes
         // from a future binary.
         let connection = Connection::open(temp.db()).unwrap();
-        connection.execute("PRAGMA user_version = 4", []).unwrap();
+        connection.execute("PRAGMA user_version = 5", []).unwrap();
         drop(connection);
 
         let mut connection = Connection::open(temp.db()).unwrap();
@@ -748,8 +749,8 @@ mod tests {
             matches!(
                 error,
                 StateError::SchemaTooNew {
-                    found: 4,
-                    supported: 3
+                    found: 5,
+                    supported: 4
                 }
             ),
             "{error:?}"

@@ -146,6 +146,23 @@ pub fn with_retry_after(mut response: Response, seconds: u64) -> Response {
     response
 }
 
+/// Adds the fixed-pattern attachment disposition used by client config export.
+/// The caller supplies only a UUID-derived filename, never operator text.
+pub fn with_attachment(response: &mut Response, filename: &str) {
+    debug_assert!(filename
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.')));
+    let value = format!("attachment; filename=\"{filename}\"");
+    let pushed = response
+        .head_mut()
+        .headers_mut()
+        .push_str("content-disposition", value);
+    debug_assert!(
+        pushed.is_ok(),
+        "a UUID-derived filename is a valid header value"
+    );
+}
+
 /// The names [`seal`] adds, so a test can assert the set is complete.
 pub fn header_names(is_secure_origin: bool) -> Vec<&'static str> {
     let mut names: Vec<&'static str> = SECURITY_HEADERS.iter().map(|(name, _)| *name).collect();

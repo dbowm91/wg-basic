@@ -8,11 +8,12 @@
 //! | `POST` | `/api/v1/logout` | session | **required** | **exact** |
 //! | `GET` | `/api/v1/session` | session | none | — |
 //! | `GET` | `/api/v1/health` | session | none | — |
+//! | `GET` | `/api/v1/clients/<id>/config` | session | none | — |
+//! | `GET` | `/api/v1/clients/<id>/qr` | session | none | — |
+//! | `POST` | `/api/v1/clients/<id>/enrollment-links` | session | **required** | **exact** |
+//! | `DELETE` | `/api/v1/enrollment-links/<id>` | session | **required** | **exact** |
+//! | `POST` | `/api/v1/enroll/<id>/consume` | token | none | **exact** |
 //! | `GET` | `/healthz` | none | none | — |
-//!
-//! There is no peer, client, or interface route. Phase 8 owns those, and M003's
-//! job is to close the perimeter *before* a configuration-mutating route exists
-//! to be abused through it.
 //!
 //! # Two pieces, split on purpose
 //!
@@ -73,6 +74,8 @@ pub const UNSAFE_METHODS: &[&str] = &["POST", "PUT", "PATCH", "DELETE"];
 /// request. Well below the EggServe hard ceiling, so this tighter bound is the one
 /// that actually applies.
 pub const LOGIN_BODY_LIMIT: usize = 4 * 1024;
+/// Tiny token-only consume envelope; config never travels in a request body.
+pub const ENROLLMENT_BODY_LIMIT: usize = 1024;
 
 /// HTTP 401, which EggServe does not name as a constant.
 ///
@@ -302,6 +305,7 @@ pub struct AuthenticatedApi {
     worker: WorkerClient,
     guard: RequestGuard,
     limiter: Arc<LoginLimiter>,
+    enrollment_limiter: Arc<LoginLimiter>,
 }
 
 impl AuthenticatedApi {
@@ -315,6 +319,11 @@ impl AuthenticatedApi {
             worker,
             guard: RequestGuard::new(policy),
             limiter,
+            enrollment_limiter: Arc::new(LoginLimiter::new(
+                crate::http::Bucket::per_second(12, 1),
+                crate::http::Bucket::per_second(5, 1),
+                128,
+            )),
         }
     }
 
@@ -326,6 +335,15 @@ impl AuthenticatedApi {
     /// The limiter in force.
     pub fn limiter(&self) -> &LoginLimiter {
         &self.limiter
+    }
+
+    /// Independent admission budget for public one-time capability consumes.
+    pub(crate) fn admit_enrollment(&self, peer: SocketAddr) -> Admission {
+        self.enrollment_limiter.check(peer, Instant::now())
+    }
+
+    pub(crate) fn canonical_origin(&self) -> String {
+        self.guard.policy().canonical_origin()
     }
 
     /// The bounded worker is the only state path available to HTTP handlers.

@@ -890,7 +890,7 @@ async fn authenticated_product_crud_uses_generation_cas_and_reports_degraded_com
         );
     }
 
-    let setup_body = r#"{"expected_generation":1,"interface_name":"wg0","tunnel_prefix":"10.77.0.0/24","listen_port":51820,"advertised_endpoint":"vpn.example.test:51820","egress_interface":"eth0","ipv4_forwarding_required":true,"masquerade":true,"default_client_route_policy":{"prefixes":["0.0.0.0/0"]}}"#;
+    let setup_body = r#"{"expected_generation":1,"interface_name":"wg0","tunnel_prefix":"10.77.0.0/24","listen_port":51820,"advertised_endpoint":"vpn.example.test:51820","egress_interface":"eth0","ipv4_forwarding_required":true,"masquerade":true,"default_client_route_policy":{"prefixes":["10.77.0.0/24"]}}"#;
     let setup = unsafe_request("POST", "/api/v1/setup", setup_body, true);
     assert_eq!(
         setup.status, 202,
@@ -929,6 +929,248 @@ async fn authenticated_product_crud_uses_generation_cas_and_reports_degraded_com
     let created_json: serde_json::Value = serde_json::from_str(&created.body).unwrap();
     let client_id = created_json["data"]["client_id"].as_str().unwrap();
     let generation = created_json["generation"].as_u64().unwrap();
+
+    let config = request_on(
+        addr,
+        &wire(
+            "GET",
+            &format!("/api/v1/clients/{client_id}/config"),
+            &host,
+            &[("Cookie", &cookie)],
+        ),
+    );
+    assert_eq!(config.status, 200);
+    assert!(config.body.contains("[Interface]"));
+    assert!(config.body.contains("PrivateKey = "));
+    assert_eq!(config.header("cache-control"), Some("no-store"));
+    assert!(config
+        .header("content-disposition")
+        .unwrap()
+        .contains(client_id));
+    assert_eq!(config.header("x-content-type-options"), Some("nosniff"));
+    let qr = request_on(
+        addr,
+        &wire(
+            "GET",
+            &format!("/api/v1/clients/{client_id}/qr"),
+            &host,
+            &[("Cookie", &cookie)],
+        ),
+    );
+    assert_eq!(qr.status, 200);
+    assert_eq!(qr.header("content-type"), Some("image/svg+xml"));
+    assert_eq!(qr.header("cache-control"), Some("no-store"));
+    assert!(qr.body.starts_with("<svg "));
+    assert!(!qr.body.contains("PrivateKey"));
+
+    let link_path = format!("/api/v1/clients/{client_id}/enrollment-links");
+    assert_eq!(unsafe_request("POST", &link_path, "{}", false).status, 403);
+    let link_response = unsafe_request("POST", &link_path, "{}", true);
+    assert_eq!(link_response.status, 201, "{}", link_response.body);
+    assert_eq!(link_response.header("cache-control"), Some("no-store"));
+    let link: serde_json::Value = serde_json::from_str(&link_response.body).unwrap();
+    let share_url = link["share_url"].as_str().unwrap();
+    let (_, fragment) = share_url
+        .split_once('#')
+        .unwrap_or_else(|| panic!("share URL has no fragment: {share_url}"));
+    let token = fragment.strip_prefix("token=").unwrap();
+    assert_eq!(token.len(), 43);
+    let stored_digest: String = rusqlite::Connection::open(scratch.db())
+        .unwrap()
+        .query_row(
+            "SELECT token_digest FROM enrollment_capabilities WHERE capability_id = ?1",
+            [link["capability_id"].as_str().unwrap()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(stored_digest.len(), 64);
+    assert_ne!(stored_digest, token);
+    let audit_values = rusqlite::Connection::open(scratch.db()).unwrap();
+    let audit_text: String = audit_values
+        .query_row(
+            "SELECT group_concat(action || ':' || coalesce(resource_id, '')) FROM audit_events",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(!audit_text.contains(token));
+    let landing_path = format!("/enroll/{}", link["capability_id"].as_str().unwrap());
+    assert!(share_url.contains(&landing_path));
+    let landing = request_on(addr, &wire("GET", &landing_path, &host, &[]));
+    assert_eq!(landing.status, 200);
+    assert_eq!(landing.header("cache-control"), Some("no-store"));
+    assert!(landing.body.contains("/assets/enroll.js"));
+    let enrollment_script = request_on(addr, &wire("GET", "/assets/enroll.js", &host, &[]));
+    assert_eq!(enrollment_script.status, 200);
+    assert!(enrollment_script.body.contains("history.replaceState"));
+    assert!(!landing.body.contains(token));
+    let consume_body = format!(r#"{{"token":"{token}"}}"#);
+    let wrong_token = "A".repeat(43);
+    let wrong_body = format!(r#"{{"token":"{wrong_token}"}}"#);
+    let wrong = request_on(
+        addr,
+        &wire_with_body(
+            "POST",
+            &format!(
+                "/api/v1/enroll/{}/consume",
+                link["capability_id"].as_str().unwrap()
+            ),
+            &host,
+            &[
+                ("Origin", &origin),
+                ("Content-Type", "application/json"),
+                ("Content-Length", &wrong_body.len().to_string()),
+            ],
+            &wrong_body,
+        ),
+    );
+    assert_eq!(wrong.status, 410);
+    let wrong_host = request_on(
+        addr,
+        &wire_with_body(
+            "POST",
+            &format!(
+                "/api/v1/enroll/{}/consume",
+                link["capability_id"].as_str().unwrap()
+            ),
+            "attacker.invalid",
+            &[
+                ("Origin", &origin),
+                ("Content-Type", "application/json"),
+                ("Content-Length", &consume_body.len().to_string()),
+            ],
+            &consume_body,
+        ),
+    );
+    assert_eq!(wrong_host.status, 403);
+    let wrong_origin = request_on(
+        addr,
+        &wire_with_body(
+            "POST",
+            &format!(
+                "/api/v1/enroll/{}/consume",
+                link["capability_id"].as_str().unwrap()
+            ),
+            &host,
+            &[
+                ("Origin", "http://attacker.invalid"),
+                ("Content-Type", "application/json"),
+                ("Content-Length", &consume_body.len().to_string()),
+            ],
+            &consume_body,
+        ),
+    );
+    assert_eq!(wrong_origin.status, 403);
+    let consume = request_on(
+        addr,
+        &wire_with_body(
+            "POST",
+            &format!(
+                "/api/v1/enroll/{}/consume",
+                link["capability_id"].as_str().unwrap()
+            ),
+            &host,
+            &[
+                ("Origin", &origin),
+                ("Content-Type", "application/json"),
+                ("Content-Length", &consume_body.len().to_string()),
+            ],
+            &consume_body,
+        ),
+    );
+    assert_eq!(consume.status, 200, "{}", consume.body);
+    assert!(consume.body.contains("[Interface]"));
+    assert_eq!(consume.header("cache-control"), Some("no-store"));
+    assert_eq!(consume.header("access-control-allow-origin"), None);
+    let second = request_on(
+        addr,
+        &wire_with_body(
+            "POST",
+            &format!(
+                "/api/v1/enroll/{}/consume",
+                link["capability_id"].as_str().unwrap()
+            ),
+            &host,
+            &[
+                ("Origin", &origin),
+                ("Content-Type", "application/json"),
+                ("Content-Length", &consume_body.len().to_string()),
+            ],
+            &consume_body,
+        ),
+    );
+    assert_eq!(second.status, 410);
+
+    let second_link = unsafe_request("POST", &link_path, "{}", true);
+    assert_eq!(second_link.status, 201);
+    let second_json: serde_json::Value = serde_json::from_str(&second_link.body).unwrap();
+    let revoke = unsafe_request(
+        "DELETE",
+        &format!(
+            "/api/v1/enrollment-links/{}",
+            second_json["capability_id"].as_str().unwrap()
+        ),
+        "",
+        true,
+    );
+    assert_eq!(revoke.status, 200);
+    let revoked_url = second_json["share_url"].as_str().unwrap();
+    let revoked_token = revoked_url
+        .split_once('#')
+        .unwrap()
+        .1
+        .strip_prefix("token=")
+        .unwrap();
+    let revoked_body = format!(r#"{{"token":"{revoked_token}"}}"#);
+    let revoked_consume = request_on(
+        addr,
+        &wire_with_body(
+            "POST",
+            &format!(
+                "/api/v1/enroll/{}/consume",
+                second_json["capability_id"].as_str().unwrap()
+            ),
+            &host,
+            &[
+                ("Origin", &origin),
+                ("Content-Type", "application/json"),
+                ("Content-Length", &revoked_body.len().to_string()),
+            ],
+            &revoked_body,
+        ),
+    );
+    assert_eq!(revoked_consume.status, 410);
+
+    let expiring = unsafe_request("POST", &link_path, r#"{"expires_in_seconds":1}"#, true);
+    assert_eq!(expiring.status, 201);
+    let expiring_json: serde_json::Value = serde_json::from_str(&expiring.body).unwrap();
+    let (expired_url, expired_fragment) = expiring_json["share_url"]
+        .as_str()
+        .unwrap()
+        .split_once('#')
+        .unwrap();
+    assert!(expired_url.ends_with(expiring_json["capability_id"].as_str().unwrap()));
+    let expired_token = expired_fragment.strip_prefix("token=").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1_100));
+    let expired_body = format!(r#"{{"token":"{expired_token}"}}"#);
+    let expired_consume = request_on(
+        addr,
+        &wire_with_body(
+            "POST",
+            &format!(
+                "/api/v1/enroll/{}/consume",
+                expiring_json["capability_id"].as_str().unwrap()
+            ),
+            &host,
+            &[
+                ("Origin", &origin),
+                ("Content-Type", "application/json"),
+                ("Content-Length", &expired_body.len().to_string()),
+            ],
+            &expired_body,
+        ),
+    );
+    assert_eq!(expired_consume.status, 410);
 
     for (method, path, body) in [
         (

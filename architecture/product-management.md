@@ -1,8 +1,7 @@
 # Product management API
 
-This document describes behavior implemented by Phase 8 M001 and M002.
-Export, QR, one-time enrollment, telemetry, audit queries, and the operator UI
-are separate later milestones and are not implied here.
+This document describes behavior implemented by Phase 8 M001–M003. Live
+telemetry, audit queries, and the product UI remain later milestones.
 
 ## Authority and mutation path
 
@@ -37,6 +36,12 @@ CORS policy. Setup, create, update, enable, disable, and delete use an explicit
 | POST | `/api/v1/clients/<uuid>/enable` | Enable the client |
 | POST | `/api/v1/clients/<uuid>/disable` | Disable the client |
 | DELETE | `/api/v1/clients/<uuid>` | Delete the client |
+| GET | `/api/v1/clients/<uuid>/config` | Download the standard WireGuard config |
+| GET | `/api/v1/clients/<uuid>/qr` | Render the config as local SVG QR |
+| POST | `/api/v1/clients/<uuid>/enrollment-links` | Create a short-lived share link |
+| DELETE | `/api/v1/enrollment-links/<uuid>` | Revoke an unused share link |
+| GET | `/enroll/<uuid>` | Load the static enrollment page without consuming the link |
+| POST | `/api/v1/enroll/<uuid>/consume` | Consume a valid capability exactly once |
 
 IDs must be canonical lowercase UUIDs and routes match exact path segments.
 Unknown or malformed IDs return a bounded not-found answer. Setup is one-time;
@@ -52,7 +57,14 @@ change.
 Ordinary response shapes contain identifiers, public keys, labels, addresses,
 routes, DNS policy, keepalive policy, timestamps, and bounded enforcement
 metadata. Private keys, preshared keys, and enrollment tokens are absent from
-the projection types.
+the projection types. Config and QR are explicit secret-bearing exports and
+always use `Cache-Control: no-store`; config is an attachment. Enrollment
+tokens contain 256 random bits, are stored only as SHA-256 digests, expire after
+10 minutes by default (operator-selectable up to 24 hours), and are returned
+only in the URL fragment. The landing page moves the token into a same-origin
+bounded POST; GET never consumes it. A separate limiter runs before capability
+lookup, and the state transaction consumes and audits the token atomically.
+Audit rows contain no config or token data.
 
 ## Operational boundary
 

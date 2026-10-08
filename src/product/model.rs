@@ -379,6 +379,33 @@ impl AuditEventId {
     }
 }
 
+/// Identifier of one one-time enrollment capability. The bearer token is a
+/// separate secret and is never derived from or encoded into this identifier.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct EnrollmentCapabilityId(Uuid);
+impl EnrollmentCapabilityId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
+impl Default for EnrollmentCapabilityId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl fmt::Display for EnrollmentCapabilityId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+impl FromStr for EnrollmentCapabilityId {
+    type Err = uuid::Error;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Uuid::parse_str(value).map(Self)
+    }
+}
+
 impl Default for AuditEventId {
     fn default() -> Self {
         Self::new()
@@ -412,6 +439,9 @@ pub enum AuditAction {
     /// A post-commit reconciliation outcome, recorded separately because the
     /// kernel's answer is not inside the transaction that wrote the mutation.
     EnforcementDegraded,
+    EnrollmentCapabilityCreated,
+    EnrollmentCapabilityRevoked,
+    EnrollmentCapabilityConsumed,
 }
 
 impl AuditAction {
@@ -425,6 +455,9 @@ impl AuditAction {
             AuditAction::ClientDisable => "client_disable",
             AuditAction::ClientDelete => "client_delete",
             AuditAction::EnforcementDegraded => "enforcement_degraded",
+            AuditAction::EnrollmentCapabilityCreated => "enrollment_capability_created",
+            AuditAction::EnrollmentCapabilityRevoked => "enrollment_capability_revoked",
+            AuditAction::EnrollmentCapabilityConsumed => "enrollment_capability_consumed",
         }
     }
 }
@@ -441,6 +474,7 @@ impl fmt::Display for AuditAction {
 pub enum AuditResourceKind {
     Server,
     Client,
+    EnrollmentCapability,
 }
 
 impl AuditResourceKind {
@@ -448,6 +482,7 @@ impl AuditResourceKind {
         match self {
             AuditResourceKind::Server => "server",
             AuditResourceKind::Client => "client",
+            AuditResourceKind::EnrollmentCapability => "enrollment_capability",
         }
     }
 }

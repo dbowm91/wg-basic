@@ -24,7 +24,7 @@ use crate::{
     domain::{DesiredGeneration, DesiredState, InterfaceId, PrincipalId},
     product::model::{
         AdvertisedEndpoint, AuditAction, AuditEvent, AuditEventId, AuditOutcome, AuditResourceKind,
-        ClientEnabled, ClientLabel, ClientProductSettings,
+        ClientEnabled, ClientLabel, ClientProductSettings, EnrollmentCapabilityId,
     },
     state::{error::StateError, schema},
 };
@@ -225,6 +225,137 @@ impl StateStore {
         )?;
         transaction.commit().map_err(StateError::database)?;
         Ok(event)
+    }
+
+    /// Stores a digest-only enrollment capability and its audit row atomically.
+    pub(crate) fn create_enrollment_capability(
+        &self,
+        capability_id: EnrollmentCapabilityId,
+        client_id: crate::domain::ClientId,
+        token_digest: &str,
+        principal_id: PrincipalId,
+        created_at: i64,
+        expires_at: i64,
+    ) -> Result<(), StateError> {
+        let mut connection = self.lock()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(StateError::database)?;
+        transaction.execute(
+            "INSERT INTO enrollment_capabilities (capability_id, client_id, token_digest, creator_principal_id, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![capability_id.to_string(), client_id.to_string(), token_digest, principal_id.to_string(), created_at, expires_at],
+        ).map_err(StateError::database)?;
+        insert_audit_event(
+            &transaction,
+            Some(principal_id),
+            ProductAudit {
+                action: AuditAction::EnrollmentCapabilityCreated,
+                resource_kind: AuditResourceKind::EnrollmentCapability,
+                resource_id: Some(capability_id.to_string()),
+            },
+            None,
+            None,
+            created_at,
+        )?;
+        transaction.commit().map_err(StateError::database)
+    }
+
+    /// Revokes an unused capability and appends the bounded audit event in the
+    /// same write transaction. Expiry and prior consumption are permanent.
+    pub(crate) fn revoke_enrollment_capability(
+        &self,
+        capability_id: EnrollmentCapabilityId,
+        principal_id: PrincipalId,
+        now: i64,
+    ) -> Result<bool, StateError> {
+        let mut connection = self.lock()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(StateError::database)?;
+        let changed = transaction.execute(
+            "UPDATE enrollment_capabilities SET revoked_at = ?1 WHERE capability_id = ?2 AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at > ?1",
+            rusqlite::params![now, capability_id.to_string()],
+        ).map_err(StateError::database)?;
+        if changed == 0 {
+            return Ok(false);
+        }
+        insert_audit_event(
+            &transaction,
+            Some(principal_id),
+            ProductAudit {
+                action: AuditAction::EnrollmentCapabilityRevoked,
+                resource_kind: AuditResourceKind::EnrollmentCapability,
+                resource_id: Some(capability_id.to_string()),
+            },
+            None,
+            None,
+            now,
+        )?;
+        transaction.commit().map_err(StateError::database)?;
+        Ok(true)
+    }
+
+    /// Atomically validates, consumes, audits, and loads the one client
+    /// artifact. A failed token or unavailable capability changes no row.
+    pub(crate) fn consume_enrollment_capability(
+        &self,
+        capability_id: EnrollmentCapabilityId,
+        token_digest: &str,
+        now: i64,
+    ) -> Result<Option<crate::product::SecretArtifact>, StateError> {
+        let mut connection = self.lock()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(StateError::database)?;
+        let eligible: bool = transaction.query_row(
+            "SELECT EXISTS (SELECT 1 FROM enrollment_capabilities WHERE capability_id = ?1 AND token_digest = ?2 AND expires_at > ?3 AND consumed_at IS NULL AND revoked_at IS NULL)",
+            rusqlite::params![capability_id.to_string(), token_digest, now], |row| row.get(0),
+        ).map_err(StateError::database)?;
+        if !eligible {
+            return Ok(None);
+        }
+        let desired = load_desired_for_transaction(&transaction)?;
+        let product = read_product(&transaction)?;
+        let capability =
+            crate::product::service::material_from_snapshots(&desired.state, &product, {
+                let client: String = transaction
+                    .query_row(
+                        "SELECT client_id FROM enrollment_capabilities WHERE capability_id = ?1",
+                        [capability_id.to_string()],
+                        |row| row.get(0),
+                    )
+                    .map_err(StateError::database)?;
+                client.parse().map_err(|_| {
+                    StateError::Corrupt("enrollment capability has an invalid client id")
+                })?
+            });
+        let Ok(material) = capability else {
+            return Ok(None);
+        };
+        let Ok(config) = crate::product::render_config(&material) else {
+            return Ok(None);
+        };
+        let changed = transaction.execute(
+            "UPDATE enrollment_capabilities SET consumed_at = ?1 WHERE capability_id = ?2 AND token_digest = ?3 AND expires_at > ?1 AND consumed_at IS NULL AND revoked_at IS NULL",
+            rusqlite::params![now, capability_id.to_string(), token_digest],
+        ).map_err(StateError::database)?;
+        if changed != 1 {
+            return Ok(None);
+        }
+        insert_audit_event(
+            &transaction,
+            None,
+            ProductAudit {
+                action: AuditAction::EnrollmentCapabilityConsumed,
+                resource_kind: AuditResourceKind::EnrollmentCapability,
+                resource_id: Some(capability_id.to_string()),
+            },
+            None,
+            None,
+            now,
+        )?;
+        transaction.commit().map_err(StateError::database)?;
+        Ok(Some(config))
     }
 
     /// Reads audit rows newest-first, bounded to `limit`.
@@ -610,15 +741,22 @@ fn parse_action(value: &str) -> Option<AuditAction> {
         AuditAction::ClientDisable,
         AuditAction::ClientDelete,
         AuditAction::EnforcementDegraded,
+        AuditAction::EnrollmentCapabilityCreated,
+        AuditAction::EnrollmentCapabilityRevoked,
+        AuditAction::EnrollmentCapabilityConsumed,
     ]
     .into_iter()
     .find(|action| action.as_str() == value)
 }
 
 fn parse_resource_kind(value: &str) -> Option<AuditResourceKind> {
-    [AuditResourceKind::Server, AuditResourceKind::Client]
-        .into_iter()
-        .find(|kind| kind.as_str() == value)
+    [
+        AuditResourceKind::Server,
+        AuditResourceKind::Client,
+        AuditResourceKind::EnrollmentCapability,
+    ]
+    .into_iter()
+    .find(|kind| kind.as_str() == value)
 }
 
 fn parse_outcome(value: &str) -> Option<AuditOutcome> {
