@@ -1992,7 +1992,8 @@ pub fn apply() -> Result<(), String> {
                 Err(_) => recovery_ok = false,
             }
         }
-        let services_stopped = stop_owned_services().is_ok();
+        let services_stop_error = stop_owned_services().err();
+        let services_stopped = services_stop_error.is_none();
         if !services_stopped {
             recovery_ok = false;
         }
@@ -2016,7 +2017,8 @@ pub fn apply() -> Result<(), String> {
             Err(cause)
         } else {
             *rollback_failure.borrow_mut() = Some(format!(
-                "services_stopped={services_stopped}, state_restored={state_restored}, metadata_restored={metadata_restored}"
+                "services_stop_error={}, services_stopped={services_stopped}, state_restored={state_restored}, metadata_restored={metadata_restored}",
+                services_stop_error.as_deref().unwrap_or("none")
             ));
             if journal.phase != UpdatePhase::RecoveryRequired {
                 if let Ok(updated) =

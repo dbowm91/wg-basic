@@ -1210,7 +1210,7 @@ fn delay_fixture_candidate_doctor_start(state: &std::path::Path) -> Result<(), S
     let version = std::fs::read_to_string(marker)
         .map_err(|_| "fixture startup timeout marker cannot be read")?;
     if version.trim() == wg_basic::release::PACKAGE_VERSION {
-        std::thread::sleep(std::time::Duration::from_secs(40));
+        std::thread::sleep(std::time::Duration::from_secs(32));
     }
     Ok(())
 }
