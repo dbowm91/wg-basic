@@ -257,31 +257,44 @@ fn assemble_interface(
 
     let mut clients = Vec::new();
     {
-        let mut statement = connection
-            .prepare(
-                "SELECT id, peer_id, assigned_address FROM clients
-                 WHERE interface_id = ?1 ORDER BY position, id",
-            )
+        // Read-only compatibility paths intentionally inspect historical
+        // databases before migration (for example updater restore checks).
+        // Schema versions before v6 have no assigned_ipv6_address column.
+        let schema_version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
             .map_err(StateError::database)?;
+        let query = if schema_version >= 6 {
+            "SELECT id, peer_id, assigned_address, assigned_ipv6_address FROM clients
+             WHERE interface_id = ?1 ORDER BY position, id"
+        } else {
+            "SELECT id, peer_id, assigned_address, NULL FROM clients
+             WHERE interface_id = ?1 ORDER BY position, id"
+        };
+        let mut statement = connection.prepare(query).map_err(StateError::database)?;
         let rows = statement
             .query_map([&row.id], |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, String>(1)?,
                     r.get::<_, String>(2)?,
+                    r.get::<_, Option<String>>(3)?,
                 ))
             })
             .map_err(StateError::database)?;
-        let collected: Vec<(String, String, String)> = rows
+        let collected: Vec<(String, String, String, Option<String>)> = rows
             .collect::<Result<Vec<_>, _>>()
             .map_err(StateError::database)?;
-        for (id, peer_id, assigned) in collected {
+        for (id, peer_id, assigned, assigned_ipv6) in collected {
             clients.push(DesiredClient {
                 id: id.parse().map_err(|_| StateError::Corrupt("invalid client id"))?,
                 peer_id: peer_id
                     .parse()
                     .map_err(|_| StateError::Corrupt("invalid client peer id"))?,
                 assigned_address: parse_ipnet(&assigned)?,
+                assigned_ipv6_address: assigned_ipv6
+                    .as_deref()
+                    .map(parse_ipnet)
+                    .transpose()?,
                 route_policy: ClientRoutePolicy {
                     prefixes: query_prefixes_for(
                         connection,
@@ -534,14 +547,15 @@ fn write_desired(transaction: &Transaction<'_>, state: &DesiredState) -> Result<
                 let client_id = client.id.to_string();
                 transaction
                     .execute(
-                        "INSERT INTO clients (id, interface_id, peer_id, assigned_address, position)
-                         VALUES (?1, ?2, ?3, ?4, ?5)",
+                        "INSERT INTO clients (id, interface_id, peer_id, assigned_address, position, assigned_ipv6_address)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                         rusqlite::params![
                             client_id,
                             interface_id,
                             peer_id,
                             client.assigned_address.to_string(),
                             client_index as i64,
+                            client.assigned_ipv6_address.map(|address| address.to_string()),
                         ],
                     )
                     .map_err(StateError::database)?;

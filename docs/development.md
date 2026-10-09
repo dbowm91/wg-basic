@@ -12,7 +12,7 @@ cargo test --locked
 cargo +1.89.0 check --all-targets --locked
 ```
 
-The default unit/protocol suite does not require root or network namespace setup. The Linux WireGuard backend mutates only through typed requests to an existing device; the real-kernel integration test creates temporary namespaces and fixture links and requires root, `CAP_NET_ADMIN`, `iproute2`, `iputils-ping`, and kernel WireGuard support.
+The default unit/protocol suite does not require root or network namespace setup. The Linux WireGuard backend mutates only through typed requests to an existing device; real-kernel integration suites create temporary namespaces and fixture links and require root, `CAP_NET_ADMIN`, `iproute2`, `iputils-ping`, and kernel WireGuard support. Dual-stack tunnel addressing is qualified by the hosted `product-management-rootful` job; it does not qualify IPv6 forwarding or host firewall policy.
 
 The installed serve unit runs `doctor` as the management account before each
 start. `--allow-warnings` keeps advisory drift from blocking service recovery;
@@ -336,8 +336,9 @@ The installed CLI is `wg-basic update check`, `wg-basic update run`, and
 effective root and never invoke sudo. The production check/run paths currently
 fail closed before network access because the production Minisign public key is
 not provisioned. M004 transaction, enabled/disabled traffic, target, and
-operator-contract qualification is closed; M005 fresh-install and
-uninstall/reinstall lifecycle qualification is active.
+operator-contract qualification is closed. Phase 10 lifecycle qualification
+is also closed, including native fresh-install and uninstall/reinstall on both
+supported GNU targets.
 
 The destructive signed-fixture test installs under `/usr/local/bin`, creates
 systemd units and `/var/lib/wg-basic`, configures a real WireGuard server, and

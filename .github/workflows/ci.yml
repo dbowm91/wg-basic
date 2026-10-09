@@ -257,7 +257,7 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
-      - run: sudo apt-get update && sudo apt-get install -y iproute2 nftables
+      - run: sudo apt-get update && sudo apt-get install -y iproute2 iputils-ping nftables
       # Phase 8 M001: enabled state changes real kernel authorization, so the
       # enable/disable/re-enable evidence needs a real device and a real backend,
       # not a simulated one. This job also covers the degraded-enforcement claim,

@@ -258,6 +258,7 @@ mod tests {
                     id: ClientId::new(),
                     peer_id,
                     assigned_address: address,
+                    assigned_ipv6_address: None,
                     route_policy: Default::default(),
                 }],
             }],
@@ -335,7 +336,7 @@ mod tests {
             .unwrap();
         assert_eq!(user_version, migrations::supported_version());
         assert_eq!(
-            user_version, 5,
+            user_version, 6,
             "a fresh database is created at the current head, never behind it"
         );
 
@@ -385,7 +386,7 @@ mod tests {
             StateStore::open(temp.db()),
             Err(StateError::SchemaTooNew {
                 found: 9999,
-                supported: 5
+                supported: 6
             })
         ));
     }
@@ -663,7 +664,7 @@ mod tests {
         );
 
         migrations::apply_migrations(&mut connection, MIGRATIONS).unwrap();
-        assert_eq!(user_version_of(&connection), 5);
+        assert_eq!(user_version_of(&connection), 6);
 
         // Every version the upgrade ran through must actually have created its
         // schema.
@@ -696,14 +697,14 @@ mod tests {
         assert_eq!(stored_identity, identity.to_string());
         connection.close().unwrap();
 
-        // The production opener must accept the migrated file: version 5 is one
+        // The production opener must accept the migrated file: version 6 is one
         // this binary actually supports, so refusing it would be a false alarm.
         StateStore::open(temp.db())
             .expect("a migrated database must open through the production path");
     }
 
     #[test]
-    fn migration_v4_to_v5_preserves_generation_and_enables_existing_server() {
+    fn migration_v4_to_v6_preserves_generation_and_enables_existing_server() {
         let temp = TempDir::new();
         historical_v1(&temp);
         let (identity, _) = commit_snapshot_at_v2(&temp);
@@ -728,7 +729,7 @@ mod tests {
         connection.close().unwrap();
 
         let store = StateStore::open(temp.db()).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 5);
+        assert_eq!(store.schema_version().unwrap(), 6);
         let metadata = store.installation_metadata().unwrap();
         assert_eq!(metadata.installation_id, identity);
         assert_eq!(metadata.desired_generation.to_storage(), before_generation);
@@ -741,6 +742,9 @@ mod tests {
             Some(&true)
         );
         assert_eq!(product.state.clients.len(), 1);
+        assert!(desired.state.interfaces[0].clients[0]
+            .assigned_ipv6_address
+            .is_none());
         drop(store);
 
         let recovery = migrations::recovery_snapshot_path(&temp.db(), 4);
@@ -770,6 +774,33 @@ mod tests {
             )
             .unwrap();
         assert_eq!(columns, 1, "the conflicting table is unchanged by rollback");
+    }
+
+    #[test]
+    fn migration_v6_failure_rolls_back_the_new_column_and_version() {
+        let temp = TempDir::new();
+        migrations::initialize_at_version(&temp.db(), 5).unwrap();
+        let mut connection = Connection::open(temp.db()).unwrap();
+        connection
+            .execute_batch("CREATE INDEX clients_unique_ipv6_address ON clients(interface_id, id);")
+            .unwrap();
+        let error = migrations::apply_migrations(&mut connection, MIGRATIONS).unwrap_err();
+        assert!(matches!(
+            error,
+            StateError::MigrationFailed { version: 6, .. }
+        ));
+        assert_eq!(user_version_of(&connection), 5);
+        let column_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('clients') WHERE name = 'assigned_ipv6_address'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            column_count, 0,
+            "the failed transaction removes the added column"
+        );
     }
 
     #[test]
@@ -809,10 +840,10 @@ mod tests {
         let temp = TempDir::new();
         historical_v1(&temp);
 
-        // The production list stops at version 5, so a database stamped 6 comes
+        // The production list stops at version 6, so a database stamped 7 comes
         // from a future binary.
         let connection = Connection::open(temp.db()).unwrap();
-        connection.execute("PRAGMA user_version = 6", []).unwrap();
+        connection.execute("PRAGMA user_version = 7", []).unwrap();
         drop(connection);
 
         let mut connection = Connection::open(temp.db()).unwrap();
@@ -821,8 +852,8 @@ mod tests {
             matches!(
                 error,
                 StateError::SchemaTooNew {
-                    found: 6,
-                    supported: 5
+                    found: 7,
+                    supported: 6
                 }
             ),
             "{error:?}"

@@ -45,7 +45,7 @@ Targets with `linux-integration` only compile/run under
 | `durable_owner` | root | Owner tags and generation-aware aggregate reconcile against the real kernel |
 | `durable_restart` | root, needs built `wg-basic` binary | Startup reconciliation and crash/restart recovery via real `netd` + `reconcile` child processes |
 | `durable_backup` | root | Restored database drives real traffic (3 namespaces, handshake, forwarding, NAT); foreign same-name link fails closed |
-| `product_management_rootful` | root | Real-device client lifecycle via HTTP: setup, create, export, enrollment consume/replay, handshake traffic, telemetry/audit, disable/re-enable/delete |
+| `product_management_rootful` | root | Real-device dual-stack tunnel addressing and traffic plus client lifecycle via HTTP: setup, create, export, enrollment consume/replay, telemetry/audit, disable/re-enable/delete |
 | `maintenance_rootful` | root | CLI disable/re-enable through a real handshake; disabled state survives restart; purge needs disabled+converged+no-op plan |
 | `doctor_readonly` | mixed: first case unprivileged, rest root | Empty-install checks unprivileged; configured-but-unapplied install in a disposable namespace plans repair without applying; snapshots unchanged |
 | `service_rootful_e2e` | root | HTTP surface reflects real network state (`ok` vs `degraded`), survives backend loss without restart, leaks no key material; `serve` on host, `netd` in namespace |

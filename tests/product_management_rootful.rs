@@ -396,7 +396,9 @@ impl Installation {
                 expected_generation: DesiredGeneration::default(),
                 interface_name: "wg0".parse().unwrap(),
                 tunnel_prefix: NetworkPrefix::new(prefix.parse().unwrap()),
+                ipv6_tunnel_prefix: None,
                 server_address: None,
+                ipv6_server_address: None,
                 listen_port: 51820,
                 advertised_endpoint: wg_basic::product::AdvertisedEndpoint::new(
                     "198.18.0.1",
@@ -638,7 +640,7 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
     );
     let unconfigured: serde_json::Value = serde_json::from_str(&unconfigured_body).unwrap();
     assert!(unconfigured["server"].is_null());
-    let setup_body = r#"{"expected_generation":1,"interface_name":"wg0","tunnel_prefix":"10.67.0.0/24","server_address":"10.67.0.1","listen_port":51820,"advertised_endpoint":"198.18.0.1:51820","egress_interface":"lo","ipv4_forwarding_required":false,"masquerade":false,"default_client_route_policy":{"prefixes":["10.67.0.1/32"]}}"#;
+    let setup_body = r#"{"expected_generation":1,"interface_name":"wg0","tunnel_prefix":"10.67.0.0/24","ipv6_tunnel_prefix":"2001:db8:67::/64","server_address":"10.67.0.1","ipv6_server_address":"2001:db8:67::1","listen_port":51820,"advertised_endpoint":"198.18.0.1:51820","egress_interface":"lo","ipv4_forwarding_required":false,"masquerade":false,"default_client_route_policy":{"prefixes":["10.67.0.1/32","2001:db8:67::1/128"]}}"#;
     let (setup_status, setup_reply, _) = http(
         addr,
         "POST",
@@ -788,9 +790,16 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
         .lines()
         .filter_map(|line| line.split_once(" = "))
         .collect::<std::collections::HashMap<_, _>>();
-    let address = values["Address"]
-        .parse::<NetworkPrefix>()
-        .expect("config address");
+    let addresses = config_text
+        .lines()
+        .filter_map(|line| line.strip_prefix("Address = "))
+        .map(|address| address.parse::<NetworkPrefix>().expect("config address"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        addresses.len(),
+        2,
+        "dual-stack export contains both tunnel addresses"
+    );
     let private_key = PrivateKey::new(values["PrivateKey"].to_owned()).expect("config key");
     let server_public_key = PublicKey::new(values["PublicKey"].to_owned()).expect("config peer");
     let endpoint = values["Endpoint"]
@@ -827,15 +836,17 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
         "type",
         "wireguard",
     ]);
-    run(&[
-        "-n",
-        &client_ns.0,
-        "addr",
-        "add",
-        &address.to_string(),
-        "dev",
-        "wg-client",
-    ]);
+    for address in &addresses {
+        run(&[
+            "-n",
+            &client_ns.0,
+            "addr",
+            "add",
+            &address.to_string(),
+            "dev",
+            "wg-client",
+        ]);
+    }
     run(&["-n", &client_ns.0, "link", "set", "wg-client", "up"]);
     let interface: InterfaceName = "wg-client".parse().unwrap();
     let reply = wg_basic::protocol::request(
@@ -870,6 +881,15 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
         "dev",
         "wg-client",
     ]);
+    run(&[
+        "-n",
+        &client_ns.0,
+        "route",
+        "add",
+        "2001:db8:67::1/128",
+        "dev",
+        "wg-client",
+    ]);
     let ping = Command::new("ip")
         .args([
             "netns",
@@ -888,16 +908,41 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
         .output()
         .expect("ping");
     let _ = ping; // A local firewall may refuse ICMP; the WireGuard UDP exchange is authoritative here.
+    let ping6 = Command::new("ip")
+        .args([
+            "netns",
+            "exec",
+            &client_ns.0,
+            "ping",
+            "-6",
+            "-n",
+            "-c",
+            "1",
+            "-W",
+            "2",
+            "-I",
+            "wg-client",
+            "2001:db8:67::1",
+        ])
+        .output()
+        .expect("IPv6 ping");
+    assert!(
+        ping6.status.success(),
+        "IPv6 tunnel traffic failed: {}",
+        String::from_utf8_lossy(&ping6.stderr)
+    );
     let observed_client = client_ns.device(&client_scratch.netd_socket(), "wg-client");
     let exported_peer = observed_client
         .peers
         .first()
         .expect("exported peer is installed");
     assert_eq!(exported_peer.endpoint, Some(endpoint));
-    assert_eq!(
-        exported_peer.allowed_ips,
-        vec!["10.67.0.1/32".parse().unwrap()]
-    );
+    assert!(exported_peer
+        .allowed_ips
+        .contains(&"10.67.0.1/32".parse().unwrap()));
+    assert!(exported_peer
+        .allowed_ips
+        .contains(&"2001:db8:67::1/128".parse().unwrap()));
     assert!(exported_peer.latest_handshake.is_some());
     assert!(exported_peer.rx_bytes.unwrap_or_default() > 0);
     assert!(exported_peer.tx_bytes.unwrap_or_default() > 0);
@@ -1006,6 +1051,29 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
         .output()
         .expect("ping after network re-enable");
     let _ = ping;
+    let ping6 = Command::new("ip")
+        .args([
+            "netns",
+            "exec",
+            &client_ns.0,
+            "ping",
+            "-6",
+            "-n",
+            "-c",
+            "1",
+            "-W",
+            "2",
+            "-I",
+            "wg-client",
+            "2001:db8:67::1",
+        ])
+        .output()
+        .expect("IPv6 ping after network re-enable");
+    assert!(
+        ping6.status.success(),
+        "IPv6 tunnel traffic after restart/reconcile failed: {}",
+        String::from_utf8_lossy(&ping6.stderr)
+    );
     wait_until(
         "the same exported peer to handshake after re-enable",
         || {
@@ -1164,7 +1232,7 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
                 peer: Some(PeerMutation::Add(DesiredWireGuardPeer {
                     public_key: client_public_key.clone(),
                     preshared_key: None,
-                    allowed_ips: vec![address],
+                    allowed_ips: vec![addresses[0].clone()],
                     persistent_keepalive_seconds: None,
                     endpoint: None,
                 })),

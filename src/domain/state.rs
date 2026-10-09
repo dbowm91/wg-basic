@@ -26,6 +26,10 @@ pub struct DesiredClient {
     pub peer_id: PeerId,
     /// Address assigned to this client inside this interface's managed tunnel prefixes.
     pub assigned_address: IpNet,
+    /// Optional IPv6 address assigned to the same client. IPv4 remains
+    /// required for compatibility with the current product contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assigned_ipv6_address: Option<IpNet>,
     /// Client-side routes; these are not server-side peer AllowedIPs.
     pub route_policy: ClientRoutePolicy,
 }
@@ -78,17 +82,8 @@ impl DesiredInterface {
             .collect::<std::collections::HashSet<_>>();
         let mut assigned = std::collections::HashSet::new();
         for client in &self.clients {
-            let address = client.assigned_address.addr();
-            let host_prefix = if address.is_ipv4() { 32 } else { 128 };
-            if client.assigned_address.prefix_len() != host_prefix {
-                return Err(StateValidationError::ClientAddressMustBeHostPrefix);
-            }
-            if !self
-                .tunnel_prefixes
-                .iter()
-                .any(|prefix| prefix.contains(address))
-            {
-                return Err(StateValidationError::ClientAddressOutsideTunnel(address));
+            if !client.assigned_address.addr().is_ipv4() {
+                return Err(StateValidationError::ClientPrimaryAddressNotIpv4);
             }
             if !peer_ids.contains(&client.peer_id) {
                 return Err(StateValidationError::ClientPeerMissing);
@@ -98,15 +93,36 @@ impl DesiredInterface {
                 .iter()
                 .find(|peer| peer.id == client.peer_id)
                 .expect("peer id checked above");
-            if !peer
-                .allowed_ips
-                .iter()
-                .any(|prefix| prefix.contains(address))
-            {
-                return Err(StateValidationError::ClientAddressNotAllowedForPeer);
+            let mut client_addresses = vec![&client.assigned_address];
+            if let Some(address) = &client.assigned_ipv6_address {
+                if !address.addr().is_ipv6() {
+                    return Err(StateValidationError::ClientSecondaryAddressNotIpv6);
+                }
+                client_addresses.push(address);
             }
-            if !assigned.insert(address) {
-                return Err(StateValidationError::DuplicateClientAddress(address));
+            for address in client_addresses {
+                let ip = address.addr();
+                let host_prefix = if ip.is_ipv4() { 32 } else { 128 };
+                if address.prefix_len() != host_prefix {
+                    return Err(StateValidationError::ClientAddressMustBeHostPrefix);
+                }
+                if !self
+                    .tunnel_prefixes
+                    .iter()
+                    .any(|prefix| prefix.family_matches(ip) && prefix.contains(ip))
+                {
+                    return Err(StateValidationError::ClientAddressOutsideTunnel(ip));
+                }
+                if !peer
+                    .allowed_ips
+                    .iter()
+                    .any(|prefix| prefix.network().eq(address))
+                {
+                    return Err(StateValidationError::ClientAddressNotAllowedForPeer);
+                }
+                if !assigned.insert(ip) {
+                    return Err(StateValidationError::DuplicateClientAddress(ip));
+                }
             }
         }
         Ok(())
@@ -162,6 +178,10 @@ pub enum StateValidationError {
     ClientPeerMissing,
     #[error("client assigned address is not covered by its peer's server-side AllowedIPs")]
     ClientAddressNotAllowedForPeer,
+    #[error("client's required primary address must be IPv4")]
+    ClientPrimaryAddressNotIpv4,
+    #[error("client's optional secondary address must be IPv6")]
+    ClientSecondaryAddressNotIpv6,
     #[error("two managed interfaces share the name {0}")]
     DuplicateInterfaceName(InterfaceName),
     #[error("network policy references {0}, which is not a managed interface")]
@@ -263,6 +283,7 @@ mod tests {
                 id: ClientId::new(),
                 peer_id,
                 assigned_address: address,
+                assigned_ipv6_address: None,
                 route_policy: ClientRoutePolicy::default(),
             }],
         }

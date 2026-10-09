@@ -107,6 +107,9 @@
       ["Generation", String(generation)],
       ["Network", `${server.name} · ${server.tunnel_prefix}`],
     ];
+    if (server.ipv6_tunnel_prefix) {
+      values.push(["IPv6 tunnel", `${server.ipv6_server_address} · ${server.ipv6_tunnel_prefix}`]);
+    }
     for (const [label, value] of values) {
       const card = document.createElement("div"); card.className = "card";
       const title = document.createElement("span"); title.className = "card-label"; title.textContent = label;
@@ -147,7 +150,8 @@
       const drift = live?.drift ? " · needs attention" : "";
       const handshake = live?.latest_handshake_age_seconds == null ? "Never" : `${live.latest_handshake_age_seconds}s ago`;
       const traffic = live?.rx_bytes == null ? "—" : `↓ ${bytes(live.rx_bytes)} · ↑ ${bytes(live.tx_bytes)}`;
-      for (const value of [client.settings.label, String(client.assigned_address), state + drift, handshake, traffic]) {
+      const addresses = [client.assigned_address, client.assigned_ipv6_address].filter(Boolean).join(" · ");
+      for (const value of [client.settings.label, addresses, state + drift, handshake, traffic]) {
         const cell = document.createElement("td"); cell.textContent = value; row.append(cell);
       }
       const actions = document.createElement("td"); actions.className = "actions";
@@ -206,6 +210,8 @@
       masquerade: $("setup-form").elements.masquerade.checked,
       default_client_route_policy: routes(data.routes),
     };
+    if (data.ipv6_tunnel_prefix.trim()) body.ipv6_tunnel_prefix = data.ipv6_tunnel_prefix.trim();
+    if (data.ipv6_server_address.trim()) body.ipv6_server_address = data.ipv6_server_address.trim();
     const response = await api("POST", "/api/v1/setup", body); const result = await json(response);
     await refreshAfterMutation(response, result, false);
   }
@@ -216,6 +222,7 @@
     if (!serverResponse.ok) { message("The configured server could not be loaded; try again."); return; }
     const server = await json(serverResponse);
     const body = { expected_generation: generation, interface_id: server.server.interface_id, label: data.label };
+    if (data.ipv6_address.trim()) body.ipv6_address = data.ipv6_address.trim();
     if (data.dns_servers.trim()) body.dns_servers = data.dns_servers.split(",").map((x) => x.trim()).filter(Boolean);
     const response = await api("POST", "/api/v1/clients", body); const result = await json(response);
     if (await refreshAfterMutation(response, result, false)) { $("create-form").reset(); setVisible("create-form", false); }
@@ -224,6 +231,7 @@
   function openClient(client) {
     const edit = $("edit-form"); edit.elements.client_id.value = client.client_id;
     edit.elements.label.value = client.settings.label; edit.elements.address.value = client.assigned_address.split("/")[0];
+    edit.elements.ipv6_address.value = client.assigned_ipv6_address?.split("/")[0] ?? "";
     edit.elements.routes.value = client.route_policy.prefixes.join(", "); edit.elements.dns_servers.value = client.dns_servers.join(", ");
     edit.elements.client_keepalive_seconds.value = client.settings.client_keepalive_seconds ?? "";
     $("artifact").replaceChildren(); setVisible("artifact", false); $("client-dialog").showModal();
@@ -241,6 +249,7 @@
   async function submitEdit(event) {
     event.preventDefault(); clearBanner(); const data = form("edit-form");
     const body = { expected_generation: generation, label: data.label, address: data.address, route_policy: routes(data.routes), dns_servers: data.dns_servers.split(",").map((x) => x.trim()).filter(Boolean), client_keepalive_seconds: data.client_keepalive_seconds === "" ? null : Number(data.client_keepalive_seconds) };
+    if (data.ipv6_address.trim()) body.ipv6_address = data.ipv6_address.trim();
     const response = await api("PATCH", `/api/v1/clients/${data.client_id}`, body); const result = await json(response);
     await refreshAfterMutation(response, result, false);
   }

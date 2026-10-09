@@ -45,8 +45,8 @@ module has its own deep dive in `architecture/`:
 
 ## Planning authority (read before implementing)
 
-1. `plans/registry.md` — control surface, milestone order, what is
-   ready vs blocked (Phase 10 M001 is the sole ready plan).
+1. `plans/registry.md` — control surface, milestone order, and the
+   current ready/active/blocked implementation plans.
 2. `plans/003-planning-process.md` — handoff/closure rules.
 3. Subsystem roadmap under `plans/subsystems/`, then the milestone
    implementation plan, then current repository evidence.
@@ -55,8 +55,10 @@ module has its own deep dive in `architecture/`:
 
 - Current behavior docs stay factual; planned behavior belongs in
   `plans/`, never in `architecture/` or `docs/` as if shipped.
-- Installation and transactional self-update are **not implemented**
-  (Phase 10 planned, M001 ready). Never describe them as available.
+- Installation, transactional self-update, and state-preserving uninstall
+  are implemented and technically qualified under Phase 10. Production
+  release/update authority remains blocked until the maintainer provisions
+  the trust root, signs a draft, and authorizes publication.
 - Operator procedures: `docs/development.md` (gates, local
   netd/serve, fixtures), `docs/operations-runbook.md`,
   `docs/state-backup-restore.md`, `docs/client-enrollment.md`.

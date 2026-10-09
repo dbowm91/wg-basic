@@ -2,8 +2,8 @@
 
 This is the Phase 10 service-manager contract established by Phase 9. The
 product-owned systemd definitions encode these controls at the canonical paths.
-Phase 10 qualification must validate their runtime ownership, capabilities,
-and ceilings against the installed services.
+Native systemd qualification validated runtime ownership, capabilities,
+service properties, and state access on x86_64 and aarch64 Ubuntu 24.04 hosts.
 
 | Directive | `serve` | `netd` | Reason / qualification |
 |---|---|---|---|
@@ -67,9 +67,11 @@ the current runtime contract and MUST NOT be claimed by the shipped netd unit.
 Any later change to forwarding ownership needs an explicit implementation and
 security review before changing this profile.
 
-The ceilings are initial conservative recommendations, not measured maxima.
-The ordinary release footprint and Argon2 qualification provide headroom
-evidence; Phase 10 must recheck them with final service units and cgroup
-accounting. Service-manager journald retention owns log storage and rotation;
+The ceilings are conservative limits, not measured maxima. The native M005
+release-candidate lifecycle runs measured installed product bytes of 9,937,817
+(x86_64) and 9,096,498 (aarch64), with idle serve/netd RSS of 9,192/6,556 KiB
+and 8,068/5,560 KiB respectively. Fresh install elapsed 2,387 ms and 5,195 ms
+on those runners. These are single-run engineering receipts, not performance
+SLOs. Service-manager journald retention owns log storage and rotation;
 the binary emits human or newline-delimited JSON events to stderr and owns no
 log files.

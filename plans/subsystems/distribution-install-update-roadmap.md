@@ -1,6 +1,6 @@
 # Distribution, Installation, Update, and Rollback Roadmap
 
-Status: active; M001–M004 technically closed; M005 active; production signing/publication pending maintainer provisioning
+Status: Phase 10 technically closed; production signing/publication pending maintainer provisioning; Phase 11 IPv6/route-policy work is ready
 
 Canonical references:
 
@@ -580,4 +580,4 @@ A production release requires explicit maintainer authorization after:
 | M002 system install/service layout | closed | `plans/implementation/distribution/002-system-install-and-service-layout.md` | `plans/closure/distribution/002-status.md` |
 | M003 Eggpack producer pipeline/signed draft | closed — mechanically qualified; production signing pending | `plans/implementation/distribution/003-eggpack-release-pipeline-and-signed-draft.md` | `plans/closure/distribution/003-final-status.md` |
 | M004 transactional self-update/rollback | closed — technical implementation and qualification; production trust-root provisioning pending | `plans/implementation/distribution/004-transactional-self-update-and-rollback.md` | `plans/closure/distribution/004-status.md` |
-| M005 lifecycle E2E/Phase 10 closure | active | `plans/implementation/distribution/005-install-update-uninstall-e2e-and-phase10-closure.md` | Technical predecessor M004 closed; production release readiness remains externally gated |
+| M005 lifecycle E2E/Phase 10 closure | closed — release-mechanically complete, public publication blocked | `plans/implementation/distribution/005-install-update-uninstall-e2e-and-phase10-closure.md` | `plans/closure/distribution/005-status.md`; production release readiness remains externally gated |

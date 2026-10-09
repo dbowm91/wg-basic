@@ -51,11 +51,12 @@ Network control, durable state/restart reconciliation, management/auth,
 product/enrollment/UI, and operational hardening are implemented and
 qualified in Linux namespaces. Native systemd installation and M004's signed
 update, rollback, and recovery transaction are technically qualified on
-current x86_64 and aarch64 GNU release artifacts. M005 is active for complete
-fresh-install, uninstall/reinstall, and Phase 10 lifecycle qualification.
-Production `update check` and `update run` remain fail-closed because the
-maintainer-provisioned Minisign public key is still pending; no public release
-is ready. See [plans/registry.md](plans/registry.md).
+current x86_64 and aarch64 GNU release artifacts. Phase 10 lifecycle
+qualification is closed, including fresh install, state-preserving
+uninstall/reinstall, and guarded purge. Production `update check` and
+`update run` remain fail-closed because the maintainer-provisioned Minisign
+public key is still pending; no public release is ready. See
+[plans/registry.md](plans/registry.md).
 
 ## Docs
 
