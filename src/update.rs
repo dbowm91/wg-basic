@@ -1032,7 +1032,11 @@ fn save_old_binary(
     durable_copy(
         Path::new(crate::distribution::BINARY_PATH),
         &destination,
-        0o700,
+        // Eggup installs the source mode on rollback. Keep the recovery
+        // executable usable by the unprivileged management identity after
+        // it is moved back to /usr/local/bin; the containing transaction
+        // directory remains root-only (0700).
+        0o755,
     )?;
     if eggup_core::hash_file(&destination).map_err(|_| "old binary digest failed")?
         != parse_digest(&metadata.binary_sha256)?
@@ -2376,15 +2380,20 @@ fn validate_transaction_directory(journal: &UpdateJournal) -> Result<(), String>
 fn validate_transaction_artifacts(journal: &UpdateJournal) -> Result<(), String> {
     let old = journal.transaction_dir.join("old-wg-basic");
     let candidate = journal.transaction_dir.join("candidate-wg-basic");
-    for (path, expected, label) in [
-        (&old, &journal.old_binary_sha256, "old binary"),
-        (&candidate, &journal.candidate_sha256, "candidate binary"),
+    for (path, expected, label, mode) in [
+        (&old, &journal.old_binary_sha256, "old binary", 0o755),
+        (
+            &candidate,
+            &journal.candidate_sha256,
+            "candidate binary",
+            0o700,
+        ),
     ] {
         let metadata = fs::symlink_metadata(path)
             .map_err(|_| format!("{label} recovery artifact is unavailable"))?;
         if !metadata.file_type().is_file()
             || metadata.uid() != 0
-            || metadata.mode() & 0o777 != 0o700
+            || metadata.mode() & 0o777 != mode
             || metadata.nlink() != 1
             || eggup_core::hash_file(path)
                 .map_err(|_| format!("{label} recovery artifact digest failed"))?
@@ -2440,7 +2449,7 @@ fn ensure_runtime_old_binary(journal: &UpdateJournal) -> Result<PathBuf, String>
     let expected = parse_digest(&journal.old_binary_sha256)?;
     if !metadata.file_type().is_file()
         || metadata.uid() != 0
-        || metadata.mode() & 0o777 != 0o700
+        || metadata.mode() & 0o777 != 0o755
         || eggup_core::hash_file(&old).map_err(|_| "old binary digest failed")? != expected
     {
         return Err("old binary recovery artifact is unsafe".into());
