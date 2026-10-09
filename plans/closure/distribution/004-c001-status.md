@@ -94,3 +94,47 @@ outstanding. C002's hard dependency on C001 strict closure is therefore still
 unsatisfied. C002 remains **blocked**, M005 remains **blocked on M004 closure**,
 and no successor implementation plan is eligible to begin from this evidence.
 M004 itself is not closed.
+
+## C001a progress addendum — upstream prerequisite resolved (2026-10-09; not closure)
+
+Eggup Service M010 closed with a required runtime correction at source
+`0bde3fefbda07019529ad7566c02e6e4ec141fd6`; hosted run `37875012280` passed
+the real-systemd failed-unit matrix and all other required lanes. Service M011
+published `eggup-service 0.1.3` from
+`feb6ae5aea4c9b61c4051957f3662ca49d845f9e`, registry SHA-256
+`9f7f7ea854577158e66aa202709ab1c97a3aedcf00b06c1ab914d25b132124dc`; hosted
+post-publication run `37883703334` passed all five lanes. The upstream records
+are `eggstack/eggup` `plans/closure/service-lifecycle/010-status.md` and
+`011-status.md`.
+
+wg-basic now pins the exact published 0.1.3 package. The local stop path
+implementation is commit
+`87320c73bd28d05d20dbfa7a9169ed66661c3e98` (`fix(distribution): adopt Eggup
+failed-unit quiescence`). It retains the pre-mutation Owned check, calls
+Eggup's typed stop for an Owned `Unknown` lifecycle observation, requires its
+completed receipt, rechecks exact ownership, and accepts the still-Unknown
+post-state only for that successful path. It also proves the serve lease is
+released and netd's socket is inactive
+before subsequent database rollback. A focused transition-matrix regression
+rejects transition states and incomplete stop results. No generic process or
+systemctl fallback was added. Because update runs as root while the lease file
+belongs to the `wg-basic` account, the lease probe validates the expected
+management UID rather than incorrectly comparing it with root's effective UID.
+
+Current local evidence: `cargo fmt --all -- --check`, `cargo check
+--all-targets --locked`, `cargo clippy --all-targets --locked -- -D warnings`,
+`cargo test --locked` (560 passed, 3 ignored, 34 suites), `cargo +1.89.0 check
+--all-targets --locked`, `cargo audit` (211 locked dependencies),
+`cargo tree -i eggup-service --locked`, and `git diff --check` passed on the
+C001a implementation tree. The lockfile resolves `eggup-service 0.1.3` from
+crates.io with the checksum above.
+
+This addendum does **not** close C001. The required C001a real updater signed-
+fixture rollback/retry, updater-process SIGKILL/recover-twice cutpoints,
+post-migration SQLite restore interruption, and negative rootful service/unit
+fixtures have not been run or added to isolated CI. The local host is not a
+disposable systemd VM, so destructive suites were not run here. C001 remains
+`corrective required`; C002 remains blocked on C001 closure; M005 remains
+blocked on M004 closure. Exact next work is to add/run C001a's isolated actual-
+updater systemd fixture and record its disposable runner, systemd/kernel,
+cutpoints, state-identity checks, and immutable CI run before deciding closure.
