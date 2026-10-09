@@ -33,6 +33,10 @@ fn command(args: &[&str]) -> Output {
 }
 
 fn run_as_management(args: &[&str]) -> Output {
+    run_as_management_with(BINARY, args)
+}
+
+fn run_as_management_with(binary: &str, args: &[&str]) -> Output {
     let management = nix::unistd::User::from_name("wg-basic").unwrap().unwrap();
     let group = nix::unistd::Group::from_name("wg-basic").unwrap().unwrap();
     Command::new("/usr/bin/setpriv")
@@ -41,7 +45,7 @@ fn run_as_management(args: &[&str]) -> Output {
             format!("--regid={}", group.gid.as_raw()),
             "--clear-groups".into(),
         ])
-        .arg(BINARY)
+        .arg(binary)
         .args(args)
         .output()
         .unwrap()
@@ -1478,36 +1482,45 @@ fn signed_systemd_update_rolls_back_and_retries() {
         .output()
         .unwrap();
     assert!(stop_serve.status.success(), "{}", output_text(&stop_serve));
-    let disabled = run_as_management(&[
-        "network",
-        "disable",
-        "--state",
-        distribution::STATE_PATH,
-        "--socket",
-        distribution::SOCKET_PATH,
-    ]);
+    let disabled = run_as_management_with(
+        distribution::BINARY_PATH,
+        &[
+            "network",
+            "disable",
+            "--state",
+            distribution::STATE_PATH,
+            "--socket",
+            distribution::SOCKET_PATH,
+        ],
+    );
     assert!(disabled.status.success(), "{}", output_text(&disabled));
     assert!(
         String::from_utf8_lossy(&disabled.stdout).contains("enforced"),
         "network disable must converge before purge: {}",
         output_text(&disabled)
     );
-    let state_status = run_as_management(&["state", "status", "--state", distribution::STATE_PATH]);
+    let state_status = run_as_management_with(
+        distribution::BINARY_PATH,
+        &["state", "status", "--state", distribution::STATE_PATH],
+    );
     assert!(
         state_status.status.success(),
         "{}",
         output_text(&state_status)
     );
-    let purged = run_as_management(&[
-        "state",
-        "purge",
-        "--confirm-installation-id",
-        after_retry.1.as_str(),
-        "--state",
-        distribution::STATE_PATH,
-        "--socket",
-        distribution::SOCKET_PATH,
-    ]);
+    let purged = run_as_management_with(
+        distribution::BINARY_PATH,
+        &[
+            "state",
+            "purge",
+            "--confirm-installation-id",
+            after_retry.1.as_str(),
+            "--state",
+            distribution::STATE_PATH,
+            "--socket",
+            distribution::SOCKET_PATH,
+        ],
+    );
     assert!(purged.status.success(), "{}", output_text(&purged));
     assert!(!Path::new(distribution::STATE_PATH).exists());
 
