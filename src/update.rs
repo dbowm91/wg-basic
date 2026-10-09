@@ -631,12 +631,42 @@ fn start_owned_service(
         eggup_service::ServiceSpec,
     ),
 ) -> Result<(), String> {
-    use eggup_service::{LifecycleState, Ownership, ServiceManager};
-    let before = manager
+    use eggup_service::{
+        CommandExecutor, LifecycleState, Ownership, ServiceManager, SystemExecutor, SystemdScope,
+    };
+    let mut before = manager
         .inspect(&spec)
         .map_err(|_| "could not inspect product service before start")?;
     if before.ownership != Ownership::Owned {
         return Err("product service registration is not owned".into());
+    }
+    if before.state != LifecycleState::Running {
+        let install = manager.install_config();
+        let scope = match install.scope {
+            SystemdScope::System => "--system",
+            SystemdScope::User => "--user",
+        };
+        let output = SystemExecutor::new()
+            .run(
+                &[
+                    "systemctl".into(),
+                    scope.into(),
+                    "reset-failed".into(),
+                    install.unit_name.clone(),
+                ],
+                None,
+                Duration::from_secs(10),
+            )
+            .map_err(|_| "could not clear the owned service start limit")?;
+        if output.status != Some(0) {
+            return Err("could not clear the owned service start limit".into());
+        }
+        before = manager
+            .inspect(&spec)
+            .map_err(|_| "could not re-inspect product service after reset")?;
+        if before.ownership != Ownership::Owned {
+            return Err("product service registration is not owned".into());
+        }
     }
     if before.state != LifecycleState::Running {
         manager

@@ -101,6 +101,12 @@ schema instead of requiring the old product identity to remain current. The
 transaction itself still proves exact rollback identity before it records
 `RolledBack`.
 
+Before starting an owned stopped systemd unit during update recovery, wg-basic
+clears that exact owned unit's failed-start counter through the bounded
+Eggup-service command executor. This lets a healthy prior generation recover
+after candidate retries exhausted systemd's start limit; it does not change
+unit contents or ownership.
+
 ## Crash-window matrix
 
 | Crash point | Authoritative pair/artifact | Safe next action |
