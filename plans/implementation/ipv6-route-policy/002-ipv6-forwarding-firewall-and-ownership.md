@@ -201,6 +201,6 @@ side effects cannot be represented truthfully; the independent firewall
 preservation test fails; IPv4 rules/defaults regress; or routed IPv6 return
 traffic requires NAT66 or an ownership mutation outside the selected prefix
 and egress. M002 strict closure is recorded in
-`plans/closure/ipv6-route-policy/002-status.md`. M003 is unblocked and active
-under `plans/implementation/ipv6-route-policy/003-client-route-policy-and-product-surface.md`;
-M004 remains blocked until M003 strictly closes.
+`plans/closure/ipv6-route-policy/002-status.md`. At that closure, M003 became
+unblocked; the current M003/M004 disposition is maintained in
+`plans/subsystems/ipv6-route-policy-roadmap.md`.

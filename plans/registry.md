@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-09 (Phase 10 technically closed; IPv6/route-policy M001–M002 closed and M003 active; production signing/publication remains externally blocked)
+Last planning reconciliation: 2026-10-09 (Phase 10 technically closed; IPv6/route-policy M001–M003 closed and M004 active; production signing/publication remains externally blocked)
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -43,7 +43,7 @@ The architecture separates:
 
 The privileged service does not expose arbitrary shell, command, file-write, sysctl-path, nft-script, or raw-netlink execution.
 
-Current production code state: **Network control and Phases 6–10 are technically closed. The authenticated product API and embedded UI provide server setup, client lifecycle, config/QR export, one-time enrollment, live telemetry, bounded audit history, operational diagnostics, safe maintenance/recovery, and a proven old/new database rollback contract.** Phase 10 is release-mechanically complete: native x86_64/aarch64 systemd install, signed-fixture update/recovery, state-preserving uninstall/reinstall, and guarded purge are qualified. Phase 11 M001 dual-stack tunnel addressing and M002 IPv6 forwarding/firewall ownership are closed; M003 client route policy and product surface is active. Production signing/publication remain blocked on maintainer provisioning of the release trust root and production-signed draft; this external gate does not block Phase 11 engineering.
+Current production code state: **Network control and Phases 6–10 are technically closed. The authenticated product API and embedded UI provide server setup, client lifecycle, config/QR export, one-time enrollment, live telemetry, bounded audit history, operational diagnostics, safe maintenance/recovery, and a proven old/new database rollback contract.** Phase 10 is release-mechanically complete: native x86_64/aarch64 systemd install, signed-fixture update/recovery, state-preserving uninstall/reinstall, and guarded purge are qualified. Phase 11 M001 dual-stack tunnel addressing, M002 IPv6 forwarding/firewall ownership, and M003 client route policy/product surface are closed; M004 dual-stack end-to-end qualification is active. Production signing/publication remain blocked on maintainer provisioning of the release trust root and production-signed draft; this external gate does not block Phase 11 engineering.
 
 ## 3. Eggstack reuse disposition
 
@@ -73,7 +73,7 @@ Runtime dependency adoption remains evidence-driven.
 | Product management/enrollment/UI | closed | `plans/subsystems/product-management-enrollment-ui-roadmap.md` | Phase 8 M001–M005 closed |
 | Operational hardening | closed | `plans/subsystems/operational-hardening-roadmap.md` | M001–M005 closed; Phase 9 closed |
 | Distribution/install/update | closed (technical) | `plans/subsystems/distribution-install-update-roadmap.md` | M001–M005 closed; production release remains blocked on signing |
-| IPv6/route-policy qualification | active | `plans/subsystems/ipv6-route-policy-roadmap.md` | M001–M002 closed; M003 client route policy/product surface active |
+| IPv6/route-policy qualification | active | `plans/subsystems/ipv6-route-policy-roadmap.md` | M001–M003 closed; M004 active |
 
 Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
 
@@ -81,7 +81,7 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
-| IPv6/route-policy | M003 client route policy and product surface | active | `plans/implementation/ipv6-route-policy/003-client-route-policy-and-product-surface.md` | M002 strictly closed; M004 remains blocked on M003 |
+| IPv6/route-policy | M004 dual-stack E2E and Phase 11 closure | active | `plans/implementation/ipv6-route-policy/004-dual-stack-e2e-and-phase-11-closure.md` | M003 strictly closed; rootful dual-family client traffic remains to qualify |
 
 ## 6. External readiness blockers
 
@@ -102,12 +102,16 @@ M004 and its corrective slices are closed: `plans/closure/distribution/004-statu
   authorization.
 - IPv6/route-policy M001 strict closure:
   `plans/closure/ipv6-route-policy/001-status.md` (head `fa25918`; full CI
-  `37945376954`; native product job `113870168633`). M002's follow-on closure
-  evidence is recorded below; M003 is now active.
+  `37945376954`; native product job `113870168633`). M002 and M003 strict
+  closures are recorded below; M004 is now active.
 - IPv6/route-policy M002 strict closure:
   `plans/closure/ipv6-route-policy/002-status.md` (implementation head
   `306ec64`; full CI `37952330395`; rootful network-control job
-  `113894015843`). M003 is active; M004 remains blocked until M003 closes.
+  `113894015843`). M003 is strictly closed; M004 is unblocked.
+- IPv6/route-policy M003 strict closure:
+  `plans/closure/ipv6-route-policy/003-status.md` (implementation head
+  `7bfa28f`; full CI `37955744248`; rootful product job `113905694296`).
+  M004 is active under its bounded implementation plan.
 - Operational-hardening M001 strict closure: `plans/closure/operational-hardening/001-status.md` (implementation commit `3e5b21c`; real-kernel doctor drift/convergence/conflict fixtures).
 - Operational-hardening M002 strict closure: `plans/closure/operational-hardening/002-status.md` (implementation commit `ae60e81`; real serve lease, schema v5, network lifecycle, recovery and purge evidence).
 - Operational-hardening M003 strict closure: `plans/closure/operational-hardening/003-status.md` (implementation commit `5815c59`; structured events, bounded retention, crash/resource qualification, and service-manager contract).
@@ -228,7 +232,7 @@ If later implementation evidence reveals a material architecture contradiction, 
 
 Phase 9 research/planning is complete under ADR-005 and `plans/subsystems/operational-hardening-roadmap.md`. The selected baseline is an authoritative read-only doctor, crash-safe service lease, durable whole-server network state, fail-closed purge, structured stderr events, bounded operational-row housekeeping, adversarial HTTP/UDS qualification, and a binary+database rollback rehearsal using Phase 8 closure `e8fd6b1` as the old-version baseline.
 
-Phase 10 is technically closed under ADR-006 and `plans/subsystems/distribution-install-update-roadmap.md`; M001–M005 closure evidence is recorded. The selected baseline is two native Linux GNU targets, a signed Eggpack ReleaseManifest with project-owned Minisign trust, native systemd installation, Eggup-owned local binary mechanics, wg-basic-owned two-service/database orchestration, a root-owned crash-recovery journal, and state-preserving uninstall. The production private signing key remains outside repository/ordinary CI authority; public-release readiness requires maintainer provisioning of the real trust root and a production-signed draft. Phase 11 M001 and M002 are strictly closed; M003 client route policy/product surface is active and M004 remains blocked until M003 closes.
+Phase 10 is technically closed under ADR-006 and `plans/subsystems/distribution-install-update-roadmap.md`; M001–M005 closure evidence is recorded. The selected baseline is two native Linux GNU targets, a signed Eggpack ReleaseManifest with project-owned Minisign trust, native systemd installation, Eggup-owned local binary mechanics, wg-basic-owned two-service/database orchestration, a root-owned crash-recovery journal, and state-preserving uninstall. The production private signing key remains outside repository/ordinary CI authority; public-release readiness requires maintainer provisioning of the real trust root and a production-signed draft. Phase 11 M001–M003 are strictly closed; M004 dual-stack E2E qualification is active.
 
 ## 13. Closure handoff
 
