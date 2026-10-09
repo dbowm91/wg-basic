@@ -936,6 +936,10 @@ fn make_signed_fixture() {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
+    println!(
+        "C002 signed candidate: target={target} bytes={} sha256={digest}",
+        artifact.len()
+    );
     let mut manifest: serde_json::Value = serde_json::from_slice(include_bytes!(
         "fixtures/release-auth/release-manifest.json"
     ))
@@ -948,6 +952,11 @@ fn make_signed_fixture() {
         }, "install": "wg-basic" }
     }]);
     let bytes = serde_json::to_vec(&manifest).unwrap();
+    println!(
+        "C002 signed fixture manifest: bytes={} sha256={:x}",
+        bytes.len(),
+        Sha256::digest(&bytes)
+    );
     let minisign::KeyPair { pk, sk } = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
     let signature = minisign::sign(
         Some(&pk),
@@ -1070,6 +1079,17 @@ fn signed_systemd_update_rolls_back_and_retries() {
     let old_release = std::env::var("WGB_OLD_BINARY").unwrap_or_else(|_| BINARY.to_owned());
     let install = command(&["system", "install", "--candidate", &old_release]);
     assert!(install.status.success(), "{}", output_text(&install));
+    let installed_receipt: serde_json::Value = serde_json::from_slice(
+        &fs::read(Path::new(distribution::SYSTEM_DIR).join("install.json")).unwrap(),
+    )
+    .unwrap();
+    println!(
+        "C002 installed old release: version={} target={} bytes={} sha256={}",
+        installed_receipt["version"].as_str().unwrap(),
+        installed_receipt["target"].as_str().unwrap(),
+        fs::metadata(distribution::BINARY_PATH).unwrap().len(),
+        installed_receipt["binary_sha256"].as_str().unwrap()
+    );
     let disabled_before = database_identity();
     let disabled_identity = typed_state_identity();
     assert_eq!(disabled_before.0, 4);

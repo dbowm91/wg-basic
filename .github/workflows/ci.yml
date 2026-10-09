@@ -32,7 +32,10 @@ jobs:
           sudo ip link add wgb-c002-probe type wireguard
           sudo ip link delete wgb-c002-probe
       - name: Build the exact release-mode old fixture
-        run: cargo build --locked --release --features update-test-fixtures --bin wg-basic --target-dir "$RUNNER_TEMP/wg-basic-old-target"
+        run: |
+          cargo build --locked --release --features update-test-fixtures --bin wg-basic --target-dir "$RUNNER_TEMP/wg-basic-old-target"
+          stat -c 'old fixture bytes: %s' "$RUNNER_TEMP/wg-basic-old-target/release/wg-basic"
+          sha256sum "$RUNNER_TEMP/wg-basic-old-target/release/wg-basic"
       - name: Build a strictly newer fixture candidate without changing repository history
         run: |
           mkdir -p "$RUNNER_TEMP/wg-basic-candidate-src"
@@ -40,6 +43,8 @@ jobs:
           sed -i '0,/^version = "0.1.0"$/s//version = "0.1.1"/' "$RUNNER_TEMP/wg-basic-candidate-src/Cargo.toml"
           cargo update --manifest-path "$RUNNER_TEMP/wg-basic-candidate-src/Cargo.toml" -p wg-basic --precise 0.1.1
           cargo build --locked --release --features update-test-fixtures --manifest-path "$RUNNER_TEMP/wg-basic-candidate-src/Cargo.toml" --target-dir "$RUNNER_TEMP/wg-basic-candidate-target" --bin wg-basic
+          stat -c 'candidate fixture bytes: %s' "$RUNNER_TEMP/wg-basic-candidate-target/release/wg-basic"
+          sha256sum "$RUNNER_TEMP/wg-basic-candidate-target/release/wg-basic"
       - name: Qualify signed-fixture migration rollback, recovery, retry, and real systemd services
         run: |
           sudo chmod 0755 /usr/local/bin
