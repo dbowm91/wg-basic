@@ -37,15 +37,18 @@ informational only. Online backups use a shared `<state>.maintenance.lock`, so
 they can run while serve is active. Restore and purge take the exclusive
 maintenance lock.
 
-Phase 10 M002 adds `wg-basic system install [--candidate PATH]` for a local
-executable and `wg-basic system status` for read-only ownership/service
-inspection. Installation requires effective root and an active systemd system
-manager; canonical destination parents must be root-owned and not group/world
-writable. It never invokes sudo. It installs the canonical `/usr/local/bin` and
-`/var/lib` layout, creates the `wg-basic` identities through
-`systemd-sysusers`, and starts netd before the management service. This local
-install path performs no release discovery or signature verification; a
-qualified public release path is part of the later release pipeline.
+`wg-basic system install [--candidate PATH]` installs a local executable;
+`wg-basic system status` inspects ownership/service state; and
+`wg-basic system uninstall` removes verified owned service/program files while
+preserving the state database and service identities for reinstall. Installation
+and uninstall require effective root and an active systemd system manager;
+canonical destination parents must be root-owned and not group/world writable.
+Neither command invokes sudo. Install creates the `wg-basic` identities through
+`systemd-sysusers`, installs the canonical `/usr/local/bin` and `/var/lib`
+layout, and starts netd before the management service. The local install path
+performs no release discovery or signature verification. Destructive state
+removal remains a separate guarded `state purge`; see the
+[installation guide](installation.md).
 
 ## Local administrator credentials
 

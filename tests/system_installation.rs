@@ -1,11 +1,12 @@
 use std::{
     fs,
+    io::Write,
     os::unix::{
         fs::{MetadataExt, PermissionsExt},
         net::UnixStream,
     },
     path::Path,
-    process::Command,
+    process::{Command, Stdio},
 };
 
 const BINARY: &str = env!("CARGO_BIN_EXE_wg-basic");
@@ -45,44 +46,37 @@ fn systemd_installation_ownership_reinstall_and_service_credentials() {
     }
     assert!(!Path::new("/etc/sysusers.d/wg-basic.conf").exists());
     assert!(!Path::new("/var/lib/wg-basic").exists());
-    fs::write(
-        "/etc/sysusers.d/wg-basic.conf",
-        wg_basic::distribution::SYSUSERS,
-    )
-    .unwrap();
-    fs::set_permissions(
-        "/etc/sysusers.d/wg-basic.conf",
-        fs::Permissions::from_mode(0o644),
-    )
-    .unwrap();
-    let sysusers = Command::new("/usr/bin/systemd-sysusers")
-        .arg("/etc/sysusers.d/wg-basic.conf")
+    let release_candidate = std::env::var("WGB_CANDIDATE_BINARY").unwrap_or_else(|_| BINARY.into());
+    let version = Command::new(&release_candidate)
+        .arg("--version")
         .output()
         .unwrap();
-    assert!(sysusers.status.success(), "{}", output_text(&sysusers));
-    let management = nix::unistd::User::from_name("wg-basic").unwrap().unwrap();
-    let service_group = nix::unistd::Group::from_name("wg-basic").unwrap().unwrap();
-    fs::create_dir("/var/lib/wg-basic").unwrap();
-    nix::unistd::chown(
-        "/var/lib/wg-basic",
-        Some(management.uid),
-        Some(service_group.gid),
-    )
-    .unwrap();
-    fs::set_permissions("/var/lib/wg-basic", fs::Permissions::from_mode(0o700)).unwrap();
-    let seeded = run_as_service_user(
-        management.uid.as_raw(),
-        service_group.gid.as_raw(),
-        &["state", "init", "--state", "/var/lib/wg-basic/state.db"],
+    assert!(version.status.success(), "{}", output_text(&version));
+    let digest = Command::new("/usr/bin/sha256sum")
+        .arg(&release_candidate)
+        .output()
+        .unwrap();
+    assert!(digest.status.success(), "{}", output_text(&digest));
+    let systemd = Command::new("/usr/bin/systemctl")
+        .arg("--version")
+        .output()
+        .unwrap();
+    assert!(systemd.status.success(), "{}", output_text(&systemd));
+    let kernel = Command::new("/usr/bin/uname").arg("-a").output().unwrap();
+    assert!(kernel.status.success(), "{}", output_text(&kernel));
+    println!(
+        "M005 lifecycle host evidence: version={} sha256={} kernel={} systemd={}",
+        String::from_utf8_lossy(&version.stdout).trim(),
+        String::from_utf8_lossy(&digest.stdout)
+            .split_whitespace()
+            .next()
+            .unwrap(),
+        String::from_utf8_lossy(&kernel.stdout).trim(),
+        String::from_utf8_lossy(&systemd.stdout)
+            .lines()
+            .next()
+            .unwrap_or("unknown")
     );
-    assert!(seeded.status.success(), "{}", output_text(&seeded));
-    let before = run_as_service_user(
-        management.uid.as_raw(),
-        service_group.gid.as_raw(),
-        &["state", "status", "--state", "/var/lib/wg-basic/state.db"],
-    );
-    assert!(before.status.success(), "{}", output_text(&before));
-
     fs::copy("/bin/true", "/usr/local/bin/wg-basic").unwrap();
     fs::set_permissions("/usr/local/bin/wg-basic", fs::Permissions::from_mode(0o755)).unwrap();
     let foreign = command(&["system", "install", "--candidate", BINARY]);
@@ -92,7 +86,7 @@ fn systemd_installation_ownership_reinstall_and_service_credentials() {
     );
     fs::remove_file("/usr/local/bin/wg-basic").unwrap();
 
-    let install = command(&["system", "install", "--candidate", BINARY]);
+    let install = command(&["system", "install", "--candidate", &release_candidate]);
     assert!(
         install.status.success(),
         "{}\n{}",
@@ -107,13 +101,22 @@ fn systemd_installation_ownership_reinstall_and_service_credentials() {
     let status = command(&["system", "status"]);
     assert!(status.status.success(), "{}", output_text(&status));
     assert!(
-        String::from_utf8_lossy(&status.stdout).contains("doctor (last install): unknown"),
-        "status must not claim an unobserved result for pre-existing state: {}",
+        String::from_utf8_lossy(&status.stdout).contains("doctor (last install): pass"),
+        "fresh install must record the observed empty-state doctor result: {}",
         output_text(&status)
     );
 
+    let management = nix::unistd::User::from_name("wg-basic").unwrap().unwrap();
+    let service_group = nix::unistd::Group::from_name("wg-basic").unwrap().unwrap();
     let management_uid = management.uid.as_raw();
     let group = service_group.gid.as_raw();
+    let before = run_as_service_user(
+        management_uid,
+        group,
+        &["state", "status", "--state", "/var/lib/wg-basic/state.db"],
+    );
+    assert!(before.status.success(), "{}", output_text(&before));
+    set_admin_password_as_service_user();
     let after = run_as_service_user(
         management_uid,
         group,
@@ -143,6 +146,65 @@ fn systemd_installation_ownership_reinstall_and_service_credentials() {
 
     let netd = systemd_property("wg-basic-netd.service", "MainPID");
     let serve = systemd_property("wg-basic.service", "MainPID");
+    for (unit, expected) in [
+        (
+            "wg-basic.service",
+            [
+                ("User", "wg-basic"),
+                ("Group", "wg-basic"),
+                ("NoNewPrivileges", "yes"),
+                ("ProtectSystem", "strict"),
+                ("ProtectHome", "yes"),
+                ("PrivateTmp", "yes"),
+                ("RestrictAddressFamilies", "AF_UNIX AF_INET AF_INET6"),
+                ("StateDirectory", "wg-basic"),
+                ("TasksMax", "64"),
+                ("MemoryMax", "268435456"),
+                ("LimitCORE", "0"),
+                ("Restart", "on-failure"),
+                ("CapabilityBoundingSet", ""),
+                ("AmbientCapabilities", ""),
+            ],
+        ),
+        (
+            "wg-basic-netd.service",
+            [
+                ("User", "wg-basic-netd"),
+                ("Group", "wg-basic"),
+                ("NoNewPrivileges", "yes"),
+                ("ProtectSystem", "strict"),
+                ("ProtectHome", "yes"),
+                ("PrivateTmp", "yes"),
+                ("RestrictAddressFamilies", "AF_UNIX AF_NETLINK"),
+                ("TasksMax", "32"),
+                ("MemoryMax", "134217728"),
+                ("LimitCORE", "0"),
+                ("Restart", "on-failure"),
+                ("CapabilityBoundingSet", "CAP_NET_ADMIN"),
+                ("AmbientCapabilities", "CAP_NET_ADMIN"),
+                ("ProtectKernelTunables", "no"),
+            ],
+        ),
+    ] {
+        for (property, value) in expected {
+            assert_eq!(
+                systemd_property(unit, property),
+                value,
+                "unexpected effective {property} on {unit}"
+            );
+        }
+    }
+    assert!(
+        systemd_property("wg-basic.service", "ExecStart")
+            .contains("/usr/local/bin/wg-basic serve --state /var/lib/wg-basic/state.db --socket /run/wg-basic/netd.sock"),
+        "effective serve argv differs from the product contract"
+    );
+    assert!(
+        systemd_property("wg-basic-netd.service", "ExecStart").contains(
+            "/usr/local/bin/wg-basic netd --socket /run/wg-basic/netd.sock --allow-user wg-basic"
+        ),
+        "effective netd argv differs from the product contract"
+    );
     assert_eq!(
         proc_field(&netd, "CapEff"),
         0x1000,
@@ -174,7 +236,7 @@ fn systemd_installation_ownership_reinstall_and_service_credentials() {
         .unwrap();
     assert!(unrelated.status.success(), "{}", output_text(&unrelated));
 
-    let reinstall = command(&["system", "install", "--candidate", BINARY]);
+    let reinstall = command(&["system", "install", "--candidate", &release_candidate]);
     assert!(reinstall.status.success(), "{}", output_text(&reinstall));
     let unit = Path::new("/etc/systemd/system/wg-basic.service");
     let original = fs::read(unit).unwrap();
@@ -183,18 +245,161 @@ fn systemd_installation_ownership_reinstall_and_service_credentials() {
         [original.as_slice(), b"# local operator change\n"].concat(),
     )
     .unwrap();
-    let refused = command(&["system", "install", "--candidate", BINARY]);
-    fs::write(unit, original).unwrap();
+    let refused = command(&["system", "install", "--candidate", &release_candidate]);
+    fs::write(unit, &original).unwrap();
     assert!(
         !refused.status.success(),
         "modified unit must refuse refresh"
     );
+
+    // Every file whose digest is registered in the install receipt must be
+    // checked before uninstall stops services or removes any owned material.
+    for path in [
+        "/usr/local/bin/wg-basic",
+        "/etc/systemd/system/wg-basic.service",
+        "/etc/systemd/system/wg-basic-netd.service",
+        "/etc/sysusers.d/wg-basic.conf",
+        "/var/lib/wg-basic-system/install.json",
+    ] {
+        let path = Path::new(path);
+        let original = fs::read(path).unwrap();
+        fs::write(
+            path,
+            [original.as_slice(), b"# local operator change\n"].concat(),
+        )
+        .unwrap();
+        let uninstall_refused = command(&["system", "uninstall"]);
+        fs::write(path, original).unwrap();
+        assert!(
+            !uninstall_refused.status.success(),
+            "modified {} must refuse uninstall: {}",
+            path.display(),
+            output_text(&uninstall_refused)
+        );
+        assert!(Path::new("/usr/local/bin/wg-basic").is_file());
+        for service in ["wg-basic.service", "wg-basic-netd.service"] {
+            let active = Command::new("/usr/bin/systemctl")
+                .args(["is-active", service])
+                .output()
+                .unwrap();
+            assert!(
+                active.status.success(),
+                "refusal for {} must leave {service} running: {}",
+                path.display(),
+                output_text(&active)
+            );
+        }
+    }
     let final_status = command(&["system", "status"]);
     assert!(
         final_status.status.success(),
         "{}",
         output_text(&final_status)
     );
+
+    let state_before_uninstall = run_as_service_user(
+        management_uid,
+        group,
+        &["state", "status", "--state", "/var/lib/wg-basic/state.db"],
+    );
+    assert!(
+        state_before_uninstall.status.success(),
+        "{}",
+        output_text(&state_before_uninstall)
+    );
+    let uninstall = command(&["system", "uninstall"]);
+    assert!(uninstall.status.success(), "{}", output_text(&uninstall));
+    assert!(!Path::new("/usr/local/bin/wg-basic").exists());
+    assert!(!Path::new("/etc/systemd/system/wg-basic.service").exists());
+    assert!(!Path::new("/etc/systemd/system/wg-basic-netd.service").exists());
+    assert!(!Path::new("/etc/sysusers.d/wg-basic.conf").exists());
+    assert!(!Path::new("/var/lib/wg-basic-system/install.json").exists());
+    assert!(Path::new("/var/lib/wg-basic/state.db").is_file());
+    assert_eq!(
+        state_identity(&String::from_utf8_lossy(&state_before_uninstall.stdout)),
+        state_identity(&String::from_utf8_lossy(
+            &run_as_service_user(
+                management_uid,
+                group,
+                &["state", "status", "--state", "/var/lib/wg-basic/state.db"],
+            )
+            .stdout
+        )),
+        "default uninstall must retain the same installation identity"
+    );
+    assert_eq!(
+        nix::unistd::User::from_name("wg-basic")
+            .unwrap()
+            .unwrap()
+            .uid,
+        management.uid
+    );
+    assert_eq!(
+        nix::unistd::Group::from_name("wg-basic")
+            .unwrap()
+            .unwrap()
+            .gid,
+        service_group.gid
+    );
+    assert_eq!(
+        nix::unistd::User::from_name("wg-basic-netd")
+            .unwrap()
+            .unwrap()
+            .uid
+            .as_raw(),
+        netd_uid
+    );
+
+    let reinstall = command(&["system", "install", "--candidate", &release_candidate]);
+    assert!(reinstall.status.success(), "{}", output_text(&reinstall));
+    let state_after_reinstall = run_as_service_user(
+        management_uid,
+        group,
+        &["state", "status", "--state", "/var/lib/wg-basic/state.db"],
+    );
+    assert!(
+        state_after_reinstall.status.success(),
+        "{}",
+        output_text(&state_after_reinstall)
+    );
+    assert_eq!(
+        state_identity(&String::from_utf8_lossy(&state_before_uninstall.stdout)),
+        state_identity(&String::from_utf8_lossy(&state_after_reinstall.stdout)),
+        "reinstall must reuse preserved state"
+    );
+    assert!(command(&["system", "status"]).status.success());
+}
+
+fn set_admin_password_as_service_user() {
+    let management = nix::unistd::User::from_name("wg-basic").unwrap().unwrap();
+    let group = nix::unistd::Group::from_name("wg-basic").unwrap().unwrap();
+    let mut child = Command::new("/usr/bin/setpriv")
+        .args([
+            format!("--reuid={}", management.uid.as_raw()),
+            format!("--regid={}", group.gid.as_raw()),
+            "--clear-groups".to_owned(),
+        ])
+        .arg(BINARY)
+        .args([
+            "admin",
+            "set-password",
+            "--password-stdin",
+            "--state",
+            "/var/lib/wg-basic/state.db",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"M005 disposable lifecycle password\n")
+        .unwrap();
+    let result = child.wait_with_output().unwrap();
+    assert!(result.status.success(), "{}", output_text(&result));
 }
 
 fn systemd_property(unit: &str, property: &str) -> String {

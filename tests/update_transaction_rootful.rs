@@ -32,6 +32,21 @@ fn command(args: &[&str]) -> Output {
     Command::new(BINARY).args(args).output().unwrap()
 }
 
+fn run_as_management(args: &[&str]) -> Output {
+    let management = nix::unistd::User::from_name("wg-basic").unwrap().unwrap();
+    let group = nix::unistd::Group::from_name("wg-basic").unwrap().unwrap();
+    Command::new("/usr/bin/setpriv")
+        .args([
+            format!("--reuid={}", management.uid.as_raw()),
+            format!("--regid={}", group.gid.as_raw()),
+            "--clear-groups".into(),
+        ])
+        .arg(BINARY)
+        .args(args)
+        .output()
+        .unwrap()
+}
+
 fn output_text(output: &Output) -> String {
     format!(
         "stdout={} stderr={}",
@@ -1431,15 +1446,79 @@ fn signed_systemd_update_rolls_back_and_retries() {
     assert_enabled_product_healthy(traffic.admin_cookie.as_deref().unwrap());
     assert_private_key_not_in_service_logs(client_private_key);
 
-    let stop = Command::new("/usr/bin/systemctl")
-        .args([
-            "disable",
-            "--now",
-            "wg-basic.service",
-            "wg-basic-netd.service",
-        ])
-        .status()
+    let candidate = std::env::var("WGB_CANDIDATE_BINARY").expect("candidate release fixture");
+    let uninstalled = command(&["system", "uninstall"]);
+    assert!(
+        uninstalled.status.success(),
+        "{}",
+        output_text(&uninstalled)
+    );
+    assert!(!Path::new(distribution::BINARY_PATH).exists());
+    assert!(!Path::new(distribution::SERVE_UNIT_PATH).exists());
+    assert!(!Path::new(distribution::NETD_UNIT_PATH).exists());
+    assert!(Path::new(distribution::STATE_PATH).is_file());
+    assert_eq!(database_identity(), after_retry);
+
+    let reinstalled = Command::new(&candidate)
+        .args(["system", "install", "--candidate", &candidate])
+        .output()
         .unwrap();
-    assert!(stop.success());
+    assert!(
+        reinstalled.status.success(),
+        "{}",
+        output_text(&reinstalled)
+    );
+    assert_eq!(database_identity(), after_retry);
+    assert_eq!(typed_state_identity(), typed_after_retry);
+    traffic.require_handshake_and_traffic();
+    assert_enabled_product_healthy(traffic.admin_cookie.as_deref().unwrap());
+
+    let stop_serve = Command::new("/usr/bin/systemctl")
+        .args(["stop", "wg-basic.service"])
+        .output()
+        .unwrap();
+    assert!(stop_serve.status.success(), "{}", output_text(&stop_serve));
+    let disabled = run_as_management(&[
+        "network",
+        "disable",
+        "--state",
+        distribution::STATE_PATH,
+        "--socket",
+        distribution::SOCKET_PATH,
+    ]);
+    assert!(disabled.status.success(), "{}", output_text(&disabled));
+    assert!(
+        String::from_utf8_lossy(&disabled.stdout).contains("enforced"),
+        "network disable must converge before purge: {}",
+        output_text(&disabled)
+    );
+    let state_status = run_as_management(&["state", "status", "--state", distribution::STATE_PATH]);
+    assert!(
+        state_status.status.success(),
+        "{}",
+        output_text(&state_status)
+    );
+    let purged = run_as_management(&[
+        "state",
+        "purge",
+        "--confirm-installation-id",
+        after_retry.1.as_str(),
+        "--state",
+        distribution::STATE_PATH,
+        "--socket",
+        distribution::SOCKET_PATH,
+    ]);
+    assert!(purged.status.success(), "{}", output_text(&purged));
+    assert!(!Path::new(distribution::STATE_PATH).exists());
+
+    let destructively_uninstalled = command(&["system", "uninstall"]);
+    assert!(
+        destructively_uninstalled.status.success(),
+        "{}",
+        output_text(&destructively_uninstalled)
+    );
+    assert!(!Path::new(distribution::BINARY_PATH).exists());
+    assert!(!Path::new(distribution::STATE_PATH).exists());
+
     fs::remove_file(IDENTITY_HELPER).unwrap();
 }

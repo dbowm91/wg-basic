@@ -82,3 +82,46 @@ jobs:
           digest="$(sha256sum "$binary" | cut -d' ' -f1)"
           printf '### %s native release candidate\n\n- Bytes: `%s`\n- SHA-256: `%s`\n' \
             "$TARGET" "$bytes" "$digest" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Preserve exact native artifact for systemd lifecycle qualification
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: wg-basic-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/wg-basic
+          if-no-files-found: error
+          retention-days: 7
+
+  system-install-lifecycle-systemd:
+    needs: native-release-candidate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.89.0
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      - name: Download the exact native release candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: wg-basic-${{ matrix.target }}
+          path: ${{ runner.temp }}/wg-basic-${{ matrix.target }}
+      - name: Qualify fresh systemd install, state-preserving uninstall, and reinstall
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          sudo chmod 0755 /usr/local/bin
+          sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo \
+            CARGO_TARGET_DIR="$RUNNER_TEMP/wg-basic-system-install-target" \
+            WGB_CANDIDATE_BINARY="$RUNNER_TEMP/wg-basic-$TARGET/wg-basic" \
+            cargo test --locked --test system_installation -- --ignored --exact \
+              systemd_installation_ownership_reinstall_and_service_credentials \
+              --nocapture --test-threads=1

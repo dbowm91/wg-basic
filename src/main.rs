@@ -163,6 +163,8 @@ enum SystemCommand {
     },
     /// Read-only installation ownership and service status.
     Status,
+    /// Remove owned system files and units while preserving VPN state.
+    Uninstall,
 }
 
 #[derive(Subcommand)]
@@ -348,6 +350,7 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
                 wg_basic::distribution::install_local(&candidate)
             }
             SystemCommand::Status => wg_basic::distribution::install_status(),
+            SystemCommand::Uninstall => wg_basic::distribution::uninstall_local(),
         },
         Some(Command::Update { action }) => {
             match action {

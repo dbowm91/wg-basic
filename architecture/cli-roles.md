@@ -52,6 +52,7 @@ Part of the [architecture overview](overview.md). Role internals live in
 | `network disable/enable` | `--state`, `--socket` | durable flag commit + reconcile attempt | kernel directly |
 | `system install` | `--candidate` (current executable by default) | root-owned system layout, sysusers, systemd units and services | automatic sudo, release discovery, signature claims |
 | `system status` | none | installation receipt, file ownership and systemd lifecycle inspection | state mutation, kernel mutation |
+| `system uninstall` | none | removes verified owned units, sysusers definition, receipt, and binary | state database, service identities, foreign/modified installation material |
 | `update check` | none | bounded authenticated release discovery when a production key exists | install mutation, service lifecycle |
 | `update run` | effective root | root-owned lock, signed artifact and transactional binary/state update | automatic sudo, arbitrary release URLs/keys |
 | `update recover` | effective root | root-owned journal reconciliation and compatibility/health checks | implicit downgrade, ambiguous service adoption |
@@ -74,6 +75,14 @@ returns an error and leaves the active transaction for its owner to finish.
 - `status`: validates the root-owned receipt, executable and exact product
   definition digests, systemd registration/lifecycle, and state directory
   ownership. It does not mutate the installation.
+- `uninstall`: requires effective root and the systemd system manager. It
+  verifies the receipt and all owned files and both exact unit registrations
+  before stopping either service. It removes only owned unit/sysusers/binary
+  material, removes the executable last, and retains the state database,
+  management/network service identities, and installation lock directory so
+  state ownership and safe reinstall remain possible. Any foreign or modified
+  registration/file causes refusal. Destructive state removal remains the
+  separately guarded `state purge` operation.
 
 ## `serve` (unprivileged management role)
 
