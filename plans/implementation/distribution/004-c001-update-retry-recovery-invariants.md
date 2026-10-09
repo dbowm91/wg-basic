@@ -1,6 +1,6 @@
 # Distribution M004 C001 — Update Retry and Crash-Recovery Invariants
 
-Status: ready for implementation; corrective required before M004 strict closure.
+Status: corrective required — implementation hardening is recorded in `plans/closure/distribution/004-c001-status.md`, but strict closure remains blocked on resolving Eggup's failed-service lifecycle classification and updater-level retry/crash qualification.
 Repository baseline: dbowm91/wg-basic main at 7b69c75634242bf0d5c0d35374b96346c73f20c6 (2026-10-08).
 Primary work class: corrective / invariant (durability, rollback safety, update retry).
 
@@ -120,3 +120,14 @@ Stop for a scoped architecture review if Eggup rollback ownership cannot be prov
 ## 12. Closure evidence
 
 Write a new C001 corrective evidence record only after implementation/testing. Include baseline/final SHA, changed files, defect-to-regression table, exact repeated-recovery matrix, ownership/secrecy review, failures found, CI/MSRV/advisory outcomes, limitations and C002 readiness. Historical distribution M004 plan and prior closure records remain period-accurate.
+
+### 12.1 Implementation review disposition (2026-10-09)
+
+The source changes and available regression evidence are recorded in
+`plans/closure/distribution/004-c001-status.md`. Terminal journal/archive and
+typed identity checks, unique restore staging, failure classification, and
+state restore replay coverage have landed. Strict C001 closure is not claimed:
+the pinned Eggup-service 0.1.2 adapter maps systemd `ActiveState=failed` to
+`LifecycleState::Unknown` and its stop confirmation only accepts `inactive`;
+the full signed-fixture updater rollback/retry and in-restore SIGKILL matrix has
+not been run. Do not unblock C002 or M005 from this partial evidence.

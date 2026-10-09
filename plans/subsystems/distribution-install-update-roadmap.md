@@ -1,6 +1,6 @@
 # Distribution, Installation, Update, and Rollback Roadmap
 
-Status: active; M001–M003 closed; M004 active with C001 recovery corrective ready and C002 rootful qualification corrective blocked on C001; M005 blocked
+Status: active; M001–M003 closed; M004 active with C001 implementation hardening recorded but strict closure corrective-required, C002 blocked on C001 strict closure, and M005 blocked
 
 Canonical references:
 
@@ -205,7 +205,7 @@ Expected outcomes:
 
 ## 8. M004 — Transactional self-update and rollback orchestration
 
-Status: active, corrective required; M003 is mechanically closed. M004 C001 retry/recovery invariant corrective is ready, M004 C002 rootful/CI/docs qualification corrective follows C001. Production update remains disabled until the production public key is provisioned.
+Status: active, corrective required; M003 is mechanically closed. C001 implementation hardening is recorded in `plans/closure/distribution/004-c001-status.md`, but strict closure is blocked on failed-service lifecycle proof and updater-level signed-fixture retry/crash evidence. C002 rootful/CI/docs qualification remains blocked on C001 strict closure. Production update remains disabled until the production public key is provisioned.
 
 Implementation plan:
 
