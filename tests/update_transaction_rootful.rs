@@ -94,12 +94,43 @@ fn kill_update_at_phase(phase: &str, expected_identity: &(i64, String, i64, i64)
         let recovery = command(&["update", "recover"]);
         assert!(
             recovery.status.success(),
-            "recovery after {phase} failed: {}",
-            output_text(&recovery)
+            "recovery after {phase} failed: {}\n{}",
+            output_text(&recovery),
+            recovery_diagnostics()
         );
     }
     assert_eq!(database_identity(), *expected_identity);
     let _ = fs::remove_dir_all(gate);
+}
+
+fn recovery_diagnostics() -> String {
+    let status = Command::new("/usr/bin/systemctl")
+        .args([
+            "status",
+            "--no-pager",
+            "-l",
+            "wg-basic.service",
+            "wg-basic-netd.service",
+        ])
+        .output()
+        .unwrap();
+    let journal = Command::new("/usr/bin/journalctl")
+        .args([
+            "-u",
+            "wg-basic.service",
+            "-u",
+            "wg-basic-netd.service",
+            "--no-pager",
+            "-n",
+            "100",
+        ])
+        .output()
+        .unwrap();
+    format!(
+        "systemctl={}\njournalctl={}",
+        output_text(&status),
+        output_text(&journal)
+    )
 }
 
 fn kill_process_group(child: &mut std::process::Child) {
