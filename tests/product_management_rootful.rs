@@ -671,7 +671,7 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
     let dashboard_read_elapsed = dashboard_read_started.elapsed();
     let interface_id = summary["server"]["interface_id"].as_str().unwrap();
     let create_body = format!(
-        r#"{{"expected_generation":{},"interface_id":"{interface_id}","label":"exported-phone","route_policy":{{"prefixes":["10.67.0.1/32"]}}}}"#,
+        r#"{{"expected_generation":{},"interface_id":"{interface_id}","label":"exported-phone","route_policy":{{"prefixes":["10.67.0.1/32","2001:db8:67::1/128"]}}}}"#,
         summary["generation"].as_u64().unwrap()
     );
     let create_started = std::time::Instant::now();
