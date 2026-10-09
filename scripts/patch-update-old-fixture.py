@@ -38,6 +38,11 @@ source = replace_once(
     source,
     'enum StateCommand {\n    /// Prints a safe status projection:',
     'enum StateCommand {\n'
+    '    /// Emit the updater\'s secret-free typed v4 compatibility identity.\n'
+    '    Identity {\n'
+    '        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]\n'
+    '        state: PathBuf,\n'
+    '    },\n'
     '    /// Create an empty schema or validate and migrate existing owned state.\n'
     '    Init {\n'
     '        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]\n'
@@ -96,6 +101,32 @@ source = replace_once(
     '            Ok(())\n'
     '        }\n'
     '        StateCommand::Status { state } => {',
+)
+source = replace_once(
+    source,
+    '        StateCommand::Backup { destination, state } => {',
+    '        StateCommand::Identity { state } => {\n'
+    '            use sha2::{Digest, Sha256};\n'
+    '            let store = StateStore::open(&state).map_err(|error| error.to_string())?;\n'
+    '            let metadata = store.installation_metadata().map_err(|error| error.to_string())?;\n'
+    '            let product = store.load_product().map_err(|error| error.to_string())?;\n'
+    '            let identifiers = serde_json::json!({\n'
+    '                "interfaces": product.state.interfaces.keys().map(ToString::to_string).collect::<Vec<_>>(),\n'
+    '                "clients": product.state.clients.keys().map(ToString::to_string).collect::<Vec<_>>(),\n'
+    '            });\n'
+    '            let digest = Sha256::digest(serde_json::to_vec(&identifiers)\n'
+    '                .map_err(|_| "state product identity could not be encoded".to_owned())?);\n'
+    '            let identity = serde_json::json!({\n'
+    '                "installation_id": metadata.installation_id.to_string(),\n'
+    '                "schema_version": store.schema_version().map_err(|error| error.to_string())?,\n'
+    '                "desired_generation": metadata.desired_generation.to_storage(),\n'
+    '                "network_enabled": !product.state.interfaces.is_empty(),\n'
+    '                "product_identity_sha256": digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>(),\n'
+    '            });\n'
+    '            println!("{}", serde_json::to_string(&identity).map_err(|_| "could not format state identity".to_owned())?);\n'
+    '            Ok(())\n'
+    '        }\n'
+    '        StateCommand::Backup { destination, state } => {',
 )
 path.write_text(source)
 
