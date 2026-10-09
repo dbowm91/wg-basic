@@ -1,6 +1,6 @@
 # Release Readiness R001 — Workflow Input, Tag Authority, and Build/Stage Provenance Hardening
 
-Status: ready for implementation.
+Status: product-side security tests/provenance work ready; strict closure and generated-workflow update blocked on upstream Eggpack CI M003j.
 Baseline: `dbowm91/wg-basic@ff40f851508ccda52171c27cefdcdaf4ec1da2d5` (2026-10-09).
 Primary class: invariant / security corrective.
 Source roadmap: `plans/subsystems/release-readiness-security-roadmap.md`.
@@ -11,7 +11,7 @@ Related completed evidence: `plans/closure/distribution/003-final-status.md`, `0
 
 Eliminate shell-expression injection from the generated Eggpack `workflow_dispatch` release workflow, enforce a tightly bounded release tag/commit identity from dispatch through staged draft, and prevent the privileged staging job from acting on a mismatched or unverifiable build. Keep the release pipeline producer-owned by Eggpack and the release-signing decision owned by wg-basic's maintainer.
 
-No new Eggup runtime features or rootful VPN implementation changes are required. R001 is independently ready; its completion is a hard prerequisite for R004 release authorization and for R002's *production signing ceremony* (R002 fixture development can proceed against its stable contract).
+No new Eggup runtime features or rootful VPN implementation changes are required. The generated workflow security correction belongs to Eggpack, so R001's producer-dependent implementation and strict closure require upstream CI M003j: `eggstack/eggpack` `plans/implementation/ci-release-orchestration/003j-dispatch-tag-shell-injection-corrective.md` on `plans/ci-m003j-dispatch-input-hardening` (planning baseline `d61ca71`). Product-side tests/provenance work is independently authorable. R001 closure remains a hard prerequisite for R004 release authorization and R002's *production signing ceremony* (R002 fixture development may proceed against the stable contract).
 
 ## 2. Verified source finding and detection gap
 
@@ -45,7 +45,7 @@ Use an isolated parsed/executable Bash-script fixture—not the live privileged 
 
 ### WP2 — Fix at the correct generator boundary
 
-Inspect pinned `eggstack/eggpack@d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628` generator for the offending interpolation. If produced upstream, create/register a bounded Eggpack corrective there and block generated workflow activation until the new qualified revision is available. If product-owned policy/template supplied it, fix only product-owned templates. Require env-mediated dispatch handling and stable SemVer validation before any untrusted value reaches shell. Re-generate `.github/workflows/release-eggpack.yml` from the corrected pinned source and update `github-policy.json`/workflow-shape contract in lockstep. No silent local patch that `eggpack ci check` would later undo.
+Root cause confirmed in pinned `eggstack/eggpack@d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628`, `crates/eggpack-ci/src/lib.rs`, in the reusable resolver and write-scoped staging renderer. Eggpack CI M003j is registered and ready on its own branch. **Do not modify the checked-in generated YAML as the canonical fix while M003j remains unqualified**; implement product-side guards and wait for the new upstream source revision. If a product policy/template has an independent unsafe sink, fix that at the product-owned boundary. Require env-mediated dispatch handling and stable SemVer validation before any untrusted value reaches shell. Re-generate `.github/workflows/release-eggpack.yml` from the corrected pinned source and update `github-policy.json`/workflow-shape contract in lockstep. No silent local patch that `eggpack ci check` would later undo.
 
 ### WP3 — Verify source and job-artifact binding
 
@@ -97,7 +97,7 @@ R001 closes only with no raw untrusted expression in shell run bodies, a *discri
 
 ## 10. Stop conditions
 
-Stop if generator remediation belongs upstream and is unavailable; canonical tag cannot be frozen or checked; a write-scoped job can be driven by uncontrolled code; release assets cannot be tied to an exact source/ref/run; a fake receipt passes stage checks; or the repair requires an automatic signing key in ordinary CI.
+Stop if Eggpack CI M003j remains unqualified for the production build; canonical tag cannot be frozen or checked; a write-scoped job can be driven by uncontrolled code; release assets cannot be tied to an exact source/ref/run; a fake receipt passes stage checks; or the repair requires an automatic signing key in ordinary CI.
 
 ## 11. Closure evidence
 
