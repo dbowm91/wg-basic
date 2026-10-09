@@ -163,6 +163,8 @@ The store is synchronous by design. It owns exactly one `rusqlite::Connection` b
 
 Backup uses SQLite's online backup API, never a file copy of a live WAL database, and holds the store's mutation lock so the receipt's generation is exactly the generation the file contains. Restore is offline and exclusive: it proves the candidate readable, integrity-clean, not-newer-than-this-binary, migratable, and fully loadable into typed state *before* anything is replaced, and it retains the previous database.
 
+The updater's `state identity` projection uses a separate SQLite read-only connection. It reads historical schema versions as they are stored and never runs pending migrations; while a service is live it reads committed WAL data only when both owner-private WAL sidecars are present. Recovery checks therefore cannot silently migrate a restored database before selecting the compatible binary.
+
 A schema-changing migration first writes a deterministic `<state>.pre-migration-v<N>` snapshot beside the database. Retention is bounded: the name carries the version, and wg-basic never accumulates automatic backups.
 
 Backups contain the VPN secrets and are created `0600`. Neither operation contacts the kernel. See [state backup, restore, and migration](../docs/state-backup-restore.md) for the operator contract.
