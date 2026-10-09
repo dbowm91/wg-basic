@@ -120,9 +120,11 @@ normal product changes after a successful rollback and prevented retry. A
 terminal transaction now pins InstallationId and the compatible schema while
 allowing generation/network/product changes after its completion. Immediate
 rollback qualification still asserts exact pre-update identity before any
-subsequent product mutation. The identity reader also uses a dedicated
-read-only SQLite path so verification never applies migrations; a regression
-test keeps v4 and live WAL at v4 across inspection.
+subsequent product mutation. The bounded startup-timeout fixture also pipes
+the updater's diagnostics so it asserts the actual service-start failure. The
+identity reader uses a dedicated read-only SQLite path so verification never
+applies migrations; a regression test keeps v4 and live WAL at v4 across
+inspection.
 
 Transport comparison at C002 implementation head `f5988c4` (x86_64 Linux,
 Rust 1.89.0, locked release profile): the current curl-linked `wg-basic` executable is

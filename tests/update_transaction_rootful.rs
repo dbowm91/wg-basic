@@ -12,7 +12,7 @@ use std::{
     net::{SocketAddr, TcpStream},
     os::unix::{fs::symlink, fs::PermissionsExt, process::CommandExt},
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
     thread,
     time::{Duration, Instant},
 };
@@ -1229,6 +1229,8 @@ fn signed_systemd_update_rolls_back_and_retries() {
     let mut timed_out_start = Command::new(BINARY)
         .args(["update", "run"])
         .env("WGB_UPDATE_FIXTURE_DIR", FIXTURE)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     wait_for_update_phase(&mut timed_out_start, "binary_committed");
