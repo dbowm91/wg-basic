@@ -95,6 +95,12 @@ Make fixture version/signature/manifest generation repeatable, record exact scri
 
 Compare Eggup curl vs alternative transport link/footprint/host availability as required by M004; record binary bytes, per-service RSS, startup/readiness, storage amplification during backup/rollback and idle CPU. Do not weaken Argon2id, root/service capability separation, authenticity, or TLS restrictions to hit footprint targets.
 
+The actual updater fixture uses immutable Phase 8 v4 source `e8fd6b1` and its
+locked release-mode artifact as the old installation; the candidate is built
+from the C002 source in a scratch archive with version 0.1.1 and the
+test-only fault hooks. This keeps old service code and its schema-4 contract
+authentic while avoiding repository tags/history edits.
+
 Transport comparison at C002 implementation head `f5988c4` (x86_64 Linux,
 Rust 1.89.0, locked release profile): the current curl-linked `wg-basic` executable is
 12,218,768 bytes (SHA-256
