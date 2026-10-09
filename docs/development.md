@@ -345,15 +345,18 @@ environment:
 ```sh
 sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo \
   CARGO_TARGET_DIR=/tmp/wg-basic-update-rootful-target \
+  WGB_OLD_BINARY=/path/to/release-mode-old-fixture/wg-basic \
   WGB_CANDIDATE_BINARY=/path/to/strictly-newer-fixture/wg-basic \
   cargo test --locked --features linux-integration,update-test-fixtures \
     --test update_transaction_rootful -- --ignored --exact \
     signed_systemd_update_rolls_back_and_retries --nocapture --test-threads=1
 ```
 
-The candidate must be strictly newer than the built-in test binary and include
-`update-test-fixtures`; release workflows must never enable that feature. The
-fixture signing key and fault markers exist only on the disposable host. The
+The old and candidate artifacts must be release-mode builds with strictly
+increasing fixture versions; both include `update-test-fixtures` only for the
+disposable-host run. The default old artifact is the current package version,
+and the candidate has its version raised in a scratch source archive. Release
+workflows must never enable that feature. The fixture signing key and fault markers exist only on the disposable host. The
 test confirms an absolute root-owned curl binary is available without making a
 network request. It also proves release signing remains unavailable without
 the production key.
