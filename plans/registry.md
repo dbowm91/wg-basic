@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-09 (M001–M003 and C001/C001a closed; C002 ready; M005 blocked on M004 closure)
+Last planning reconciliation: 2026-10-09 (M001–M003 and C001/C001a closed; C002 active; M005 blocked on M004 closure)
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -90,7 +90,7 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 | Distribution/install/update | M004 C001a — failed-unit recovery adoption and focused rootful evidence | closed | `plans/implementation/distribution/004-c001a-eggup-failed-unit-adoption-and-recovery-evidence.md` | Closure: `plans/closure/distribution/004-c001a-status.md`; hosted actual-updater signed-fixture retry/recovery run `37896480910`; included in parent C001 strict closure |
 | Distribution/install/update | M005 install/update/uninstall E2E + Phase 10 closure | blocked | `plans/implementation/distribution/005-install-update-uninstall-e2e-and-phase10-closure.md` | Phase 10 M004 closure |
 
-M004 corrective ordering: upstream `eggstack/eggup` Service M010 owned-failed-systemd quiescence and required M011 publication are closed; wg-basic C001a and C001 are closed with actual-updater hosted recovery evidence; C002 is ready for full lifecycle/traffic/CI/doc qualification; decide M004 closure; only then unblock M005. C001/C002 fixture evidence does not claim full release readiness.
+M004 corrective ordering: upstream `eggstack/eggup` Service M010 owned-failed-systemd quiescence and required M011 publication are closed; wg-basic C001a and C001 are closed with actual-updater hosted recovery evidence; C002 is active for full lifecycle/traffic/CI/doc qualification; decide M004 closure; only then unblock M005. C001/C002 fixture evidence does not claim full release readiness.
 
 Production public-release readiness additionally requires maintainer provisioning of the real release signing trust root. Fixture signing is sufficient to implement and qualify the mechanics but MUST NOT be described as production signing.
 

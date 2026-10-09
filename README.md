@@ -49,9 +49,12 @@ as root plus server setup; see
 
 Network control, durable state/restart reconciliation, management/auth,
 product/enrollment/UI, and operational hardening are implemented and
-qualified in Linux namespaces. Transactional self-update is **not implemented**;
-native installation is under implementation and not yet release-qualified (see
-[plans/registry.md](plans/registry.md)).
+qualified in Linux namespaces. Native systemd installation is implemented.
+Transactional update and recovery are implemented and C001's recovery matrix is
+closed; the broader M004 C002 systemd/traffic/target qualification is active.
+Production `update check` and `update run` remain fail-closed because the
+production Minisign public key is not provisioned. Uninstall and Phase 10
+closure remain planned (see [plans/registry.md](plans/registry.md)).
 
 ## Docs
 

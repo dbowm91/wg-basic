@@ -38,6 +38,7 @@ Targets with `linux-integration` only compile/run under
 | `state_durability` | none | Interrupted process leaves a cleanly reopening DB holding one whole generation (not power-cut safety) |
 | `privileged_protocol` | Linux, unprivileged | UDS capability/auth IPC: peer-credential authorization, socket lifecycle, fail-closed collisions |
 | `upgrade_rehearsal` | none, `#[ignore]`d, needs `WGB_OLD_BINARY` | v4 preservation, config hashes, old-binary refusal, explicit restore, repeated migration |
+| `update_transaction_rootful` | root, isolated systemd VM, `#[ignore]`d | Signed-fixture installed update with disabled and enabled health profiles, real client traffic, startup timeout, post-migration rollback, crash recovery, retained session, and retry to Committed |
 | `wireguard_kernel` | root | Real-kernel handshake, telemetry, peer update/preservation in temp namespaces; netd workers run inside the namespaces |
 | `network_reconcile` | root | Link/address/route lifecycle and reconciliation in a namespace |
 | `network_control_e2e` | root | Forwarding, NAT, firewall ownership across namespaces |

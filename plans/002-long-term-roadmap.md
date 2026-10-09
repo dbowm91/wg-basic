@@ -352,7 +352,7 @@ Phase 9 does not install systemd units or implement self-update; it produces the
 
 ## 12. Phase 10 — Distribution, installation, update, and rollback
 
-Status: planned; M001 ready.
+Status: M001–M003 closed; M004 active (C001 closed, C002 active); M005 blocked on M004 closure.
 
 Owned by:
 

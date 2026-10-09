@@ -1,6 +1,6 @@
 # Distribution M004 — Transactional Self-Update and Rollback
 
-Status: active — M003 and corrective C001 are closed; C002 rootful lifecycle/traffic, operator-contract, and M004 handoff qualification is ready and remains outstanding. Production update stays fail-closed until the production public key is provisioned.
+Status: active — M003 and corrective C001 are closed; C002 rootful lifecycle/traffic, operator-contract, and M004 handoff qualification is active. Production update stays fail-closed until the production public key is provisioned.
 
 Source roadmap:
 
