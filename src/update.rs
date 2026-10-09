@@ -483,6 +483,7 @@ fn stop_owned_service(
     if before.ownership != Ownership::Owned {
         return Err("product service registration is not owned".into());
     }
+    let mut eggup_unknown_quiescence_proven = false;
     let stop_completed = if before.state == LifecycleState::Transitioning {
         // Eggup's normal stop path re-inspects ownership before issuing the
         // stop command. During a timed-out systemd start job, that inspection
@@ -536,6 +537,7 @@ fn stop_owned_service(
                             result.detail
                         ));
                     }
+                    eggup_unknown_quiescence_proven = current.state == LifecycleState::Unknown;
                     break;
                 }
                 LifecycleState::Transitioning => {}
@@ -575,7 +577,12 @@ fn stop_owned_service(
         .inspect(&spec)
         .map_err(|_| "could not confirm product service stop")?;
     if after.ownership != Ownership::Owned
-        || !stop_postcondition_allowed(before.state, stop_completed, after.state)
+        || !stop_postcondition_allowed(
+            before.state,
+            stop_completed,
+            after.state,
+            eggup_unknown_quiescence_proven,
+        )
     {
         return Err("product service did not stop cleanly".into());
     }
@@ -646,6 +653,7 @@ fn stop_postcondition_allowed(
     before: eggup_service::LifecycleState,
     stop_completed: bool,
     after: eggup_service::LifecycleState,
+    eggup_unknown_quiescence_proven: bool,
 ) -> bool {
     use eggup_service::LifecycleState;
     after == LifecycleState::Stopped
@@ -655,6 +663,10 @@ fn stop_postcondition_allowed(
         ) && stop_completed
             || (before == LifecycleState::Stopped && !stop_completed))
         || (before == LifecycleState::Unknown && stop_completed && after == LifecycleState::Unknown)
+        || (before == LifecycleState::Transitioning
+            && stop_completed
+            && after == LifecycleState::Unknown
+            && eggup_unknown_quiescence_proven)
 }
 
 fn confirm_serve_lease_released() -> Result<(), String> {
@@ -2841,18 +2853,41 @@ mod tests {
         // are both required below.
         assert!(stop_preflight_state_allowed(Transitioning));
 
-        assert!(stop_postcondition_allowed(Running, true, Stopped));
-        assert!(stop_postcondition_allowed(Stopped, false, Stopped));
-        assert!(stop_postcondition_allowed(Unknown, true, Unknown));
-        assert!(!stop_postcondition_allowed(Unknown, false, Unknown));
-        assert!(!stop_postcondition_allowed(Unknown, true, Running));
-        assert!(!stop_postcondition_allowed(Running, true, Unknown));
-        assert!(stop_postcondition_allowed(Transitioning, true, Stopped));
-        assert!(!stop_postcondition_allowed(Transitioning, false, Stopped));
+        assert!(stop_postcondition_allowed(Running, true, Stopped, false));
+        assert!(stop_postcondition_allowed(Stopped, false, Stopped, false));
+        assert!(stop_postcondition_allowed(Unknown, true, Unknown, false));
+        assert!(!stop_postcondition_allowed(Unknown, false, Unknown, false));
+        assert!(!stop_postcondition_allowed(Unknown, true, Running, false));
+        assert!(!stop_postcondition_allowed(Running, true, Unknown, false));
+        assert!(stop_postcondition_allowed(
+            Transitioning,
+            true,
+            Stopped,
+            false
+        ));
+        assert!(!stop_postcondition_allowed(
+            Transitioning,
+            false,
+            Stopped,
+            false
+        ));
         assert!(!stop_postcondition_allowed(
             Transitioning,
             true,
-            Transitioning
+            Unknown,
+            false
+        ));
+        assert!(stop_postcondition_allowed(
+            Transitioning,
+            true,
+            Unknown,
+            true
+        ));
+        assert!(!stop_postcondition_allowed(
+            Transitioning,
+            true,
+            Transitioning,
+            false
         ));
     }
 

@@ -137,9 +137,11 @@ deadline expires. For the `Transitioning` state only, recovery now requests
 `systemctl --system stop --no-block` for the exact Eggup-owned unit through its
 bounded executor. Recovery then re-inspects ownership/state: it accepts an
 inactive unit, or delegates a resolved running/failed state to Eggup's normal
-stop path (including its failed-unit cgroup/process quiescence proof). It
-finally confirms the service lease or socket postcondition. Candidate start
-and updater health checks retain their existing 30-second bound.
+stop path (including its failed-unit cgroup/process quiescence proof). If
+Eggup proves a failed unit quiescent while the lifecycle projection remains
+`Unknown`, that typed proof is retained through the final ownership check. The
+service lease or socket postcondition is then confirmed. Candidate start and
+updater health checks retain their existing 30-second bound.
 
 Transport comparison at C002 implementation head `f5988c4` (x86_64 Linux,
 Rust 1.89.0, locked release profile): the current curl-linked `wg-basic` executable is
