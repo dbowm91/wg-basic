@@ -1033,6 +1033,23 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
         .peers
         .iter()
         .any(|peer| peer.public_key == client_public_key));
+    wait_until("the server IPv6 tunnel route after re-enable", || {
+        Command::new("ip")
+            .args([
+                "-n",
+                &installation.namespace.0,
+                "-6",
+                "route",
+                "show",
+                "dev",
+                "wg0",
+            ])
+            .output()
+            .is_ok_and(|output| {
+                output.status.success()
+                    && String::from_utf8_lossy(&output.stdout).contains("2001:db8:67::/64")
+            })
+    });
     let ping = Command::new("ip")
         .args([
             "netns",
@@ -1071,8 +1088,30 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
         .expect("IPv6 ping after network re-enable");
     assert!(
         ping6.status.success(),
-        "IPv6 tunnel traffic after restart/reconcile failed: {}",
-        String::from_utf8_lossy(&ping6.stderr)
+        "IPv6 tunnel traffic after restart/reconcile failed: {}; server addresses: {}; routes: {}",
+        String::from_utf8_lossy(&ping6.stderr),
+        String::from_utf8_lossy(
+            &Command::new("ip")
+                .args([
+                    "-n",
+                    &installation.namespace.0,
+                    "-6",
+                    "addr",
+                    "show",
+                    "dev",
+                    "wg0"
+                ])
+                .output()
+                .unwrap()
+                .stdout
+        ),
+        String::from_utf8_lossy(
+            &Command::new("ip")
+                .args(["-n", &installation.namespace.0, "-6", "route", "show"])
+                .output()
+                .unwrap()
+                .stdout
+        )
     );
     wait_until(
         "the same exported peer to handshake after re-enable",
