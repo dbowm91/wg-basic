@@ -60,6 +60,12 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
 
 /// The highest schema version this binary understands.
 pub(crate) fn supported_version() -> i64 {
+    #[cfg(feature = "update-test-fixtures")]
+    if let Ok(version) = std::fs::read_to_string("/var/lib/wg-basic/.update-fixture-schema-v4") {
+        if version.trim() == crate::release::PACKAGE_VERSION {
+            return 4;
+        }
+    }
     MIGRATIONS.last().map_or(0, |m| m.version)
 }
 /// Creates a recovery snapshot before a schema-changing migration runs.
@@ -144,6 +150,13 @@ pub fn recovery_snapshot_path(database: &Path, from_version: i64) -> PathBuf {
 }
 /// Applies every production migration in order.
 pub(super) fn run_migrations(connection: &mut Connection) -> Result<(), StateError> {
+    #[cfg(feature = "update-test-fixtures")]
+    {
+        let supported = supported_version();
+        let count = MIGRATIONS.partition_point(|migration| migration.version <= supported);
+        apply_migrations(connection, &MIGRATIONS[..count])
+    }
+    #[cfg(not(feature = "update-test-fixtures"))]
     apply_migrations(connection, MIGRATIONS)
 }
 

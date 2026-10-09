@@ -1,6 +1,6 @@
 # Distribution, Installation, Update, and Rollback Roadmap
 
-Status: active; M001–M003 closed; M004 C001 corrective-required with Eggup Service M010 dependency and conditional M011 publication; C001a blocked on upstream; C002 blocked on C001 closure; M005 blocked
+Status: active; M001–M003 closed; Eggup M010/M011 closed and adopted by C001a; C001/C001a remain corrective-required pending hosted updater recovery evidence; C002 blocked on C001 closure; M005 blocked
 
 Canonical references:
 
@@ -75,7 +75,7 @@ The implementation should prefer exact-compatible published versions proven toge
 At planning time:
 
 - core/acquisition/eggpack adapter are published at 0.1.3;
-- curl/service are published at 0.1.2.
+- curl is pinned at 0.1.2 and service at 0.1.3; the latter includes the closed M010 failed-unit quiescence correction and M011 publication evidence.
 
 M001/M004 must resolve and pin a registry-only compatible graph and record it.
 
@@ -205,13 +205,13 @@ Expected outcomes:
 
 ## 8. M004 — Transactional self-update and rollback orchestration
 
-Status: active, corrective required; M003 is mechanically closed. C001 implementation hardening is recorded in `plans/closure/distribution/004-c001-status.md`, but strict closure remains blocked. Eggup Service M010 strict closure and required M011 publication (`eggup-service 0.1.3`) are complete. wg-basic C001a has adopted the typed failed-unit stop proof; focused signed-fixture updater rollback/retry and SIGKILL recovery remain outstanding. C002 rootful/CI/docs qualification remains blocked on C001 strict closure. Production update remains disabled until the production public key is provisioned.
+Status: active, corrective required; M003 is mechanically closed. C001 implementation hardening is recorded in `plans/closure/distribution/004-c001-status.md`, but strict closure remains blocked. Eggup Service M010 strict closure and required M011 publication (`eggup-service 0.1.3`) are complete. wg-basic C001a has adopted the typed failed-unit stop proof and added the signed-fixture updater test plus isolated rootful CI lane; hosted recovery evidence remains outstanding. C002 rootful/CI/docs qualification remains blocked on C001 strict closure. Production update remains disabled until the production public key is provisioned.
 
 Implementation plan:
 
 - `plans/implementation/distribution/004-transactional-self-update-and-rollback.md`
 - `plans/implementation/distribution/004-c001-update-retry-recovery-invariants.md` (implementation hardening recorded; strict closure corrective-required)
-- `plans/implementation/distribution/004-c001a-eggup-failed-unit-adoption-and-recovery-evidence.md` (blocked on Eggup Service M010 and conditional M011; source-owned failed-unit quiescence, real updater recovery/retry evidence)
+- `plans/implementation/distribution/004-c001a-eggup-failed-unit-adoption-and-recovery-evidence.md` (Eggup M010/M011 closed; source-owned failed-unit quiescence adopted; real updater recovery/retry evidence pending hosted systemd qualification)
 - `plans/implementation/distribution/004-c002-rootful-update-qualification-and-doc-reconciliation.md` (blocked on C001 strict closure; full systemd/traffic and operator-contract evidence)
 
 Objective:
@@ -579,5 +579,5 @@ A production release requires explicit maintainer authorization after:
 | M001 release identity/authenticity/targets | closed | `plans/implementation/distribution/001-release-identity-authenticity-and-targets.md` | `plans/closure/distribution/001-status.md` |
 | M002 system install/service layout | closed | `plans/implementation/distribution/002-system-install-and-service-layout.md` | `plans/closure/distribution/002-status.md` |
 | M003 Eggpack producer pipeline/signed draft | closed — mechanically qualified; production signing pending | `plans/implementation/distribution/003-eggpack-release-pipeline-and-signed-draft.md` | `plans/closure/distribution/003-final-status.md` |
-| M004 transactional self-update/rollback | active; C001 corrective-required, C001a active with rootful updater evidence pending, C002 blocked on C001; production update disabled pending trust-root provisioning | `plans/implementation/distribution/004-transactional-self-update-and-rollback.md`; `plans/implementation/distribution/004-c001-update-retry-recovery-invariants.md`; `plans/implementation/distribution/004-c001a-eggup-failed-unit-adoption-and-recovery-evidence.md`; `plans/implementation/distribution/004-c002-rootful-update-qualification-and-doc-reconciliation.md` | Eggup Service M010/M011 closed -> wg-basic C001a -> C001 closure -> C002 -> M004 closure |
+| M004 transactional self-update/rollback | active; C001 corrective-required, C001a active with isolated updater qualification pending hosted evidence, C002 blocked on C001; production update disabled pending trust-root provisioning | `plans/implementation/distribution/004-transactional-self-update-and-rollback.md`; `plans/implementation/distribution/004-c001-update-retry-recovery-invariants.md`; `plans/implementation/distribution/004-c001a-eggup-failed-unit-adoption-and-recovery-evidence.md`; `plans/implementation/distribution/004-c002-rootful-update-qualification-and-doc-reconciliation.md` | Eggup Service M010/M011 closed -> wg-basic C001a -> C001 closure -> C002 -> M004 closure |
 | M005 lifecycle E2E/Phase 10 closure | blocked on M004 closure | `plans/implementation/distribution/005-install-update-uninstall-e2e-and-phase10-closure.md` | M004 |
