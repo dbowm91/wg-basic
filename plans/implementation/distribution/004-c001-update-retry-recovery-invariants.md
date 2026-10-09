@@ -204,7 +204,7 @@ The fixture-only candidate seam now also permits a specifically versioned
 netd startup failure on the disposable rootful host. The test drives a real
 signed update through candidate netd failure, verifies the old state identity
 and both old services return, then removes the fault marker. Its marker is
-root-owned, read-only to the service group, and compiled only with
+root-owned under `/run`, read-only to the service group, and compiled only with
 `update-test-fixtures`; the production release contract remains unchanged.
 The updated rootful test and default integration targets compile locally;
 hosted execution is pending. Strict feature-gated clippy initially exposed five
@@ -228,6 +228,8 @@ preserving the later matrix setup. Final hosted verification is pending.
 
 Hosted run `37899213693` reached the new netd-failure case after the expanded
 recovery/tamper matrix, but the updater returned success where the test expected
-rollback. The assertion now prints the updater result. The service-manager and
-fixture interaction must be diagnosed and corrected before claiming this
-negative case or closing C001.
+rollback. The marker was under `/run/wg-basic`, which systemd removes with its
+RuntimeDirectory after netd stops. It now lives directly under `/run` and the
+clean-host fixture checks that it is initially absent. The assertion also
+prints the updater result. Hosted verification remains required before claiming
+this negative case or closing C001.
