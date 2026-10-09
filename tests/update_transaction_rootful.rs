@@ -217,7 +217,12 @@ fn qualify_tampered_recovery_refusal(expected_identity: &(i64, String, i64, i64)
 
     for _ in 0..2 {
         let recovery = command(&["update", "recover"]);
-        assert!(recovery.status.success(), "{}", output_text(&recovery));
+        assert!(
+            recovery.status.success(),
+            "{}\n{}",
+            output_text(&recovery),
+            recovery_diagnostics()
+        );
     }
     assert_eq!(database_identity(), *expected_identity);
 }
@@ -496,7 +501,12 @@ fn signed_systemd_update_rolls_back_and_retries() {
     fs::remove_file(restore_entered).unwrap();
     for _ in 0..2 {
         let recovery = command(&["update", "recover"]);
-        assert!(recovery.status.success(), "{}", output_text(&recovery));
+        assert!(
+            recovery.status.success(),
+            "{}\n{}",
+            output_text(&recovery),
+            recovery_diagnostics()
+        );
     }
     let after = database_identity();
     assert_eq!(after, before, "rollback must restore exact state identity");
