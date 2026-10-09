@@ -337,6 +337,21 @@ fn ping6(client: &Namespace) -> Output {
     )
 }
 
+fn ping_target(client: &Namespace, target: &str, ipv6: bool) -> Output {
+    let mut args = vec!["netns", "exec", client.0.as_str(), "ping"];
+    if ipv6 {
+        args.push("-6");
+    }
+    args.extend_from_slice(&["-n", "-c", "1", "-W", "2"]);
+    if ipv6 {
+        args.extend_from_slice(&["-I", "2001:db8:42::2"]);
+    } else {
+        args.extend_from_slice(&["-I", "10.8.0.2"]);
+    }
+    args.push(target);
+    command("ip", &args)
+}
+
 #[test]
 fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
     if nix::unistd::geteuid().as_raw() != 0 {
@@ -724,6 +739,58 @@ fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
         "traffic did not recover after external drop removal"
     );
 
+    // Replace both default client routes with explicit split prefixes. The
+    // selected egress networks continue through WireGuard, while destinations
+    // outside each family prefix have no client tunnel route.
+    let mut split_client = client_state();
+    let split_peer = split_client
+        .wireguard
+        .as_mut()
+        .unwrap()
+        .peers
+        .first_mut()
+        .unwrap();
+    split_peer.allowed_ips = vec![
+        "198.51.100.0/24".parse().unwrap(),
+        "2001:db8:100::/64".parse().unwrap(),
+    ];
+    split_client.routes = vec![
+        ManagedRoute {
+            destination: "198.51.100.0/24".parse().unwrap(),
+            gateway: None,
+            presence: ResourcePresence::Present,
+        },
+        ManagedRoute {
+            destination: "2001:db8:100::/64".parse().unwrap(),
+            gateway: None,
+            presence: ResourcePresence::Present,
+        },
+    ];
+    let split_receipt = apply_interface(&client_netd, split_client, 513);
+    assert_eq!(
+        split_receipt.status,
+        ApplyStatus::Applied,
+        "split-route apply: {split_receipt:?}"
+    );
+    assert!(
+        ping(&client).status.success(),
+        "IPv4 split route did not carry selected traffic"
+    );
+    assert!(
+        ping6(&client).status.success(),
+        "IPv6 split route did not carry selected traffic"
+    );
+    assert!(
+        !ping_target(&client, "203.0.113.2", false).status.success(),
+        "IPv4 traffic outside the split prefix unexpectedly used the tunnel"
+    );
+    assert!(
+        !ping_target(&client, "2001:db8:200::2", true)
+            .status
+            .success(),
+        "IPv6 traffic outside the split prefix unexpectedly used the tunnel"
+    );
+
     drop(server_netd);
     server_netd = Netd::start(&server.0);
     let restarted_server = apply_interface(&server_netd, server_state(), 506);
@@ -834,6 +901,13 @@ fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
     );
     let preserved_route = run("ip", &["-n", &server.0, "route", "show", "203.0.113.0/24"]);
     assert!(String::from_utf8_lossy(&preserved_route.stdout).contains("203.0.113.0/24"));
+    let preserved_egress_addresses = run(
+        "ip",
+        &["-n", &server.0, "addr", "show", "dev", "veth-egress"],
+    );
+    let preserved_egress_addresses = String::from_utf8_lossy(&preserved_egress_addresses.stdout);
+    assert!(preserved_egress_addresses.contains("198.51.100.1/24"));
+    assert!(preserved_egress_addresses.contains("2001:db8:100::1/64"));
 
     nft_input(&server, "add table inet wg_basic\n");
     let collision = request(

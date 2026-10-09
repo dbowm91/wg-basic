@@ -30,7 +30,9 @@ and the client has an assigned IPv6 tunnel address. Assigning that address
 does not enable any route. Client routes are rendered as the client's
 `AllowedIPs`; server peer `AllowedIPs` continue to contain only assigned client
 tunnel addresses. Route selection does not itself prove upstream IPv6
-reachability; routed egress qualification is recorded separately.
+reachability; M004 namespace qualification proves the supported full/split
+route behavior with explicit upstream and return routes. Operators must arrange
+those upstream routes in their own network.
 
 ## HTTP contract
 

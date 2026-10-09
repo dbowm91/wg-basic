@@ -41,14 +41,13 @@ Targets with `linux-integration` only compile/run under
 | `update_transaction_rootful` | root, isolated systemd VM, `#[ignore]`d | Signed-fixture installed update with disabled and enabled health profiles, real client traffic, startup timeout, post-migration rollback, crash recovery, retained session, and retry to Committed |
 | `wireguard_kernel` | root | Real-kernel handshake, telemetry, peer update/preservation in temp namespaces; netd workers run inside the namespaces |
 | `network_reconcile` | root | Link/address/route lifecycle and reconciliation in a namespace |
-| `network_control_e2e` | root | Forwarding, NAT, firewall ownership across namespaces |
 | `durable_owner` | root | Owner tags and generation-aware aggregate reconcile against the real kernel |
 | `durable_restart` | root, needs built `wg-basic` binary | Startup reconciliation and crash/restart recovery via real `netd` + `reconcile` child processes |
 | `durable_backup` | root | Restored database drives real traffic (3 namespaces, handshake, forwarding, NAT); foreign same-name link fails closed |
-| `product_management_rootful` | root | Real-device dual-stack tunnel addressing and traffic plus client lifecycle via HTTP: setup, create, export, enrollment consume/replay, telemetry/audit, disable/re-enable/delete |
+| `product_management_rootful` | root | Authenticated API exports an explicit dual-family full-tunnel config; real client handshake/IPv4+IPv6 tunnel traffic; client disable stops IPv6 traffic and re-enable restores it; enrollment consume/replay, telemetry/audit, whole-network restart/reapply |
 | `maintenance_rootful` | root | CLI disable/re-enable through a real handshake; disabled state survives restart; purge needs disabled+converged+no-op plan |
 | `doctor_readonly` | mixed: first case unprivileged, rest root | Empty-install checks unprivileged; configured-but-unapplied install in a disposable namespace plans repair without applying; snapshots unchanged |
-| `network_control_e2e` | root | Three namespaces qualify IPv4 NAT and routed IPv6 without NAT66, global forwarding persistence, independent firewall drops, and retry after injected nft failure |
+| `network_control_e2e` | root | Three namespaces qualify IPv4 NAT and IPv4/IPv6 full and split client routes, positive/negative split traffic, routed IPv6 without NAT66, global forwarding persistence, foreign-state preservation, independent firewall drops, restart, and retry after injected nft failure |
 | `service_rootful_e2e` | root | HTTP surface reflects real network state (`ok` vs `degraded`), survives backend loss without restart, leaks no key material; `serve` on host, `netd` in namespace |
 | `upgrade_rehearsal_rootful` | root, `#[ignore]`d, needs `WGB_OLD_BINARY` + `WGB_CANDIDATE_BINARY` | Real v4 product traffic, backup verification, candidate migration/failed health, v4 restore, doctor, old-service recovery, re-upgrade |
 
