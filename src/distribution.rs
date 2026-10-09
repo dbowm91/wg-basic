@@ -815,7 +815,7 @@ fn require_effective_root(uid: u32) -> Result<(), String> {
     }
 }
 
-fn read_metadata(directory: &Path) -> Result<Option<InstallMetadata>, String> {
+pub(crate) fn read_metadata(directory: &Path) -> Result<Option<InstallMetadata>, String> {
     let path = directory.join("install.json");
     let meta = match fs::symlink_metadata(&path) {
         Ok(meta) => meta,
