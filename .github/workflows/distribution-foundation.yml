@@ -81,4 +81,4 @@ jobs:
           bytes="$(stat -c %s "$binary")"
           digest="$(sha256sum "$binary" | cut -d' ' -f1)"
           printf '### %s native release candidate\n\n- Bytes: `%s`\n- SHA-256: `%s`\n' \
-            "$TARGET" "$bytes" "$digest" >> "$GITHUB_STEP_SUMMARY"
+            "$TARGET" "$bytes" "$digest" | tee -a "$GITHUB_STEP_SUMMARY"
