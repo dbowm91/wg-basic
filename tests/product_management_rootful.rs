@@ -1097,6 +1097,39 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
         ])
         .output()
         .expect("IPv6 ping after network re-enable");
+    let client_after_recovery = client_ns.device(&client_scratch.netd_socket(), "wg-client");
+    let client_peer_after_recovery = client_after_recovery.peers.first();
+    let server_after_recovery = installation
+        .namespace
+        .device(&installation.scratch.netd_socket(), "wg0");
+    let server_peer_after_recovery = server_after_recovery
+        .peers
+        .iter()
+        .find(|peer| peer.public_key == client_public_key);
+    if !ping6.status.success() {
+        eprintln!(
+            "IPv6 recovery diagnostics: client_routes={}; client_peer={:?}; server_peer={:?}",
+            String::from_utf8_lossy(
+                &Command::new("ip")
+                    .args(["-n", &client_ns.0, "-6", "route", "show"])
+                    .output()
+                    .unwrap()
+                    .stdout
+            ),
+            client_peer_after_recovery.map(|peer| (
+                &peer.allowed_ips,
+                peer.latest_handshake,
+                peer.rx_bytes,
+                peer.tx_bytes
+            )),
+            server_peer_after_recovery.map(|peer| (
+                &peer.allowed_ips,
+                peer.latest_handshake,
+                peer.rx_bytes,
+                peer.tx_bytes
+            ))
+        );
+    }
     assert!(
         ping6.status.success(),
         "IPv6 tunnel traffic after restart/reconcile failed: {}; server addresses: {}; routes: {}",
