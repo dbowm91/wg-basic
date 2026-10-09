@@ -946,8 +946,13 @@ fn reject_unresolved_journal() -> Result<Option<PathBuf>, String> {
                     }
                     return Err(
                         format!(
-                            "rolled-back state identity does not match its pre-update receipt (mismatched fields: {})",
-                            mismatches.join(", ")
+                            "rolled-back state identity does not match its pre-update receipt (mismatched fields: {}; desired_generation {}->{}, network_enabled {}->{}, product_identity_matches {})",
+                            mismatches.join(", "),
+                            expected_state.desired_generation,
+                            actual_state.desired_generation,
+                            expected_state.network_enabled,
+                            actual_state.network_enabled,
+                            expected_state.product_identity_sha256 == actual_state.product_identity_sha256
                         ),
                     );
                 }
