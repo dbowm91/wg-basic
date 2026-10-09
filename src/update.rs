@@ -737,10 +737,6 @@ fn read_state_identity(path: &Path) -> Result<StateIdentity, String> {
 }
 
 fn read_state_identity_program(program: &Path, path: &Path) -> Result<StateIdentity, String> {
-    if program == Path::new(crate::distribution::BINARY_PATH) {
-        return crate::state::inspect_identity_readonly(path)
-            .map_err(|_| "state identity could not be read".into());
-    }
     let path = path.to_str().ok_or("state path is invalid")?;
     let output = run_as_management_program(program, &["state", "identity", "--state", path])?;
     if !output.success() {
