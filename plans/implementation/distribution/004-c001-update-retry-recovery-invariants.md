@@ -197,9 +197,8 @@ The running-service preflight now also requires the management service's
 owner-bound state lease to be held, not just a Running unit. The rootful test
 removes the lease path while serve is live, proves update refuses before
 service mutation, then restores the same still-locked inode before other test
-phases. The
-check/all-target clippy gates passed after this addition; hosted verification
-is still pending.
+phases. Check and all-target clippy gates passed after this addition; hosted
+verification is still pending.
 
 The fixture-only candidate seam now also permits a specifically versioned
 netd startup failure on the disposable rootful host. The test drives a real
@@ -226,3 +225,9 @@ cleanup assumption: restarting serve did not recreate the unlinked lock path
 as expected. The fixture now renames the live lock file aside, probes update
 refusal, and restores the original locked inode, avoiding service restart and
 preserving the later matrix setup. Final hosted verification is pending.
+
+Hosted run `37899213693` reached the new netd-failure case after the expanded
+recovery/tamper matrix, but the updater returned success where the test expected
+rollback. The assertion now prints the updater result. The service-manager and
+fixture interaction must be diagnosed and corrected before claiming this
+negative case or closing C001.
