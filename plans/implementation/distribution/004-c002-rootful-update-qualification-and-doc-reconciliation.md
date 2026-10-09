@@ -1,6 +1,6 @@
 # Distribution M004 C002 — Rootful Transaction Qualification and Operator-Contract Reconciliation
 
-Status: blocked until M004 C001 closes (planning handoff ready; execute after C001).
+Status: ready — M004 C001 strict closure is recorded in `plans/closure/distribution/004-c001-status.md`; execute the remaining systemd/traffic, docs, and M004 qualification contract.
 Repository baseline: dbowm91/wg-basic main at 7b69c75634242bf0d5c0d35374b96346c73f20c6 (2026-10-08). Rebase/re-review at C001's verified implementation head.
 Primary work class: corrective / capability qualification / documentation polish.
 

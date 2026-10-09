@@ -1,6 +1,6 @@
 # Distribution M004 C001 — Update Retry and Crash-Recovery Invariants
 
-Status: corrective required — implementation hardening is recorded in `plans/closure/distribution/004-c001-status.md`; C001a is closed with hosted updater retry/recovery evidence, while the broader C001 phase and adversarial qualification remains outstanding.
+Status: closed — strict C001 acceptance and hosted actual-updater recovery qualification are recorded in `plans/closure/distribution/004-c001-status.md`. C002 is now ready; M004 and M005 remain open/blocked pending their own contracts.
 Repository baseline: dbowm91/wg-basic main at 7b69c75634242bf0d5c0d35374b96346c73f20c6 (2026-10-08).
 Primary work class: corrective / invariant (durability, rollback safety, update retry).
 

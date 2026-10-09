@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-09 (M001–M003 closed; C001a closed with hosted updater recovery evidence; C001 remains corrective-required; C002 blocked on C001 closure; M005 blocked on M004)
+Last planning reconciliation: 2026-10-09 (M001–M003 and C001/C001a closed; C002 ready; M005 blocked on M004 closure)
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -79,18 +79,18 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
-| Distribution/install/update | M004 transactional self-update/rollback | active — corrective required | `plans/implementation/distribution/004-transactional-self-update-and-rollback.md` | M001–M003 closed; apply C001 then C002; production signing/public update remain gated |
-| Distribution/install/update | M004 C001 — updater retry and recovery invariants | active — corrective required | `plans/implementation/distribution/004-c001-update-retry-recovery-invariants.md` | Initial hardening and focused C001a hosted evidence are recorded; strict closure still requires remaining phase and adversarial matrix |
+| Distribution/install/update | M004 transactional self-update/rollback | active — C001 closed, C002 ready | `plans/implementation/distribution/004-transactional-self-update-and-rollback.md` | M001–M003 and C001 closed; execute C002; production signing/public update remain gated |
+| Distribution/install/update | M004 C001 — updater retry and recovery invariants | closed | `plans/implementation/distribution/004-c001-update-retry-recovery-invariants.md` | Closure: `plans/closure/distribution/004-c001-status.md`; hosted full CI run `37900751408`; C002 ready |
+| Distribution/install/update | M004 C002 — rootful update qualification and docs | ready | `plans/implementation/distribution/004-c002-rootful-update-qualification-and-doc-reconciliation.md` | C001 closed; qualify full enabled/disabled systemd update traffic, adversarial cases, CLI/docs, and M004 handoff |
 
 ## 6. Blocked implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Hard blocker |
 |---|---|---|---|---|
-| Distribution/install/update | M004 C001a — failed-unit recovery adoption and focused rootful evidence | closed | `plans/implementation/distribution/004-c001a-eggup-failed-unit-adoption-and-recovery-evidence.md` | Closure: `plans/closure/distribution/004-c001a-status.md`; hosted actual-updater signed-fixture retry/recovery run `37896480910`; parent C001 remains corrective-required |
-| Distribution/install/update | M004 C002 — rootful update qualification and docs | blocked | `plans/implementation/distribution/004-c002-rootful-update-qualification-and-doc-reconciliation.md` | M004 C001 strict closure including C001a; then broader signed-fixture systemd/traffic/CI/CLI/docs evidence |
+| Distribution/install/update | M004 C001a — failed-unit recovery adoption and focused rootful evidence | closed | `plans/implementation/distribution/004-c001a-eggup-failed-unit-adoption-and-recovery-evidence.md` | Closure: `plans/closure/distribution/004-c001a-status.md`; hosted actual-updater signed-fixture retry/recovery run `37896480910`; included in parent C001 strict closure |
 | Distribution/install/update | M005 install/update/uninstall E2E + Phase 10 closure | blocked | `plans/implementation/distribution/005-install-update-uninstall-e2e-and-phase10-closure.md` | Phase 10 M004 closure |
 
-M004 corrective ordering: upstream `eggstack/eggup` Service M010 owned-failed-systemd quiescence and required M011 publication are closed; wg-basic C001a adopts/proves the typed seam and has passed focused actual-updater hosted recovery evidence; close existing C001's remaining phase/adversarial matrix; execute C002 full lifecycle/traffic/CI/doc qualification; decide M004 closure; only then unblock M005. C001 strict closure has not been achieved; never claim full release readiness from planning or fixture evidence.
+M004 corrective ordering: upstream `eggstack/eggup` Service M010 owned-failed-systemd quiescence and required M011 publication are closed; wg-basic C001a and C001 are closed with actual-updater hosted recovery evidence; C002 is ready for full lifecycle/traffic/CI/doc qualification; decide M004 closure; only then unblock M005. C001/C002 fixture evidence does not claim full release readiness.
 
 Production public-release readiness additionally requires maintainer provisioning of the real release signing trust root. Fixture signing is sufficient to implement and qualify the mechanics but MUST NOT be described as production signing.
 
