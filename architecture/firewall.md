@@ -30,4 +30,4 @@ Run the three-namespace kernel test on a rootful Linux host with kernel WireGuar
 sudo -E cargo test --locked --features linux-integration --test network_control_e2e -- --nocapture
 ```
 
-The IPv4 no-NAT case must fail until masquerade is enabled. The IPv6 fixture instead installs an upstream route to the tunnel prefix and proves routed traffic plus established return traffic without NAT66.
+The IPv4 no-NAT case must fail until masquerade is enabled. The IPv6 fixture installs an upstream route to the tunnel prefix and proves routed traffic plus established return traffic without NAT66. Its client starts with explicit IPv4 and IPv6 full-tunnel routes, then changes to independent split prefixes; selected destinations pass and destinations outside those prefixes do not. Traffic under the split policy resumes after server netd restart/reapply, while unrelated firewall, route, and egress-address state remains intact.

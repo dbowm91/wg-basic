@@ -12,7 +12,7 @@ cargo test --locked
 cargo +1.89.0 check --all-targets --locked
 ```
 
-The default unit/protocol suite does not require root or network namespace setup. The Linux WireGuard backend mutates only through typed requests to an existing device; real-kernel integration suites create temporary namespaces and fixture links and require root, `CAP_NET_ADMIN`, `iproute2`, `iputils-ping`, and kernel WireGuard support. Dual-stack tunnel addressing and explicit family-correct client route config are qualified by product and export tests; the hosted `product-management-rootful` job qualifies real dual-stack addressing and product flows. The `network-control-e2e` rootful fixture qualifies routed IPv6 forwarding, owned firewall rules, upstream return routing, disable/restart behavior, and absence of NAT66. End-to-end client routed traffic for selected IPv6 routes remains M004 qualification.
+The default unit/protocol suite does not require root or network namespace setup. The Linux WireGuard backend mutates only through typed requests to an existing device; real-kernel integration suites create temporary namespaces and fixture links and require root, `CAP_NET_ADMIN`, `iproute2`, `iputils-ping`, and kernel WireGuard support. Dual-stack tunnel addressing and explicit family-correct client route config are qualified by product and export tests. Hosted `product-management-rootful` exercises the authenticated full-tunnel export, real client handshake and dual-family tunnel traffic, disable/re-enable, and restart/reapply. The `network-control-e2e` fixture carries IPv4 and IPv6 full-tunnel traffic, then changes to split prefixes and proves selected destinations pass while destinations outside those prefixes do not. It also qualifies routed IPv6 forwarding, upstream return routing, foreign-state preservation, sticky forwarding, and absence of NAT66.
 
 The installed serve unit runs `doctor` as the management account before each
 start. `--allow-warnings` keeps advisory drift from blocking service recovery;
@@ -136,9 +136,10 @@ Run Linux IPC integration coverage with:
 cargo test --locked --test privileged_protocol -- --nocapture
 ```
 
-Run the three-namespace network-control fixture for IPv4 NAT, routed IPv6,
-sticky global forwarding, foreign firewall preservation, independent firewall
-denial, and nft-failure retry evidence:
+Run the three-namespace network-control fixture for IPv4 and IPv6 full/split
+client routes, positive and negative split traffic, IPv4 NAT, routed IPv6,
+sticky global forwarding, foreign-state preservation, independent firewall
+denial, restart/reapply, and nft-failure retry evidence:
 
 ```sh
 sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo \

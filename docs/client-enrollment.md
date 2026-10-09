@@ -11,6 +11,10 @@ a managed server IPv6 tunnel range and an IPv6 address assigned to that client;
 assigning an IPv6 address alone never enables IPv6 routes. Route policies are
 limited to 64 unique unicast prefixes. Export preserves the selected routes,
 DNS addresses, and a bracketed IPv6 endpoint literal where configured.
+Hosted namespace qualification covers IPv4 and IPv6 full-tunnel traffic and
+split-prefix positive/negative traffic. The server's IPv6 path is routed with
+an explicit upstream return route and no NAT66; a saved route policy does not
+configure that upstream network for the operator.
 The embedded operator page offers these exports from the client editor only
 after an explicit action. Closing the editor clears its displayed artifact.
 

@@ -31,6 +31,16 @@ down the WireGuard interface. Arrange an upstream route to the configured
 tunnel prefix; wg-basic does not add that route and does not perform NAT66.
 Doctor reports the desired/observed forwarding state without writing it.
 
+Client IPv4 and IPv6 routes are selected independently in setup and the client
+editor: no route, the family's full-tunnel default (`0.0.0.0/0` or `::/0`), or
+split prefixes. IPv6 routes require both a managed server IPv6 tunnel range and
+an IPv6 address assigned to the client. Address assignment alone does not
+enable IPv6 routes. For IPv6, arrange routed egress and an upstream return route
+for the tunnel prefix; wg-basic does not perform NAT66. A route selection is
+client configuration intent. Verify the client receives the exported config
+and that the selected egress and return paths are available before relying on
+it for connectivity.
+
 ## Recovery after a failed update
 
 Stop both roles and confirm that neither holds the state lease or netd socket.

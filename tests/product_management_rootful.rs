@@ -641,7 +641,7 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
     );
     let unconfigured: serde_json::Value = serde_json::from_str(&unconfigured_body).unwrap();
     assert!(unconfigured["server"].is_null());
-    let setup_body = r#"{"expected_generation":1,"interface_name":"wg0","tunnel_prefix":"10.67.0.0/24","ipv6_tunnel_prefix":"2001:db8:67::/64","server_address":"10.67.0.1","ipv6_server_address":"2001:db8:67::1","listen_port":51820,"advertised_endpoint":"198.18.0.1:51820","egress_interface":"lo","ipv4_forwarding_required":false,"masquerade":false,"default_client_route_policy":{"prefixes":["10.67.0.1/32","2001:db8:67::1/128"]}}"#;
+    let setup_body = r#"{"expected_generation":1,"interface_name":"wg0","tunnel_prefix":"10.67.0.0/24","ipv6_tunnel_prefix":"2001:db8:67::/64","server_address":"10.67.0.1","ipv6_server_address":"2001:db8:67::1","listen_port":51820,"advertised_endpoint":"198.18.0.1:51820","egress_interface":"lo","ipv4_forwarding_required":false,"masquerade":false,"default_client_route_policy":{"prefixes":["0.0.0.0/0","::/0"]}}"#;
     let (setup_status, setup_reply, _) = http(
         addr,
         "POST",
@@ -672,7 +672,7 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
     let dashboard_read_elapsed = dashboard_read_started.elapsed();
     let interface_id = summary["server"]["interface_id"].as_str().unwrap();
     let create_body = format!(
-        r#"{{"expected_generation":{},"interface_id":"{interface_id}","label":"exported-phone","route_policy":{{"prefixes":["10.67.0.1/32","2001:db8:67::1/128"]}}}}"#,
+        r#"{{"expected_generation":{},"interface_id":"{interface_id}","label":"exported-phone","route_policy":{{"prefixes":["0.0.0.0/0","::/0"]}}}}"#,
         summary["generation"].as_u64().unwrap()
     );
     let create_started = std::time::Instant::now();
@@ -940,10 +940,8 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
     assert_eq!(exported_peer.endpoint, Some(endpoint));
     assert!(exported_peer
         .allowed_ips
-        .contains(&"10.67.0.1/32".parse().unwrap()));
-    assert!(exported_peer
-        .allowed_ips
-        .contains(&"2001:db8:67::1/128".parse().unwrap()));
+        .contains(&"0.0.0.0/0".parse().unwrap()));
+    assert!(exported_peer.allowed_ips.contains(&"::/0".parse().unwrap()));
     assert!(exported_peer.latest_handshake.is_some());
     assert!(exported_peer.rx_bytes.unwrap_or_default() > 0);
     assert!(exported_peer.tx_bytes.unwrap_or_default() > 0);
@@ -960,6 +958,94 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
                     && peer.tx_bytes.unwrap_or_default() > 0
             })
     });
+
+    let client_generation = created["generation"].as_u64().unwrap();
+    let (disable_status, disable_body, _) = http(
+        addr,
+        "POST",
+        &format!("/api/v1/clients/{client_id}/disable"),
+        &host,
+        Some(&origin),
+        Some(&cookie),
+        Some(&csrf),
+        &format!(r#"{{"expected_generation":{client_generation}}}"#),
+    );
+    assert_eq!(disable_status, 200, "client disable: {disable_body}");
+    wait_until("client disable to remove the server peer", || {
+        !installation
+            .namespace
+            .device(&installation.scratch.netd_socket(), "wg0")
+            .peers
+            .iter()
+            .any(|peer| peer.public_key == client_public_key)
+    });
+    let disabled_ping = Command::new("ip")
+        .args([
+            "netns",
+            "exec",
+            &client_ns.0,
+            "ping",
+            "-6",
+            "-n",
+            "-c",
+            "1",
+            "-W",
+            "2",
+            "-I",
+            "wg-client",
+            "2001:db8:67::1",
+        ])
+        .output()
+        .expect("IPv6 ping after client disable");
+    assert!(
+        !disabled_ping.status.success(),
+        "disabled client still carried tunnel traffic"
+    );
+
+    let disabled_reply: serde_json::Value = serde_json::from_str(&disable_body).unwrap();
+    let disabled_generation = disabled_reply["generation"].as_u64().unwrap();
+    let (enable_status, enable_body, _) = http(
+        addr,
+        "POST",
+        &format!("/api/v1/clients/{client_id}/enable"),
+        &host,
+        Some(&origin),
+        Some(&cookie),
+        Some(&csrf),
+        &format!(r#"{{"expected_generation":{disabled_generation}}}"#),
+    );
+    assert_eq!(enable_status, 200, "client enable: {enable_body}");
+    wait_until("client enable to restore the same server peer", || {
+        installation
+            .namespace
+            .device(&installation.scratch.netd_socket(), "wg0")
+            .peers
+            .iter()
+            .any(|peer| peer.public_key == client_public_key)
+    });
+    let resumed_ping = Command::new("ip")
+        .args([
+            "netns",
+            "exec",
+            &client_ns.0,
+            "ping",
+            "-6",
+            "-n",
+            "-c",
+            "1",
+            "-W",
+            "2",
+            "-I",
+            "wg-client",
+            "2001:db8:67::1",
+        ])
+        .output()
+        .expect("IPv6 ping after client enable");
+    assert!(
+        resumed_ping.status.success(),
+        "re-enabled client traffic failed: {}",
+        String::from_utf8_lossy(&resumed_ping.stderr)
+    );
 
     // Whole-network maintenance keeps the configured server/client rows while
     // projecting the interface and owned network policy absent.
