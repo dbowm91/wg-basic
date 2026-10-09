@@ -8,15 +8,24 @@
 
 use std::{
     fs,
-    io::Cursor,
+    io::{Cursor, Read, Write},
+    net::{SocketAddr, TcpStream},
     os::unix::{fs::symlink, fs::PermissionsExt, process::CommandExt},
     path::Path,
     process::{Command, Output},
+    thread,
+    time::{Duration, Instant},
+};
+use wg_basic::{
+    domain::{InterfaceName, NetworkPrefix, PrivateKey, PublicKey},
+    protocol::{request, RequestOperation, ResponseBody},
+    wireguard::{DesiredWireGuardPeer, FieldUpdate, PeerMutation, WireGuardDevicePatch},
 };
 
 const BINARY: &str = env!("CARGO_BIN_EXE_wg-basic");
 const FIXTURE: &str = "/run/wg-basic-update-fixture";
 const CANDIDATE_VERSION: &str = "0.1.1";
+const ADMIN_PASSWORD: &str = "C002 disposable update qualification password";
 
 fn command(args: &[&str]) -> Output {
     Command::new(BINARY).args(args).output().unwrap()
@@ -378,6 +387,483 @@ fn private_file(path: &Path, bytes: &[u8], owner: u32) {
     fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
 }
 
+fn set_admin_password_as_service_user() {
+    let management = nix::unistd::User::from_name("wg-basic").unwrap().unwrap();
+    let group = nix::unistd::Group::from_name("wg-basic").unwrap().unwrap();
+    let mut child = Command::new("/usr/bin/setpriv")
+        .args([
+            "--reuid",
+            &management.uid.to_string(),
+            "--regid",
+            &group.gid.to_string(),
+            "--clear-groups",
+            BINARY,
+            "admin",
+            "set-password",
+            "--password-stdin",
+            "--state",
+            distribution_state_path(),
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(format!("{ADMIN_PASSWORD}\n").as_bytes())
+        .unwrap();
+    let result = child.wait_with_output().unwrap();
+    assert!(result.status.success(), "{}", output_text(&result));
+}
+
+fn api_request(
+    method: &str,
+    path: &str,
+    cookie: Option<&str>,
+    csrf: Option<&str>,
+    body: &str,
+) -> (u16, std::collections::HashMap<String, String>, String) {
+    let address: SocketAddr = "127.0.0.1:8000".parse().unwrap();
+    let origin = format!("http://{address}");
+    let mut request =
+        format!("{method} {path} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n");
+    if let Some(cookie) = cookie {
+        request.push_str(&format!("Cookie: {cookie}\r\n"));
+    }
+    if let Some(csrf) = csrf {
+        request.push_str(&format!("Origin: {origin}\r\nx-wg-basic-csrf: {csrf}\r\n"));
+    } else if method == "POST" {
+        request.push_str(&format!("Origin: {origin}\r\n"));
+    }
+    if method == "POST" {
+        request.push_str(&format!(
+            "Content-Type: application/json\r\nContent-Length: {}\r\n",
+            body.len()
+        ));
+    }
+    request.push_str("\r\n");
+    request.push_str(body);
+
+    let mut stream = TcpStream::connect(address).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    stream.write_all(request.as_bytes()).unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    let (head, body) = response.split_once("\r\n\r\n").unwrap();
+    let mut lines = head.lines();
+    let status = lines
+        .next()
+        .unwrap()
+        .split_whitespace()
+        .nth(1)
+        .unwrap()
+        .parse()
+        .unwrap();
+    let headers = lines
+        .filter_map(|line| line.split_once(':'))
+        .map(|(key, value)| (key.trim().to_ascii_lowercase(), value.trim().to_owned()))
+        .collect();
+    (status, headers, body.to_owned())
+}
+
+struct TrafficClient {
+    namespace: String,
+    host_link: String,
+    runtime: std::path::PathBuf,
+    netd: std::process::Child,
+    admin_cookie: Option<String>,
+    client_private_key: Option<String>,
+}
+
+impl TrafficClient {
+    fn new() -> Self {
+        let suffix = std::process::id() % 10_000;
+        let namespace = format!("wgu{suffix}c");
+        let host_link = format!("wgu{suffix}s");
+        let client_link = format!("wgu{suffix}e");
+        let runtime = std::path::PathBuf::from(format!("/run/wgb-update-traffic-{suffix}"));
+        fs::create_dir(&runtime).unwrap();
+        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
+        let socket = runtime.join("netd.sock");
+        let run_ip = |args: &[&str]| {
+            let result = Command::new("/usr/sbin/ip").args(args).output().unwrap();
+            assert!(
+                result.status.success(),
+                "ip {args:?}: {}",
+                output_text(&result)
+            );
+        };
+        run_ip(&["netns", "add", &namespace]);
+        run_ip(&[
+            "link",
+            "add",
+            &host_link,
+            "type",
+            "veth",
+            "peer",
+            "name",
+            &client_link,
+        ]);
+        run_ip(&["link", "set", &client_link, "netns", &namespace]);
+        run_ip(&["addr", "add", "198.18.77.1/24", "dev", &host_link]);
+        run_ip(&["link", "set", &host_link, "up"]);
+        run_ip(&[
+            "-n",
+            &namespace,
+            "addr",
+            "add",
+            "198.18.77.2/24",
+            "dev",
+            &client_link,
+        ]);
+        run_ip(&["-n", &namespace, "link", "set", "lo", "up"]);
+        run_ip(&["-n", &namespace, "link", "set", &client_link, "up"]);
+
+        let mut netd = Command::new("/usr/sbin/ip")
+            .args(["netns", "exec", &namespace, BINARY, "netd", "--socket"])
+            .arg(&socket)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .stdin(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !socket.exists() {
+            assert!(Instant::now() < deadline, "client netd did not bind socket");
+            assert!(
+                netd.try_wait().unwrap().is_none(),
+                "client netd exited early"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        Self {
+            namespace,
+            host_link,
+            runtime,
+            netd,
+            admin_cookie: None,
+            client_private_key: None,
+        }
+    }
+
+    fn configure(&mut self, config: &str) {
+        let socket = self.runtime.join("netd.sock");
+        let fields: std::collections::HashMap<_, _> = config
+            .lines()
+            .filter_map(|line| line.split_once(" = "))
+            .collect();
+        let address: NetworkPrefix = fields["Address"].parse().unwrap();
+        let endpoint: SocketAddr = fields["Endpoint"].parse().unwrap();
+        let private_key = PrivateKey::new(fields["PrivateKey"].to_owned()).unwrap();
+        self.client_private_key = Some(fields["PrivateKey"].to_owned());
+        let public_key = PublicKey::new(fields["PublicKey"].to_owned()).unwrap();
+        let allowed_ips = fields["AllowedIPs"]
+            .split(", ")
+            .map(|prefix| prefix.parse::<NetworkPrefix>().unwrap())
+            .collect();
+        let interface: InterfaceName = "wg-client".parse().unwrap();
+        let run_ip = |args: &[&str]| {
+            let result = Command::new("/usr/sbin/ip").args(args).output().unwrap();
+            assert!(
+                result.status.success(),
+                "ip {args:?}: {}",
+                output_text(&result)
+            );
+        };
+        run_ip(&[
+            "-n",
+            &self.namespace,
+            "link",
+            "add",
+            "wg-client",
+            "type",
+            "wireguard",
+        ]);
+        run_ip(&[
+            "-n",
+            &self.namespace,
+            "addr",
+            "add",
+            &address.to_string(),
+            "dev",
+            "wg-client",
+        ]);
+        run_ip(&["-n", &self.namespace, "link", "set", "wg-client", "up"]);
+        let result = request(
+            &socket,
+            RequestOperation::ApplyWireGuardDevice {
+                interface,
+                patch: WireGuardDevicePatch {
+                    private_key: FieldUpdate::Set(private_key),
+                    listen_port: FieldUpdate::Set(51821),
+                    peer: Some(PeerMutation::Add(DesiredWireGuardPeer {
+                        public_key,
+                        preshared_key: fields.get("PresharedKey").map(|key| {
+                            wg_basic::domain::PresharedKey::new((*key).to_owned()).unwrap()
+                        }),
+                        allowed_ips,
+                        persistent_keepalive_seconds: fields
+                            .get("PersistentKeepalive")
+                            .map(|seconds| seconds.parse().unwrap()),
+                        endpoint: Some(endpoint),
+                    })),
+                },
+            },
+            9801,
+        )
+        .unwrap();
+        assert!(matches!(result, ResponseBody::WireGuardApplied(_)));
+        run_ip(&[
+            "-n",
+            &self.namespace,
+            "route",
+            "add",
+            "10.77.0.1/32",
+            "dev",
+            "wg-client",
+        ]);
+    }
+
+    fn require_handshake_and_traffic(&self) {
+        let socket = self.runtime.join("netd.sock");
+        let interface: InterfaceName = "wg-client".parse().unwrap();
+        let baseline = request(
+            &socket,
+            RequestOperation::ObserveWireGuardDevice {
+                interface: interface.clone(),
+            },
+            9802,
+        )
+        .unwrap();
+        let ResponseBody::WireGuardDevice(device) = baseline else {
+            panic!("expected client WireGuard observation: {baseline:?}");
+        };
+        let peer = device.peers.first().unwrap();
+        let tx = peer.tx_bytes.unwrap_or_default();
+        let rx = peer.rx_bytes.unwrap_or_default();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let _ = Command::new("/usr/bin/ip")
+                .args([
+                    "netns",
+                    "exec",
+                    &self.namespace,
+                    "/usr/bin/ping",
+                    "-n",
+                    "-c",
+                    "1",
+                    "-W",
+                    "1",
+                    "-I",
+                    "wg-client",
+                    "10.77.0.1",
+                ])
+                .output();
+            let observation = request(
+                &socket,
+                RequestOperation::ObserveWireGuardDevice {
+                    interface: interface.clone(),
+                },
+                9802,
+            )
+            .unwrap();
+            let ResponseBody::WireGuardDevice(device) = observation else {
+                panic!("expected client WireGuard observation: {observation:?}");
+            };
+            if device.peers.iter().any(|peer| {
+                peer.latest_handshake.is_some()
+                    && peer.tx_bytes.unwrap_or_default() > tx
+                    && peer.rx_bytes.unwrap_or_default() > rx
+            }) {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "WireGuard traffic did not resume"
+            );
+            thread::sleep(Duration::from_millis(100));
+        }
+    }
+}
+
+impl Drop for TrafficClient {
+    fn drop(&mut self) {
+        if self.netd.try_wait().ok().flatten().is_none() {
+            let _ = self.netd.kill();
+            let _ = self.netd.wait();
+        }
+        let _ = Command::new("/usr/sbin/ip")
+            .args(["netns", "del", &self.namespace])
+            .status();
+        let _ = fs::remove_dir_all(&self.runtime);
+    }
+}
+
+fn configure_enabled_product_and_client() -> TrafficClient {
+    let mut traffic = TrafficClient::new();
+    let (login_status, login_headers, login_body) = api_request(
+        "POST",
+        "/api/v1/login",
+        None,
+        None,
+        &format!(r#"{{"username":"admin","password":{ADMIN_PASSWORD:?}}}"#),
+    );
+    assert_eq!(login_status, 200, "{login_body}");
+    assert_eq!(
+        login_headers.get("content-type").map(String::as_str),
+        Some("application/json")
+    );
+    let cookie = login_headers["set-cookie"]
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    traffic.admin_cookie = Some(cookie.clone());
+    let (_, _, session_body) = api_request("GET", "/api/v1/session", Some(&cookie), None, "");
+    let session: serde_json::Value = serde_json::from_str(&session_body).unwrap();
+    let csrf = session["csrf_token"].as_str().unwrap();
+    let (setup_status, _, setup_body) = api_request(
+        "POST",
+        "/api/v1/setup",
+        Some(&cookie),
+        Some(csrf),
+        &format!(
+            r#"{{"expected_generation":1,"interface_name":"wg0","tunnel_prefix":"10.77.0.0/24","listen_port":51820,"advertised_endpoint":"198.18.77.1:51820","egress_interface":"{}","ipv4_forwarding_required":false,"masquerade":false,"default_client_route_policy":{{"prefixes":["10.77.0.0/24"]}}}}"#,
+            traffic.host_link
+        ),
+    );
+    assert_eq!(setup_status, 200, "{setup_body}");
+    let setup: serde_json::Value = serde_json::from_str(&setup_body).unwrap();
+    let generation = setup["generation"].as_u64().unwrap();
+    let interface_id = setup["data"]["interface_id"].as_str().unwrap();
+    let (client_status, _, client_body) = api_request(
+        "POST",
+        "/api/v1/clients",
+        Some(&cookie),
+        Some(csrf),
+        &format!(
+            r#"{{"expected_generation":{generation},"interface_id":"{interface_id}","label":"c002-update-traffic"}}"#
+        ),
+    );
+    assert_eq!(client_status, 201, "{client_body}");
+    let client: serde_json::Value = serde_json::from_str(&client_body).unwrap();
+    let client_id = client["data"]["client_id"].as_str().unwrap();
+    let (config_status, _, config) = api_request(
+        "GET",
+        &format!("/api/v1/clients/{client_id}/config"),
+        Some(&cookie),
+        None,
+        "",
+    );
+    assert_eq!(
+        config_status, 200,
+        "authenticated client configuration export failed"
+    );
+    let health_deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let (_, _, health_body) = api_request("GET", "/api/v1/health", Some(&cookie), None, "");
+        if serde_json::from_str::<serde_json::Value>(&health_body)
+            .map(|health| {
+                health["health"]["netd_reachable"] == true && health["backend"]["answered"] == true
+            })
+            .unwrap_or(false)
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < health_deadline,
+            "enabled product did not become healthy"
+        );
+        thread::sleep(Duration::from_millis(100));
+    }
+    traffic.configure(&config);
+    traffic.require_handshake_and_traffic();
+    traffic
+}
+
+fn assert_enabled_product_healthy(cookie: &str) {
+    let (liveness_status, _, liveness) = api_request("GET", "/healthz", None, None, "");
+    assert_eq!(liveness_status, 200);
+    assert_eq!(liveness, "ok");
+    let (health_status, _, health_body) =
+        api_request("GET", "/api/v1/health", Some(cookie), None, "");
+    assert_eq!(health_status, 200, "{health_body}");
+    let health: serde_json::Value = serde_json::from_str(&health_body).unwrap();
+    assert_eq!(health["health"]["database_healthy"], true, "{health_body}");
+    assert_eq!(health["health"]["netd_reachable"], true, "{health_body}");
+    assert_eq!(health["backend"]["answered"], true, "{health_body}");
+    let (clients_status, _, clients_body) =
+        api_request("GET", "/api/v1/clients", Some(cookie), None, "");
+    assert_eq!(clients_status, 200, "client list unavailable after update");
+    assert!(!clients_body.contains("PrivateKey"));
+}
+
+fn assert_private_key_not_in_service_logs(private_key: &str) {
+    let logs = Command::new("/usr/bin/journalctl")
+        .args([
+            "-u",
+            "wg-basic.service",
+            "-u",
+            "wg-basic-netd.service",
+            "--no-pager",
+            "-n",
+            "1000",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        logs.status.success(),
+        "could not read disposable service logs"
+    );
+    assert!(
+        !String::from_utf8_lossy(&logs.stdout).contains(private_key),
+        "service logs exposed a client private key"
+    );
+}
+
+fn fail_candidate_after_health_and_restore(
+    expected_state: &(i64, String, i64, i64),
+    expected_identity: &serde_json::Value,
+    secret: Option<&str>,
+) {
+    let result = Command::new(BINARY)
+        .args(["update", "run"])
+        .env("WGB_UPDATE_FIXTURE_DIR", FIXTURE)
+        .env("WGB_UPDATE_TEST_FAIL_AFTER_HEALTH", "1")
+        .output()
+        .unwrap();
+    let failure = output_text(&result);
+    if let Some(secret) = secret {
+        assert!(
+            !failure.contains(secret),
+            "update diagnostics exposed a client key"
+        );
+    }
+    assert!(!result.status.success(), "{failure}");
+    assert!(
+        failure.contains("candidate health passed with state schema 5"),
+        "candidate must reach healthy migrated state before the forced failure: {failure}"
+    );
+    assert!(
+        failure.contains("previous binary and state were restored"),
+        "{failure}"
+    );
+    assert_eq!(database_identity(), *expected_state);
+    assert_eq!(typed_state_identity(), *expected_identity);
+    let recovery = command(&["update", "recover"]);
+    assert!(
+        recovery.status.success(),
+        "{}\n{}",
+        output_text(&recovery),
+        recovery_diagnostics()
+    );
+}
+
 fn make_signed_fixture() {
     use sha2::{Digest, Sha256};
     let candidate = std::env::var("WGB_CANDIDATE_BINARY").expect("candidate binary");
@@ -452,6 +938,12 @@ fn signed_systemd_update_rolls_back_and_retries() {
         Path::new("/run/systemd/system").is_dir(),
         "systemd is required"
     );
+    let curl = wg_basic::update::system_transport()
+        .expect("supported systemd runner needs a safe allowlisted curl executable");
+    println!(
+        "qualified update transport executable: {}",
+        curl.executable().display()
+    );
     for path in [
         distribution::BINARY_PATH,
         distribution::SYSTEM_DIR,
@@ -515,9 +1007,50 @@ fn signed_systemd_update_rolls_back_and_retries() {
         .output()
         .unwrap();
     assert!(init.status.success(), "{}", output_text(&init));
+    set_admin_password_as_service_user();
 
     let install = command(&["system", "install", "--candidate", BINARY]);
     assert!(install.status.success(), "{}", output_text(&install));
+    let disabled_before = database_identity();
+    let disabled_identity = typed_state_identity();
+    assert_eq!(disabled_before.0, 4);
+    assert_eq!(
+        disabled_identity
+            .get("network_enabled")
+            .and_then(serde_json::Value::as_bool),
+        Some(false),
+        "fixture explicitly qualifies an intentionally disabled healthy profile"
+    );
+    let disabled_doctor = Command::new("/usr/bin/setpriv")
+        .args([
+            "--reuid",
+            &management.uid.to_string(),
+            "--regid",
+            &group.gid.to_string(),
+            "--clear-groups",
+            BINARY,
+            "doctor",
+            "--state",
+            distribution::STATE_PATH,
+            "--socket",
+            distribution::SOCKET_PATH,
+            "--json",
+            "--allow-warnings",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        disabled_doctor.status.success(),
+        "intentionally disabled profile must pass required doctor checks: {}",
+        output_text(&disabled_doctor)
+    );
+    fail_candidate_after_health_and_restore(&disabled_before, &disabled_identity, None);
+
+    // Keep the empty/disabled profile as an explicit healthy baseline, then
+    // configure an enabled server and real namespace client for all updater
+    // cutpoints, rollback, and the final committed retry.
+    let traffic = configure_enabled_product_and_client();
+    let client_private_key = traffic.client_private_key.as_deref().unwrap();
     let before = database_identity();
     let typed_before = typed_state_identity();
     assert_eq!(before.0, 4);
@@ -525,9 +1058,48 @@ fn signed_systemd_update_rolls_back_and_retries() {
         typed_before
             .get("network_enabled")
             .and_then(serde_json::Value::as_bool),
-        Some(false),
-        "fixture explicitly qualifies an intentionally disabled healthy profile"
+        Some(true),
+        "enabled transaction fixture must be network-enabled"
     );
+    traffic.require_handshake_and_traffic();
+    assert_enabled_product_healthy(traffic.admin_cookie.as_deref().unwrap());
+
+    // The candidate ExecStartPre doctor deliberately exceeds Eggup's bounded
+    // 30-second service-start deadline. The marker only matches the candidate
+    // version, so rollback's old service can start and resume the same tunnel.
+    let startup_timeout = Path::new(distribution::STATE_DIR).join(".update-fixture-start-timeout");
+    private_file(
+        &startup_timeout,
+        format!("{CANDIDATE_VERSION}\n").as_bytes(),
+        management.uid.as_raw(),
+    );
+    let timed_out_start = Command::new(BINARY)
+        .args(["update", "run"])
+        .env("WGB_UPDATE_FIXTURE_DIR", FIXTURE)
+        .output()
+        .unwrap();
+    fs::remove_file(&startup_timeout).unwrap();
+    let timeout_result = output_text(&timed_out_start);
+    assert!(
+        !timeout_result.contains(client_private_key),
+        "startup timeout diagnostics exposed a client key"
+    );
+    assert!(!timed_out_start.status.success(), "{timeout_result}");
+    assert!(
+        timeout_result.contains("could not start product service"),
+        "candidate startup timeout must classify as a bounded service-start failure: {timeout_result}"
+    );
+    assert_eq!(database_identity(), before);
+    assert_eq!(typed_state_identity(), typed_before);
+    let timeout_recovery = command(&["update", "recover"]);
+    assert!(
+        timeout_recovery.status.success(),
+        "{}\n{}",
+        output_text(&timeout_recovery),
+        recovery_diagnostics()
+    );
+    traffic.require_handshake_and_traffic();
+    assert_enabled_product_healthy(traffic.admin_cookie.as_deref().unwrap());
 
     let serve_lease =
         wg_basic::state::ServiceLease::path_for_state(Path::new(distribution::STATE_PATH)).unwrap();
@@ -573,7 +1145,13 @@ fn signed_systemd_update_rolls_back_and_retries() {
         "candidate netd startup failure must roll the update back: {}",
         output_text(&failed_netd_update)
     );
+    assert!(
+        !output_text(&failed_netd_update).contains(client_private_key),
+        "failed update diagnostics exposed a client key"
+    );
     assert_eq!(database_identity(), before);
+    traffic.require_handshake_and_traffic();
+    assert_enabled_product_healthy(traffic.admin_cookie.as_deref().unwrap());
     for service in ["wg-basic-netd.service", "wg-basic.service"] {
         let active = Command::new("/usr/bin/systemctl")
             .args(["is-active", service])
@@ -588,6 +1166,13 @@ fn signed_systemd_update_rolls_back_and_retries() {
     }
     fs::remove_file(netd_failure).unwrap();
 
+    // Force a post-health failure after the real candidate serve process has
+    // opened and migrated the v4 database. The fixture receipt proves that the
+    // candidate was healthy on schema 5 before rollback restores schema 4.
+    fail_candidate_after_health_and_restore(&before, &typed_before, Some(client_private_key));
+    traffic.require_handshake_and_traffic();
+    assert_enabled_product_healthy(traffic.admin_cookie.as_deref().unwrap());
+
     private_file(
         &Path::new(distribution::STATE_DIR).join(".update-fixture-fail-start"),
         format!("{CANDIDATE_VERSION}\n").as_bytes(),
@@ -595,7 +1180,10 @@ fn signed_systemd_update_rolls_back_and_retries() {
     );
     kill_update_at_phase("RollingBack", &before);
     fs::remove_file(Path::new(distribution::STATE_DIR).join(".update-fixture-fail-start")).unwrap();
+    traffic.require_handshake_and_traffic();
+    assert_enabled_product_healthy(traffic.admin_cookie.as_deref().unwrap());
     qualify_tampered_recovery_refusal(&before);
+    traffic.require_handshake_and_traffic();
 
     private_file(
         &Path::new(distribution::STATE_DIR).join(".update-fixture-fail-start"),
@@ -646,6 +1234,8 @@ fn signed_systemd_update_rolls_back_and_retries() {
     assert_eq!(after, before, "rollback must restore exact state identity");
     assert_eq!(typed_state_identity(), typed_before);
     assert!(Path::new(distribution::BINARY_PATH).exists());
+    traffic.require_handshake_and_traffic();
+    assert_enabled_product_healthy(traffic.admin_cookie.as_deref().unwrap());
 
     fs::remove_file(Path::new(distribution::STATE_DIR).join(".update-fixture-fail-start")).unwrap();
     let retry = Command::new(BINARY)
@@ -680,6 +1270,9 @@ fn signed_systemd_update_rolls_back_and_retries() {
             .and_then(serde_json::Value::as_i64),
         Some(5)
     );
+    traffic.require_handshake_and_traffic();
+    assert_enabled_product_healthy(traffic.admin_cookie.as_deref().unwrap());
+    assert_private_key_not_in_service_logs(client_private_key);
 
     let stop = Command::new("/usr/bin/systemctl")
         .args([

@@ -391,6 +391,8 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
             canonical_origin,
             allow_non_loopback,
         }) => {
+            #[cfg(all(target_os = "linux", feature = "update-test-fixtures"))]
+            delay_fixture_candidate_doctor_start(&state)?;
             let (mut checks, state_snapshot) = doctor_state_checks(&state);
             match request(&socket, RequestOperation::InspectCapabilities, 2) {
                 Ok(ResponseBody::Capabilities(snapshot)) => {
@@ -1180,6 +1182,35 @@ fn fail_fixture_candidate_start() -> Result<(), String> {
         std::fs::read_to_string(&marker).map_err(|_| "fixture startup marker cannot be read")?;
     if version.trim() == wg_basic::release::PACKAGE_VERSION {
         return Err("test fixture requested candidate startup failure".into());
+    }
+    Ok(())
+}
+
+#[cfg(all(target_os = "linux", feature = "update-test-fixtures"))]
+fn delay_fixture_candidate_doctor_start(state: &std::path::Path) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+
+    let marker = state
+        .parent()
+        .ok_or("fixture state path has no parent")?
+        .join(".update-fixture-start-timeout");
+    let metadata = match std::fs::symlink_metadata(&marker) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Err("fixture startup timeout marker is unsafe".into()),
+    };
+    if !metadata.is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.uid() != nix::unistd::geteuid().as_raw()
+        || metadata.mode() & 0o777 != 0o600
+        || metadata.len() > 128
+    {
+        return Err("fixture startup timeout marker is unsafe".into());
+    }
+    let version = std::fs::read_to_string(marker)
+        .map_err(|_| "fixture startup timeout marker cannot be read")?;
+    if version.trim() == wg_basic::release::PACKAGE_VERSION {
+        std::thread::sleep(std::time::Duration::from_secs(40));
     }
     Ok(())
 }
