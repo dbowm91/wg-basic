@@ -518,8 +518,33 @@ fn stop_owned_service(
             if current.ownership != Ownership::Owned {
                 return Err("transitioning product service ownership changed during stop".into());
             }
-            if current.state == LifecycleState::Stopped {
-                break;
+            match current.state {
+                LifecycleState::Stopped => break,
+                LifecycleState::Running | LifecycleState::Unknown => {
+                    // Once systemd resolves the start job, delegate the final
+                    // stop proof to Eggup. Its Unknown path validates the
+                    // failed unit's cgroup/process state before accepting
+                    // quiescence.
+                    let result = manager
+                        .stop(&spec, Duration::from_secs(60))
+                        .map_err(|error| {
+                            format!("could not prove transitioning service quiescence: {error}")
+                        })?;
+                    if !result.completed() {
+                        return Err(format!(
+                            "transitioning service quiescence was not proven: {}",
+                            result.detail
+                        ));
+                    }
+                    break;
+                }
+                LifecycleState::Transitioning => {}
+                _ => {
+                    return Err(
+                        "transitioning product service entered an unsupported lifecycle state"
+                            .into(),
+                    );
+                }
             }
             if std::time::Instant::now() >= deadline {
                 return Err(

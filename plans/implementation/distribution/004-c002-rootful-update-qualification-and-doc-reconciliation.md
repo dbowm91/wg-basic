@@ -135,10 +135,11 @@ ownership before issuing `systemctl stop`; that inspection can remain blocked
 behind the candidate's timed-out systemd start job until its entire transition
 deadline expires. For the `Transitioning` state only, recovery now requests
 `systemctl --system stop --no-block` for the exact Eggup-owned unit through its
-bounded executor, then re-inspects ownership/state until stopped and confirms
-the service lease or socket postcondition. Running, stopped, and failed/unknown
-states retain Eggup's regular stop/quiescence behavior. Candidate start and
-updater health checks retain their existing 30-second bound.
+bounded executor. Recovery then re-inspects ownership/state: it accepts an
+inactive unit, or delegates a resolved running/failed state to Eggup's normal
+stop path (including its failed-unit cgroup/process quiescence proof). It
+finally confirms the service lease or socket postcondition. Candidate start
+and updater health checks retain their existing 30-second bound.
 
 Transport comparison at C002 implementation head `f5988c4` (x86_64 Linux,
 Rust 1.89.0, locked release profile): the current curl-linked `wg-basic` executable is
