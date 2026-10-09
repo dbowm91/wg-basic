@@ -1188,7 +1188,10 @@ fn fail_fixture_candidate_start() -> Result<(), String> {
 fn fail_fixture_netd_start() -> Result<(), String> {
     use std::os::unix::fs::MetadataExt;
 
-    let marker = std::path::Path::new("/run/wg-basic/.update-fixture-fail-netd");
+    // `/run/wg-basic` is a systemd RuntimeDirectory and is removed when netd
+    // stops during update. Keep this fixture-only switch outside that tree so
+    // it persists across the candidate stop/start boundary.
+    let marker = std::path::Path::new("/run/.wg-basic-update-fixture-fail-netd");
     let metadata = match std::fs::symlink_metadata(marker) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),

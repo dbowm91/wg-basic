@@ -441,6 +441,7 @@ fn signed_systemd_update_rolls_back_and_retries() {
         distribution::SERVE_UNIT_PATH,
         distribution::NETD_UNIT_PATH,
         FIXTURE,
+        "/run/.wg-basic-update-fixture-fail-netd",
     ] {
         assert!(
             !Path::new(path).exists(),
@@ -540,7 +541,7 @@ fn signed_systemd_update_rolls_back_and_retries() {
     ] {
         kill_update_at_phase(phase, &before);
     }
-    let netd_failure = Path::new("/run/wg-basic/.update-fixture-fail-netd");
+    let netd_failure = Path::new("/run/.wg-basic-update-fixture-fail-netd");
     fs::write(netd_failure, format!("{CANDIDATE_VERSION}\n")).unwrap();
     fs::set_permissions(netd_failure, fs::Permissions::from_mode(0o644)).unwrap();
     let failed_netd_update = Command::new(BINARY)
