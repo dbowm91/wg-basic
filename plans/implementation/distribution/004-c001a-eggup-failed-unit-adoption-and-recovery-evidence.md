@@ -1,6 +1,6 @@
 # Distribution M004 C001a — Eggup Failed-unit Recovery Adoption and C001 Closure Evidence
 
-Status: active — Eggup prerequisites and typed failed-unit adoption are complete; the signed-fixture updater and isolated rootful CI lane are implemented, with hosted recovery evidence pending.
+Status: closed — typed failed-unit adoption and focused signed-fixture updater recovery are proven; parent C001 remains corrective-required on its broader phase and adversarial matrix.
 Repository baseline: `dbowm91/wg-basic` branch `plans/m004-update-correctives` at `297af6c` (2026-10-09), with `plans/closure/distribution/004-c001-status.md` disposition `corrective required`.
 Source milestone: `plans/implementation/distribution/004-transactional-self-update-and-rollback.md`.
 Corrective predecessor: `plans/implementation/distribution/004-c001-update-retry-recovery-invariants.md`; unresolved evidence in `plans/closure/distribution/004-c001-status.md`.
@@ -164,9 +164,25 @@ calls. Run `37894224120` on `388da30` captured that state and failed closed as
 designed, but could not progress. Commit `f9a00b3` now routes an exactly owned
 `Transitioning` unit through Eggup's bounded typed stop and accepts it only
 with a completed result and a fresh `Stopped` observation. Unknown/foreign
-ownership and incomplete/stuck stops still fail closed. Hosted verification of
-this corrected expanded matrix is run `37895646615` and is pending.
+ownership and incomplete/stuck stops still fail closed. Hosted run
+`37895646615` on `f9a00b3` passed the expanded real-updater matrix.
 
-Accordingly, this plan remains active, C001 remains corrective-required, and
-C002/M005 remain blocked until the expanded hosted matrix passes and remaining
-C001 negative cases are reconciled.
+Hosted run `37896480910` on `7749317` passed the expanded matrix after adding
+two discriminating negatives: alteration of the exact owned serve unit's
+`ExecStart` is refused with both services kept stopped, and a transaction-named
+stale restore-stage file containing a sentinel survives recovery unchanged.
+Recovery then runs twice and verifies the original state identity. Environment:
+GitHub-hosted Ubuntu 24.04.5 x86_64, kernel `6.17.0-1022-azure`, systemd
+`255.4-1ubuntu8.17`; rootful test result: 1 passed, 0 failed, in 573.43 seconds.
+Full run: https://github.com/dbowm91/wg-basic/actions/runs/37896480910.
+
+This closes C001a's bounded objective: Eggup's exact published typed stop
+contract is adopted, actual signed-fixture updater failures and all five
+selected durable cutpoints recover twice, candidate migration/SQLite rollback
+and retry to Committed pass, and the selected corrupted-artifact, modified
+unit, malformed-journal, and stale-stage negatives pass on disposable real
+systemd. The parent C001 plan's broader phase matrix and additional metadata,
+receipt, lease, and service-failure negatives are not claimed by this focused
+plan. Therefore C001 remains corrective-required; C002 remains blocked on
+C001 strict closure; M005 remains blocked on M004 closure. See the additive
+closure record `plans/closure/distribution/004-c001a-status.md`.

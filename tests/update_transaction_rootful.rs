@@ -9,7 +9,7 @@
 use std::{
     fs,
     io::Cursor,
-    os::unix::{fs::PermissionsExt, process::CommandExt},
+    os::unix::{fs::symlink, fs::PermissionsExt, process::CommandExt},
     path::Path,
     process::{Command, Output},
 };
@@ -230,10 +230,35 @@ fn qualify_tampered_recovery_refusal(expected_identity: &(i64, String, i64, i64)
     assert!(reload.success());
 
     let valid_journal = fs::read(journal_path).unwrap();
+    let nobody = nix::unistd::User::from_name("nobody")
+        .unwrap()
+        .expect("disposable Ubuntu host has nobody account");
+    nix::unistd::chown(journal_path, Some(nobody.uid), None).unwrap();
+    assert_recovery_refuses_tampering("journal owner");
+    nix::unistd::chown(journal_path, Some(nix::unistd::Uid::from_raw(0)), None).unwrap();
+
+    fs::set_permissions(journal_path, fs::Permissions::from_mode(0o644)).unwrap();
+    assert_recovery_refuses_tampering("journal mode");
+    fs::set_permissions(journal_path, fs::Permissions::from_mode(0o600)).unwrap();
+
+    let journal_sidecar = journal_path.with_extension("json.saved");
+    fs::rename(journal_path, &journal_sidecar).unwrap();
+    symlink(&journal_sidecar, journal_path).unwrap();
+    assert_recovery_refuses_tampering("journal symlink");
+    fs::remove_file(journal_path).unwrap();
+    fs::rename(&journal_sidecar, journal_path).unwrap();
+
     fs::write(journal_path, b"{").unwrap();
     assert_recovery_refuses_tampering("journal");
     fs::write(journal_path, valid_journal).unwrap();
     fs::File::open(journal_path).unwrap().sync_all().unwrap();
+
+    let receipt_path = Path::new(wg_basic::distribution::SYSTEM_DIR).join("install.json");
+    let valid_receipt = fs::read(&receipt_path).unwrap();
+    fs::write(&receipt_path, b"{}").unwrap();
+    assert_recovery_refuses_tampering("install receipt");
+    fs::write(&receipt_path, valid_receipt).unwrap();
+    fs::File::open(receipt_path).unwrap().sync_all().unwrap();
 
     for _ in 0..2 {
         let recovery = command(&["update", "recover"]);
@@ -485,6 +510,7 @@ fn signed_systemd_update_rolls_back_and_retries() {
     );
 
     for phase in [
+        "Prepared",
         "BackupVerified",
         "ServicesStopped",
         "BinaryCommitted",
@@ -493,6 +519,13 @@ fn signed_systemd_update_rolls_back_and_retries() {
     ] {
         kill_update_at_phase(phase, &before);
     }
+    private_file(
+        &Path::new(distribution::STATE_DIR).join(".update-fixture-fail-start"),
+        format!("{CANDIDATE_VERSION}\n").as_bytes(),
+        management.uid.as_raw(),
+    );
+    kill_update_at_phase("RollingBack", &before);
+    fs::remove_file(Path::new(distribution::STATE_DIR).join(".update-fixture-fail-start")).unwrap();
     qualify_tampered_recovery_refusal(&before);
 
     private_file(
