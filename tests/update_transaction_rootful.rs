@@ -126,10 +126,33 @@ fn recovery_diagnostics() -> String {
         ])
         .output()
         .unwrap();
+    let management = nix::unistd::User::from_name("wg-basic").unwrap().unwrap();
+    let group = nix::unistd::Group::from_name("wg-basic").unwrap().unwrap();
+    let uid = management.uid.to_string();
+    let gid = group.gid.to_string();
+    let doctor = Command::new("/usr/bin/setpriv")
+        .args([
+            "--reuid",
+            uid.as_str(),
+            "--regid",
+            gid.as_str(),
+            "--clear-groups",
+            BINARY,
+            "doctor",
+            "--state",
+            distribution_state_path(),
+            "--socket",
+            wg_basic::distribution::SOCKET_PATH,
+            "--json",
+            "--allow-warnings",
+        ])
+        .output()
+        .unwrap();
     format!(
-        "systemctl={}\njournalctl={}",
+        "systemctl={}\njournalctl={}\ndoctor={}",
         output_text(&status),
-        output_text(&journal)
+        output_text(&journal),
+        output_text(&doctor)
     )
 }
 
