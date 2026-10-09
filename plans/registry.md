@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-09 (Phase 10 M001–M003 closed; C001 hardening implemented with strict closure corrective-required; C002 remains blocked on C001 strict closure; M005 remains blocked)
+Last planning reconciliation: 2026-10-09 (M001–M003 closed; M004 C001 corrective-required; C001a blocked on Eggup Service M010 and conditional M011; C002 blocked on C001 closure; M005 blocked)
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -80,16 +80,17 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
 | Distribution/install/update | M004 transactional self-update/rollback | active — corrective required | `plans/implementation/distribution/004-transactional-self-update-and-rollback.md` | M001–M003 closed; apply C001 then C002; production signing/public update remain gated |
-| Distribution/install/update | M004 C001 — updater retry and recovery invariants | active — corrective required | `plans/implementation/distribution/004-c001-update-retry-recovery-invariants.md` | Code hardening and routine/Phase 9 regression evidence recorded; strict closure blocked on failed-service lifecycle proof and updater-level signed-fixture retry/crash matrix; baseline `237f5f4` |
+| Distribution/install/update | M004 C001 — updater retry and recovery invariants | active — corrective required | `plans/implementation/distribution/004-c001-update-retry-recovery-invariants.md` | Initial code/test hardening in `e3ff649`; strict closure requires C001a Eggup adoption plus updater-level signed-fixture replay/crash evidence |
 
 ## 6. Blocked implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Hard blocker |
 |---|---|---|---|---|
-| Distribution/install/update | M004 C002 — rootful update qualification and docs | blocked | `plans/implementation/distribution/004-c002-rootful-update-qualification-and-doc-reconciliation.md` | M004 C001 strict closure; then signed-fixture systemd update/rollback/SIGKILL evidence, CLI/docs and CI |
+| Distribution/install/update | M004 C001a — failed-unit recovery adoption and focused rootful evidence | blocked on upstream | `plans/implementation/distribution/004-c001a-eggup-failed-unit-adoption-and-recovery-evidence.md` | Eggup Service M010 strict closure; Service M011 registry publication only if M010 source changes; close C001 after proof |
+| Distribution/install/update | M004 C002 — rootful update qualification and docs | blocked | `plans/implementation/distribution/004-c002-rootful-update-qualification-and-doc-reconciliation.md` | M004 C001 strict closure including C001a; then broader signed-fixture systemd/traffic/CI/CLI/docs evidence |
 | Distribution/install/update | M005 install/update/uninstall E2E + Phase 10 closure | blocked | `plans/implementation/distribution/005-install-update-uninstall-e2e-and-phase10-closure.md` | Phase 10 M004 closure |
 
-M004 corrective ordering: C001 first (terminal retry/recover/state safety), C002 second (rootful signed-fixture transaction qualification, CLI/docs, CI). These are registered planning handoffs, not implemented fixes or proof of M004 closure. Do not begin M005 from these plans alone.
+M004 corrective ordering: upstream `eggstack/eggup` Service M010 owned-failed-systemd quiescence; conditional M011 publish only if an upstream source fix is necessary; wg-basic C001a adopt/prove the typed seam and actual recovery; close existing C001; execute C002 full lifecycle/traffic/CI/doc qualification; decide M004 closure; only then unblock M005. The original C001 implementation hardening is landed on this work branch but strict closure has not been achieved; never claim full release readiness from planning or fixture evidence.
 
 Production public-release readiness additionally requires maintainer provisioning of the real release signing trust root. Fixture signing is sufficient to implement and qualify the mechanics but MUST NOT be described as production signing.
 
