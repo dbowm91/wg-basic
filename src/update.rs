@@ -326,8 +326,15 @@ where
         .map_err(|_| "Eggup candidate integrity or identity validation failed")?;
     let verifier = ExactDigestVerifier::new(vec![(member_id, expected_old_sha256)]);
     let ownership = CommitOwnership::new(&verifier, AbsentPolicy::DenyCreate);
+    let install_metadata =
+        fs::symlink_metadata(install_root).map_err(|_| "Eggup install root cannot be inspected")?;
+    if !install_metadata.file_type().is_dir() || install_metadata.mode() & 0o022 != 0 {
+        return Err("Eggup install root ownership or permissions are unsafe".into());
+    }
+    let installed_owner = install_metadata.uid();
+    let installed_path = install_root.join(destination_name);
     let commit_callback = || {
-        ensure_installed_executable(&expected_candidate_sha256)?;
+        ensure_executable(&installed_path, &expected_candidate_sha256, installed_owner)?;
         post_commit()
     };
     let receipt = match stale_lock_verifier {
@@ -2013,7 +2020,7 @@ pub fn apply() -> Result<(), String> {
             Ok(())
         }
         Ok(receipt) if receipt.disposition() == eggup_core::TransactionDisposition::RolledBack => {
-            ensure_installed_executable(&old_digest)?;
+            ensure_executable(Path::new(crate::distribution::BINARY_PATH), &old_digest, 0)?;
             if restore_succeeded.get() {
                 let healthy = start_owned_services()
                     .and_then(|_| validate_running_product_health(&old_state_identity));
@@ -2276,7 +2283,7 @@ pub fn recover() -> Result<(), String> {
                 &journal.version_from,
                 candidate_digest,
                 old_digest,
-                || ensure_installed_executable(&old_digest),
+                || ensure_executable(Path::new(crate::distribution::BINARY_PATH), &old_digest, 0),
                 Some(&stale_lock_verifier),
             )?;
             if receipt.disposition() != eggup_core::TransactionDisposition::Committed {
@@ -2301,7 +2308,7 @@ pub fn recover() -> Result<(), String> {
                 .map_err(|_| "could not persist recovery rollback phase")?;
         }
     }
-    if ensure_installed_executable(&old_digest).is_err() {
+    if ensure_executable(Path::new(crate::distribution::BINARY_PATH), &old_digest, 0).is_err() {
         mark_recovery_required(journal_path);
         return Err("restored binary permissions could not be safely repaired".into());
     }
@@ -2429,9 +2436,20 @@ fn installed_binary_digest() -> Result<[u8; 32], String> {
     eggup_core::hash_file(path).map_err(|_| "installed binary digest could not be read".into())
 }
 
-fn ensure_installed_executable(expected_digest: &[u8; 32]) -> Result<(), String> {
-    let path = Path::new(crate::distribution::BINARY_PATH);
-    if installed_binary_digest()? != *expected_digest {
+fn ensure_executable(
+    path: &Path,
+    expected_digest: &[u8; 32],
+    expected_owner: u32,
+) -> Result<(), String> {
+    let metadata =
+        fs::symlink_metadata(path).map_err(|_| "installed binary cannot be inspected")?;
+    if !metadata.file_type().is_file()
+        || metadata.uid() != expected_owner
+        || metadata.mode() & 0o022 != 0
+        || metadata.nlink() != 1
+        || eggup_core::hash_file(path).map_err(|_| "installed binary digest could not be read")?
+            != *expected_digest
+    {
         return Err("installed binary digest changed before permission repair".into());
     }
     fs::set_permissions(path, fs::Permissions::from_mode(0o755))
@@ -2439,17 +2457,13 @@ fn ensure_installed_executable(expected_digest: &[u8; 32]) -> Result<(), String>
     File::open(path)
         .and_then(|file| file.sync_all())
         .map_err(|_| "installed binary permissions could not be made durable")?;
-    File::open(
-        Path::new(crate::distribution::BINARY_PATH)
-            .parent()
-            .unwrap(),
-    )
-    .and_then(|directory| directory.sync_all())
-    .map_err(|_| "installed binary directory could not be made durable")?;
+    File::open(path.parent().ok_or("installed binary parent is invalid")?)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|_| "installed binary directory could not be made durable")?;
     let metadata = fs::symlink_metadata(path)
         .map_err(|_| "installed binary permissions could not be verified")?;
     if !metadata.file_type().is_file()
-        || metadata.uid() != 0
+        || metadata.uid() != expected_owner
         || metadata.mode() & 0o777 != 0o755
         || metadata.nlink() != 1
         || eggup_core::hash_file(path).map_err(|_| "installed binary digest could not be read")?
@@ -2966,6 +2980,7 @@ mod tests {
         let stage = base.join("stage");
         fs::create_dir_all(&install).unwrap();
         fs::create_dir_all(&stage).unwrap();
+        fs::set_permissions(&install, fs::Permissions::from_mode(0o755)).unwrap();
         let installed = install.join("wg-basic");
         let candidate = stage.join("candidate");
         fs::write(&installed, b"old binary bytes").unwrap();
