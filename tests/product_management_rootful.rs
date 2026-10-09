@@ -1023,6 +1023,33 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
             .iter()
             .any(|peer| peer.public_key == client_public_key)
     });
+    for peer in [
+        PeerMutation::Remove {
+            public_key: server_public_key.clone(),
+        },
+        PeerMutation::Add(DesiredWireGuardPeer {
+            public_key: server_public_key.clone(),
+            preshared_key: preshared_key.clone(),
+            allowed_ips: allowed_ips.clone(),
+            persistent_keepalive_seconds: keepalive,
+            endpoint: Some(endpoint),
+        }),
+    ] {
+        let response = wg_basic::protocol::request(
+            client_scratch.netd_socket(),
+            RequestOperation::ApplyWireGuardDevice {
+                interface: "wg-client".parse().unwrap(),
+                patch: WireGuardDevicePatch {
+                    private_key: FieldUpdate::Keep,
+                    listen_port: FieldUpdate::Keep,
+                    peer: Some(peer),
+                },
+            },
+            9005,
+        )
+        .expect("refresh exported client session after re-enable");
+        assert!(matches!(response, ResponseBody::WireGuardApplied(_)));
+    }
     let resumed_ping = Command::new("ip")
         .args([
             "netns",
