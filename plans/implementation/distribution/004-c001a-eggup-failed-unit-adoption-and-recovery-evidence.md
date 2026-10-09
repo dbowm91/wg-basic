@@ -107,8 +107,8 @@ cutpoint. It then forces a post-migration candidate startup failure, kills the
 updater during staged SQLite rollback, recovers twice, and retries the same
 signed update to Committed. Database schema, installation ID, generation, and
 client count are checked across rollback and retry. A dedicated Ubuntu 24.04
-systemd workflow builds the newer candidate in an isolated source copy and
-runs this ignored rootful test on its ephemeral hosted VM. The first hosted
+systemd CI lane builds the newer candidate in an isolated source copy and runs
+this ignored rootful test on its ephemeral hosted VM. The first hosted
 attempt exposed that the base runner omits `/etc/sysusers.d`; the fixture now
 creates that standard directory before provisioning the managed account.
 
