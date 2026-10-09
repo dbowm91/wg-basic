@@ -409,7 +409,7 @@ Docker/container distribution MAY be added later as secondary packaging only.
 
 ## 13. Phase 11 — IPv6 and route-policy production qualification
 
-Status: active — Phase 10 closes the IPv4 appliance lifecycle and product baseline. M001 is closed; M002 is active under ADR-007. Public release signing remains an independent operational gate.
+Status: active — Phase 10 closes the IPv4 appliance lifecycle and product baseline. IPv6 M001 and M002 are closed; M003 client route policy and product surface is active. Public release signing remains an independent operational gate.
 
 Expected outcomes:
 
@@ -502,5 +502,5 @@ Before the first public production claim:
 | 8 management API/UI/enrollment | closed | `plans/subsystems/product-management-enrollment-ui-roadmap.md` | — |
 | 9 operational hardening | closed | `plans/subsystems/operational-hardening-roadmap.md` | — |
 | 10 distribution/update | closed — release-mechanically complete, public publication blocked | `plans/subsystems/distribution-install-update-roadmap.md` | `plans/closure/distribution/005-status.md`; production signing pending |
-| 11 IPv6/route-policy qualification | active | `plans/subsystems/ipv6-route-policy-roadmap.md` | M001 closed; M002 active plan in registry |
+| 11 IPv6/route-policy qualification | active | `plans/subsystems/ipv6-route-policy-roadmap.md` | M001–M002 closed; M003 active plan in registry |
 | 12 advanced capabilities | deferred | separate future research | explicit product decision |

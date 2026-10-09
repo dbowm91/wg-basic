@@ -1,6 +1,6 @@
 # IPv6 and Route-Policy Qualification Roadmap
 
-Status: active; M001 closed and M002 active under accepted ADR-007
+Status: active; M001 and M002 closed, M003 active; M004 blocked pending M003 closure
 
 Canonical references:
 
@@ -41,13 +41,12 @@ dataplane. Kernel WireGuard and the typed `netd` boundary remain authoritative.
 
 ## 3. Current repository baseline
 
-At Phase 10 technical closure, core domain prefixes, peer AllowedIPs,
-RTNETLINK addresses/routes, client route prefixes, DNS values, and endpoint
-hosts are represented with family-capable types. Product allocation, setup,
-client assigned-address validation, network-policy validation, firewall
-forwarding/NAT, and operational sysctl handling are IPv4-only. Current live
-product behavior must remain documented as IPv4-only until the Phase 11
-qualification plans close.
+At M002 closure, dual-stack tunnel addressing, explicit global IPv6 forwarding,
+installation-owned IPv6 source firewall rules, and routed IPv6 forwarding are
+qualified. Client route-policy prefix storage, advertised endpoints, and DNS
+values are family-capable, but authenticated policy validation and operator
+controls for IPv6 full/split routes remain M003 work. Phase 11 claims remain
+bounded by each milestone's closure evidence.
 
 ## 4. Milestones and dependencies
 
@@ -140,6 +139,6 @@ to complete the feature.
 | Milestone | Status | Plan | Closure | Blocker |
 |---|---|---|---|---|
 | M001 dual-stack product/domain persistence and tunnel reconciliation | closed | `plans/implementation/ipv6-route-policy/001-dual-stack-domain-and-kernel-reconciliation.md` | `plans/closure/ipv6-route-policy/001-status.md` | — |
-| M002 IPv6 forwarding/firewall/ownership | active | `plans/implementation/ipv6-route-policy/002-ipv6-forwarding-firewall-and-ownership.md` | — | M001 closure and accepted ADR-007 |
-| M003 client route policy/product surface | blocked | to be written after M002 | — | M002 closure |
+| M002 IPv6 forwarding/firewall/ownership | closed | `plans/implementation/ipv6-route-policy/002-ipv6-forwarding-firewall-and-ownership.md` | `plans/closure/ipv6-route-policy/002-status.md` | — |
+| M003 client route policy/product surface | active | `plans/implementation/ipv6-route-policy/003-client-route-policy-and-product-surface.md` | — | M002 strict closure |
 | M004 dual-stack E2E/Phase 11 closure | blocked | to be written after M003 | — | M003 closure |
