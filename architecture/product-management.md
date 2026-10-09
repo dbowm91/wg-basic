@@ -22,6 +22,16 @@ policy for the managed tunnel prefix. Forwarding uses the host-global Linux
 control, remains enabled when policy is disabled, requires upstream routing,
 and does not use NAT66.
 
+Client route policy is explicit and independent for IPv4 and IPv6. Operators
+may select no route, the family's full-tunnel default (`0.0.0.0/0` or `::/0`),
+or split prefixes; every policy is limited to 64 unique unicast prefixes.
+IPv6 routes are accepted only when the server has a managed IPv6 tunnel pool
+and the client has an assigned IPv6 tunnel address. Assigning that address
+does not enable any route. Client routes are rendered as the client's
+`AllowedIPs`; server peer `AllowedIPs` continue to contain only assigned client
+tunnel addresses. Route selection does not itself prove upstream IPv6
+reachability; routed egress qualification is recorded separately.
+
 ## HTTP contract
 
 All product routes require a live administrator session and pass the same
@@ -92,7 +102,8 @@ inside the writing transaction. Retention does not advance DesiredGeneration.
 ## Operator UI
 
 The embedded operator page is a buildless same-origin client of these routes.
-It provides login, first-server setup, server and client status, client
+It provides login, first-server setup, separate IPv4 and IPv6 route controls for
+no route, full tunnel, and split prefixes, server and client status, client
 create/edit/enable/disable/delete, explicit config/QR export, one-time link
 create/revoke, bounded visible-page telemetry refresh, and recent audit
 history. Mutations carry the generation from the latest API read; a `409`
@@ -107,5 +118,6 @@ from the dialog on close; the UI does not persist them in browser storage.
 Administrator bootstrap and reset remain local CLI operations. The HTTP setup
 route configures the WireGuard server only after login; it does not create the
 administrator. The product API does not add arbitrary hooks, firewall rules,
-TLS termination, installation, or update behavior. Per-client dual-family
-route selection and multi-interface product workflows remain deferred.
+TLS termination, installation, or update behavior. Multi-interface product
+workflows remain deferred. Dual-family client route selection is explicit and
+does not claim end-to-end routed traffic.

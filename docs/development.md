@@ -12,7 +12,7 @@ cargo test --locked
 cargo +1.89.0 check --all-targets --locked
 ```
 
-The default unit/protocol suite does not require root or network namespace setup. The Linux WireGuard backend mutates only through typed requests to an existing device; real-kernel integration suites create temporary namespaces and fixture links and require root, `CAP_NET_ADMIN`, `iproute2`, `iputils-ping`, and kernel WireGuard support. Dual-stack tunnel addressing is qualified by the hosted `product-management-rootful` job. The `network-control-e2e` rootful fixture also qualifies routed IPv6 forwarding, owned firewall rules, upstream return routing, disable/restart behavior, and absence of NAT66.
+The default unit/protocol suite does not require root or network namespace setup. The Linux WireGuard backend mutates only through typed requests to an existing device; real-kernel integration suites create temporary namespaces and fixture links and require root, `CAP_NET_ADMIN`, `iproute2`, `iputils-ping`, and kernel WireGuard support. Dual-stack tunnel addressing and explicit family-correct client route config are qualified by product and export tests; the hosted `product-management-rootful` job qualifies real dual-stack addressing and product flows. The `network-control-e2e` rootful fixture qualifies routed IPv6 forwarding, owned firewall rules, upstream return routing, disable/restart behavior, and absence of NAT66. End-to-end client routed traffic for selected IPv6 routes remains M004 qualification.
 
 The installed serve unit runs `doctor` as the management account before each
 start. `--allow-warnings` keeps advisory drift from blocking service recovery;

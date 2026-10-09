@@ -159,6 +159,8 @@ pub(crate) fn material_from_snapshots(
     product: &ProductState,
     client_id: ClientId,
 ) -> Result<super::export::ClientConfigMaterial, ProductError> {
+    crate::domain::validate_desired_state(state)
+        .map_err(|error| ProductError::State(StateError::Validation(error)))?;
     let (interface, client) = state
         .interfaces
         .iter()

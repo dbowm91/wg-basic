@@ -5,6 +5,12 @@ WireGuard configuration or request a local SVG QR encoding of that exact
 configuration. Both artifact responses are marked `Cache-Control: no-store`;
 the config response is an attachment. A client without an allowed route policy
 cannot be exported because it would produce an unusable `AllowedIPs` setting.
+Client route intent is selected explicitly per family: no routes, that family's
+full tunnel (`0.0.0.0/0` or `::/0`), or split prefixes. IPv6 routes require both
+a managed server IPv6 tunnel range and an IPv6 address assigned to that client;
+assigning an IPv6 address alone never enables IPv6 routes. Route policies are
+limited to 64 unique unicast prefixes. Export preserves the selected routes,
+DNS addresses, and a bracketed IPv6 endpoint literal where configured.
 The embedded operator page offers these exports from the client editor only
 after an explicit action. Closing the editor clears its displayed artifact.
 

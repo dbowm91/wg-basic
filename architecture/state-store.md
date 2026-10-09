@@ -108,6 +108,12 @@ loads them with no IPv6 assignment. The server IPv6 address is stored in the
 existing typed interface tunnel-prefix and managed-address collections; no
 new privileged operation or state authority is introduced.
 
+Client route policies remain in the existing typed prefix tables; M003 adds no
+schema migration. Desired-state validation bounds each policy to 64 unique
+unicast prefixes, allows explicit IPv4/IPv6 default routes, and rejects IPv6
+routes unless the managed server has an IPv6 tunnel pool and the client has an
+assigned IPv6 address. Backup restore and state reopen use the same validation.
+
 Schema v7 adds `network_policy.ipv6_forwarding_required`, defaulting existing
 rows to false. IPv6 forwarding is never inferred from an assigned tunnel
 address; enabling it requires the explicit server policy and managed IPv6

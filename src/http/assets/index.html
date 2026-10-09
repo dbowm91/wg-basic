@@ -43,10 +43,11 @@
             <label>Optional IPv6 tunnel range <input name="ipv6_tunnel_prefix" placeholder="fd77::/64" /></label>
             <label>Optional server IPv6 address <input name="ipv6_server_address" placeholder="fd77::1" /></label>
             <label>Internet egress interface <input name="egress_interface" value="eth0" required /></label>
-            <label>Client routes <input name="routes" value="10.77.0.0/24" required /><span class="help">Comma separated. Use 0.0.0.0/0 to route all IPv4 traffic through this server.</span></label>
+            <fieldset><legend>Default client IPv4 routes</legend><label>Mode <select name="routes_v4_mode"><option value="none">No IPv4 route</option><option value="full">Full tunnel</option><option value="split" selected>Split routes</option></select></label><label>Split prefixes <input name="routes_v4_prefixes" value="10.77.0.0/24" /></label></fieldset>
+            <fieldset><legend>Default client IPv6 routes</legend><label>Mode <select name="routes_v6_mode"><option value="none" selected>No IPv6 route</option><option value="full">Full tunnel</option><option value="split">Split routes</option></select></label><label>Split prefixes <input name="routes_v6_prefixes" placeholder="2001:db8:1234::/48" /></label></fieldset>
             <label class="check"><input name="ipv4_forwarding_required" type="checkbox" checked /> Enable IPv4 forwarding</label>
             <label class="check"><input name="ipv6_forwarding_required" type="checkbox" /> Enable host-wide IPv6 forwarding</label>
-            <span class="help">IPv6 forwarding is opt-in. Linux applies it globally; disabling this network leaves the host setting enabled. IPv6 client prefixes must be routed upstream. NAT66 is not used.</span>
+            <span class="help">IPv6 forwarding is opt-in. IPv6 client routes require an IPv6 tunnel range and client address, plus working routed IPv6 egress. Linux applies forwarding globally; disabling this network leaves it enabled. NAT66 is not used.</span>
             <label class="check"><input name="masquerade" type="checkbox" checked /> Masquerade IPv4 client internet traffic</label>
           </details>
           <button type="submit">Save server settings</button>
@@ -86,7 +87,8 @@
           <label>Client name <input name="label" maxlength="128" required /></label>
           <label>VPN address <input name="address" required /></label>
           <label>VPN IPv6 address <input name="ipv6_address" /></label>
-          <label>Client routes <input name="routes" /></label>
+          <fieldset><legend>Client IPv4 routes</legend><label>Mode <select name="routes_v4_mode"><option value="none">No IPv4 route</option><option value="full">Full tunnel</option><option value="split">Split routes</option></select></label><label>Split prefixes <input name="routes_v4_prefixes" placeholder="10.77.0.0/24" /></label></fieldset>
+          <fieldset><legend>Client IPv6 routes</legend><label>Mode <select name="routes_v6_mode"><option value="none">No IPv6 route</option><option value="full">Full tunnel</option><option value="split">Split routes</option></select></label><label>Split prefixes <input name="routes_v6_prefixes" placeholder="2001:db8:1234::/48" /></label><span class="help">IPv6 routes require an IPv6 server tunnel range and an IPv6 address assigned to this client. Routed egress must also be configured.</span></fieldset>
           <label>DNS servers <input name="dns_servers" /></label>
           <label>Keepalive seconds <input name="client_keepalive_seconds" type="number" min="1" max="65535" /></label>
           <button type="submit">Save changes</button>

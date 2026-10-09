@@ -73,7 +73,10 @@ validates. `"wg0"` and 15-char names pass; 16-char names and
   so `"10.8.0.7/24"` parses to `"10.8.0.0/24"`. Helpers: `network()`,
   `contains(IpAddr)`, `family_matches(IpAddr)`.
 - `ClientRoutePolicy { prefixes: Vec<NetworkPrefix> }` is client-side routing
-  intent, kept separate from server-side peer `AllowedIPs`.
+  intent, kept separate from server-side peer `AllowedIPs`. Validation accepts
+  at most 64 unique unicast prefixes, including the explicit family defaults
+  `0.0.0.0/0` and `::/0`; IPv6 client routes require an IPv6 server pool and
+  address assigned to that client. Address assignment never selects routes.
 - `validate_unique_client_addresses` requires every assignment to be a host
   prefix (`/32` for v4, `/128` for v6) and rejects a repeated address:
   `ClientAddressMustBeHostPrefix` / `DuplicateClientAddress(IpAddr)`.
