@@ -23,7 +23,7 @@ This is a bounded corrective that does not replace M004 C002's wider x86_64/aarc
 ## 3. Required invariants
 
 1. First prove exact owned registration for both `wg-basic.service` and `wg-basic-netd.service` via `ServiceSpec`, executable/argv/unit definition, secure installation receipt, and Eggup's owner check. An unknown *lifecycle* classification must never be treated as known stopped or as ownership proof.
-2. Update/recover may stop only service identities proven owned. A failed unit must be stopped/proven quiescent by Eggup's qualified typed path; foreign, modified, missing, transitioning or manager-inaccessible units fail closed.
+2. Update/recover may stop only service identities proven owned. A failed unit must be stopped/proven quiescent by Eggup's qualified typed path. An exactly owned unit observed in `Transitioning` may be passed to that same bounded Eggup stop operation, but counts as stopped only after a completed receipt, a fresh exact ownership check, and a `Stopped` observation; foreign, modified, missing or manager-inaccessible units and incomplete/stuck transitions fail closed.
 3. Maintain stop ordering `serve -> netd`; start ordering `netd -> serve`. Confirm serve lease released and netd socket is not active before SQLite/database rollback. Do not start old binary on migrated candidate schema.
 4. The root-owned install/update lock, signed candidate/manifest parsing, fixed target, no Cargo/unsigned downgrade fallback and product health remain unchanged.
 5. Journal/backup/digest/typed InstallationId/schema/generation and runtime binary compatibility are reverified after failure and after repeated recovery. Report RecoveryRequired rather than false success; retain artifacts.
@@ -40,7 +40,7 @@ M010 proved published 0.1.2 insufficient and introduced the private typed system
 
 Audit `src/update.rs` `stop_owned_services`, `stop_owned_service`, `start_owned_service`, `recover`, `apply`, `fail_before_services`, `mark_recovery_required`, and Eggup binary callback failure path. Replace the unconditional `Running|Stopped` rejection with a narrow, typed **known owned failed** transition that consumes Eggup M010's successful stop/quiescence proof. Leave truly Unknown/Transitioning and failed ownership blocked. Recheck exact service identity after mutation, and validate actual stopped lease/socket. Factor service-stop handling into one shared safe path to prevent different terminal/nonterminal recovery semantics.
 
-The public enum still has no `Failed` variant. wg-basic allows `Unknown` only through exact-owned `SystemdManager::stop`; it requires `TransitionResult::completed()`, rechecks ownership, accepts a still-Unknown post-state only for that completed path, and checks serve lease release/netd socket inactivity. Ambiguous and transitioning states fail closed.
+The public enum still has no `Failed` variant. wg-basic allows `Unknown` only through exact-owned `SystemdManager::stop`; it requires `TransitionResult::completed()`, rechecks ownership, accepts a still-Unknown post-state only for that completed failed-state path, and checks serve lease release/netd socket inactivity. Exact-owned `Transitioning` observations use Eggup's bounded typed stop and require the post-state to be `Stopped`; an incomplete stop or any remaining transition fails closed. Hosted recovery reproduced systemd `activating (auto-restart)` after the candidate failure fixture, so treating every Transitioning observation as a preflight refusal made the actual updater unable to recover that owned unit.
 
 ### WP3 — Real signed-fixture rollback/retry
 
@@ -142,3 +142,31 @@ malformed, mismatched, or live records remain blocked. The rootful matrix now
 asserts Eggup removes the claimed record after each recovery. This correction
 has not yet been hosted-verified; C001/C001a remain corrective-required and
 C002/M005 remain blocked.
+
+## 10. Implementation progress — hosted cutpoints and recovery negatives
+
+Hosted run `37891679297` passed the then-current real-updater signed-fixture
+matrix on commit `ca6902e`: all five journal cutpoints, recovery twice per
+cutpoint, candidate failure after migration, interrupted SQLite restore,
+rollback identity, retry to Committed, and terminal recovery. Environment:
+GitHub-hosted Ubuntu 24.04.5 x86_64, kernel `6.17.0-1022-azure`, systemd
+`255.4-1ubuntu8.17`. This run predates the later artifact-tamper cases.
+
+The expanded tamper matrix now corrupts/restores the old binary, state backup,
+journal, and owned serve unit while recovery is interrupted, asserting that
+each unsafe state refuses recovery and keeps both units stopped. The test also
+records the disabled-network healthy profile and typed identity before/after
+rollback and migration. Early hosted runs caught test-harness issues (service
+identity needed the installed `wg-basic` binary; a restored unit must be
+followed by `daemon-reload`) and an actual recovery issue: systemd can report
+the owned failed candidate as `activating (auto-restart)` between stop/recover
+calls. Run `37894224120` on `388da30` captured that state and failed closed as
+designed, but could not progress. Commit `f9a00b3` now routes an exactly owned
+`Transitioning` unit through Eggup's bounded typed stop and accepts it only
+with a completed result and a fresh `Stopped` observation. Unknown/foreign
+ownership and incomplete/stuck stops still fail closed. Hosted verification of
+this corrected expanded matrix is run `37895646615` and is pending.
+
+Accordingly, this plan remains active, C001 remains corrective-required, and
+C002/M005 remain blocked until the expanded hosted matrix passes and remaining
+C001 negative cases are reconciled.
