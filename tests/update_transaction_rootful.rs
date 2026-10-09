@@ -62,12 +62,20 @@ fn database_identity() -> (i64, String, i64, i64) {
 }
 
 fn typed_state_identity() -> serde_json::Value {
+    // The immutable pre-v5 service fixture intentionally has only the Phase 9
+    // state CLI. Use the current test controller for its schema-4 projection;
+    // after migration, use the installed candidate, which understands v5.
+    let identity_binary = if database_identity().0 == 4 {
+        BINARY
+    } else {
+        wg_basic::distribution::BINARY_PATH
+    };
     let identity = Command::new("/usr/sbin/runuser")
         .args([
             "--user",
             "wg-basic",
             "--",
-            wg_basic::distribution::BINARY_PATH,
+            identity_binary,
             "state",
             "identity",
             "--state",
