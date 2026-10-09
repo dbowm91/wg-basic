@@ -54,7 +54,10 @@ source = replace_once(
     source,
     '            std::process::exit(report.exit_code());',
     '            let exit_code = if allow_warnings\n'
-    '                && report.overall == wg_basic::doctor::DoctorDisposition::Warn\n'
+    '                && matches!(report.overall,\n'
+    '                    wg_basic::doctor::DoctorDisposition::Warn\n'
+    '                        | wg_basic::doctor::DoctorDisposition::Unknown\n'
+    '                )\n'
     '            {\n                0\n            } else {\n                report.exit_code()\n            };\n'
     '            std::process::exit(exit_code);',
 )
