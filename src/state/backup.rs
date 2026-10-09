@@ -708,4 +708,40 @@ mod tests {
             PathBuf::from("/var/lib/wg-basic/state.db.pre-restore")
         );
     }
+
+    #[test]
+    fn offline_state_restore_can_be_replayed_after_an_interrupted_attempt() {
+        use crate::state::StateStore;
+        use std::os::unix::fs::PermissionsExt;
+
+        let root =
+            std::env::temp_dir().join(format!("wg-basic-restore-replay-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let target = root.join("state.db");
+        let backup = root.join("state-backup.db");
+        let store = StateStore::initialize(&target).unwrap();
+        let expected_id = store.installation_metadata().unwrap().installation_id;
+        store.backup(&backup).unwrap();
+        drop(store);
+
+        // Model a process dying after it has already replaced the live state:
+        // the next invocation must be able to apply the same verified backup.
+        fs::write(&target, b"partial or incompatible database").unwrap();
+        let first = restore(&backup, &target).unwrap();
+        assert_eq!(first.installation_id, expected_id);
+        let second = restore(&backup, &target).unwrap();
+        assert_eq!(second.installation_id, expected_id);
+        let restored = StateStore::open(&target).unwrap();
+        assert_eq!(
+            restored.installation_metadata().unwrap().installation_id,
+            expected_id
+        );
+        assert_eq!(
+            restored.schema_version().unwrap(),
+            schema::supported_version()
+        );
+        drop(restored);
+        fs::remove_dir_all(root).unwrap();
+    }
 }

@@ -40,6 +40,7 @@ Part of the [architecture overview](overview.md). Role internals live in
 | `admin set-password` | `--username`, `--password-stdin` (required), `--state` | state DB credential row + session revocation | argv/env password sources, verifier/token output |
 | `admin status` | `--state` | state DB safe projection | verifiers, tokens |
 | `state status` | `--state` | state DB metadata/convergence | keys, row contents, kernel |
+| `state identity` | `--state` | secret-free typed compatibility identity for update recovery | product rows, keys, sessions, kernel |
 | `state init` | `--state` | create current schema or validate/migrate existing owned DB | network IPC, kernel |
 | `state backup <dest>` | `--state` | consistent snapshot write (fails if dest exists, owner-only `0600`) | kernel |
 | `state restore <cand>` | `--state` | validate-then-replace, retains `<state>.pre-restore` | kernel |
@@ -49,6 +50,9 @@ Part of the [architecture overview](overview.md). Role internals live in
 | `network disable/enable` | `--state`, `--socket` | durable flag commit + reconcile attempt | kernel directly |
 | `system install` | `--candidate` (current executable by default) | root-owned system layout, sysusers, systemd units and services | automatic sudo, release discovery, signature claims |
 | `system status` | none | installation receipt, file ownership and systemd lifecycle inspection | state mutation, kernel mutation |
+| `update check` | none | bounded authenticated release discovery when a production key exists | install mutation, service lifecycle |
+| `update run` | none | root-owned lock, signed artifact and transactional binary/state update | automatic sudo, arbitrary release URLs/keys |
+| `update recover` | none | root-owned journal reconciliation and compatibility/health checks | implicit downgrade, ambiguous service adoption |
 
 ## `system` (native installation)
 
