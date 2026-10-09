@@ -61,6 +61,7 @@ is ready. See [plans/registry.md](plans/registry.md).
 
 | Document | Covers |
 |---|---|
+| [docs/installation.md](docs/installation.md) | Native installation, authenticity status, state-preserving uninstall/reinstall |
 | [docs/development.md](docs/development.md) | Gates, local `netd`/`serve`, credentials, test fixtures |
 | [docs/operations-runbook.md](docs/operations-runbook.md) | Backup, recovery, disable/purge |
 | [docs/state-backup-restore.md](docs/state-backup-restore.md) | Backup/restore/verify mechanics |

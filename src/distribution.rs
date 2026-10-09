@@ -460,6 +460,214 @@ pub fn install_status() -> Result<(), String> {
     Ok(())
 }
 
+/// Removes only the registered wg-basic program and service material.
+///
+/// The secret-bearing state database and its service identities are preserved;
+/// destructive state removal remains the separate, guarded `state purge`
+/// operation.
+pub fn uninstall_local() -> Result<(), String> {
+    use eggup_service::{
+        LifecycleState, Ownership, ServiceId, ServiceManager, ServiceSpec, SystemExecutor,
+        SystemdInstall, SystemdManager, SystemdScope,
+    };
+    use std::time::Duration;
+
+    require_effective_root(nix::unistd::geteuid().as_raw())?;
+    if !Path::new("/run/systemd/system").is_dir() {
+        return Err("system uninstall requires the systemd system manager".into());
+    }
+    create_private_root_dir(Path::new(SYSTEM_DIR))
+        .map_err(|_| "system metadata directory ownership or mode is unsafe")?;
+    let lock_path = Path::new(SYSTEM_DIR).join("install.lock");
+    let _lock = InstallLock::acquire(&lock_path)
+        .map_err(|_| "another system transaction is active or the lock is unsafe")?;
+    let receipt = validate_owned_installation()?;
+
+    // Verify every removable product file before stopping services or
+    // changing systemd state. A modified/foreign file must leave the whole
+    // installation running and untouched.
+    verify_owned_file(Path::new(SYSUSERS_PATH), &receipt.sysusers_sha256, 0)
+        .map_err(|_| "modified sysusers definition refused; no file removed")?;
+    verify_owned_file(Path::new(BINARY_PATH), &receipt.binary_sha256, 0)
+        .map_err(|_| "modified executable refused; no file removed")?;
+
+    let management = nix::unistd::User::from_name("wg-basic")
+        .map_err(|_| "management account lookup failed")?
+        .ok_or("management account is missing")?;
+    let group = nix::unistd::Group::from_name("wg-basic")
+        .map_err(|_| "management group lookup failed")?
+        .ok_or("management group is missing")?;
+    let state_dir = fs::symlink_metadata(STATE_DIR).map_err(|_| "state directory is missing")?;
+    let state_db = match fs::symlink_metadata(STATE_PATH) {
+        Ok(metadata) => Some(metadata),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(_) => return Err("state database cannot be inspected".into()),
+    };
+    if !state_dir.file_type().is_dir()
+        || state_dir.uid() != management.uid.as_raw()
+        || state_dir.gid() != group.gid.as_raw()
+        || state_dir.mode() & 0o777 != 0o700
+        || state_db.as_ref().is_some_and(|database| {
+            !database.file_type().is_file()
+                || database.uid() != management.uid.as_raw()
+                || database.gid() != group.gid.as_raw()
+                || database.mode() & 0o777 != 0o600
+        })
+    {
+        return Err("secret state ownership or mode is unsafe; uninstall refused".into());
+    }
+
+    let endpoint = |name: &str| -> Result<_, String> {
+        let (unit_path, definition, args) = match name {
+            "wg-basic.service" => (
+                SERVE_UNIT_PATH,
+                SERVE_UNIT,
+                vec![
+                    "serve".into(),
+                    "--state".into(),
+                    STATE_PATH.into(),
+                    "--socket".into(),
+                    SOCKET_PATH.into(),
+                ],
+            ),
+            "wg-basic-netd.service" => (
+                NETD_UNIT_PATH,
+                NETD_UNIT,
+                vec![
+                    "netd".into(),
+                    "--socket".into(),
+                    SOCKET_PATH.into(),
+                    "--allow-user".into(),
+                    "wg-basic".into(),
+                ],
+            ),
+            _ => return Err("unknown wg-basic service".into()),
+        };
+        let install = SystemdInstall::new(
+            name.into(),
+            SystemdScope::System,
+            unit_path.into(),
+            definition.as_bytes().to_vec(),
+            true,
+            true,
+            Duration::from_secs(20),
+        )
+        .map_err(|_| "invalid product systemd definition")?;
+        let id = ServiceId::new(name).map_err(|_| "invalid product service identity")?;
+        let spec = ServiceSpec::new(id, BINARY_PATH.into(), args, None)
+            .map_err(|_| "invalid product service specification")?;
+        Ok((
+            SystemdManager::new(SystemExecutor::default(), install),
+            spec,
+        ))
+    };
+
+    // Establish exact ownership of both registrations before changing either.
+    let mut serve = endpoint("wg-basic.service")?;
+    let mut netd = endpoint("wg-basic-netd.service")?;
+    for (manager, spec) in [&serve, &netd] {
+        let observed = manager
+            .inspect(spec)
+            .map_err(|_| "product service ownership could not be inspected")?;
+        if observed.ownership != Ownership::Owned {
+            return Err("foreign or ambiguous service registration; uninstall refused".into());
+        }
+    }
+
+    let stop = |manager: &mut SystemdManager<SystemExecutor>, spec: &ServiceSpec| {
+        manager
+            .stop(spec, Duration::from_secs(60))
+            .map(|result| result.completed)
+            .map_err(|_| "owned service could not be stopped")
+    };
+    if !stop(&mut serve.0, &serve.1)? {
+        return Err("management service stop could not be proven".into());
+    }
+    if !stop(&mut netd.0, &netd.1)? {
+        let _ = serve.0.start(&serve.1, Duration::from_secs(20));
+        return Err(
+            "network service stop could not be proven; management restart was attempted".into(),
+        );
+    }
+    if fs::symlink_metadata(SOCKET_PATH).is_ok() {
+        let _ = netd.0.start(&netd.1, Duration::from_secs(20));
+        let _ = serve.0.start(&serve.1, Duration::from_secs(20));
+        return Err("network socket remains after service stop; uninstall refused".into());
+    }
+
+    let remove_unit = |manager: &mut SystemdManager<SystemExecutor>, spec: &ServiceSpec| {
+        manager
+            .uninstall(spec)
+            .map(|result| result.completed)
+            .map_err(|_| "owned service unit could not be removed")
+    };
+    if !remove_unit(&mut serve.0, &serve.1)? {
+        let _ = serve.0.start(&serve.1, Duration::from_secs(20));
+        let _ = netd.0.start(&netd.1, Duration::from_secs(20));
+        return Err("management service removal was incomplete; restart was attempted".into());
+    }
+    if !remove_unit(&mut netd.0, &netd.1)? {
+        // Restore the first unit from its embedded canonical definition before
+        // returning. State and the installed executable remain untouched.
+        let _ = serve.0.install(&serve.1);
+        let _ = netd.0.start(&netd.1, Duration::from_secs(20));
+        let _ = serve.0.start(&serve.1, Duration::from_secs(20));
+        return Err("network service removal was incomplete; restoration was attempted".into());
+    }
+    for (manager, spec) in [&serve, &netd] {
+        let observed = manager
+            .inspect(spec)
+            .map_err(|_| "removed service registration could not be verified")?;
+        if observed.ownership != Ownership::Absent || observed.state == LifecycleState::Running {
+            return Err("service registration remains after uninstall".into());
+        }
+    }
+
+    fs::remove_file(SYSUSERS_PATH).map_err(|_| "owned sysusers definition could not be removed")?;
+    File::open(
+        Path::new(SYSUSERS_PATH)
+            .parent()
+            .ok_or("invalid sysusers path")?,
+    )
+    .and_then(|directory| directory.sync_all())
+    .map_err(|_| "sysusers directory change could not be persisted")?;
+    let receipt_path = Path::new(SYSTEM_DIR).join("install.json");
+    fs::remove_file(&receipt_path).map_err(|_| "installation receipt could not be removed")?;
+    File::open(SYSTEM_DIR)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|_| "installation receipt removal could not be persisted")?;
+    // The executable is deliberately the last product file removed. The
+    // system lock and state-owner identities remain for race-free reinstall.
+    fs::remove_file(BINARY_PATH).map_err(|_| "owned executable could not be removed")?;
+    File::open(
+        Path::new(BINARY_PATH)
+            .parent()
+            .ok_or("invalid executable path")?,
+    )
+    .and_then(|directory| directory.sync_all())
+    .map_err(|_| "executable removal could not be persisted")?;
+    if let Ok(runtime) = fs::symlink_metadata(RUNTIME_DIR) {
+        let netd = nix::unistd::User::from_name("wg-basic-netd")
+            .map_err(|_| "network service account lookup failed")?
+            .ok_or("network service account is missing")?;
+        if runtime.file_type().is_dir()
+            && runtime.uid() == netd.uid.as_raw()
+            && runtime.mode() & 0o777 == 0o750
+        {
+            let _ = fs::remove_dir(RUNTIME_DIR);
+        }
+    }
+    println!("wg-basic system files and services removed");
+    if state_db.is_some() {
+        println!("state preserved: {STATE_PATH}");
+    } else {
+        println!("state database is absent after the separate guarded purge operation");
+    }
+    println!("service identities preserved to retain state ownership: wg-basic, wg-basic-netd, group wg-basic");
+    println!("run `wg-basic system install --candidate PATH` to reinstall; state purge remains a separate guarded operation");
+    Ok(())
+}
+
 /// Performs the local, explicitly privileged installation transaction.
 /// Release authenticity is supplied only by a future release-aware entry point;
 /// this command identifies its source honestly as a local candidate.

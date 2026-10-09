@@ -89,6 +89,28 @@ After restoring an old state, the next startup still validates netd ownership
 tags. A backup does not authorize taking over a foreign same-name interface,
 route or nftables table.
 
+## Uninstall and reinstall
+
+Default system uninstall preserves the database and service identities:
+
+```sh
+sudo wg-basic system uninstall
+```
+
+It refuses modified or foreign service/program material. After uninstall, the
+state database remains at `/var/lib/wg-basic/state.db` and remains owned by the
+same management UID. Reinstall a trusted, compatible candidate with
+`sudo ./wg-basic system install --candidate ./wg-basic`, then check
+`sudo ./wg-basic system status`, authenticated product health, and client
+traffic. See the [installation guide](installation.md) for the authenticity
+boundary of local candidates and the bootstrap trust model.
+
+Uninstall does not disable WireGuard networking or purge secrets. To remove
+the database, first use the disable/convergence/purge sequence below while the
+services are still installed; then run `sudo wg-basic system uninstall` to
+remove the remaining owned system files. This sequence preserves operator
+backups outside the canonical live-state path.
+
 ## Safe service disable and purge
 
 For a planned maintenance window, use the durable network-disable operation
