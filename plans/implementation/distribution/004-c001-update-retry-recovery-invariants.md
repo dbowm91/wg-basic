@@ -207,4 +207,8 @@ and both old services return, then removes the fault marker. Its marker is
 root-owned, read-only to the service group, and compiled only with
 `update-test-fixtures`; the production release contract remains unchanged.
 The updated rootful test and default integration targets compile locally;
-hosted execution is pending.
+hosted execution is pending. Strict feature-gated clippy initially exposed five
+pre-existing rootful-test lints in adjacent service/product suites. Those were
+resolved without changing test behavior; the full
+`cargo clippy --all-targets --locked --features linux-integration,update-test-fixtures -- -D warnings`
+gate then passed.
