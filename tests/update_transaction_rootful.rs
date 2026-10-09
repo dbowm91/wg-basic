@@ -550,7 +550,8 @@ fn signed_systemd_update_rolls_back_and_retries() {
         .unwrap();
     assert!(
         !failed_netd_update.status.success(),
-        "candidate netd startup failure must roll the update back"
+        "candidate netd startup failure must roll the update back: {}",
+        output_text(&failed_netd_update)
     );
     assert_eq!(database_identity(), before);
     for service in ["wg-basic-netd.service", "wg-basic.service"] {
