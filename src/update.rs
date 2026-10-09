@@ -1964,6 +1964,7 @@ pub fn apply() -> Result<(), String> {
     let old_binary_for_restore = runtime_old_binary_path(&transaction_id);
     let backup_for_restore = backup.clone();
     let restore_succeeded = std::cell::Cell::new(false);
+    let rollback_failure = std::cell::RefCell::new(None);
     let callback = || -> Result<(), String> {
         let transaction = (|| {
             journal = advance_journal(&journal_path, &journal, UpdatePhase::BinaryCommitted)
@@ -1991,25 +1992,32 @@ pub fn apply() -> Result<(), String> {
                 Err(_) => recovery_ok = false,
             }
         }
-        if stop_owned_services().is_err() {
+        let services_stopped = stop_owned_services().is_ok();
+        if !services_stopped {
             recovery_ok = false;
         }
-        if restore_state_backup(
-            &old_binary_for_restore,
-            &backup_for_restore,
-            &transaction_id,
-        )
-        .is_err()
-        {
+        let state_restored = services_stopped
+            && restore_state_backup(
+                &old_binary_for_restore,
+                &backup_for_restore,
+                &transaction_id,
+            )
+            .is_ok();
+        if !state_restored {
             recovery_ok = false;
         }
-        if crate::distribution::write_metadata(system_dir, &old_install).is_err() {
+        let metadata_restored =
+            crate::distribution::write_metadata(system_dir, &old_install).is_ok();
+        if !metadata_restored {
             recovery_ok = false;
         }
         if recovery_ok {
             restore_succeeded.set(true);
             Err(cause)
         } else {
+            *rollback_failure.borrow_mut() = Some(format!(
+                "services_stopped={services_stopped}, state_restored={state_restored}, metadata_restored={metadata_restored}"
+            ));
             if journal.phase != UpdatePhase::RecoveryRequired {
                 if let Ok(updated) =
                     advance_journal(&journal_path, &journal, UpdatePhase::RecoveryRequired)
@@ -2055,7 +2063,13 @@ pub fn apply() -> Result<(), String> {
                         .into(),
                 )
             } else {
-                Err("update rollback requires operator recovery; services remain stopped".into())
+                Err(format!(
+                    "update rollback requires operator recovery; services remain stopped ({})",
+                    rollback_failure
+                        .borrow()
+                        .as_deref()
+                        .unwrap_or("recovery stage status unavailable")
+                ))
             }
         }
         Ok(_) => {
