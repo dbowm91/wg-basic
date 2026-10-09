@@ -483,7 +483,7 @@ fn stop_owned_service(
     }
     let stop_completed = if matches!(
         before.state,
-        LifecycleState::Running | LifecycleState::Unknown
+        LifecycleState::Running | LifecycleState::Unknown | LifecycleState::Transitioning
     ) {
         let result = manager
             .stop(&spec, Duration::from_secs(30))
@@ -515,7 +515,10 @@ fn stop_preflight_state_allowed(state: eggup_service::LifecycleState) -> bool {
     use eggup_service::LifecycleState;
     matches!(
         state,
-        LifecycleState::Running | LifecycleState::Stopped | LifecycleState::Unknown
+        LifecycleState::Running
+            | LifecycleState::Stopped
+            | LifecycleState::Unknown
+            | LifecycleState::Transitioning
     )
 }
 
@@ -569,9 +572,12 @@ fn stop_postcondition_allowed(
     after: eggup_service::LifecycleState,
 ) -> bool {
     use eggup_service::LifecycleState;
-    (after == LifecycleState::Stopped
-        && ((before == LifecycleState::Running && stop_completed)
-            || (before == LifecycleState::Stopped && !stop_completed)))
+    after == LifecycleState::Stopped
+        && (matches!(
+            before,
+            LifecycleState::Running | LifecycleState::Transitioning
+        ) && stop_completed
+            || (before == LifecycleState::Stopped && !stop_completed))
         || (before == LifecycleState::Unknown && stop_completed && after == LifecycleState::Unknown)
 }
 
@@ -2654,7 +2660,10 @@ mod tests {
         // Eggup 0.1.3 keeps a proven systemd failed state classified Unknown;
         // only its typed stop result can distinguish it from other ambiguity.
         assert!(stop_preflight_state_allowed(Unknown));
-        assert!(!stop_preflight_state_allowed(Transitioning));
+        // An owned systemd auto-restart transition can be quiesced only by
+        // Eggup's typed stop, whose completed receipt and stopped post-state
+        // are both required below.
+        assert!(stop_preflight_state_allowed(Transitioning));
 
         assert!(stop_postcondition_allowed(Running, true, Stopped));
         assert!(stop_postcondition_allowed(Stopped, false, Stopped));
@@ -2662,7 +2671,13 @@ mod tests {
         assert!(!stop_postcondition_allowed(Unknown, false, Unknown));
         assert!(!stop_postcondition_allowed(Unknown, true, Running));
         assert!(!stop_postcondition_allowed(Running, true, Unknown));
-        assert!(!stop_postcondition_allowed(Transitioning, true, Stopped));
+        assert!(stop_postcondition_allowed(Transitioning, true, Stopped));
+        assert!(!stop_postcondition_allowed(Transitioning, false, Stopped));
+        assert!(!stop_postcondition_allowed(
+            Transitioning,
+            true,
+            Transitioning
+        ));
     }
 
     #[test]
