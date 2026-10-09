@@ -1444,7 +1444,7 @@ fn signed_systemd_update_rolls_back_and_retries() {
         typed_after_retry
             .get("schema_version")
             .and_then(serde_json::Value::as_i64),
-        Some(6)
+        Some(7)
     );
     traffic.require_handshake_and_traffic();
     assert_enabled_product_healthy(traffic.admin_cookie.as_deref().unwrap());
