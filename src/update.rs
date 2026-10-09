@@ -2236,15 +2236,24 @@ pub fn recover() -> Result<(), String> {
             "could not establish stopped owned services; recovery classification required: {error}"
         ));
     }
-    let current_install = match crate::distribution::validate_owned_installation() {
-        Ok(install) => install,
-        Err(_) => {
-            mark_recovery_required(journal_path);
-            return Err(
-                "installed receipt is invalid; services remain stopped for manual recovery".into(),
-            );
-        }
-    };
+    let current_install =
+        match crate::distribution::read_metadata(Path::new(crate::distribution::SYSTEM_DIR)) {
+            Ok(Some(install)) => install,
+            Ok(None) => {
+                mark_recovery_required(journal_path);
+                return Err(
+                    "installed receipt is missing; services remain stopped for manual recovery"
+                        .into(),
+                );
+            }
+            Err(_) => {
+                mark_recovery_required(journal_path);
+                return Err(
+                    "installed receipt is invalid; services remain stopped for manual recovery"
+                        .into(),
+                );
+            }
+        };
     if current_install.target != journal.target
         || !((current_install.version == journal.version_from
             && current_install.binary_sha256 == journal.old_binary_sha256)

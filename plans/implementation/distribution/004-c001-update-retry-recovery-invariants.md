@@ -196,7 +196,8 @@ claiming these new matrix entries as passed.
 The running-service preflight now also requires the management service's
 owner-bound state lease to be held, not just a Running unit. The rootful test
 removes the lease path while serve is live, proves update refuses before
-service mutation, restarts the service, and confirms lease recreation. The
+service mutation, then restores the same still-locked inode before other test
+phases. The
 check/all-target clippy gates passed after this addition; hosted verification
 is still pending.
 
@@ -212,3 +213,16 @@ pre-existing rootful-test lints in adjacent service/product suites. Those were
 resolved without changing test behavior; the full
 `cargo clippy --all-targets --locked --features linux-integration,update-test-fixtures -- -D warnings`
 gate then passed.
+
+Hosted run `37898145059` exposed an ordering edge in the new receipt check:
+`validate_owned_installation()` binds receipt digest to installed bytes, so it
+rejects the expected old receipt during the durable `BinaryCommitted` window,
+before candidate health has written the new receipt. Recovery now parses and
+validates the root-owned receipt structure independently, then requires its
+version/digest pair to be one of the journaled generations. This preserves the
+valid old-receipt/candidate-binary crash window while rejecting malformed or
+unrelated receipts. Run `37898411196` separately exposed a flawed lease-test
+cleanup assumption: restarting serve did not recreate the unlinked lock path
+as expected. The fixture now renames the live lock file aside, probes update
+refusal, and restores the original locked inode, avoiding service restart and
+preserving the later matrix setup. Final hosted verification is pending.
