@@ -509,6 +509,30 @@ fn signed_systemd_update_rolls_back_and_retries() {
         "fixture explicitly qualifies an intentionally disabled healthy profile"
     );
 
+    let serve_lease =
+        wg_basic::state::ServiceLease::path_for_state(Path::new(distribution::STATE_PATH)).unwrap();
+    fs::remove_file(&serve_lease).unwrap();
+    let missing_lease_update = Command::new(BINARY)
+        .args(["update", "run"])
+        .env("WGB_UPDATE_FIXTURE_DIR", FIXTURE)
+        .output()
+        .unwrap();
+    assert!(!missing_lease_update.status.success());
+    assert!(
+        output_text(&missing_lease_update).contains("lease"),
+        "missing live service lease must block update: {}",
+        output_text(&missing_lease_update)
+    );
+    let restart = Command::new("/usr/bin/systemctl")
+        .args(["restart", "wg-basic.service"])
+        .status()
+        .unwrap();
+    assert!(restart.success());
+    assert!(
+        fs::symlink_metadata(&serve_lease).is_ok(),
+        "management restart must recreate its state lease"
+    );
+
     for phase in [
         "Prepared",
         "BackupVerified",

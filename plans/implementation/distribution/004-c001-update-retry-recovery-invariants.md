@@ -192,3 +192,10 @@ install receipt. Formatting and the focused updater integration target compile
 passed locally; `cargo test --locked update::tests -- --nocapture` passed 16
 focused unit tests. Hosted destructive execution remains required before
 claiming these new matrix entries as passed.
+
+The running-service preflight now also requires the management service's
+owner-bound state lease to be held, not just a Running unit. The rootful test
+removes the lease path while serve is live, proves update refuses before
+service mutation, restarts the service, and confirms lease recreation. The
+check/all-target clippy gates passed after this addition; hosted verification
+is still pending.
