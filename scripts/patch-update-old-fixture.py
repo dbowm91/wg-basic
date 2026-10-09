@@ -43,6 +43,8 @@ source = replace_once(
     '        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]\n'
     '        state: PathBuf,\n'
     '    },\n'
+    '    /// Validate a recovery database without installing it.\n'
+    '    Verify { candidate: PathBuf },\n'
     '    /// Create an empty schema or validate and migrate existing owned state.\n'
     '    Init {\n'
     '        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]\n'
@@ -105,6 +107,11 @@ source = replace_once(
 source = replace_once(
     source,
     '        StateCommand::Backup { destination, state } => {',
+    '        StateCommand::Verify { candidate } => {\n'
+    '            validate_candidate(&candidate).map_err(|error| error.to_string())?;\n'
+    '            println!("candidate valid: {}", candidate.display());\n'
+    '            Ok(())\n'
+    '        }\n'
     '        StateCommand::Identity { state } => {\n'
     '            use sha2::{Digest, Sha256};\n'
     '            let store = StateStore::open(&state).map_err(|error| error.to_string())?;\n'
