@@ -524,9 +524,9 @@ dependencies = [
 
 [[package]]
 name = "eggup-service"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6288eb17dd9906380de8c75104d33dfa95c9039b39dc481f49b3700dd750e3f"
+checksum = "9f7f7ea854577158e66aa202709ab1c97a3aedcf00b06c1ab914d25b132124dc"
 dependencies = [
  "eggup-core",
  "windows-args",

@@ -115,10 +115,15 @@ a candidate failure.
 If recovery is interrupted while preparing its database staging file, the next
 recovery uses a distinct private name and validates the original transaction
 backup again. A failed, transitioning, or otherwise ambiguous systemd service
-classification is not treated as stopped. The pinned Eggup-service 0.1.2
-adapter maps systemd `ActiveState=failed` to `Unknown`; its stop receipt only
-confirms `inactive`, so wg-basic refuses terminal success and leaves the
-journal for operator recovery when that state cannot be resolved safely.
+classification is not treated as stopped. The pinned Eggup-service 0.1.3
+adapter keeps `ActiveState=failed` classified as `Unknown`, but its typed stop
+operation recognizes that exact owned manager state and reports completion
+only after rechecking ownership, manager state, pending jobs, process IDs, and
+cgroup task evidence. wg-basic accepts that still-`Unknown` post-state only
+when Eggup returned a completed stop receipt and the exact registration remains
+owned. Before database rollback, wg-basic also confirms the serve lease is
+released and netd's Unix socket no longer accepts connections. Other unknown,
+foreign, transitioning, or unproven states remain fail-closed.
 
 ## Secret and ownership handling
 

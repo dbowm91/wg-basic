@@ -61,6 +61,14 @@ that both services are stopped and owned, leave the system untouched and use
 the failure classification from the command before attempting manual service
 operations.
 
+The updater uses the pinned Eggup service adapter for an exact-owned systemd
+unit left in `failed`. Eggup keeps that lifecycle observation as `Unknown` and
+returns a completed typed stop only after proving quiescence. wg-basic also
+checks that the serve lease is released and netd's socket is inactive before it
+restores SQLite. A failed/unknown result, foreign unit, or changed unit
+definition leaves recovery unresolved; do not use `reset-failed` or process
+killing to force the update forward.
+
 After restoring an old state, the next startup still validates netd ownership
 tags. A backup does not authorize taking over a foreign same-name interface,
 route or nftables table.

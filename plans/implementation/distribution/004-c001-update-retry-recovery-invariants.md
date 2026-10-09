@@ -1,6 +1,6 @@
 # Distribution M004 C001 — Update Retry and Crash-Recovery Invariants
 
-Status: corrective required — implementation hardening is recorded in `plans/closure/distribution/004-c001-status.md`, but strict closure remains blocked on resolving Eggup's failed-service lifecycle classification and updater-level retry/crash qualification.
+Status: corrective required — implementation hardening is recorded in `plans/closure/distribution/004-c001-status.md`; Eggup's failed-service lifecycle prerequisite is now resolved through C001a, but updater-level retry/crash qualification remains outstanding.
 Repository baseline: dbowm91/wg-basic main at 7b69c75634242bf0d5c0d35374b96346c73f20c6 (2026-10-08).
 Primary work class: corrective / invariant (durability, rollback safety, update retry).
 
