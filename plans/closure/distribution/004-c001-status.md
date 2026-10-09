@@ -154,6 +154,91 @@ focused updater evidence that was absent when this original disposition was
 written. It does not prove all C001 acceptance cases: Prepared/RollingBack
 crash points and additional metadata owner/mode/symlink, receipt, lease,
 failed-netd, and startup-timeout negatives remain for C001/C002 reconciliation.
-Accordingly, the C001 disposition above remains period-accurate and current:
-C001 is corrective-required, C002 is blocked on C001 strict closure, and M005
-is blocked on M004 closure. This addendum does not close C001 or M004.
+At that point C001 remained corrective-required, C002 blocked on C001, and M005
+blocked on M004. The following closure evidence supersedes that disposition
+without rewriting the historical findings above.
+
+## Strict C001 closure (2026-10-09)
+
+Disposition: **closed**. This closes the retry, rollback, and crash-recovery
+invariants owned by C001. It does not close M004 or claim production release
+readiness.
+
+### Baseline and implementation revision
+
+- Baseline: `237f5f4` (`plans: sequence M004 corrective prerequisites in distribution roadmap`).
+- C001 implementation head: `e26e9f2396dcd0719667e6b7bc906fde96269f3c`.
+- C001a closure reference: `540c98ce7790ffb14cb82c98ec5167854555972b`.
+- Final C001 closure documentation is committed after implementation evidence;
+  see the repository history on `plans/m004-update-correctives`.
+- The implementation includes the terminal journal/receipt checks, typed
+  state identity, reentrant SQLite restore, Eggup 0.1.3 owned failed-unit
+  quiescence, rootful fixture gates, tamper refusal cases, and persistent
+  candidate-netd failure marker. Relevant implementation commits run from
+  `87320c7` through `e26e9f2`; no production signing trust root or bypass was
+  introduced.
+
+### Requirement-to-evidence matrix
+
+| C001 acceptance | Implementation and evidence | Disposition |
+|---|---|---|
+| Verified `RolledBack` permits a later authenticated update while retaining recovery evidence | The hosted real-updater test drives rollback, runs recovery repeatedly, then applies a second signed fixture update to `Committed`; previous terminal evidence is retained. | Passed in rootful run `37900751408`. |
+| Interrupted restore and recovery are replayable | Actual updater SIGKILL cutpoints cover `Prepared`, `BackupVerified`, `ServicesStopped`, `BinaryCommitted`, `CandidateStarted`, `CandidateHealthy`, and `RollingBack`; interrupted SQLite restore is recovered twice and exact old identity is checked. | Passed in rootful run `37900751408`. |
+| Early failures preserve truthful recoverability | Recovery failures retain the journal and transaction set; update fixtures assert refused/tampered states and successful old-pair restoration. Eggup's typed stop receipt, fresh ownership check, released serve lease, and inactive netd socket gate restoration. | Passed in rootful run `37900751408`; no generic kill/adopt fallback. |
+| Terminal recovery proves a compatible running product | Recovery verifies the journaled old/candidate receipt and binary relationship, state compatibility and identity, exact owned services, and management health before success. Rootful rollback and terminal retry assertions passed. | Passed for the C001 enabled fixture; broader enabled/disabled traffic qualification is owned by C002. |
+| Typed pre/post identity and health profiles | The secret-free identity binds installation ID, schema, generation, network intent, and product identity digest. Unit profile tests cover enabled/converged and intentionally disabled/healthy semantics; the hosted migration/rollback fixture checks exact identity preservation. | Passed for C001; real disabled-network systemd/traffic profile remains an explicit C002 acceptance item. |
+| Representative adversarial recovery negatives | Rootful cases cover wrong journal owner/mode/symlink, malformed install receipt, altered unit definition, corrupt backup/old binary, missing serve lease, failed candidate netd, stale restore stage, and service lifecycle refusal. | Passed in rootful run `37900751408`. |
+| Earlier Phase 6–9 correctness and privilege boundaries remain intact | Full CI at the tested implementation head passed the existing system-install, upgrade, network, durable-state, product-management, maintenance, and updater jobs. The source diff adds no generic process path, IPC/HTTP change, or release trust bypass. | Passed in full CI run `37900751408`; see known limits below. |
+
+### Verification and hosted environment
+
+The full workflow at implementation head `e26e9f2` completed successfully:
+[CI run 37900751408](https://github.com/dbowm91/wg-basic/actions/runs/37900751408).
+Its dedicated rootful job ran the actual updater fixture on `ubuntu-24.04`,
+x86_64, kernel `6.17.0-1022-azure`, systemd `255.4-1ubuntu8.17`. The exact
+destructive hosted command was:
+
+```sh
+sudo chmod 0755 /usr/local/bin && sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo CARGO_TARGET_DIR="$RUNNER_TEMP/wg-basic-rootful-target" WGB_CANDIDATE_BINARY="$RUNNER_TEMP/wg-basic-candidate-target/release/wg-basic" cargo test --locked --features linux-integration,update-test-fixtures --test update_transaction_rootful -- --ignored --exact signed_systemd_update_rolls_back_and_retries --nocapture --test-threads=1
+```
+
+Result: `1 passed; 0 failed`, test duration `818.02s`. The full CI workflow
+also passed its existing installation, upgrade rehearsal, network, product,
+durability, maintenance, Rust, and dependency-audit jobs. On the implementation
+tree, the development gates passed: `cargo fmt --all -- --check`,
+`cargo check --all-targets --locked`,
+`cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`
+(`561 passed, 3 ignored`), `cargo +1.89.0 check --all-targets --locked`,
+`cargo audit` (211 locked dependencies), feature-gated strict clippy, focused
+update unit tests (`16 passed`), and compilation of the ignored rootful updater
+test. The destructive updater suite was run only on the disposable hosted
+systemd runner.
+
+### Artifact, ownership, documentation, and security review
+
+- Journal schema remains 1 and older journal parsing remains fail-safe.
+- Journal, install metadata, binaries, and recovery artifacts are validated
+  against root ownership, exact mode/type, transaction identity, bounded size,
+  and expected digests before recovery uses them. SQLite restore preserves
+  management ownership and private permissions.
+- The database identity projection and diagnostics contain no credentials,
+  sessions, keys, or database contents. Recovery artifacts remain protected
+  and retained through retry.
+- `architecture/update-rollback-contract.md`,
+  `docs/operations-runbook.md`, and the C001/C001a plans describe the implemented
+  ordering and recovery constraints. Production `update check`/`update run`
+  remain fail-closed because the production public key is not provisioned.
+
+### Limitations and downstream disposition
+
+- No high, medium, or low C001 defect remains open. Startup-timeout
+  qualification, real enabled and intentionally-disabled WireGuard traffic
+  across update, broader CLI/operator documentation reconciliation, and full
+  M004 performance/target evidence are deliberately owned by C002, not silently
+  counted as C001 results.
+- No maintainer production signing key, release signature, or publication
+  authorization was available or created. This is an M004/M005 operational
+  release gate, not a C001 recovery invariant.
+- C001 is closed. C002 is ready and becomes the next eligible implementation
+  plan. M004 remains active and M005 remains blocked until M004 has its own
+  strict technical closure.

@@ -1,6 +1,6 @@
 # Distribution M004 C001a — Eggup Failed-unit Recovery Adoption and C001 Closure Evidence
 
-Status: closed — typed failed-unit adoption and focused signed-fixture updater recovery are proven; parent C001 remains corrective-required on its broader phase and adversarial matrix.
+Status: closed — typed failed-unit adoption and focused signed-fixture updater recovery are proven in `plans/closure/distribution/004-c001a-status.md`; parent C001 strict closure is recorded in `plans/closure/distribution/004-c001-status.md`, and C002 is ready.
 Repository baseline: `dbowm91/wg-basic` branch `plans/m004-update-correctives` at `297af6c` (2026-10-09), with `plans/closure/distribution/004-c001-status.md` disposition `corrective required`.
 Source milestone: `plans/implementation/distribution/004-transactional-self-update-and-rollback.md`.
 Corrective predecessor: `plans/implementation/distribution/004-c001-update-retry-recovery-invariants.md`; unresolved evidence in `plans/closure/distribution/004-c001-status.md`.
@@ -186,3 +186,11 @@ receipt, lease, and service-failure negatives are not claimed by this focused
 plan. Therefore C001 remains corrective-required; C002 remains blocked on
 C001 strict closure; M005 remains blocked on M004 closure. See the additive
 closure record `plans/closure/distribution/004-c001a-status.md`.
+
+### 10.1 Parent handoff update (2026-10-09)
+
+The subsequent C001 strict closure passed its expanded actual-updater phase and
+adversarial matrix in hosted full CI run `37900751408`. C001 is closed, C002 is
+ready, and M005 remains blocked on M004 closure. The earlier handoff statement
+above records the state before the parent matrix completed; this update does
+not expand C001a's scope or change its evidence.
