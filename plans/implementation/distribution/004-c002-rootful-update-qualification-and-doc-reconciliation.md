@@ -103,8 +103,9 @@ scratch-only patch also adds the three M002 unit CLI requirements (`state init`,
 `netd --allow-user`, and `doctor --allow-warnings`, accepting its legacy
 `unknown` lease diagnostic; `state verify` is also exposed over the fixture's
 existing read-only candidate validator). It adds `state identity` compatibility
-output needed to prove the restored v4 database. Its v4 network-enabled
-projection follows the legacy rule that a configured interface is enabled.
+output needed to prove the restored v4 database. Its v4 network-enabled projection is false because schema v4 has no
+operational-enabled field and the typed updater contract defaults that missing
+field to false.
 State and doctor behavior remain from v4 source; the candidate is built from
 C002 source in a scratch archive with version 0.1.1 and test-only fault hooks.
 For v4 identity assertions, the rootful fixture stages a temporary controller
