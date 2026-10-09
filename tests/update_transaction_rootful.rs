@@ -724,6 +724,29 @@ fn configure_enabled_product_and_client() -> TrafficClient {
         .unwrap()
         .to_owned();
     traffic.admin_cookie = Some(cookie.clone());
+    // systemd can mark the management listener ready while netd is still
+    // starting. Wait for the authenticated backend health projection before
+    // submitting the first product mutation.
+    let backend_deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let (status, _, body) = api_request("GET", "/api/v1/health", Some(&cookie), None, "");
+        let ready = status == 200
+            && serde_json::from_str::<serde_json::Value>(&body)
+                .map(|health| {
+                    health["health"]["netd_reachable"] == true
+                        && health["backend"]["answered"] == true
+                })
+                .unwrap_or(false);
+        if ready {
+            break;
+        }
+        assert!(
+            Instant::now() < backend_deadline,
+            "installed netd did not become ready before product setup: status={status} body={body}\n{}",
+            recovery_diagnostics()
+        );
+        thread::sleep(Duration::from_millis(100));
+    }
     let (_, _, session_body) = api_request("GET", "/api/v1/session", Some(&cookie), None, "");
     let session: serde_json::Value = serde_json::from_str(&session_body).unwrap();
     let csrf = session["csrf_token"].as_str().unwrap();
