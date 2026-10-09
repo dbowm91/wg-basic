@@ -705,7 +705,13 @@ fn read_state_identity_program(program: &Path, path: &Path) -> Result<StateIdent
     let path = path.to_str().ok_or("state path is invalid")?;
     let output = run_as_management_program(program, &["state", "identity", "--state", path])?;
     if !output.success() {
-        return Err("management state identity command failed".into());
+        let detail = String::from_utf8_lossy(output.stderr())
+            .chars()
+            .take(256)
+            .collect::<String>();
+        return Err(format!(
+            "management state identity command failed: {detail}"
+        ));
     }
     serde_json::from_slice(output.stdout())
         .map_err(|_| "management state identity projection is invalid".into())

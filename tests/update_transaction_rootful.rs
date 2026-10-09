@@ -154,11 +154,25 @@ fn recovery_diagnostics() -> String {
         ])
         .output()
         .unwrap();
+    let identity = Command::new("/usr/sbin/runuser")
+        .args([
+            "--user",
+            "wg-basic",
+            "--",
+            wg_basic::distribution::BINARY_PATH,
+            "state",
+            "identity",
+            "--state",
+            distribution_state_path(),
+        ])
+        .output()
+        .unwrap();
     format!(
-        "systemctl={}\njournalctl={}\ndoctor={}",
+        "systemctl={}\njournalctl={}\ndoctor={}\nidentity={}",
         output_text(&status),
         output_text(&journal),
-        output_text(&doctor)
+        output_text(&doctor),
+        output_text(&identity)
     )
 }
 
