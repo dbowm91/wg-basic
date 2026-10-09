@@ -1033,6 +1033,17 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
         .peers
         .iter()
         .any(|peer| peer.public_key == client_public_key));
+    let restored_peer = restored
+        .peers
+        .iter()
+        .find(|peer| peer.public_key == client_public_key)
+        .expect("the same client peer is restored");
+    assert!(restored_peer
+        .allowed_ips
+        .contains(&"10.67.0.2/32".parse().unwrap()));
+    assert!(restored_peer
+        .allowed_ips
+        .contains(&"2001:db8:67::2/128".parse().unwrap()));
     wait_until("the server IPv6 tunnel route after re-enable", || {
         Command::new("ip")
             .args([
