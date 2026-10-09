@@ -1,6 +1,6 @@
 # IPv6 M001 — Dual-Stack Product/Domain Persistence and Tunnel Reconciliation
 
-Status: active
+Status: closed — `plans/closure/ipv6-route-policy/001-status.md`
 
 Repository planning baseline: `c7de919c0b9d8f3326c50c799779ee5dc3734dca` (Phase 10 technical closure)
 
@@ -212,5 +212,7 @@ Stop and revise the plan before expanding scope if:
 Record implementation/final heads, migration and serialization behavior,
 native namespace/kernel traffic receipts, before/after IPv4 regression matrix,
 exact hosted CI links, backup/restore and restart evidence, security findings,
-documentation, unresolved limitations, and M002 readiness. M002 stays blocked
-until M001 is strictly closed.
+documentation, unresolved limitations, and M002 readiness. The completed
+evidence and successor handoff are recorded in
+`plans/closure/ipv6-route-policy/001-status.md`; ADR-007 now records the
+separate IPv6 forwarding ownership decision required by M002.
