@@ -137,6 +137,47 @@ source = replace_once(
 )
 path.write_text(source)
 
+# Keep the destructive restore interruption point inside the actual v4
+# restore implementation. The old fixture does not carry this repository's
+# `update-test-fixtures` feature, so patch its scratch-only backup module with
+# the same private-file gate used by the candidate implementation.
+backup_path = path.parent / "state" / "backup.rs"
+backup = backup_path.read_text()
+backup = replace_once(
+    backup,
+    "            sync_directory(&parent_of(target)?)?;\n            Some(retained)",
+    "            sync_directory(&parent_of(target)?)?;\n"
+    "            wait_fixture_restore_gate(target)?;\n"
+    "            Some(retained)",
+)
+backup = replace_once(
+    backup,
+    "fn current_uid() -> u32 {",
+    "fn wait_fixture_restore_gate(target: &Path) -> Result<(), StateError> {\n"
+    "    use std::os::unix::fs::MetadataExt;\n"
+    "    let parent = parent_of(target)?;\n"
+    "    let gate = parent.join(\".update-fixture-restore-gate\");\n"
+    "    let metadata = match fs::symlink_metadata(&gate) {\n"
+    "        Ok(metadata) => metadata,\n"
+    "        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),\n"
+    "        Err(_) => return Err(StateError::Corrupt(\"fixture restore gate is unsafe\")),\n"
+    "    };\n"
+    "    if !metadata.is_file() || metadata.file_type().is_symlink()\n"
+    "        || metadata.uid() != current_uid() || metadata.mode() & 0o777 != 0o600\n"
+    "        || fs::read(&gate).map_err(|_| StateError::Corrupt(\"fixture restore gate is unsafe\"))? != b\"pause\"\n"
+    "    {\n"
+    "        return Err(StateError::Corrupt(\"fixture restore gate is unsafe\"));\n"
+    "    }\n"
+    "    let entered = parent.join(\".update-fixture-restore-entered\");\n"
+    "    std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(entered)\n"
+    "        .map_err(|_| StateError::Corrupt(\"fixture restore gate is unsafe\"))?;\n"
+    "    while gate.exists() { std::thread::sleep(std::time::Duration::from_millis(10)); }\n"
+    "    Ok(())\n"
+    "}\n\n"
+    "fn current_uid() -> u32 {",
+)
+backup_path.write_text(backup)
+
 state_path = path.parent / "state" / "mod.rs"
 state = state_path.read_text()
 state = replace_once(state, "mod schema;\nmod store;", "mod schema;\nmod service_lease;\nmod store;")
