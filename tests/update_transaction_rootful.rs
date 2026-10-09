@@ -1067,7 +1067,8 @@ fn signed_systemd_update_rolls_back_and_retries() {
     assert!(init.status.success(), "{}", output_text(&init));
     set_admin_password_as_service_user();
 
-    let install = command(&["system", "install", "--candidate", BINARY]);
+    let old_release = std::env::var("WGB_OLD_BINARY").unwrap_or_else(|_| BINARY.to_owned());
+    let install = command(&["system", "install", "--candidate", &old_release]);
     assert!(install.status.success(), "{}", output_text(&install));
     let disabled_before = database_identity();
     let disabled_identity = typed_state_identity();
