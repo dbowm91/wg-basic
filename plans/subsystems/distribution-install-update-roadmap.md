@@ -205,7 +205,7 @@ Expected outcomes:
 
 ## 8. M004 — Transactional self-update and rollback orchestration
 
-Status: active, corrective required; M003 is mechanically closed. C001 implementation hardening is recorded in `plans/closure/distribution/004-c001-status.md`, but strict closure remains blocked. Eggup Service M010 strict closure and required M011 publication (`eggup-service 0.1.3`) are complete. wg-basic C001a has adopted the typed failed-unit stop proof and added the signed-fixture updater test plus isolated rootful qualification lane; hosted recovery evidence remains outstanding. C002 rootful/CI/docs qualification remains blocked on C001 strict closure. Production update remains disabled until the production public key is provisioned.
+Status: active, corrective required; M003 is mechanically closed. C001 implementation hardening is recorded in `plans/closure/distribution/004-c001-status.md`, but strict closure remains blocked. Eggup Service M010 strict closure and required M011 publication (`eggup-service 0.1.3`) are complete. wg-basic C001a has adopted the typed failed-unit stop proof and added the signed-fixture updater test plus isolated rootful qualification lane; hosted runs exposed and are correcting live-WAL doctor and interrupted Eggup-lock recovery behavior. C002 rootful/CI/docs qualification remains blocked on C001 strict closure. Production update remains disabled until the production public key is provisioned.
 
 Implementation plan:
 
