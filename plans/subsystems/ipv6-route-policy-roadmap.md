@@ -1,6 +1,6 @@
 # IPv6 and Route-Policy Qualification Roadmap
 
-Status: active; M001 ready after Phase 10 technical closure
+Status: active; M001 closed and M002 active under accepted ADR-007
 
 Canonical references:
 
@@ -9,6 +9,7 @@ Canonical references:
 - `plans/002-long-term-roadmap.md#13-phase-11--ipv6-and-route-policy-production-qualification`
 - `plans/003-planning-process.md`
 - `plans/adr/001-linux-native-control-plane.md`
+- `plans/adr/007-ipv6-forwarding-ownership.md`
 - `plans/closure/distribution/005-status.md`
 
 ## 1. Ownership and goal
@@ -138,7 +139,7 @@ to complete the feature.
 
 | Milestone | Status | Plan | Closure | Blocker |
 |---|---|---|---|---|
-| M001 dual-stack product/domain persistence and tunnel reconciliation | active | `plans/implementation/ipv6-route-policy/001-dual-stack-domain-and-kernel-reconciliation.md` | — | — |
-| M002 IPv6 forwarding/firewall/ownership | blocked | to be written after M001 | — | M001 closure and explicit forwarding ownership design |
+| M001 dual-stack product/domain persistence and tunnel reconciliation | closed | `plans/implementation/ipv6-route-policy/001-dual-stack-domain-and-kernel-reconciliation.md` | `plans/closure/ipv6-route-policy/001-status.md` | — |
+| M002 IPv6 forwarding/firewall/ownership | active | `plans/implementation/ipv6-route-policy/002-ipv6-forwarding-firewall-and-ownership.md` | — | M001 closure and accepted ADR-007 |
 | M003 client route policy/product surface | blocked | to be written after M002 | — | M002 closure |
 | M004 dual-stack E2E/Phase 11 closure | blocked | to be written after M003 | — | M003 closure |
