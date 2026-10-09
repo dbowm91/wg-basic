@@ -511,7 +511,7 @@ mod tests {
     use super::*;
     use crate::{
         domain::{NetworkPrefix, PrivateKey},
-        firewall::{Ipv4Forwarding, NatMode},
+        firewall::{Ipv4Forwarding, Ipv6Forwarding, NatMode},
         reconcile::{DesiredManagedPeer, DesiredWireGuardConfiguration, OwnershipDeclaration},
     };
 
@@ -558,6 +558,7 @@ mod tests {
             },
             Some(DesiredNetworkPolicy {
                 ipv4_forwarding: Ipv4Forwarding::Required,
+                ipv6_forwarding: Ipv6Forwarding::NotRequired,
                 egress_interface: "eth0".parse().unwrap(),
                 source_prefixes: vec![NetworkPrefix::new("10.8.0.0/24".parse().unwrap())],
                 nat: NatMode::Masquerade,

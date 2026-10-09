@@ -370,6 +370,7 @@ pub struct ProductServer {
     pub public_key: PublicKey,
     pub egress_interface: crate::domain::InterfaceName,
     pub ipv4_forwarding_required: bool,
+    pub ipv6_forwarding_required: bool,
     pub masquerade: bool,
     pub default_client_route_policy: crate::domain::ClientRoutePolicy,
 }

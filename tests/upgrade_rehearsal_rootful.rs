@@ -656,7 +656,7 @@ fn v4_product_traffic_rolls_back_and_reupgrades_as_one_transaction() {
     degraded_candidate.stop();
     checkpoint_state(&state);
     let migrated_snapshot = wg_basic::state::inspect_readonly(&state).unwrap();
-    assert_eq!(migrated_snapshot.schema_version, 6);
+    assert_eq!(migrated_snapshot.schema_version, 7);
     let migrated_interface = migrated_snapshot.desired.state.interfaces[0].id;
     assert_eq!(
         migrated_snapshot

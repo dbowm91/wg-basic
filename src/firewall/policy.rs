@@ -64,11 +64,19 @@ pub enum Ipv4Forwarding {
     NotRequired,
 }
 
-/// A bounded IPv4 policy. Interface names and source prefixes use validated domain types.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Ipv6Forwarding {
+    Required,
+    NotRequired,
+}
+
+/// A bounded dual-stack forwarding policy. NAT remains IPv4 masquerade only.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DesiredNetworkPolicy {
     pub ipv4_forwarding: Ipv4Forwarding,
+    pub ipv6_forwarding: Ipv6Forwarding,
     pub egress_interface: InterfaceName,
     pub source_prefixes: Vec<NetworkPrefix>,
     pub nat: NatMode,
@@ -85,12 +93,26 @@ impl DesiredNetworkPolicy {
         let mut prefixes = BTreeSet::new();
         for prefix in &self.source_prefixes {
             let network = prefix.network();
-            if !network.addr().is_ipv4()
-                || !prefixes.insert(prefix.to_string())
+            let ipv6_link_local = match network.addr() {
+                std::net::IpAddr::V6(address) => address.is_unicast_link_local(),
+                std::net::IpAddr::V4(_) => false,
+            };
+            if !prefixes.insert(prefix.to_string())
                 || network.addr().is_unspecified()
+                || network.addr().is_multicast()
+                || ipv6_link_local
+                || (network.addr().is_ipv6() && self.ipv6_forwarding != Ipv6Forwarding::Required)
             {
                 return Err(FirewallError::InvalidPolicy);
             }
+        }
+        if self.nat == NatMode::Masquerade
+            && !self
+                .source_prefixes
+                .iter()
+                .any(|prefix| prefix.network().addr().is_ipv4())
+        {
+            return Err(FirewallError::InvalidPolicy);
         }
         Ok(())
     }
@@ -99,6 +121,23 @@ impl DesiredNetworkPolicy {
         let mut prefixes = self.source_prefixes.iter().collect::<Vec<_>>();
         prefixes.sort_by_key(|prefix| prefix.to_string());
         prefixes
+    }
+
+    pub(crate) fn sorted_ipv4_prefixes(&self) -> Vec<&NetworkPrefix> {
+        self.sorted_prefixes()
+            .into_iter()
+            .filter(|prefix| prefix.network().addr().is_ipv4())
+            .collect()
+    }
+
+    pub(crate) fn sorted_allowed_prefixes(&self) -> Vec<&NetworkPrefix> {
+        self.sorted_prefixes()
+            .into_iter()
+            .filter(|prefix| {
+                prefix.network().addr().is_ipv4()
+                    || self.ipv6_forwarding == Ipv6Forwarding::Required
+            })
+            .collect()
     }
 
     pub(crate) fn rule_markers(
@@ -110,13 +149,13 @@ impl DesiredNetworkPolicy {
         let mut markers = BTreeSet::new();
         markers.insert(format!("{owner}:chain:forward:{hash}"));
         markers.insert(format!("{owner}:rule:return:{hash}"));
-        for (index, _) in self.sorted_prefixes().iter().enumerate() {
+        for (index, _) in self.sorted_allowed_prefixes().iter().enumerate() {
             markers.insert(format!("{owner}:rule:allow:{index}:{hash}"));
         }
         markers.insert(format!("{owner}:rule:drop:{hash}"));
         if self.nat == NatMode::Masquerade {
             markers.insert(format!("{owner}:chain:postrouting:{hash}"));
-            for (index, _) in self.sorted_prefixes().iter().enumerate() {
+            for (index, _) in self.sorted_ipv4_prefixes().iter().enumerate() {
                 markers.insert(format!("{owner}:rule:nat:{index}:{hash}"));
             }
         }
@@ -129,6 +168,7 @@ impl DesiredNetworkPolicy {
 #[serde(rename_all = "snake_case")]
 pub enum FirewallActionKind {
     EnableIpv4Forwarding,
+    EnableIpv6Forwarding,
     ReplaceOwnedNftablesTable,
     RemoveOwnedNftablesTable,
 }
@@ -137,6 +177,7 @@ pub enum FirewallActionKind {
 #[serde(rename_all = "snake_case")]
 pub enum FirewallWarning {
     IndependentFirewallMayStillBlockForwardedTraffic,
+    Ipv6ForwardingIsHostGlobalAndRemainsEnabled,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -196,6 +237,7 @@ mod tests {
             "wg0".parse().unwrap(),
             DesiredNetworkPolicy {
                 ipv4_forwarding: Ipv4Forwarding::Required,
+                ipv6_forwarding: Ipv6Forwarding::NotRequired,
                 egress_interface: "eth0".parse().unwrap(),
                 source_prefixes: vec!["10.8.0.0/24".parse().unwrap()],
                 nat: NatMode::Masquerade,

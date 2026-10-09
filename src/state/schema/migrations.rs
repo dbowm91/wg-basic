@@ -61,6 +61,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "client_ipv6_address",
         sql: include_str!("../migrations/006_client_ipv6_address.sql"),
     },
+    Migration {
+        version: 7,
+        name: "ipv6_forwarding_policy",
+        sql: include_str!("../migrations/007_ipv6_forwarding_policy.sql"),
+    },
 ];
 
 /// The highest schema version this binary understands.

@@ -207,6 +207,7 @@
       tunnel_prefix: data.tunnel_prefix, server_address: data.server_address,
       listen_port: Number(data.listen_port), advertised_endpoint: data.advertised_endpoint,
       egress_interface: data.egress_interface, ipv4_forwarding_required: $("setup-form").elements.ipv4_forwarding_required.checked,
+      ipv6_forwarding_required: $("setup-form").elements.ipv6_forwarding_required.checked,
       masquerade: $("setup-form").elements.masquerade.checked,
       default_client_route_policy: routes(data.routes),
     };

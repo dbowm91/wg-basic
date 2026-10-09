@@ -23,6 +23,14 @@ wg-basic state verify /var/lib/wg-basic/backups/pre-update.db
 Record the backup schema version, installation ID and generation. Do not copy a
 live SQLite database with ordinary filesystem tools.
 
+IPv6 forwarding is an explicit server policy. Enabling it writes the fixed
+host-global `/proc/sys/net/ipv6/conf/all/forwarding` control to `1`, which
+changes Linux Host/Router and Router Advertisement behavior across interfaces.
+The setting remains enabled after wg-basic disables the network policy or tears
+down the WireGuard interface. Arrange an upstream route to the configured
+tunnel prefix; wg-basic does not add that route and does not perform NAT66.
+Doctor reports the desired/observed forwarding state without writing it.
+
 ## Recovery after a failed update
 
 Stop both roles and confirm that neither holds the state lease or netd socket.

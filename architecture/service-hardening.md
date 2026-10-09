@@ -15,7 +15,7 @@ service properties, and state access on x86_64 and aarch64 Ubuntu 24.04 hosts.
 | `ProtectHome=` | `yes` | `yes` | Neither role uses operator home directories. |
 | `PrivateTmp=` | `yes` | `yes` | Private temporary namespace. |
 | `RestrictAddressFamilies=` | `AF_UNIX AF_INET AF_INET6` | `AF_UNIX AF_NETLINK` | Serve needs its HTTP listener and privileged UDS; netd uses UDS and rtnetlink. Add a family only with runtime evidence. |
-| `ReadWritePaths=` | Explicit state directory and runtime/socket directory | Explicit runtime/socket directory and `/proc/sys/net/ipv4/ip_forward` | No broad writable filesystem paths. The state database belongs only to serve. |
+| `ReadWritePaths=` | Explicit state directory and runtime/socket directory | Explicit runtime/socket directory and the fixed IPv4/IPv6 forwarding sysctls | No broad writable filesystem paths. The state database belongs only to serve. |
 | `LimitCORE=` | `0` | `0` | State, keys, and process memory must not enter core dumps. |
 | `TasksMax=` | `64` | `32` | Conservative task ceilings above the measured single-worker service shape. |
 | `MemoryMax=` | `256M` | `128M` | Headroom above idle RSS and the 19 MiB Argon2 working set used by serve. Re-measure under release load before tightening. |
@@ -51,7 +51,7 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 RestrictAddressFamilies=AF_UNIX AF_NETLINK
-ReadWritePaths=/run/wg-basic /proc/sys/net/ipv4/ip_forward
+ReadWritePaths=/run/wg-basic /proc/sys/net/ipv4/ip_forward /proc/sys/net/ipv6/conf/all/forwarding
 LimitCORE=0
 TasksMax=32
 MemoryMax=128M
@@ -61,11 +61,12 @@ StartLimitIntervalSec=60s
 StartLimitBurst=5
 ```
 
-Netd directly writes `/proc/sys/net/ipv4/ip_forward` as part of the managed
-forwarding policy. Therefore `ProtectKernelTunables=yes` is incompatible with
-the current runtime contract and MUST NOT be claimed by the shipped netd unit.
-Any later change to forwarding ownership needs an explicit implementation and
-security review before changing this profile.
+Netd directly writes only `/proc/sys/net/ipv4/ip_forward` and the explicitly
+requested `/proc/sys/net/ipv6/conf/all/forwarding`, each to `1`, as part of the
+managed forwarding policy. Therefore `ProtectKernelTunables=yes` is incompatible
+with the current runtime contract and MUST NOT be claimed by the shipped netd
+unit. Any later change to forwarding ownership needs an explicit
+implementation and security review before changing this profile.
 
 The ceilings are conservative limits, not measured maxima. The native M005
 release-candidate lifecycle runs measured installed product bytes of 9,937,817

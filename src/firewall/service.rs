@@ -1,10 +1,12 @@
 //! Serialized application of a firewall plan and receipt reporting.
 
-use super::nft::{observe_firewall, remove_table, replace_table, set_ipv4_forwarding};
+use super::nft::{
+    observe_firewall, remove_table, replace_table, set_ipv4_forwarding, set_ipv6_forwarding,
+};
 use super::planner::{matches_policy, plan_firewall};
 use super::policy::{
     DesiredNetworkPolicy, FirewallActionKind, FirewallApplyReceipt, FirewallError, FirewallFailure,
-    FirewallOwner, FirewallPlanSummary, FirewallWarning,
+    FirewallOwner, FirewallPlanSummary,
 };
 use crate::{
     domain::{InstallationId, InterfaceName},
@@ -45,7 +47,7 @@ impl FirewallService {
             policy.validate(wireguard_interface)?;
         }
         let owner = FirewallOwner::new(installation_id);
-        let observation = observe_firewall(&owner)?;
+        let observation = observe_firewall(&owner, requires_ipv6_forwarding(policy))?;
         Ok(plan_firewall(&owner, wireguard_interface, policy, &observation)?.summary)
     }
 
@@ -63,7 +65,7 @@ impl FirewallService {
             .mutation_lock
             .lock()
             .map_err(|_| FirewallError::BackendFailure)?;
-        let before = observe_firewall(&owner)?;
+        let before = observe_firewall(&owner, requires_ipv6_forwarding(policy))?;
         let plan = plan_firewall(&owner, wireguard_interface, policy, &before)?;
         if plan.summary.actions.is_empty() {
             return Ok(FirewallApplyReceipt {
@@ -73,15 +75,39 @@ impl FirewallService {
                 forwarding_changed: false,
                 table_changed: false,
                 failure: None,
-                warnings: vec![FirewallWarning::IndependentFirewallMayStillBlockForwardedTraffic],
+                warnings: plan.summary.warnings,
             });
         }
-        let forwarding_changed = plan
-            .summary
-            .actions
-            .contains(&FirewallActionKind::EnableIpv4Forwarding);
-        if forwarding_changed {
-            set_ipv4_forwarding(true)?;
+        let mut forwarding_applied = false;
+        for result in [
+            plan.summary
+                .actions
+                .contains(&FirewallActionKind::EnableIpv4Forwarding)
+                .then(|| set_ipv4_forwarding(true)),
+            plan.summary
+                .actions
+                .contains(&FirewallActionKind::EnableIpv6Forwarding)
+                .then(set_ipv6_forwarding),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if let Err(error) = result {
+                return Ok(FirewallApplyReceipt {
+                    wireguard_interface: wireguard_interface.clone(),
+                    status: if forwarding_applied {
+                        ApplyStatus::PartialFailure
+                    } else {
+                        ApplyStatus::FailedBeforeMutation
+                    },
+                    actions: plan.summary.actions.clone(),
+                    forwarding_changed: forwarding_applied,
+                    table_changed: false,
+                    failure: Some(failure_from(&error)),
+                    warnings: plan.summary.warnings.clone(),
+                });
+            }
+            forwarding_applied = true;
         }
         let table_changed = plan.summary.actions.iter().any(|action| {
             matches!(
@@ -102,25 +128,36 @@ impl FirewallService {
                 ),
                 None => remove_table(),
             };
-            if result.is_err() {
+            if let Err(error) = result {
                 return Ok(FirewallApplyReceipt {
                     wireguard_interface: wireguard_interface.clone(),
-                    status: if forwarding_changed {
+                    status: if forwarding_applied {
                         ApplyStatus::PartialFailure
                     } else {
                         ApplyStatus::FailedBeforeMutation
                     },
-                    actions: plan.summary.actions,
-                    forwarding_changed,
+                    actions: plan.summary.actions.clone(),
+                    forwarding_changed: forwarding_applied,
                     table_changed: false,
-                    failure: Some(FirewallFailure::BackendFailure),
-                    warnings: vec![
-                        FirewallWarning::IndependentFirewallMayStillBlockForwardedTraffic,
-                    ],
+                    failure: Some(failure_from(&error)),
+                    warnings: plan.summary.warnings.clone(),
                 });
             }
         }
-        let after = observe_firewall(&owner)?;
+        let after = match observe_firewall(&owner, requires_ipv6_forwarding(policy)) {
+            Ok(after) => after,
+            Err(error) => {
+                return Ok(FirewallApplyReceipt {
+                    wireguard_interface: wireguard_interface.clone(),
+                    status: ApplyStatus::PartialFailure,
+                    actions: plan.summary.actions,
+                    forwarding_changed: forwarding_applied,
+                    table_changed,
+                    failure: Some(failure_from(&error)),
+                    warnings: plan.summary.warnings,
+                });
+            }
+        };
         let verified = matches_policy(&owner, policy, wireguard_interface, &after)?;
         Ok(FirewallApplyReceipt {
             wireguard_interface: wireguard_interface.clone(),
@@ -130,10 +167,52 @@ impl FirewallService {
                 ApplyStatus::VerificationFailed
             },
             actions: plan.summary.actions,
-            forwarding_changed,
+            forwarding_changed: forwarding_applied,
             table_changed,
             failure: (!verified).then_some(FirewallFailure::BackendFailure),
-            warnings: vec![FirewallWarning::IndependentFirewallMayStillBlockForwardedTraffic],
+            warnings: plan.summary.warnings,
         })
+    }
+}
+
+fn failure_from(error: &FirewallError) -> FirewallFailure {
+    match error {
+        FirewallError::PermissionDenied => FirewallFailure::PermissionDenied,
+        FirewallError::Unsupported => FirewallFailure::Unsupported,
+        FirewallError::TableOwnershipConflict | FirewallError::LegacyTableOwnership => {
+            FirewallFailure::Conflict
+        }
+        FirewallError::InvalidPolicy
+        | FirewallError::BackendFailure
+        | FirewallError::ResourceLimitExceeded => FirewallFailure::BackendFailure,
+    }
+}
+
+fn requires_ipv6_forwarding(policy: Option<&DesiredNetworkPolicy>) -> bool {
+    policy.is_some_and(|policy| policy.ipv6_forwarding == super::policy::Ipv6Forwarding::Required)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn receipts_preserve_bounded_forwarding_failure_categories() {
+        assert_eq!(
+            failure_from(&FirewallError::PermissionDenied),
+            FirewallFailure::PermissionDenied
+        );
+        assert_eq!(
+            failure_from(&FirewallError::Unsupported),
+            FirewallFailure::Unsupported
+        );
+        assert_eq!(
+            failure_from(&FirewallError::TableOwnershipConflict),
+            FirewallFailure::Conflict
+        );
+        assert_eq!(
+            failure_from(&FirewallError::BackendFailure),
+            FirewallFailure::BackendFailure
+        );
     }
 }

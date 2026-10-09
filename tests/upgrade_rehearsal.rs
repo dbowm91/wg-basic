@@ -429,7 +429,7 @@ fn real_v4_state_migrates_refuses_old_binary_and_rolls_back_with_v4_artifact() {
     // Starting candidate serve against the v4 file is the real migration path.
     let (candidate_serve, candidate_addr) = start_serve(candidate, &state, &socket);
     let migrated = status_text(candidate, &state);
-    assert!(migrated.contains("schema version:     6"), "{migrated}");
+    assert!(migrated.contains("schema version:     7"), "{migrated}");
     assert!(migrated.contains(&installation_line));
     assert!(migrated.contains(&generation_line));
     assert!(state.with_file_name("state.db.pre-migration-v4").exists());
@@ -538,7 +538,7 @@ fn real_v4_state_migrates_refuses_old_binary_and_rolls_back_with_v4_artifact() {
     drop(restored_serve);
 
     let reupgraded = status_text(candidate, &state);
-    assert!(reupgraded.contains("schema version:     6"), "{reupgraded}");
+    assert!(reupgraded.contains("schema version:     7"), "{reupgraded}");
     assert!(reupgraded.contains(&installation_line));
     assert!(reupgraded.contains(&generation_line));
     let (reupgraded_serve, reupgraded_addr) = start_serve(candidate, &state, &socket);

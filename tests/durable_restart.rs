@@ -466,6 +466,7 @@ fn desired_state_with_policy(interface_id: InterfaceId) -> DesiredState {
     state.network_policy = Some(wg_basic::domain::DesiredNetworkPolicy {
         wireguard_interface: "wg-restart".parse().unwrap(),
         ipv4_forwarding_required: true,
+        ipv6_forwarding_required: false,
         egress_interface: "lo".parse().unwrap(),
         source_prefixes: vec![NetworkPrefix::new("10.55.0.0/24".parse().unwrap())],
         masquerade: true,

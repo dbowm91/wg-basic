@@ -116,6 +116,7 @@ fn purge_requires_confirmed_disabled_noop_network_and_preserves_operator_files()
             advertised_endpoint: AdvertisedEndpoint::new("198.18.0.1", 51820).unwrap(),
             egress_interface: "lo".parse().unwrap(),
             ipv4_forwarding_required: false,
+            ipv6_forwarding_required: false,
             masquerade: false,
             default_client_route_policy: ClientRoutePolicy::default(),
         })

@@ -45,7 +45,9 @@
             <label>Internet egress interface <input name="egress_interface" value="eth0" required /></label>
             <label>Client routes <input name="routes" value="10.77.0.0/24" required /><span class="help">Comma separated. Use 0.0.0.0/0 to route all IPv4 traffic through this server.</span></label>
             <label class="check"><input name="ipv4_forwarding_required" type="checkbox" checked /> Enable IPv4 forwarding</label>
-            <label class="check"><input name="masquerade" type="checkbox" checked /> Masquerade client internet traffic</label>
+            <label class="check"><input name="ipv6_forwarding_required" type="checkbox" /> Enable host-wide IPv6 forwarding</label>
+            <span class="help">IPv6 forwarding is opt-in. Linux applies it globally; disabling this network leaves the host setting enabled. IPv6 client prefixes must be routed upstream. NAT66 is not used.</span>
+            <label class="check"><input name="masquerade" type="checkbox" checked /> Masquerade IPv4 client internet traffic</label>
           </details>
           <button type="submit">Save server settings</button>
         </form>

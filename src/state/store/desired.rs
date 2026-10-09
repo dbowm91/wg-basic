@@ -377,24 +377,33 @@ fn read_network_policy(
     connection: &Connection,
     interfaces: &[DesiredInterface],
 ) -> Result<Option<DesiredNetworkPolicy>, StateError> {
+    let schema_version: i64 = connection
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(StateError::database)?;
+    let ipv6_column = if schema_version >= 7 {
+        "ipv6_forwarding_required"
+    } else {
+        "0"
+    };
+    let query = format!(
+        "SELECT wireguard_interface, ipv4_forwarding_required, egress_interface, masquerade, {ipv6_column}
+         FROM network_policy WHERE singleton = 1"
+    );
     let row = connection
-        .query_row(
-            "SELECT wireguard_interface, ipv4_forwarding_required, egress_interface, masquerade
-             FROM network_policy WHERE singleton = 1",
-            [],
-            |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, i64>(1)?,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, i64>(3)?,
-                ))
-            },
-        )
+        .query_row(&query, [], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, i64>(4)?,
+            ))
+        })
         .optional()
         .map_err(StateError::database)?;
 
-    let Some((interface, forwarding_required, egress, masquerade)) = row else {
+    let Some((interface, forwarding_required, egress, masquerade, ipv6_forwarding_required)) = row
+    else {
         return Ok(None);
     };
     let wireguard_interface: InterfaceName = interface
@@ -408,6 +417,7 @@ fn read_network_policy(
     Ok(Some(DesiredNetworkPolicy {
         wireguard_interface,
         ipv4_forwarding_required: forwarding_required == 1,
+        ipv6_forwarding_required: ipv6_forwarding_required == 1,
         egress_interface: egress
             .parse()
             .map_err(|_| StateError::Corrupt("invalid policy egress"))?,
@@ -582,13 +592,15 @@ fn write_desired(transaction: &Transaction<'_>, state: &DesiredState) -> Result<
         transaction
             .execute(
                 "INSERT INTO network_policy
-                     (singleton, wireguard_interface, ipv4_forwarding_required, egress_interface, masquerade)
-                 VALUES (1, ?1, ?2, ?3, ?4)",
+                     (singleton, wireguard_interface, ipv4_forwarding_required, egress_interface, masquerade,
+                      ipv6_forwarding_required)
+                 VALUES (1, ?1, ?2, ?3, ?4, ?5)",
                 rusqlite::params![
                     policy.wireguard_interface.as_str(),
                     i64::from(policy.ipv4_forwarding_required),
                     policy.egress_interface.as_str(),
                     i64::from(policy.masquerade),
+                    i64::from(policy.ipv6_forwarding_required),
                 ],
             )
             .map_err(StateError::database)?;

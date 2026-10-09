@@ -899,7 +899,7 @@ fn fail_candidate_after_health_and_restore(
     }
     assert!(!result.status.success(), "{failure}");
     assert!(
-        failure.contains("candidate health passed with state schema 6"),
+        failure.contains("candidate health passed with state schema 7"),
         "candidate must reach healthy migrated state before the forced failure: {failure}"
     );
     assert!(
@@ -1344,7 +1344,7 @@ fn signed_systemd_update_rolls_back_and_retries() {
 
     // Force a post-health failure after the real candidate serve process has
     // opened and migrated the v4 database. The fixture receipt proves that the
-    // candidate was healthy on schema 6 before rollback restores schema 4.
+    // candidate was healthy on schema 7 before rollback restores schema 4.
     fail_candidate_after_health_and_restore(&before, &typed_before, Some(client_private_key));
     traffic.require_handshake_and_traffic();
     assert_enabled_product_healthy(traffic.admin_cookie.as_deref().unwrap());
@@ -1423,7 +1423,7 @@ fn signed_systemd_update_rolls_back_and_retries() {
     let committed = command(&["update", "recover"]);
     assert!(committed.status.success(), "{}", output_text(&committed));
     let after_retry = database_identity();
-    assert_eq!(after_retry.0, 6);
+    assert_eq!(after_retry.0, 7);
     assert_eq!(after_retry.1, before.1);
     assert_eq!(after_retry.2, before.2);
     assert_eq!(after_retry.3, before.3);

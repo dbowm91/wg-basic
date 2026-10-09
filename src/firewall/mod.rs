@@ -17,6 +17,6 @@ mod service;
 
 pub use policy::{
     DesiredNetworkPolicy, FirewallActionKind, FirewallApplyReceipt, FirewallError, FirewallFailure,
-    FirewallPlanSummary, FirewallWarning, Ipv4Forwarding, NatMode,
+    FirewallPlanSummary, FirewallWarning, Ipv4Forwarding, Ipv6Forwarding, NatMode,
 };
 pub use service::FirewallService;

@@ -92,6 +92,7 @@ fn setup(command_overrides: impl FnOnce(&mut ServerSetupCommand)) -> Setup {
             .unwrap(),
         egress_interface: "eth0".parse().unwrap(),
         ipv4_forwarding_required: true,
+        ipv6_forwarding_required: false,
         masquerade: true,
         default_client_route_policy: ClientRoutePolicy::default(),
     };
@@ -275,6 +276,7 @@ fn setup_is_one_time() {
             .unwrap(),
         egress_interface: "eth0".parse().unwrap(),
         ipv4_forwarding_required: true,
+        ipv6_forwarding_required: false,
         masquerade: true,
         default_client_route_policy: ClientRoutePolicy::default(),
     });
@@ -483,6 +485,7 @@ fn dual_stack_setup_allocates_persists_and_reassigns_client_addresses() {
         ..
     } = setup(|command| {
         command.ipv6_tunnel_prefix = Some(NetworkPrefix::new("2001:db8:42::/64".parse().unwrap()));
+        command.ipv6_forwarding_required = true;
     });
     let service = service(&store);
     let server = service.server().unwrap().unwrap();
@@ -494,6 +497,12 @@ fn dual_stack_setup_allocates_persists_and_reassigns_client_addresses() {
         server.ipv6_server_address.unwrap().to_string(),
         "2001:db8:42::1"
     );
+    let network_policy = store.load().unwrap().state.network_policy.unwrap();
+    assert!(network_policy.ipv6_forwarding_required);
+    assert!(network_policy
+        .source_prefixes
+        .iter()
+        .any(|prefix| prefix.to_string() == "2001:db8:42::/64"));
 
     let client = create(&service, "dual-stack");
     assert_eq!(client.assigned_address.to_string(), "10.8.0.2/32");

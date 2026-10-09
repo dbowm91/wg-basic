@@ -129,7 +129,7 @@ impl DesiredInterface {
     }
 }
 
-/// Desired IPv4 forwarding/NAT policy for one managed interface.
+/// Desired IPv4/IPv6 forwarding and IPv4 NAT policy for one managed interface.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DesiredNetworkPolicy {
@@ -138,6 +138,10 @@ pub struct DesiredNetworkPolicy {
     pub wireguard_interface: InterfaceName,
     /// Whether host IPv4 forwarding is required.
     pub ipv4_forwarding_required: bool,
+    /// Whether host IPv6 forwarding is required. This is independent of merely
+    /// assigning IPv6 tunnel addresses.
+    #[serde(default)]
+    pub ipv6_forwarding_required: bool,
     pub egress_interface: InterfaceName,
     pub source_prefixes: Vec<NetworkPrefix>,
     pub masquerade: bool,
@@ -186,8 +190,12 @@ pub enum StateValidationError {
     DuplicateInterfaceName(InterfaceName),
     #[error("network policy references {0}, which is not a managed interface")]
     NetworkPolicyUnknownInterface(InterfaceName),
-    #[error("network policy source prefixes must be IPv4")]
-    NetworkPolicyNonIpv4Prefix,
+    #[error("network policy source prefixes must be valid unicast prefixes")]
+    NetworkPolicyInvalidPrefix,
+    #[error("IPv6 forwarding requires an IPv6 source prefix")]
+    NetworkPolicyIpv6PrefixRequired,
+    #[error("IPv6 network policy source prefix is outside its managed tunnel prefix")]
+    NetworkPolicyIpv6PrefixNotManaged,
     #[error("network policy requires at least one source prefix")]
     NetworkPolicyEmptySourcePrefixes,
     #[error("peer identifier {0} is declared more than once")]
@@ -222,24 +230,38 @@ pub fn validate_desired_state(state: &DesiredState) -> Result<(), StateValidatio
         }
     }
     if let Some(policy) = &state.network_policy {
-        if !state
+        let Some(interface) = state
             .interfaces
             .iter()
-            .any(|interface| interface.name == policy.wireguard_interface)
-        {
+            .find(|interface| interface.name == policy.wireguard_interface)
+        else {
             return Err(StateValidationError::NetworkPolicyUnknownInterface(
                 policy.wireguard_interface.clone(),
             ));
-        }
+        };
         if policy.source_prefixes.is_empty() {
             return Err(StateValidationError::NetworkPolicyEmptySourcePrefixes);
+        }
+        if policy.source_prefixes.iter().any(|prefix| {
+            prefix.network().addr().is_unspecified() || prefix.network().addr().is_multicast()
+        }) {
+            return Err(StateValidationError::NetworkPolicyInvalidPrefix);
+        }
+        if policy.ipv6_forwarding_required
+            && !policy
+                .source_prefixes
+                .iter()
+                .any(|prefix| prefix.network().addr().is_ipv6())
+        {
+            return Err(StateValidationError::NetworkPolicyIpv6PrefixRequired);
         }
         if policy
             .source_prefixes
             .iter()
-            .any(|prefix| !prefix.network().addr().is_ipv4())
+            .filter(|prefix| prefix.network().addr().is_ipv6())
+            .any(|prefix| !interface.tunnel_prefixes.contains(prefix))
         {
-            return Err(StateValidationError::NetworkPolicyNonIpv4Prefix);
+            return Err(StateValidationError::NetworkPolicyIpv6PrefixNotManaged);
         }
     }
     Ok(())

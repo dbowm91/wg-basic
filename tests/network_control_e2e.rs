@@ -130,6 +130,10 @@ struct Netd {
 
 impl Netd {
     fn start(namespace: &str) -> Self {
+        Self::start_with_path(namespace, None)
+    }
+
+    fn start_with_path(namespace: &str, path: Option<&std::ffi::OsStr>) -> Self {
         let suffix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -150,6 +154,7 @@ impl Netd {
             ])
             .env("WG_BASIC_TEST_SOCKET", &socket)
             .env("WG_BASIC_TEST_SHUTDOWN", &shutdown_file)
+            .envs(path.map(|path| [("PATH", path)]).into_iter().flatten())
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())
             .spawn()
@@ -284,6 +289,7 @@ fn managed_interface(
 fn policy(nat: NatMode) -> DesiredNetworkPolicy {
     DesiredNetworkPolicy {
         ipv4_forwarding: Ipv4Forwarding::Required,
+        ipv6_forwarding: wg_basic::firewall::Ipv6Forwarding::NotRequired,
         egress_interface: "veth-egress".parse().unwrap(),
         source_prefixes: vec!["10.8.0.0/24".parse::<NetworkPrefix>().unwrap()],
         nat,
@@ -306,6 +312,27 @@ fn ping(client: &Namespace) -> Output {
             "-I",
             "10.8.0.2",
             "198.51.100.2",
+        ],
+    )
+}
+
+fn ping6(client: &Namespace) -> Output {
+    command(
+        "ip",
+        &[
+            "netns",
+            "exec",
+            &client.0,
+            "ping",
+            "-6",
+            "-n",
+            "-c",
+            "1",
+            "-W",
+            "2",
+            "-I",
+            "2001:db8:42::2",
+            "2001:db8:100::2",
         ],
     )
 }
@@ -383,6 +410,24 @@ fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
         "dev",
         "veth-internet",
     ]);
+    run_ip(&[
+        "-n",
+        &server.0,
+        "addr",
+        "add",
+        "2001:db8:100::1/64",
+        "dev",
+        "veth-egress",
+    ]);
+    run_ip(&[
+        "-n",
+        &internet.0,
+        "addr",
+        "add",
+        "2001:db8:100::2/64",
+        "dev",
+        "veth-internet",
+    ]);
     run_ip(&["-n", &client.0, "link", "set", "lo", "up"]);
     run_ip(&["-n", &server.0, "link", "set", "lo", "up"]);
     run_ip(&["-n", &internet.0, "link", "set", "lo", "up"]);
@@ -398,6 +443,15 @@ fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
         "203.0.113.0/24",
         "dev",
         "veth-egress",
+    ]);
+    run_ip(&[
+        "-n",
+        &internet.0,
+        "route",
+        "add",
+        "2001:db8:42::/64",
+        "via",
+        "2001:db8:100::1",
     ]);
 
     run(
@@ -432,19 +486,27 @@ fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
     let client_owner = OwnerTag::new(install, InterfaceId::new());
 
     let server_state = || {
-        managed_interface(
+        let mut desired = managed_interface(
             server_interface.clone(),
             server_private.clone(),
             DesiredManagedPeer {
                 public_key: client_public.clone(),
-                allowed_ips: vec!["10.8.0.2/32".parse().unwrap()],
+                allowed_ips: vec![
+                    "10.8.0.2/32".parse().unwrap(),
+                    "2001:db8:42::2/128".parse().unwrap(),
+                ],
                 persistent_keepalive_seconds: None,
                 endpoint: None,
             },
             "10.8.0.1/24",
             51820,
             server_owner.clone(),
-        )
+        );
+        desired.addresses.push(DesiredAddress {
+            address: "2001:db8:42::1/64".parse().unwrap(),
+            presence: ResourcePresence::Present,
+        });
+        desired
     };
     let client_state = || {
         let mut desired = managed_interface(
@@ -452,7 +514,7 @@ fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
             client_private.clone(),
             DesiredManagedPeer {
                 public_key: server_public.clone(),
-                allowed_ips: vec!["0.0.0.0/0".parse().unwrap()],
+                allowed_ips: vec!["0.0.0.0/0".parse().unwrap(), "::/0".parse().unwrap()],
                 persistent_keepalive_seconds: Some(25),
                 endpoint: Some("192.0.2.1:51820".parse().unwrap()),
             },
@@ -465,6 +527,15 @@ fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
             gateway: None,
             presence: ResourcePresence::Present,
         }];
+        desired.routes.push(ManagedRoute {
+            destination: "::/0".parse().unwrap(),
+            gateway: None,
+            presence: ResourcePresence::Present,
+        });
+        desired.addresses.push(DesiredAddress {
+            address: "2001:db8:42::2/64".parse().unwrap(),
+            presence: ResourcePresence::Present,
+        });
         desired
     };
     let first_server = apply_interface(&server_netd, server_state(), 501);
@@ -518,14 +589,138 @@ fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
         ApplyStatus::NoChange
     );
 
+    let dual_stack = DesiredNetworkPolicy {
+        ipv6_forwarding: wg_basic::firewall::Ipv6Forwarding::Required,
+        source_prefixes: vec![
+            "10.8.0.0/24".parse().unwrap(),
+            "2001:db8:42::/64".parse().unwrap(),
+        ],
+        ..policy(NatMode::Masquerade)
+    };
+    let per_interface_before = run(
+        "ip",
+        &[
+            "netns",
+            "exec",
+            &server.0,
+            "sysctl",
+            "-n",
+            "net.ipv6.conf.veth-egress.forwarding",
+        ],
+    );
+    let per_interface_before = String::from_utf8_lossy(&per_interface_before.stdout)
+        .trim()
+        .to_owned();
+    let failure_root = std::env::temp_dir().join(format!(
+        "wgb-m002-nft-failure-{:x}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir(&failure_root).unwrap();
+    let real_nft = command("which", &["nft"]);
+    assert!(real_nft.status.success());
+    let real_nft = String::from_utf8_lossy(&real_nft.stdout).trim().to_owned();
+    let wrapper = failure_root.join("nft");
+    fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\ncase \" $* \" in *\" -f - \"*) echo 'fixture nft failure' >&2; exit 1;; esac\nexec {real_nft} \"$@\"\n"
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
+    let inherited_path = std::env::var_os("PATH").unwrap_or_default();
+    let fixture_path = std::env::join_paths(
+        std::iter::once(failure_root.clone()).chain(std::env::split_paths(&inherited_path)),
+    )
+    .unwrap();
+    drop(server_netd);
+    server_netd = Netd::start_with_path(&server.0, Some(&fixture_path));
+    let ipv6_apply = apply_policy(
+        &server_netd,
+        server_interface.clone(),
+        Some(dual_stack.clone()),
+        511,
+    );
+    assert_eq!(
+        ipv6_apply.status,
+        ApplyStatus::PartialFailure,
+        "partial receipt must preserve the sysctl effect after nft failure: {ipv6_apply:?}"
+    );
+    assert!(ipv6_apply.forwarding_changed);
+    let per_interface_after = run(
+        "ip",
+        &[
+            "netns",
+            "exec",
+            &server.0,
+            "sysctl",
+            "-n",
+            "net.ipv6.conf.veth-egress.forwarding",
+        ],
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&per_interface_after.stdout).trim(),
+        "1",
+        "ADR-007 global forwarding changed per-interface Host/Router forwarding from {per_interface_before}"
+    );
+    drop(server_netd);
+    server_netd = Netd::start(&server.0);
+    let retry = apply_policy(
+        &server_netd,
+        server_interface.clone(),
+        Some(dual_stack.clone()),
+        512,
+    );
+    assert_eq!(
+        retry.status,
+        ApplyStatus::Applied,
+        "IPv6 policy retry: {retry:?}"
+    );
+    fs::remove_dir_all(&failure_root).unwrap();
+    assert!(
+        ping6(&client).status.success(),
+        "routed IPv6 return path failed"
+    );
+    let ipv6_forwarding = run(
+        "ip",
+        &[
+            "netns",
+            "exec",
+            &server.0,
+            "sysctl",
+            "-n",
+            "net.ipv6.conf.all.forwarding",
+        ],
+    );
+    assert_eq!(String::from_utf8_lossy(&ipv6_forwarding.stdout).trim(), "1");
+    let owned_rules = nft(&server, &["-j", "list", "table", "inet", "wg_basic"]);
+    let owned_rules: serde_json::Value = serde_json::from_slice(&owned_rules.stdout).unwrap();
+    let serialized_rules = owned_rules.to_string();
+    assert!(
+        serialized_rules.contains("ip6"),
+        "IPv6 source rule missing: {serialized_rules}"
+    );
+    let table_rules = owned_rules["nftables"].as_array().unwrap();
+    assert!(
+        table_rules
+            .iter()
+            .filter_map(|entry| entry.get("rule"))
+            .filter(|rule| rule.to_string().contains("masquerade"))
+            .all(|rule| !rule.to_string().contains("ip6")),
+        "NAT66 emitted: {serialized_rules}"
+    );
+
     nft_input(&server, "add table inet external_drop\nadd chain inet external_drop forward { type filter hook forward priority 10; policy accept; }\nadd rule inet external_drop forward iifname \"wg-server\" drop comment \"external-firewall-drop\"\n");
     assert!(
-        !ping(&client).status.success(),
+        !ping(&client).status.success() && !ping6(&client).status.success(),
         "wg-basic ACCEPT unexpectedly overrode a later independent firewall drop"
     );
     nft_input(&server, "delete table inet external_drop\n");
     assert!(
-        ping(&client).status.success(),
+        ping(&client).status.success() && ping6(&client).status.success(),
         "traffic did not recover after external drop removal"
     );
 
@@ -545,20 +740,36 @@ fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
         apply_policy(
             &server_netd,
             server_interface.clone(),
-            Some(policy(NatMode::Masquerade)),
+            Some(dual_stack.clone()),
             507
         )
         .status,
         ApplyStatus::NoChange
     );
     assert!(
-        ping(&client).status.success(),
-        "netd restart broke the WireGuard NAT path"
+        ping(&client).status.success() && ping6(&client).status.success(),
+        "netd restart broke routed traffic"
     );
 
     assert_eq!(
         apply_policy(&server_netd, server_interface.clone(), None, 508).status,
         ApplyStatus::Applied
+    );
+    let ipv6_forwarding_after_disable = run(
+        "ip",
+        &[
+            "netns",
+            "exec",
+            &server.0,
+            "sysctl",
+            "-n",
+            "net.ipv6.conf.all.forwarding",
+        ],
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&ipv6_forwarding_after_disable.stdout).trim(),
+        "1",
+        "policy disable incorrectly reset IPv6 forwarding"
     );
     let remove_server = DesiredManagedInterface {
         interface: server_interface.clone(),
@@ -576,6 +787,22 @@ fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
     assert_eq!(
         apply_interface(&server_netd, remove_server, 509).status,
         ApplyStatus::Applied
+    );
+    let ipv6_forwarding = run(
+        "ip",
+        &[
+            "netns",
+            "exec",
+            &server.0,
+            "sysctl",
+            "-n",
+            "net.ipv6.conf.all.forwarding",
+        ],
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&ipv6_forwarding.stdout).trim(),
+        "1",
+        "IPv6 forwarding was incorrectly reverted"
     );
     let forwarding = run(
         "ip",

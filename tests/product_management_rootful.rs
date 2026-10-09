@@ -407,6 +407,7 @@ impl Installation {
                 .unwrap(),
                 egress_interface: "lo".parse().unwrap(),
                 ipv4_forwarding_required: false,
+                ipv6_forwarding_required: false,
                 masquerade: false,
                 default_client_route_policy: ClientRoutePolicy::default(),
             })
