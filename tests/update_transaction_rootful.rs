@@ -52,11 +52,58 @@ fn database_identity() -> (i64, String, i64, i64) {
     (schema, installation, generation, clients)
 }
 
+fn typed_state_identity() -> serde_json::Value {
+    let identity = command(&["state", "identity", "--state", distribution_state_path()]);
+    assert!(identity.status.success(), "{}", output_text(&identity));
+    serde_json::from_slice(&identity.stdout).unwrap()
+}
+
+fn qualification_environment() -> String {
+    let kernel = Command::new("/usr/bin/uname").arg("-r").output().unwrap();
+    let systemd = Command::new("/usr/bin/systemctl")
+        .arg("--version")
+        .output()
+        .unwrap();
+    format!(
+        "kernel={} systemd={} architecture={}",
+        String::from_utf8_lossy(&kernel.stdout)
+            .lines()
+            .next()
+            .unwrap_or("unknown"),
+        String::from_utf8_lossy(&systemd.stdout)
+            .lines()
+            .next()
+            .unwrap_or("unknown"),
+        std::env::consts::ARCH
+    )
+}
+
 fn distribution_state_path() -> &'static str {
     wg_basic::distribution::STATE_PATH
 }
 
 fn kill_update_at_phase(phase: &str, expected_identity: &(i64, String, i64, i64)) {
+    interrupt_update_at_phase(phase);
+
+    for _ in 0..2 {
+        let recovery = command(&["update", "recover"]);
+        assert!(
+            recovery.status.success(),
+            "recovery after {phase} failed: {}\n{}",
+            output_text(&recovery),
+            recovery_diagnostics()
+        );
+    }
+    assert_eq!(database_identity(), *expected_identity);
+    assert!(
+        eggup_core::MutationLock::observe(Path::new("/usr/local/bin"))
+            .unwrap()
+            .is_none(),
+        "recovery must resolve its journal-proven Eggup lock record"
+    );
+}
+
+fn interrupt_update_at_phase(phase: &str) {
     use std::{
         os::unix::process::CommandExt,
         thread,
@@ -89,24 +136,77 @@ fn kill_update_at_phase(phase: &str, expected_identity: &(i64, String, i64, i64)
         "updater did not reach durable phase {phase}"
     );
     kill_process_group(&mut child);
+    let _ = fs::remove_dir_all(gate);
+}
+
+fn assert_recovery_refuses_tampering(label: &str) {
+    let recovery = command(&["update", "recover"]);
+    assert!(
+        !recovery.status.success(),
+        "recovery must refuse tampered {label}: {}",
+        output_text(&recovery)
+    );
+    for service in ["wg-basic.service", "wg-basic-netd.service"] {
+        let active = Command::new("/usr/bin/systemctl")
+            .args(["is-active", service])
+            .output()
+            .unwrap();
+        assert_ne!(
+            String::from_utf8_lossy(&active.stdout).trim(),
+            "active",
+            "tampered {label} must not leave {service} running"
+        );
+    }
+}
+
+fn qualify_tampered_recovery_refusal(expected_identity: &(i64, String, i64, i64)) {
+    use std::io::Write;
+
+    interrupt_update_at_phase("BinaryCommitted");
+    let journal_path = Path::new(wg_basic::update::UPDATE_JOURNAL_PATH);
+    let journal_bytes = fs::read(journal_path).unwrap();
+    let journal: serde_json::Value = serde_json::from_slice(&journal_bytes).unwrap();
+    let transaction = Path::new(journal["transaction_dir"].as_str().unwrap());
+
+    for artifact in ["old-wg-basic", "state-pre-update.db"] {
+        let path = transaction.join(artifact);
+        let original = fs::read(&path).unwrap();
+        fs::write(&path, b"tampered recovery evidence").unwrap();
+        assert_recovery_refuses_tampering(artifact);
+        fs::write(&path, original).unwrap();
+        fs::File::open(&path).unwrap().sync_all().unwrap();
+    }
+
+    let unit = Path::new(wg_basic::distribution::SERVE_UNIT_PATH);
+    let original_unit = fs::read(unit).unwrap();
+    let mut changed_unit = fs::OpenOptions::new().append(true).open(unit).unwrap();
+    changed_unit
+        .write_all(b"\n# altered during updater recovery qualification\n")
+        .unwrap();
+    changed_unit.sync_all().unwrap();
+    let reload = Command::new("/usr/bin/systemctl")
+        .args(["daemon-reload"])
+        .status()
+        .unwrap();
+    assert!(reload.success());
+    assert_recovery_refuses_tampering("service unit");
+    fs::write(unit, original_unit).unwrap();
+    let reload = Command::new("/usr/bin/systemctl")
+        .args(["daemon-reload"])
+        .status()
+        .unwrap();
+    assert!(reload.success());
+
+    fs::write(journal_path, b"{").unwrap();
+    assert_recovery_refuses_tampering("journal");
+    fs::write(journal_path, journal_bytes).unwrap();
+    fs::File::open(journal_path).unwrap().sync_all().unwrap();
 
     for _ in 0..2 {
         let recovery = command(&["update", "recover"]);
-        assert!(
-            recovery.status.success(),
-            "recovery after {phase} failed: {}\n{}",
-            output_text(&recovery),
-            recovery_diagnostics()
-        );
+        assert!(recovery.status.success(), "{}", output_text(&recovery));
     }
     assert_eq!(database_identity(), *expected_identity);
-    assert!(
-        eggup_core::MutationLock::observe(Path::new("/usr/local/bin"))
-            .unwrap()
-            .is_none(),
-        "recovery must resolve its journal-proven Eggup lock record"
-    );
-    let _ = fs::remove_dir_all(gate);
 }
 
 fn recovery_diagnostics() -> String {
@@ -257,6 +357,10 @@ fn signed_systemd_update_rolls_back_and_retries() {
     use wg_basic::distribution;
 
     assert_eq!(nix::unistd::geteuid().as_raw(), 0, "run as root");
+    println!(
+        "C001a qualification environment: {}",
+        qualification_environment()
+    );
     assert!(
         Path::new("/run/systemd/system").is_dir(),
         "systemd is required"
@@ -327,6 +431,7 @@ fn signed_systemd_update_rolls_back_and_retries() {
     let install = command(&["system", "install", "--candidate", BINARY]);
     assert!(install.status.success(), "{}", output_text(&install));
     let before = database_identity();
+    let typed_before = typed_state_identity();
     assert_eq!(before.0, 4);
 
     for phase in [
@@ -338,6 +443,7 @@ fn signed_systemd_update_rolls_back_and_retries() {
     ] {
         kill_update_at_phase(phase, &before);
     }
+    qualify_tampered_recovery_refusal(&before);
 
     private_file(
         &Path::new(distribution::STATE_DIR).join(".update-fixture-fail-start"),
@@ -381,6 +487,7 @@ fn signed_systemd_update_rolls_back_and_retries() {
     }
     let after = database_identity();
     assert_eq!(after, before, "rollback must restore exact state identity");
+    assert_eq!(typed_state_identity(), typed_before);
     assert!(Path::new(distribution::BINARY_PATH).exists());
 
     fs::remove_file(Path::new(distribution::STATE_DIR).join(".update-fixture-fail-start")).unwrap();
@@ -397,6 +504,25 @@ fn signed_systemd_update_rolls_back_and_retries() {
     assert_eq!(after_retry.1, before.1);
     assert_eq!(after_retry.2, before.2);
     assert_eq!(after_retry.3, before.3);
+    let typed_after_retry = typed_state_identity();
+    for field in [
+        "installation_id",
+        "desired_generation",
+        "network_enabled",
+        "product_identity_sha256",
+    ] {
+        assert_eq!(
+            typed_after_retry.get(field),
+            typed_before.get(field),
+            "successful migration must preserve typed state field {field}"
+        );
+    }
+    assert_eq!(
+        typed_after_retry
+            .get("schema_version")
+            .and_then(serde_json::Value::as_i64),
+        Some(5)
+    );
 
     let stop = Command::new("/usr/bin/systemctl")
         .args([
