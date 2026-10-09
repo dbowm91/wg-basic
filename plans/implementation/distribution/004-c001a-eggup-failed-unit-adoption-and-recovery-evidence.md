@@ -116,7 +116,17 @@ Local verification on this implementation tree: formatting, ordinary check
 and clippy, feature clippy, Rust 1.89 check, the complete ordinary suite (561
 passed, 3 ignored), cargo audit (211 locked dependencies), the pinned Eggup
 service dependency graph, and `git diff --check` passed. The updater rootful
-test compiles but has not been run on this shared host. The dedicated hosted CI
-job has not yet produced a run, so this plan remains active and C001 remains
+test compiles but has not been run on this shared host. The hosted qualification
+has not yet passed, so this plan remains active and C001 remains
 corrective-required. Do not unblock C002 or M005 until hosted destructive
 qualification passes and remaining C001 acceptance cases are reconciled.
+
+Hosted run `37887926091` passed every existing CI job but exposed a C001a
+recovery failure at the first updater kill point. Diagnostic run `37888759782`
+identified the cause: terminal health called `doctor` while `serve` was active;
+doctor intentionally refuses immutable inspection when the live SQLite WAL
+sidecars exist and reports State, NetworkOwnership, and Forwarding as Unknown.
+`validate_candidate_health` and `validate_running_product_health` now rely on
+the already-run systemd `ExecStartPre` doctor check plus owned-service state,
+live management health, typed identity, and the product health endpoint while
+services are active. Hosted verification of this correction is pending.
