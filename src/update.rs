@@ -379,8 +379,10 @@ fn stop_owned_services() -> Result<(), String> {
             return Err("product service ownership or lifecycle is ambiguous".into());
         }
     }
-    stop_owned_service(service_endpoint("wg-basic.service", true)?)?;
+    stop_owned_service(service_endpoint("wg-basic.service", true)?)
+        .map_err(|error| format!("serve service stop failed: {error}"))?;
     stop_owned_service(service_endpoint("wg-basic-netd.service", false)?)
+        .map_err(|error| format!("netd service stop failed: {error}"))
 }
 
 #[allow(dead_code)] // Used by M004 preflight before backup or service mutation.
@@ -487,9 +489,12 @@ fn stop_owned_service(
     ) {
         let result = manager
             .stop(&spec, Duration::from_secs(30))
-            .map_err(|_| "could not stop product service")?;
+            .map_err(|error| format!("could not stop product service: {error}"))?;
         if !result.completed() {
-            return Err("product service stop did not prove quiescence".into());
+            return Err(format!(
+                "product service stop did not prove quiescence: {}",
+                result.detail
+            ));
         }
         true
     } else {
