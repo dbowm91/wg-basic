@@ -608,6 +608,10 @@ fn validate_candidate_health(expected: &StateIdentity) -> Result<(), String> {
     if endpoint != "ok" && (expected.network_enabled || endpoint != "degraded") {
         return Err("candidate /healthz is not healthy".into());
     }
+    #[cfg(feature = "update-test-fixtures")]
+    if std::env::var_os("WGB_UPDATE_TEST_FAIL_AFTER_HEALTH").is_some() {
+        return Err("test fixture requested failure after candidate health".into());
+    }
     Ok(())
 }
 
@@ -1473,7 +1477,34 @@ pub fn advance_journal(
 ) -> io::Result<UpdateJournal> {
     let mut updated = expected.clone();
     updated.phase = next;
-    replace_journal(path, expected, updated)
+    let updated = replace_journal(path, expected, updated)?;
+    #[cfg(feature = "update-test-fixtures")]
+    wait_at_update_test_gate(next);
+    Ok(updated)
+}
+
+#[cfg(feature = "update-test-fixtures")]
+fn wait_at_update_test_gate(phase: UpdatePhase) {
+    let Ok(expected) = std::env::var("WGB_UPDATE_TEST_GATE_PHASE") else {
+        return;
+    };
+    if expected != format!("{phase:?}") {
+        return;
+    }
+    let Some(directory) = std::env::var_os("WGB_UPDATE_TEST_GATE_DIR") else {
+        return;
+    };
+    let directory = PathBuf::from(directory);
+    let entered = directory.join(format!("{expected}.entered"));
+    let release = directory.join(format!("{expected}.release"));
+    let _ = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(entered);
+    while !release.exists() {
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn replace_journal(
@@ -1650,6 +1681,66 @@ pub fn system_transport() -> Result<eggup_curl::CurlTransport, String> {
     Err("no safe allowlisted curl executable is available".into())
 }
 
+#[cfg(feature = "update-test-fixtures")]
+type FixtureUpdateInputs = (Box<dyn AcquisitionTransport>, String);
+
+#[cfg(feature = "update-test-fixtures")]
+fn fixture_update_inputs() -> Result<Option<FixtureUpdateInputs>, String> {
+    use eggup_acquisition::{FixtureResponse, FixtureTransport};
+
+    let Some(directory) = std::env::var_os("WGB_UPDATE_FIXTURE_DIR") else {
+        return Ok(None);
+    };
+    let directory = PathBuf::from(directory);
+    let metadata =
+        fs::symlink_metadata(&directory).map_err(|_| "update fixture directory is unavailable")?;
+    if !metadata.is_dir() || metadata.uid() != 0 || metadata.mode() & 0o077 != 0 {
+        return Err("update fixture directory is unsafe".into());
+    }
+    let read_fixture = |name: &str, limit: u64| -> Result<Vec<u8>, String> {
+        let path = directory.join(name);
+        let metadata =
+            fs::symlink_metadata(&path).map_err(|_| "update fixture input is unavailable")?;
+        if !metadata.is_file()
+            || metadata.uid() != 0
+            || metadata.mode() & 0o022 != 0
+            || metadata.len() > limit
+        {
+            return Err("update fixture input is unsafe or outside its size bound".into());
+        }
+        fs::read(path).map_err(|_| "update fixture input could not be read".into())
+    };
+
+    let discovery = read_fixture("discovery.json", 256 * 1024)?;
+    let selection = parse_latest_release(&discovery).map_err(str::to_owned)?;
+    let manifest = read_fixture("release-manifest.json", 256 * 1024)?;
+    let signature = read_fixture("release-manifest.json.minisig", 16 * 1024)?;
+    let public_key = String::from_utf8(read_fixture("public.key", 16 * 1024)?)
+        .map_err(|_| "update fixture public key is invalid")?;
+    let target =
+        crate::release::LinuxTarget::from_host(std::env::consts::OS, std::env::consts::ARCH)
+            .map_err(str::to_owned)?;
+    let artifact_name = format!("wg-basic-{}", target.triple());
+    let artifact = read_fixture(&artifact_name, 128 * 1024 * 1024)?;
+
+    let transport = FixtureTransport::new();
+    transport.route(RELEASE_DISCOVERY_URL, FixtureResponse::body(discovery));
+    let release_base = format!("{RELEASE_ORIGIN}/v{}", selection.version);
+    transport.route(
+        &format!("{release_base}/release-manifest.json"),
+        FixtureResponse::body(manifest),
+    );
+    transport.route(
+        &format!("{release_base}/release-manifest.json.minisig"),
+        FixtureResponse::body(signature),
+    );
+    transport.route(
+        &format!("{release_base}/{artifact_name}"),
+        FixtureResponse::body(artifact),
+    );
+    Ok(Some((Box::new(transport), public_key)))
+}
+
 /// `update`: no mutation is possible without authenticated release metadata.
 pub fn apply() -> Result<(), String> {
     if !nix::unistd::Uid::effective().is_root() {
@@ -1659,9 +1750,29 @@ pub fn apply() -> Result<(), String> {
     if install.version != crate::release::PACKAGE_VERSION {
         return Err("installed version does not match updater binary identity".into());
     }
-    let public_key = require_production_key()?;
-    let transport = system_transport()?;
-    let selection = discover_latest(&transport)?;
+    #[cfg(feature = "update-test-fixtures")]
+    let fixture_inputs = fixture_update_inputs()?;
+    #[cfg(feature = "update-test-fixtures")]
+    let (transport, fixture_public_key): (Box<dyn AcquisitionTransport>, Option<String>) =
+        match fixture_inputs {
+            Some((transport, public_key)) => (transport, Some(public_key)),
+            None => (Box::new(system_transport()?), None),
+        };
+    #[cfg(not(feature = "update-test-fixtures"))]
+    let transport: Box<dyn AcquisitionTransport> = Box::new(system_transport()?);
+    let public_key = {
+        #[cfg(feature = "update-test-fixtures")]
+        if let Some(public_key) = fixture_public_key.as_deref() {
+            public_key
+        } else {
+            require_production_key()?
+        }
+        #[cfg(not(feature = "update-test-fixtures"))]
+        {
+            require_production_key()?
+        }
+    };
+    let selection = discover_latest(transport.as_ref())?;
     crate::release::require_newer(&install.version, &selection.version).map_err(str::to_owned)?;
     let target =
         crate::release::LinuxTarget::from_host(std::env::consts::OS, std::env::consts::ARCH)
@@ -1670,7 +1781,7 @@ pub fn apply() -> Result<(), String> {
         return Err("installed target does not match this host".into());
     }
     let release = acquire_authenticated_release(
-        &transport,
+        transport.as_ref(),
         &selection,
         &install.version,
         target,
@@ -1695,7 +1806,7 @@ pub fn apply() -> Result<(), String> {
     let transaction_dir = rollback_root.join(&transaction_id);
     ensure_root_private_directory(&transaction_dir, rollback_root)?;
 
-    let candidate = acquire_candidate(&transport, &release, target, &transaction_dir)?;
+    let candidate = acquire_candidate(transport.as_ref(), &release, target, &transaction_dir)?;
     let _old_binary = save_old_binary(&install, &transaction_dir, &transaction_id)?;
     let old_install_metadata_sha256 = save_old_install_metadata(&install, &transaction_dir)?;
     let mut journal = UpdateJournal {
@@ -1749,6 +1860,8 @@ pub fn apply() -> Result<(), String> {
             )
         }
     }
+    #[cfg(feature = "update-test-fixtures")]
+    wait_at_update_test_gate(UpdatePhase::BackupVerified);
 
     if let Err(error) = stop_network_service() {
         return fail_before_services(&journal, error);

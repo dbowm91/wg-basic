@@ -1765,6 +1765,28 @@ fn service_hardening_contract_matches_netd_runtime_requirements() {
 }
 
 #[test]
+fn update_fixture_hooks_are_opt_in_and_excluded_from_release_builds() {
+    let manifest = include_str!("../Cargo.toml");
+    let features = manifest
+        .split("[features]")
+        .nth(1)
+        .and_then(|section| section.split("[dependencies]").next())
+        .expect("Cargo feature section");
+    assert!(features.contains("update-test-fixtures = []"));
+    assert!(!features.contains("default = [\"update-test-fixtures\"]"));
+
+    for workflow in [
+        include_str!("../.github/workflows/release-eggpack.yml"),
+        include_str!("../.github/workflows/distribution-foundation.yml"),
+    ] {
+        assert!(
+            !workflow.contains("update-test-fixtures") && !workflow.contains("--all-features"),
+            "release workflows must not compile test-only update fixture hooks"
+        );
+    }
+}
+
+#[test]
 fn bundled_sqlite_runtime_is_past_the_wal_reset_advisory_range() {
     let version = rusqlite::version_number();
     assert!(

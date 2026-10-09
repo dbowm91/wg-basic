@@ -8,6 +8,9 @@ description = "A small Linux-native WireGuard management appliance"
 
 [features]
 linux-integration = []
+# Non-default hooks used only by the disposable systemd update transaction
+# qualification. Release workflows must never enable this feature.
+update-test-fixtures = []
 
 [dependencies]
 # Argon2id credential hashing (Phase 7 M002). Default features give the PHC

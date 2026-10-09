@@ -1098,6 +1098,9 @@ fn serve(
 ) -> Result<(), String> {
     use wg_basic::http::ServeConfig;
 
+    #[cfg(feature = "update-test-fixtures")]
+    fail_fixture_candidate_start()?;
+
     // Three shapes, and only three. Each is chosen by what the operator stated,
     // never inferred:
     //
@@ -1150,6 +1153,32 @@ fn serve(
         wait.await.ok();
     })
     .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[cfg(all(target_os = "linux", feature = "update-test-fixtures"))]
+fn fail_fixture_candidate_start() -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+
+    let marker =
+        std::path::Path::new(wg_basic::distribution::STATE_DIR).join(".update-fixture-fail-start");
+    let metadata = match std::fs::symlink_metadata(&marker) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Err("fixture startup marker is unsafe".into()),
+    };
+    if !metadata.is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.uid() != nix::unistd::geteuid().as_raw()
+        || metadata.mode() & 0o777 != 0o600
+    {
+        return Err("fixture startup marker is unsafe".into());
+    }
+    let version =
+        std::fs::read_to_string(&marker).map_err(|_| "fixture startup marker cannot be read")?;
+    if version.trim() == wg_basic::release::PACKAGE_VERSION {
+        return Err("test fixture requested candidate startup failure".into());
+    }
     Ok(())
 }
 

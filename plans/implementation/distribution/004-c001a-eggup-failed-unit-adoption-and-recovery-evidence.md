@@ -1,6 +1,6 @@
 # Distribution M004 C001a — Eggup Failed-unit Recovery Adoption and C001 Closure Evidence
 
-Status: active — Eggup prerequisites closed; typed failed-unit adoption implemented; updater-level rootful rollback/retry and SIGKILL evidence pending.
+Status: active — Eggup prerequisites and typed failed-unit adoption are complete; the signed-fixture updater and isolated rootful CI lane are implemented, with hosted recovery evidence pending.
 Repository baseline: `dbowm91/wg-basic` branch `plans/m004-update-correctives` at `297af6c` (2026-10-09), with `plans/closure/distribution/004-c001-status.md` disposition `corrective required`.
 Source milestone: `plans/implementation/distribution/004-transactional-self-update-and-rollback.md`.
 Corrective predecessor: `plans/implementation/distribution/004-c001-update-retry-recovery-invariants.md`; unresolved evidence in `plans/closure/distribution/004-c001-status.md`.
@@ -88,3 +88,33 @@ Stop if Eggup M010 remains unqualified; registry publication is required but mis
 ## 8. Handoff evidence
 
 Record upstream source/published version/checksum, lock graph, C001 implementation SHA, rootful VM/systemd/architecture, all forced failure and crash cutpoints, old/new state identity proofs, journaling/retained artifacts, negatives, routine+MSRV+audit status, and C002 unblock recommendation. M004 itself stays active until C002 and canonical milestone closure satisfy all gates. M005 remains blocked.
+
+## 9. Implementation progress — qualification harness added (2026-10-09)
+
+The opt-in `update-test-fixtures` feature supplies an in-process signed-release
+fixture transport, a candidate startup failure marker, migration-v4 simulation,
+and bounded durable-phase / SQLite-restore gates. The fixture seam is absent
+from default builds and release workflow files are pinned by an architecture
+guard. The signed fixture key is generated ephemerally by the rootful test;
+only its public key is written to the private fixture directory.
+
+`tests/update_transaction_rootful.rs` provisions a clean native systemd
+installation, installs the current binary against a v4 database, and drives a
+strictly newer signed candidate through updater recovery. It externally
+SIGKILLs the actual updater at BackupVerified, ServicesStopped, BinaryCommitted,
+CandidateStarted, and CandidateHealthy, calling recovery twice after each
+cutpoint. It then forces a post-migration candidate startup failure, kills the
+updater during staged SQLite rollback, recovers twice, and retries the same
+signed update to Committed. Database schema, installation ID, generation, and
+client count are checked across rollback and retry. CI has a dedicated Ubuntu
+24.04 systemd job that builds the newer candidate in an isolated source copy
+and runs this ignored rootful test on its ephemeral hosted VM.
+
+Local verification on this implementation tree: formatting, ordinary check
+and clippy, feature clippy, Rust 1.89 check, the complete ordinary suite (561
+passed, 3 ignored), cargo audit (211 locked dependencies), the pinned Eggup
+service dependency graph, and `git diff --check` passed. The updater rootful
+test compiles but has not been run on this shared host. The dedicated hosted CI
+job has not yet produced a run, so this plan remains active and C001 remains
+corrective-required. Do not unblock C002 or M005 until hosted destructive
+qualification passes and remaining C001 acceptance cases are reconciled.
