@@ -326,18 +326,22 @@ where
         .map_err(|_| "Eggup candidate integrity or identity validation failed")?;
     let verifier = ExactDigestVerifier::new(vec![(member_id, expected_old_sha256)]);
     let ownership = CommitOwnership::new(&verifier, AbsentPolicy::DenyCreate);
+    let commit_callback = || {
+        ensure_installed_executable(&expected_candidate_sha256)?;
+        post_commit()
+    };
     let receipt = match stale_lock_verifier {
         Some(stale_lock_verifier) => validated.commit_with_post_commit_and_stale_lock_recovery(
             ownership,
             eggup_core::PostCommitFailurePolicy::RollBack,
             stale_lock_verifier,
-            post_commit,
+            commit_callback,
         ),
         None => validated
             .commit_with_post_commit(
                 ownership,
                 eggup_core::PostCommitFailurePolicy::RollBack,
-                post_commit,
+                commit_callback,
             )
             .map_err(Into::into),
     }
@@ -2009,6 +2013,7 @@ pub fn apply() -> Result<(), String> {
             Ok(())
         }
         Ok(receipt) if receipt.disposition() == eggup_core::TransactionDisposition::RolledBack => {
+            ensure_installed_executable(&old_digest)?;
             if restore_succeeded.get() {
                 let healthy = start_owned_services()
                     .and_then(|_| validate_running_product_health(&old_state_identity));
@@ -2271,7 +2276,7 @@ pub fn recover() -> Result<(), String> {
                 &journal.version_from,
                 candidate_digest,
                 old_digest,
-                || Ok(()),
+                || ensure_installed_executable(&old_digest),
                 Some(&stale_lock_verifier),
             )?;
             if receipt.disposition() != eggup_core::TransactionDisposition::Committed {
@@ -2295,6 +2300,10 @@ pub fn recover() -> Result<(), String> {
             journal = advance_journal(journal_path, &journal, UpdatePhase::RollingBack)
                 .map_err(|_| "could not persist recovery rollback phase")?;
         }
+    }
+    if ensure_installed_executable(&old_digest).is_err() {
+        mark_recovery_required(journal_path);
+        return Err("restored binary permissions could not be safely repaired".into());
     }
 
     let old_identity = journal
@@ -2418,6 +2427,37 @@ fn installed_binary_digest() -> Result<[u8; 32], String> {
         return Err("installed binary is unsafe".into());
     }
     eggup_core::hash_file(path).map_err(|_| "installed binary digest could not be read".into())
+}
+
+fn ensure_installed_executable(expected_digest: &[u8; 32]) -> Result<(), String> {
+    let path = Path::new(crate::distribution::BINARY_PATH);
+    if installed_binary_digest()? != *expected_digest {
+        return Err("installed binary digest changed before permission repair".into());
+    }
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+        .map_err(|_| "installed binary permissions could not be assigned")?;
+    File::open(path)
+        .and_then(|file| file.sync_all())
+        .map_err(|_| "installed binary permissions could not be made durable")?;
+    File::open(
+        Path::new(crate::distribution::BINARY_PATH)
+            .parent()
+            .unwrap(),
+    )
+    .and_then(|directory| directory.sync_all())
+    .map_err(|_| "installed binary directory could not be made durable")?;
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|_| "installed binary permissions could not be verified")?;
+    if !metadata.file_type().is_file()
+        || metadata.uid() != 0
+        || metadata.mode() & 0o777 != 0o755
+        || metadata.nlink() != 1
+        || eggup_core::hash_file(path).map_err(|_| "installed binary digest could not be read")?
+            != *expected_digest
+    {
+        return Err("installed executable permissions or identity are unsafe".into());
+    }
+    Ok(())
 }
 
 fn validate_state_backup(journal: &UpdateJournal) -> Result<(), String> {
