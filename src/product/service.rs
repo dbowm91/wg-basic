@@ -223,6 +223,7 @@ pub struct ServerSetupCommand {
     pub advertised_endpoint: AdvertisedEndpoint,
     pub egress_interface: InterfaceName,
     pub ipv4_forwarding_required: bool,
+    pub ipv6_forwarding_required: bool,
     pub masquerade: bool,
     pub default_client_route_policy: ClientRoutePolicy,
 }
@@ -284,6 +285,7 @@ impl<'a> ProductService<'a> {
             advertised_endpoint,
             egress_interface,
             ipv4_forwarding_required,
+            ipv6_forwarding_required,
             masquerade,
             default_client_route_policy,
         } = command;
@@ -315,6 +317,9 @@ impl<'a> ProductService<'a> {
             }
             None => (None, None),
         };
+        if ipv6_forwarding_required && ipv6_tunnel_prefix.is_none() {
+            return Err(ProductError::Allocation(super::AllocationError::NotIpv6));
+        }
 
         let interface_id = InterfaceId::new();
         // The generated pair's public half is not stored on the interface: the
@@ -383,8 +388,11 @@ impl<'a> ProductService<'a> {
                     network_policy: Some(crate::domain::DesiredNetworkPolicy {
                         wireguard_interface: interface_name.clone(),
                         ipv4_forwarding_required,
+                        ipv6_forwarding_required,
                         egress_interface: egress_interface.clone(),
-                        source_prefixes: vec![tunnel_prefix.clone()],
+                        source_prefixes: std::iter::once(tunnel_prefix.clone())
+                            .chain(ipv6_tunnel_prefix.clone())
+                            .collect(),
                         masquerade,
                     }),
                 };
@@ -1040,6 +1048,7 @@ fn assemble_server(state: &DesiredState, product: &ProductState) -> Option<Produ
         public_key: crate::domain::derive_public_key(&interface.private_key).ok()?,
         egress_interface: policy.egress_interface.clone(),
         ipv4_forwarding_required: policy.ipv4_forwarding_required,
+        ipv6_forwarding_required: policy.ipv6_forwarding_required,
         masquerade: policy.masquerade,
         default_client_route_policy: state.client_routes.clone(),
     })

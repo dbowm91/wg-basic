@@ -12,9 +12,9 @@ use std::{
 };
 use wg_basic::{
     domain::{
-        ClientId, DesiredAddress, DesiredClient, DesiredGeneration, DesiredInterface, DesiredPeer,
-        DesiredState, InterfaceId, LinkLifecycle, NetworkPrefix, OwnershipDeclaration, PeerId,
-        PrivateKey, PublicKey, ResourcePresence,
+        ClientId, DesiredAddress, DesiredClient, DesiredGeneration, DesiredInterface,
+        DesiredNetworkPolicy, DesiredPeer, DesiredState, InterfaceId, LinkLifecycle, NetworkPrefix,
+        OwnershipDeclaration, PeerId, PrivateKey, PublicKey, ResourcePresence,
     },
     state::{
         restore, retained_previous_path, validate_candidate, verify_candidate_readonly,
@@ -111,7 +111,17 @@ fn desired_state(interface_id: InterfaceId) -> DesiredState {
             }],
         }],
         client_routes: Default::default(),
-        network_policy: None,
+        network_policy: Some(DesiredNetworkPolicy {
+            wireguard_interface: "wg-backup".parse().unwrap(),
+            ipv4_forwarding_required: false,
+            ipv6_forwarding_required: true,
+            egress_interface: "eth0".parse().unwrap(),
+            source_prefixes: vec![
+                NetworkPrefix::new("10.77.0.0/24".parse().unwrap()),
+                NetworkPrefix::new("2001:db8:77::/64".parse().unwrap()),
+            ],
+            masquerade: false,
+        }),
     }
 }
 
@@ -401,6 +411,14 @@ fn a_restore_round_trips_identity_generation_and_typed_state() {
     );
     assert_eq!(loaded.generation, expected_state.generation);
     assert_eq!(loaded.state, expected_state.state);
+    assert!(
+        loaded
+            .state
+            .network_policy
+            .as_ref()
+            .unwrap()
+            .ipv6_forwarding_required
+    );
 }
 
 #[test]

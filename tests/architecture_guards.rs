@@ -1758,6 +1758,7 @@ fn the_long_running_roles_catch_a_supervisors_termination_signal() {
 fn service_hardening_contract_matches_netd_runtime_requirements() {
     let contract = include_str!("../architecture/service-hardening.md");
     assert!(contract.contains("/proc/sys/net/ipv4/ip_forward"));
+    assert!(contract.contains("/proc/sys/net/ipv6/conf/all/forwarding"));
     assert!(contract.contains("ProtectKernelTunables=yes` is incompatible"));
     assert!(contract.contains("MemoryMax=256M"));
     assert!(contract.contains("MemoryMax=128M"));

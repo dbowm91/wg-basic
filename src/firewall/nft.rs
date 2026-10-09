@@ -29,12 +29,16 @@ pub(crate) const MIN_NFT_VERSION: (u32, u32, u32) = (0, 9, 0);
 
 pub(crate) fn observe_firewall(
     owner: &FirewallOwner,
+    observe_ipv6_forwarding: bool,
 ) -> Result<FirewallObservation, FirewallError> {
     let forwarding = fs::read_to_string("/proc/sys/net/ipv4/ip_forward").map_err(map_io_error)?;
-    let forwarding_enabled = match forwarding.trim() {
-        "0" => false,
-        "1" => true,
-        _ => return Err(FirewallError::BackendFailure),
+    let forwarding_enabled = parse_forwarding(&forwarding)?;
+    let ipv6_forwarding_enabled = if observe_ipv6_forwarding {
+        let forwarding =
+            fs::read_to_string("/proc/sys/net/ipv6/conf/all/forwarding").map_err(map_io_error)?;
+        Some(parse_forwarding(&forwarding)?)
+    } else {
+        None
     };
     let output = run_nft(&["-j", "list", "tables"], None)?;
     let json: serde_json::Value =
@@ -51,6 +55,7 @@ pub(crate) fn observe_firewall(
     let Some(table) = found else {
         return Ok(FirewallObservation {
             forwarding_enabled,
+            ipv6_forwarding_enabled,
             table: TableObservation {
                 present: false,
                 owned: false,
@@ -69,6 +74,7 @@ pub(crate) fn observe_firewall(
     if !owned {
         return Ok(FirewallObservation {
             forwarding_enabled,
+            ipv6_forwarding_enabled,
             table: TableObservation {
                 present: true,
                 owned: false,
@@ -134,6 +140,7 @@ pub(crate) fn observe_firewall(
     }
     Ok(FirewallObservation {
         forwarding_enabled,
+        ipv6_forwarding_enabled,
         table: TableObservation {
             present: true,
             owned: true,
@@ -148,12 +155,24 @@ pub(crate) fn observe_firewall(
     })
 }
 
+fn parse_forwarding(value: &str) -> Result<bool, FirewallError> {
+    match value.trim() {
+        "0" => Ok(false),
+        "1" => Ok(true),
+        _ => Err(FirewallError::BackendFailure),
+    }
+}
+
 pub(crate) fn set_ipv4_forwarding(enabled: bool) -> Result<(), FirewallError> {
     fs::write(
         "/proc/sys/net/ipv4/ip_forward",
         if enabled { "1" } else { "0" },
     )
     .map_err(map_io_error)
+}
+
+pub(crate) fn set_ipv6_forwarding() -> Result<(), FirewallError> {
+    fs::write("/proc/sys/net/ipv6/conf/all/forwarding", "1").map_err(map_io_error)
 }
 
 pub(crate) fn replace_table(
@@ -185,8 +204,13 @@ pub(crate) fn replace_table(
     script.push('\n');
     script.push_str(&format!(r#"add rule inet {TABLE_NAME} forward oifname "{wireguard_interface}" ct state established,related accept comment "{owner}:rule:return:{hash}""#));
     script.push('\n');
-    for (index, prefix) in policy.sorted_prefixes().iter().enumerate() {
-        script.push_str(&format!(r#"add rule inet {TABLE_NAME} forward iifname "{wireguard_interface}" oifname "{egress_interface}" ip saddr {} accept comment "{owner}:rule:allow:{index}:{hash}""#, prefix));
+    for (index, prefix) in policy.sorted_allowed_prefixes().iter().enumerate() {
+        let family = if prefix.network().addr().is_ipv4() {
+            "ip"
+        } else {
+            "ip6"
+        };
+        script.push_str(&format!(r#"add rule inet {TABLE_NAME} forward iifname "{wireguard_interface}" oifname "{egress_interface}" {family} saddr {} accept comment "{owner}:rule:allow:{index}:{hash}""#, prefix));
         script.push('\n');
     }
     script.push_str(&format!(r#"add rule inet {TABLE_NAME} forward iifname "{wireguard_interface}" drop comment "{owner}:rule:drop:{hash}""#));
@@ -194,7 +218,7 @@ pub(crate) fn replace_table(
     if policy.nat == NatMode::Masquerade {
         script.push_str(&format!(r#"add chain inet {TABLE_NAME} postrouting {{ type nat hook postrouting priority srcnat; comment "{owner}:chain:postrouting:{hash}"; }}"#));
         script.push('\n');
-        for (index, prefix) in policy.sorted_prefixes().iter().enumerate() {
+        for (index, prefix) in policy.sorted_ipv4_prefixes().iter().enumerate() {
             script.push_str(&format!(r#"add rule inet {TABLE_NAME} postrouting oifname "{egress_interface}" ip saddr {} masquerade comment "{owner}:rule:nat:{index}:{hash}""#, prefix));
             script.push('\n');
         }
@@ -356,5 +380,16 @@ mod tests {
             FirewallError::BackendFailure.to_string(),
             "nftables or forwarding backend failed"
         );
+    }
+
+    #[test]
+    fn forwarding_observation_accepts_only_a_single_boolean_value() {
+        assert_eq!(parse_forwarding("0\n"), Ok(false));
+        assert_eq!(parse_forwarding("1\n"), Ok(true));
+        assert_eq!(
+            parse_forwarding("enabled"),
+            Err(FirewallError::BackendFailure)
+        );
+        assert_eq!(parse_forwarding("0\n1"), Err(FirewallError::BackendFailure));
     }
 }

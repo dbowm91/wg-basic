@@ -91,7 +91,7 @@ The initial schema is created entirely by migration 1. Singleton rows are enforc
 | `clients` | identity, owning interface, peer, required IPv4 and optional IPv6 assigned tunnel addresses |
 | `client_route_prefixes` | client-side route policy, deliberately separate from server AllowedIPs |
 | `client_global_route_prefixes` | client routes not attached to a single client |
-| `network_policy` | singleton IPv4 forwarding/NAT/egress intent |
+| `network_policy` | singleton IPv4/optional IPv6 forwarding, NAT, and egress intent |
 | `network_policy_source_prefixes` | explicit policy prefixes |
 | `network_operational_state` | durable whole-server enabled/disabled projection, keyed by interface identity |
 | `convergence_state` | reconciliation evidence: attempted generation, converged generation, attempt timestamp, and a disposition category |
@@ -107,6 +107,11 @@ unique index. The v1-v5 migration path preserves existing IPv4 assignments and
 loads them with no IPv6 assignment. The server IPv6 address is stored in the
 existing typed interface tunnel-prefix and managed-address collections; no
 new privileged operation or state authority is introduced.
+
+Schema v7 adds `network_policy.ipv6_forwarding_required`, defaulting existing
+rows to false. IPv6 forwarding is never inferred from an assigned tunnel
+address; enabling it requires the explicit server policy and managed IPv6
+prefix.
 
 Session storage is bounded to 32 live sessions per principal; expired sessions
 are pruned at serve startup and before successful issuance. Enrollment storage

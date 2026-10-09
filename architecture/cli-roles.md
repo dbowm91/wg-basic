@@ -35,8 +35,8 @@ Part of the [architecture overview](overview.md). Role internals live in
 | Role / subcommand | Key flags (defaults) | Touches | Never touches |
 |---|---|---|---|
 | `serve` | `--state`, `--socket`, `--http-bind` (`127.0.0.1:8000`), `--canonical-origin` (none), `--allow-non-loopback` (false) | state DB via bounded worker, netd via UDS client, TCP listener | kernel/netlink/nft directly; never spawns or elevates netd |
-| `netd` | `--socket`, `--allow-uid UID`, `--allow-user NAME` (repeatable) | UDS socket bind, kernel via typed backends (Generic Netlink, RTNETLINK, bounded `nft`, `/proc/sys/net/ipv4/ip_forward` fixed write) | state DB (database-free) |
-| `doctor` | `--state`, `--socket`, `--json`, `--http-bind`, `--canonical-origin`, `--allow-non-loopback` | read-only SQLite inspection, netd plan-only/observe requests, read-only `/proc/sys/net/ipv4/ip_forward` | migrations, kernel applies, state writes |
+| `netd` | `--socket`, `--allow-uid UID`, `--allow-user NAME` (repeatable) | UDS socket bind, kernel via typed backends (Generic Netlink, RTNETLINK, bounded `nft`, fixed IPv4/IPv6 forwarding writes) | state DB (database-free) |
+| `doctor` | `--state`, `--socket`, `--json`, `--http-bind`, `--canonical-origin`, `--allow-non-loopback` | read-only SQLite inspection, netd plan-only/observe requests, read-only fixed IPv4/IPv6 forwarding observations | migrations, kernel applies, state writes |
 | `reconcile` | `--state`, `--socket` | state DB open, one aggregate reconcile via UDS | kernel directly |
 | `health` | `--state`, `--socket` | state DB open, health projection | netd, kernel |
 | `admin set-password` | `--username`, `--password-stdin` (required), `--state` | state DB credential row + session revocation | argv/env password sources, verifier/token output |

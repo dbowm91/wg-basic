@@ -306,6 +306,7 @@ mod tests {
                 wireguard_interface: "wg0".parse().unwrap(),
                 policy: Some(DesiredNetworkPolicy {
                     ipv4_forwarding: crate::firewall::Ipv4Forwarding::Required,
+                    ipv6_forwarding: crate::firewall::Ipv6Forwarding::NotRequired,
                     egress_interface: "eth0".parse().unwrap(),
                     source_prefixes: vec!["10.8.0.0/24".parse().unwrap()],
                     nat: crate::firewall::NatMode::Masquerade,

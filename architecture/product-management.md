@@ -16,8 +16,11 @@ is configured, also allocates an IPv6 address. An exact address can be requested
 per family. Disabled clients retain both address reservations, their row, peer
 identity, and key; only the peer's projected kernel intent is removed. Deletion
 removes the durable client and peer and returns the worker's enforcement result.
-IPv6 here covers tunnel-local addressing and peer reconciliation; host forwarding
-and IPv6 firewall policy remain outside this milestone.
+IPv6 tunnel addressing is independent from forwarding. Server setup keeps IPv6
+forwarding disabled by default; an explicit setting persists IPv6 forwarding
+policy for the managed tunnel prefix. Forwarding uses the host-global Linux
+control, remains enabled when policy is disabled, requires upstream routing,
+and does not use NAT66.
 
 ## HTTP contract
 
@@ -104,5 +107,5 @@ from the dialog on close; the UI does not persist them in browser storage.
 Administrator bootstrap and reset remain local CLI operations. The HTTP setup
 route configures the WireGuard server only after login; it does not create the
 administrator. The product API does not add arbitrary hooks, firewall rules,
-TLS termination, installation, or update behavior. IPv6 forwarding and
-multi-interface product workflows remain deferred.
+TLS termination, installation, or update behavior. Per-client dual-family
+route selection and multi-interface product workflows remain deferred.

@@ -47,6 +47,7 @@ pub enum DoctorCheckId {
     ServiceLease,
     HttpPolicy,
     Forwarding,
+    Ipv6Forwarding,
     NetworkOwnership,
 }
 

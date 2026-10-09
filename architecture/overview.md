@@ -111,7 +111,7 @@ Implementation status lives in
 - [privilege-boundary](privilege-boundary.md) — UDS protocol, peer auth, intended service contract
 - [wireguard-control](wireguard-control.md) — backend selection, M003 contract, key/error handling
 - [reconciliation](reconciliation.md) — RTNETLINK lifecycle, ordering, receipts
-- [firewall](firewall.md) — IPv4 policy, nftables boundary, disable/preservation
+- [firewall](firewall.md) — dual-stack policy, IPv4-only NAT, nftables boundary, disable/preservation
 - [ownership](ownership.md) — interface/firewall ownership proof, aggregate rules
 - [management-http](management-http.md) — HTTP boundary, worker, pipeline, limits, lifecycle
 - [authentication](authentication.md) — credentials, sessions, cookies, CSRF, limiter

@@ -12,7 +12,7 @@ cargo test --locked
 cargo +1.89.0 check --all-targets --locked
 ```
 
-The default unit/protocol suite does not require root or network namespace setup. The Linux WireGuard backend mutates only through typed requests to an existing device; real-kernel integration suites create temporary namespaces and fixture links and require root, `CAP_NET_ADMIN`, `iproute2`, `iputils-ping`, and kernel WireGuard support. Dual-stack tunnel addressing is qualified by the hosted `product-management-rootful` job; it does not qualify IPv6 forwarding or host firewall policy.
+The default unit/protocol suite does not require root or network namespace setup. The Linux WireGuard backend mutates only through typed requests to an existing device; real-kernel integration suites create temporary namespaces and fixture links and require root, `CAP_NET_ADMIN`, `iproute2`, `iputils-ping`, and kernel WireGuard support. Dual-stack tunnel addressing is qualified by the hosted `product-management-rootful` job. The `network-control-e2e` rootful fixture also qualifies routed IPv6 forwarding, owned firewall rules, upstream return routing, disable/restart behavior, and absence of NAT66.
 
 The installed serve unit runs `doctor` as the management account before each
 start. `--allow-warnings` keeps advisory drift from blocking service recovery;
@@ -134,6 +134,15 @@ Run Linux IPC integration coverage with:
 
 ```sh
 cargo test --locked --test privileged_protocol -- --nocapture
+```
+
+Run the three-namespace network-control fixture for IPv4 NAT, routed IPv6,
+sticky global forwarding, foreign firewall preservation, independent firewall
+denial, and nft-failure retry evidence:
+
+```sh
+sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo \
+  cargo test --locked --features linux-integration --test network_control_e2e -- --test-threads=1
 ```
 
 Run the real kernel WireGuard handshake, telemetry, peer update, and preservation fixture with:

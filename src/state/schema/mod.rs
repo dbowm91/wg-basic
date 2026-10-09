@@ -336,7 +336,7 @@ mod tests {
             .unwrap();
         assert_eq!(user_version, migrations::supported_version());
         assert_eq!(
-            user_version, 6,
+            user_version, 7,
             "a fresh database is created at the current head, never behind it"
         );
 
@@ -386,7 +386,7 @@ mod tests {
             StateStore::open(temp.db()),
             Err(StateError::SchemaTooNew {
                 found: 9999,
-                supported: 6
+                supported: 7
             })
         ));
     }
@@ -664,7 +664,7 @@ mod tests {
         );
 
         migrations::apply_migrations(&mut connection, MIGRATIONS).unwrap();
-        assert_eq!(user_version_of(&connection), 6);
+        assert_eq!(user_version_of(&connection), 7);
 
         // Every version the upgrade ran through must actually have created its
         // schema.
@@ -697,14 +697,13 @@ mod tests {
         assert_eq!(stored_identity, identity.to_string());
         connection.close().unwrap();
 
-        // The production opener must accept the migrated file: version 6 is one
-        // this binary actually supports, so refusing it would be a false alarm.
+        // The production opener must accept the migrated file at current schema.
         StateStore::open(temp.db())
             .expect("a migrated database must open through the production path");
     }
 
     #[test]
-    fn migration_v4_to_v6_preserves_generation_and_enables_existing_server() {
+    fn migration_v4_to_v7_preserves_generation_and_defaults_ipv6_forwarding_off() {
         let temp = TempDir::new();
         historical_v1(&temp);
         let (identity, _) = commit_snapshot_at_v2(&temp);
@@ -718,6 +717,15 @@ mod tests {
                 [],
             )
             .unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO network_policy
+                 (singleton, wireguard_interface, ipv4_forwarding_required, egress_interface, masquerade)
+                 VALUES (1, 'wg0', 1, 'eth0', 1);
+                 INSERT INTO network_policy_source_prefixes (position, prefix)
+                 VALUES (0, '10.8.0.0/24');",
+            )
+            .unwrap();
         let before_generation: i64 = connection
             .query_row(
                 "SELECT desired_generation FROM installation WHERE singleton = 1",
@@ -729,7 +737,7 @@ mod tests {
         connection.close().unwrap();
 
         let store = StateStore::open(temp.db()).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 6);
+        assert_eq!(store.schema_version().unwrap(), 7);
         let metadata = store.installation_metadata().unwrap();
         assert_eq!(metadata.installation_id, identity);
         assert_eq!(metadata.desired_generation.to_storage(), before_generation);
@@ -742,6 +750,15 @@ mod tests {
             Some(&true)
         );
         assert_eq!(product.state.clients.len(), 1);
+        let connection = Connection::open(temp.db()).unwrap();
+        let ipv6_forwarding: bool = connection
+            .query_row(
+                "SELECT ipv6_forwarding_required FROM network_policy WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!ipv6_forwarding);
         assert!(desired.state.interfaces[0].clients[0]
             .assigned_ipv6_address
             .is_none());
@@ -804,6 +821,30 @@ mod tests {
     }
 
     #[test]
+    fn migration_v7_failure_rolls_back_forwarding_column_and_version() {
+        let temp = TempDir::new();
+        migrations::initialize_at_version(&temp.db(), 6).unwrap();
+        let mut connection = Connection::open(temp.db()).unwrap();
+        connection
+            .execute_batch("ALTER TABLE network_policy ADD COLUMN ipv6_forwarding_required INTEGER NOT NULL DEFAULT 0 CHECK (ipv6_forwarding_required IN (0, 1));")
+            .unwrap();
+        let error = migrations::apply_migrations(&mut connection, MIGRATIONS).unwrap_err();
+        assert!(matches!(
+            error,
+            StateError::MigrationFailed { version: 7, .. }
+        ));
+        assert_eq!(user_version_of(&connection), 6);
+        let column_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('network_policy') WHERE name = 'ipv6_forwarding_required'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(column_count, 1, "conflicting column survives rollback");
+    }
+
+    #[test]
     fn an_upgrade_preserves_installation_identity_and_typed_state() {
         let temp = TempDir::new();
         historical_v1(&temp);
@@ -840,10 +881,10 @@ mod tests {
         let temp = TempDir::new();
         historical_v1(&temp);
 
-        // The production list stops at version 6, so a database stamped 7 comes
+        // The production list stops at version 7, so a database stamped 8 comes
         // from a future binary.
         let connection = Connection::open(temp.db()).unwrap();
-        connection.execute("PRAGMA user_version = 7", []).unwrap();
+        connection.execute("PRAGMA user_version = 8", []).unwrap();
         drop(connection);
 
         let mut connection = Connection::open(temp.db()).unwrap();
@@ -852,8 +893,8 @@ mod tests {
             matches!(
                 error,
                 StateError::SchemaTooNew {
-                    found: 7,
-                    supported: 6
+                    found: 8,
+                    supported: 7
                 }
             ),
             "{error:?}"

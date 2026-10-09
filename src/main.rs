@@ -436,6 +436,7 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
             if let Some(snapshot) = state_snapshot.as_ref() {
                 append_network_plan_checks(&mut checks, &socket, snapshot);
                 append_forwarding_check(&mut checks, snapshot);
+                append_ipv6_forwarding_check(&mut checks, snapshot);
             } else {
                 checks.push(wg_basic::doctor::DoctorCheck::new(
                     wg_basic::doctor::DoctorCheckId::NetworkOwnership,
@@ -448,6 +449,13 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
                     wg_basic::doctor::DoctorCheckId::Forwarding,
                     wg_basic::doctor::DoctorDisposition::Unknown,
                     "forwarding requirement is unknown",
+                    "the state snapshot is unavailable",
+                    "resolve the state diagnostic first, then rerun doctor",
+                ));
+                checks.push(wg_basic::doctor::DoctorCheck::new(
+                    wg_basic::doctor::DoctorCheckId::Ipv6Forwarding,
+                    wg_basic::doctor::DoctorDisposition::Unknown,
+                    "IPv6 forwarding requirement is unknown",
                     "the state snapshot is unavailable",
                     "resolve the state diagnostic first, then rerun doctor",
                 ));
@@ -1058,6 +1066,54 @@ fn append_forwarding_check(
     };
     checks.push(DoctorCheck::new(
         Id::Forwarding,
+        disposition,
+        summary,
+        evidence,
+        remediation,
+    ));
+}
+
+#[cfg(target_os = "linux")]
+fn append_ipv6_forwarding_check(
+    checks: &mut Vec<wg_basic::doctor::DoctorCheck>,
+    snapshot: &wg_basic::state::StateDiagnostic,
+) {
+    use wg_basic::doctor::{DoctorCheck, DoctorCheckId as Id, DoctorDisposition as D};
+    let required = snapshot
+        .desired
+        .state
+        .network_policy
+        .as_ref()
+        .is_some_and(|policy| policy.ipv6_forwarding_required);
+    let value = required.then(|| std::fs::read_to_string("/proc/sys/net/ipv6/conf/all/forwarding"));
+    let (disposition, summary, evidence, remediation) = match (required, value) {
+        (false, _) => (
+            D::Pass,
+            "IPv6 forwarding is not required by desired state",
+            "no forwarding observation required".to_owned(),
+            "none",
+        ),
+        (true, Some(Ok(setting))) if setting.trim() == "1" => (
+            D::Pass,
+            "required global IPv6 forwarding is enabled",
+            "read-only procfs value 1".to_owned(),
+            "none",
+        ),
+        (true, Some(Ok(setting))) if setting.trim() == "0" => (
+            D::Fail,
+            "desired network policy requires IPv6 forwarding, but it is disabled",
+            "read-only global procfs value 0".to_owned(),
+            "enable IPv6 forwarding through wg-basic policy or host configuration; the global setting remains enabled after network disable",
+        ),
+        (true, Some(Ok(_))) | (true, Some(Err(_))) | (true, None) => (
+            D::Unknown,
+            "IPv6 forwarding state could not be read",
+            "the expected global procfs setting is unavailable".to_owned(),
+            "run doctor on the Linux host that owns the WireGuard network",
+        ),
+    };
+    checks.push(DoctorCheck::new(
+        Id::Ipv6Forwarding,
         disposition,
         summary,
         evidence,

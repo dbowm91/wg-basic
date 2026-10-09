@@ -4,8 +4,8 @@
 //! calls a privileged backend. Every error it returns is a state validation
 //! error and therefore must be raised before any privileged call.
 //!
-//! M001 projects only. Durable owner tags and generation-aware protocol fields
-//! are M002's responsibility, so nothing here is written into the wire types.
+//! Desired durable state is projected into bounded typed wire values; no raw
+//! command, sysctl path, or nftables text is constructed here.
 
 use crate::domain::{
     DesiredNetworkPolicy as DomainNetworkPolicy, DesiredState, InterfaceName, LinkLifecycle, PeerId,
@@ -14,7 +14,7 @@ use std::collections::BTreeSet;
 
 #[cfg(target_os = "linux")]
 use crate::{
-    firewall::{DesiredNetworkPolicy, Ipv4Forwarding, NatMode},
+    firewall::{DesiredNetworkPolicy, Ipv4Forwarding, Ipv6Forwarding, NatMode},
     reconcile::{
         DesiredAddress, DesiredManagedInterface, DesiredManagedPeer, DesiredWireGuardConfiguration,
         ManagedRoute, OwnershipDeclaration, ResourcePresence,
@@ -94,7 +94,7 @@ pub struct ResolvedNetworkIntent {
     /// One entry per managed interface, in snapshot order.
     #[cfg(target_os = "linux")]
     pub interfaces: Vec<DesiredManagedInterface>,
-    /// The typed IPv4 policy, when the snapshot declares one.
+    /// The typed dual-stack policy, when the snapshot declares one.
     #[cfg(target_os = "linux")]
     pub network_policy: Option<DesiredNetworkPolicy>,
     /// The interfaces whose link should exist but which currently have no peers.
@@ -224,7 +224,7 @@ fn project_network_policy(
     if policy
         .source_prefixes
         .iter()
-        .any(|prefix| !prefix.network().addr().is_ipv4())
+        .any(|prefix| prefix.network().addr().is_unspecified())
     {
         let offender = policy
             .source_prefixes
@@ -234,14 +234,36 @@ fn project_network_policy(
             .unwrap_or_default();
         return Err(ProjectionError::NonIpv4PolicyPrefix(offender));
     }
+    if policy.ipv6_forwarding_required
+        && !policy
+            .source_prefixes
+            .iter()
+            .any(|prefix| prefix.network().addr().is_ipv6())
+    {
+        return Err(ProjectionError::EmptyNetworkPolicyPrefixes);
+    }
+    let source_prefixes: Vec<_> = policy
+        .source_prefixes
+        .iter()
+        .filter(|prefix| prefix.network().addr().is_ipv4() || policy.ipv6_forwarding_required)
+        .cloned()
+        .collect();
+    if source_prefixes.is_empty() {
+        return Err(ProjectionError::EmptyNetworkPolicyPrefixes);
+    }
     Ok(DesiredNetworkPolicy {
         ipv4_forwarding: if policy.ipv4_forwarding_required {
             Ipv4Forwarding::Required
         } else {
             Ipv4Forwarding::NotRequired
         },
+        ipv6_forwarding: if policy.ipv6_forwarding_required {
+            Ipv6Forwarding::Required
+        } else {
+            Ipv6Forwarding::NotRequired
+        },
         egress_interface: policy.egress_interface.clone(),
-        source_prefixes: policy.source_prefixes.clone(),
+        source_prefixes,
         nat: if policy.masquerade {
             NatMode::Masquerade
         } else {
@@ -310,6 +332,7 @@ mod tests {
             network_policy: Some(DomainNetworkPolicy {
                 wireguard_interface: "wg0".parse().unwrap(),
                 ipv4_forwarding_required: true,
+                ipv6_forwarding_required: false,
                 egress_interface: "eth0".parse().unwrap(),
                 source_prefixes: vec![NetworkPrefix::new("10.8.0.0/24".parse().unwrap())],
                 masquerade: true,
@@ -372,18 +395,22 @@ mod tests {
     }
 
     #[test]
-    fn projection_rejects_a_non_ipv4_policy_prefix_before_privileged_work() {
+    fn projection_includes_ipv6_policy_prefix_only_when_forwarding_is_opted_in() {
         let mut state = state();
-        state.network_policy.as_mut().unwrap().source_prefixes =
-            vec![NetworkPrefix::new("2001:db8::/64".parse().unwrap())];
-        assert!(matches!(
-            project(
-                &state,
-                crate::domain::InstallationId::new(),
-                &ClientVisibility::all_enabled()
-            ),
-            Err(ProjectionError::NonIpv4PolicyPrefix(_))
-        ));
+        let prefix = NetworkPrefix::new("2001:db8::/64".parse().unwrap());
+        state.interfaces[0].tunnel_prefixes.push(prefix.clone());
+        let domain_policy = state.network_policy.as_mut().unwrap();
+        domain_policy.source_prefixes = vec![prefix.clone()];
+        domain_policy.ipv6_forwarding_required = true;
+        let projected = project(
+            &state,
+            crate::domain::InstallationId::new(),
+            &ClientVisibility::all_enabled(),
+        )
+        .unwrap();
+        let policy = projected.network_policy.unwrap();
+        assert_eq!(policy.ipv6_forwarding, Ipv6Forwarding::Required);
+        assert_eq!(policy.source_prefixes, vec![prefix]);
     }
 
     #[test]

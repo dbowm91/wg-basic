@@ -645,6 +645,7 @@ impl ManagementService {
                         Err(_) => return product_status(422, "invalid request"),
                     },
                     ipv4_forwarding_required: input.ipv4_forwarding_required,
+                    ipv6_forwarding_required: input.ipv6_forwarding_required,
                     masquerade: input.masquerade,
                     default_client_route_policy: input.default_client_route_policy,
                 };
@@ -1007,6 +1008,8 @@ struct SetupBody {
     advertised_endpoint: String,
     egress_interface: String,
     ipv4_forwarding_required: bool,
+    #[serde(default)]
+    ipv6_forwarding_required: bool,
     masquerade: bool,
     #[serde(default)]
     default_client_route_policy: ClientRoutePolicy,
