@@ -98,3 +98,16 @@ source = replace_once(
     '        StateCommand::Status { state } => {',
 )
 path.write_text(source)
+
+migrations_path = path.parent / "state" / "schema" / "migrations.rs"
+migrations = migrations_path.read_text()
+migrations = replace_once(
+    migrations,
+    "pub(crate) fn supported_version() -> i64 {\n"
+    "    MIGRATIONS.last().map_or(0, |m| m.version)\n"
+    "}",
+    "pub(crate) fn supported_version() -> i64 {\n"
+    "    4 // The disposable old-release fixture intentionally models schema v4.\n"
+    "}",
+)
+migrations_path.write_text(migrations)
