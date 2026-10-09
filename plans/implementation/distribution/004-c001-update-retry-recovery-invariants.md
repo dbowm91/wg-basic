@@ -233,3 +233,10 @@ RuntimeDirectory after netd stops. It now lives directly under `/run` and the
 clean-host fixture checks that it is initially absent. The assertion also
 prints the updater result. Hosted verification remains required before claiming
 this negative case or closing C001.
+
+Run `37900470431` confirmed the persistent marker now forces candidate netd
+failure, but then failed at the SIGKILL-during-SQLite-restore recovery: the old
+serve unit hit the candidate startup-failure marker. The failure diagnostics
+now include the installed binary version and the transaction's archived old
+binary version. C001 remains open until the current-generation selection at
+this recovery boundary is identified and corrected.

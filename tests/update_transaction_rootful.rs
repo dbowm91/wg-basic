@@ -335,12 +335,31 @@ fn recovery_diagnostics() -> String {
         ])
         .output()
         .unwrap();
+    let installed_version = Command::new(wg_basic::distribution::BINARY_PATH)
+        .arg("--version")
+        .output()
+        .unwrap();
+    let old_version = fs::read(wg_basic::update::UPDATE_JOURNAL_PATH)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|journal| {
+            journal
+                .get("transaction_dir")
+                .and_then(serde_json::Value::as_str)
+                .map(|path| Path::new(path).join("old-wg-basic"))
+        })
+        .and_then(|path| Command::new(path).arg("--version").output().ok());
     format!(
-        "systemctl={}\njournalctl={}\ndoctor={}\nidentity={}",
+        "systemctl={}\njournalctl={}\ndoctor={}\nidentity={}\ninstalled_version={}\nold_artifact_version={}",
         output_text(&status),
         output_text(&journal),
         output_text(&doctor),
-        output_text(&identity)
+        output_text(&identity),
+        output_text(&installed_version),
+        old_version
+            .as_ref()
+            .map(output_text)
+            .unwrap_or_else(|| "unavailable".to_owned())
     )
 }
 
