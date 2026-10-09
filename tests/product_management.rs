@@ -503,6 +503,10 @@ fn dual_stack_setup_allocates_persists_and_reassigns_client_addresses() {
     );
     let desired = store.load().unwrap();
     let interface = &desired.state.interfaces[0];
+    assert!(interface
+        .routes
+        .iter()
+        .any(|route| route.destination.to_string() == "2001:db8:42::/64"));
     let peer = interface
         .peers
         .iter()

@@ -23,7 +23,7 @@ use crate::{
     domain::{
         ClientId, ClientRoutePolicy, DesiredAddress, DesiredClient, DesiredGeneration,
         DesiredInterface, DesiredPeer, DesiredState, InterfaceId, InterfaceName, LinkLifecycle,
-        NetworkPrefix, OwnershipDeclaration, PeerId, ResourcePresence,
+        ManagedRoute, NetworkPrefix, OwnershipDeclaration, PeerId, ResourcePresence,
     },
     product::{
         allocator::{AddressRequest, AllocationContext, AllocationError},
@@ -360,7 +360,19 @@ impl<'a> ProductService<'a> {
                         presence: ResourcePresence::Present,
                     }))
                     .collect(),
-                    routes: Vec::new(),
+                    // Linux needs a route for the tunnel pool so replies to
+                    // IPv6 client addresses leave through this WireGuard link.
+                    // WireGuard AllowedIPs selects the peer, but does not add
+                    // routes to the host routing table.
+                    routes: ipv6_tunnel_prefix
+                        .clone()
+                        .map(|destination| ManagedRoute {
+                            destination,
+                            gateway: None,
+                            presence: ResourcePresence::Present,
+                        })
+                        .into_iter()
+                        .collect(),
                     peers: Vec::new(),
                     clients: Vec::new(),
                 };
