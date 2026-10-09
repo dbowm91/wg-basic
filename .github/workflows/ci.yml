@@ -15,6 +15,7 @@ on:
 jobs:
   update-transaction-rootful:
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -23,6 +24,13 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+      - name: Verify disposable runner network prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iproute2 iputils-ping nftables
+          sudo modprobe wireguard
+          sudo ip link add wgb-c002-probe type wireguard
+          sudo ip link delete wgb-c002-probe
       - name: Build a strictly newer fixture candidate without changing repository history
         run: |
           mkdir -p "$RUNNER_TEMP/wg-basic-candidate-src"

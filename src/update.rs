@@ -700,6 +700,10 @@ fn validate_candidate_health(expected: &StateIdentity) -> Result<(), String> {
     }
     #[cfg(feature = "update-test-fixtures")]
     if std::env::var_os("WGB_UPDATE_TEST_FAIL_AFTER_HEALTH").is_some() {
+        eprintln!(
+            "update test fixture: candidate health passed with state schema {}",
+            observed.schema_version
+        );
         return Err("test fixture requested failure after candidate health".into());
     }
     Ok(())

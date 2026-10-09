@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -74,4 +75,10 @@ jobs:
       - name: Execute and qualify the exact native artifact
         env:
           TARGET: ${{ matrix.target }}
-        run: python3 scripts/release-smoke.py "target/$TARGET/release/wg-basic"
+        run: |
+          binary="target/$TARGET/release/wg-basic"
+          python3 scripts/release-smoke.py "$binary"
+          bytes="$(stat -c %s "$binary")"
+          digest="$(sha256sum "$binary" | cut -d' ' -f1)"
+          printf '### %s native release candidate\n\n- Bytes: `%s`\n- SHA-256: `%s`\n' \
+            "$TARGET" "$bytes" "$digest" >> "$GITHUB_STEP_SUMMARY"
