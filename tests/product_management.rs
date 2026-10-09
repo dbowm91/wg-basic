@@ -84,7 +84,9 @@ fn setup(command_overrides: impl FnOnce(&mut ServerSetupCommand)) -> Setup {
         expected_generation: DesiredGeneration::default(),
         interface_name: "wg0".parse().unwrap(),
         tunnel_prefix: NetworkPrefix::new("10.8.0.0/24".parse().unwrap()),
+        ipv6_tunnel_prefix: None,
         server_address: None,
+        ipv6_server_address: None,
         listen_port: 51820,
         advertised_endpoint: wg_basic::product::AdvertisedEndpoint::new("vpn.example.com", 51820)
             .unwrap(),
@@ -265,7 +267,9 @@ fn setup_is_one_time() {
         expected_generation: store.current_generation().unwrap(),
         interface_name: "wg1".parse().unwrap(),
         tunnel_prefix: NetworkPrefix::new("10.9.0.0/24".parse().unwrap()),
+        ipv6_tunnel_prefix: None,
         server_address: None,
+        ipv6_server_address: None,
         listen_port: 51821,
         advertised_endpoint: wg_basic::product::AdvertisedEndpoint::new("other.example.com", 51821)
             .unwrap(),
@@ -472,6 +476,91 @@ fn a_requested_address_is_honoured_and_a_conflict_is_refused() {
 }
 
 #[test]
+fn dual_stack_setup_allocates_persists_and_reassigns_client_addresses() {
+    let Setup {
+        scratch: _scratch,
+        store,
+        ..
+    } = setup(|command| {
+        command.ipv6_tunnel_prefix = Some(NetworkPrefix::new("2001:db8:42::/64".parse().unwrap()));
+    });
+    let service = service(&store);
+    let server = service.server().unwrap().unwrap();
+    assert_eq!(
+        server.ipv6_tunnel_prefix.unwrap().to_string(),
+        "2001:db8:42::/64"
+    );
+    assert_eq!(
+        server.ipv6_server_address.unwrap().to_string(),
+        "2001:db8:42::1"
+    );
+
+    let client = create(&service, "dual-stack");
+    assert_eq!(client.assigned_address.to_string(), "10.8.0.2/32");
+    assert_eq!(
+        client.assigned_ipv6_address.unwrap().to_string(),
+        "2001:db8:42::2/128"
+    );
+    let desired = store.load().unwrap();
+    let interface = &desired.state.interfaces[0];
+    let peer = interface
+        .peers
+        .iter()
+        .find(|peer| peer.id == client.peer_id)
+        .unwrap();
+    assert!(peer
+        .allowed_ips
+        .iter()
+        .any(|prefix| prefix.to_string() == "2001:db8:42::2/128"));
+    assert_eq!(
+        interface.clients[0]
+            .assigned_ipv6_address
+            .unwrap()
+            .to_string(),
+        "2001:db8:42::2/128"
+    );
+
+    let generation = store.current_generation().unwrap();
+    let (updated, _) = service
+        .update_client(ClientUpdateCommand {
+            principal_id: admin(&service),
+            expected_generation: generation,
+            client_id: client.client_id,
+            requested_ipv6_address: Some("2001:db8:42::55".parse().unwrap()),
+            ..ClientUpdateCommand::default()
+        })
+        .unwrap();
+    assert_eq!(
+        updated.assigned_ipv6_address.unwrap().to_string(),
+        "2001:db8:42::55/128"
+    );
+
+    let generation = store.current_generation().unwrap();
+    let (same, _) = service
+        .update_client(ClientUpdateCommand {
+            principal_id: admin(&service),
+            expected_generation: generation,
+            client_id: client.client_id,
+            requested_ipv6_address: Some("2001:db8:42::55".parse().unwrap()),
+            ..ClientUpdateCommand::default()
+        })
+        .unwrap();
+    assert_eq!(
+        same.assigned_ipv6_address.unwrap().to_string(),
+        "2001:db8:42::55/128"
+    );
+
+    let reopened = StateStore::open(store.path()).unwrap();
+    assert_eq!(
+        ProductService::new(&reopened).list_clients().unwrap()[0]
+            .assigned_ipv6_address
+            .unwrap()
+            .to_string(),
+        "2001:db8:42::55/128"
+    );
+}
+
+#[test]
 fn two_clients_never_share_a_peer_or_a_client_identifier() {
     let Setup {
         scratch: _scratch,
@@ -525,6 +614,7 @@ fn update_changes_label_dns_keepalive_and_route_policy_without_rotating_keys() {
             ]),
             client_keepalive_seconds: Some(Some(25)),
             requested_address: None,
+            requested_ipv6_address: None,
         })
         .unwrap();
 

@@ -2,10 +2,10 @@
 
 This runbook describes current state and recovery operations. Native systemd
 installation and the M004 transactional update/recovery contract are qualified
-on disposable systemd hosts. M005 is active for fresh installation and
-uninstall/reinstall lifecycle qualification. Production update discovery and
-mutation remain fail-closed because the production release trust root is
-unprovisioned. The canonical CLI commands are
+on disposable systemd hosts. Phase 10 lifecycle qualification is closed for
+fresh installation and state-preserving uninstall/reinstall on x86_64 and
+aarch64. Production update discovery and mutation remain fail-closed because
+the production release trust root is unprovisioned. The canonical CLI commands are
 `wg-basic update check`, `wg-basic update run`, and `wg-basic update recover`.
 
 ## Protect a pre-update backup

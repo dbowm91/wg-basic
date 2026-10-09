@@ -56,6 +56,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "network_operational_state",
         sql: include_str!("../migrations/005_network_operational_state.sql"),
     },
+    Migration {
+        version: 6,
+        name: "client_ipv6_address",
+        sql: include_str!("../migrations/006_client_ipv6_address.sql"),
+    },
 ];
 
 /// The highest schema version this binary understands.

@@ -302,6 +302,7 @@ mod tests {
                     id: ClientId::new(),
                     peer_id,
                     assigned_address: address,
+                    assigned_ipv6_address: None,
                     route_policy: Default::default(),
                 }],
             }],

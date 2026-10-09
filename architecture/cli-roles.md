@@ -1,11 +1,11 @@
 # CLI roles
 
 This document describes **current implemented behavior** for every `wg-basic`
-subcommand in `src/main.rs`. Native system installation is implemented under
-M002 qualification; M004 update, rollback, and recovery are technically closed
-with rootful systemd evidence. M005 lifecycle qualification is active. Update
-commands are implemented; production `check` and `run` fail closed while the
-production trust root is unprovisioned.
+subcommand in `src/main.rs`. Native system installation and M005 lifecycle
+qualification are closed with native x86_64/aarch64 systemd evidence. M004
+update, rollback, and recovery are closed with rootful systemd evidence.
+Update commands are implemented; production `check` and `run` fail closed
+while the production trust root is unprovisioned.
 See [overview](overview.md) for status.
 
 Part of the [architecture overview](overview.md). Role internals live in

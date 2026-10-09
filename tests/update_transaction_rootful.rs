@@ -84,7 +84,7 @@ fn database_identity() -> (i64, String, i64, i64) {
 fn typed_state_identity() -> serde_json::Value {
     // The immutable pre-v5 service fixture intentionally has only the Phase 9
     // state CLI. Use the current test controller for its schema-4 projection;
-    // after migration, use the installed candidate, which understands v5.
+    // after migration, use the installed candidate, which understands v6.
     let identity_binary = if database_identity().0 == 4 {
         IDENTITY_HELPER
     } else {
@@ -899,7 +899,7 @@ fn fail_candidate_after_health_and_restore(
     }
     assert!(!result.status.success(), "{failure}");
     assert!(
-        failure.contains("candidate health passed with state schema 5"),
+        failure.contains("candidate health passed with state schema 6"),
         "candidate must reach healthy migrated state before the forced failure: {failure}"
     );
     assert!(
@@ -1344,7 +1344,7 @@ fn signed_systemd_update_rolls_back_and_retries() {
 
     // Force a post-health failure after the real candidate serve process has
     // opened and migrated the v4 database. The fixture receipt proves that the
-    // candidate was healthy on schema 5 before rollback restores schema 4.
+    // candidate was healthy on schema 6 before rollback restores schema 4.
     fail_candidate_after_health_and_restore(&before, &typed_before, Some(client_private_key));
     traffic.require_handshake_and_traffic();
     assert_enabled_product_healthy(traffic.admin_cookie.as_deref().unwrap());
@@ -1423,7 +1423,7 @@ fn signed_systemd_update_rolls_back_and_retries() {
     let committed = command(&["update", "recover"]);
     assert!(committed.status.success(), "{}", output_text(&committed));
     let after_retry = database_identity();
-    assert_eq!(after_retry.0, 5);
+    assert_eq!(after_retry.0, 6);
     assert_eq!(after_retry.1, before.1);
     assert_eq!(after_retry.2, before.2);
     assert_eq!(after_retry.3, before.3);
@@ -1444,7 +1444,7 @@ fn signed_systemd_update_rolls_back_and_retries() {
         typed_after_retry
             .get("schema_version")
             .and_then(serde_json::Value::as_i64),
-        Some(5)
+        Some(6)
     );
     traffic.require_handshake_and_traffic();
     assert_enabled_product_healthy(traffic.admin_cookie.as_deref().unwrap());

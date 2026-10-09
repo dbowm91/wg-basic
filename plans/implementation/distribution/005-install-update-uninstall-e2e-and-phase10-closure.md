@@ -1,6 +1,6 @@
 # Distribution M005 — Install/Update/Uninstall E2E and Phase 10 Closure
 
-Status: active — M004 technical closure is recorded in `plans/closure/distribution/004-status.md`; production release signing remains an external readiness gate.
+Status: closed — technical Phase 10 implementation and lifecycle qualification are recorded in `plans/closure/distribution/005-status.md`; production release signing/publication remains externally blocked.
 
 Source roadmap:
 
@@ -487,7 +487,9 @@ State accurately:
 - default uninstall preservation;
 - recovery procedure;
 - unsupported ARMv7/musl/non-systemd hosts;
-- Phase 11 IPv6 remains pending.
+- Phase 11 IPv6/route-policy engineering is ready after the stable IPv4
+  lifecycle qualification recorded here; its first implementation plan is
+  tracked separately. Production signing remains an independent release gate.
 
 ## 24. Acceptance criteria
 

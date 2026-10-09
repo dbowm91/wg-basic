@@ -9,8 +9,9 @@ restore, health gating, and crash recovery. The production trust root is still
 unprovisioned, so `update check` and `update run` fail before network access.
 M004's C001 retry/recovery invariants and C002 installed-system traffic, target,
 and operator-contract qualification are closed. Production update remains
-unavailable until the trust root is provisioned. M005 owns fresh-install and
-uninstall/reinstall lifecycle qualification.
+unavailable until the trust root is provisioned. M005 lifecycle qualification
+is closed; its evidence is recorded in
+`plans/closure/distribution/005-status.md`.
 
 The M001 verify-only release foundation is strictly closed and implemented in
 `src/release.rs`: stable version policy, the two canonical GNU target mappings,
@@ -18,7 +19,7 @@ Minisign verification, and Eggpack ReleaseManifest projection after signature
 verification. M004's updater composes those primitives, but production release
 operations remain fail-closed until a trust root is provisioned. C001 and C002's
 real systemd crash-window, retry, rollback, enabled/disabled traffic, target,
-and operator-document qualifications passed hosted CI. M005 continues the
+and operator-document qualifications passed hosted CI. M005 also closed the
 broader install/update/uninstall lifecycle proof.
 
 The updater's C001 retry/recovery hardening records a secret-free state

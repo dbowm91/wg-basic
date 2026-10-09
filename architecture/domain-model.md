@@ -163,8 +163,10 @@ validates. `"wg0"` and 15-char names pass; 16-char names and
   - `DesiredPeer`: id, `PublicKey`, optional retained `PrivateKey` (only when
     wg-basic generated or was given it), optional `PresharedKey`,
     server-side `allowed_ips`, keepalive, endpoint.
-  - `DesiredClient`: id, `peer_id`, host-prefix `assigned_address` inside the
-    interface's tunnel prefixes, client-side `route_policy` (not AllowedIPs).
+  - `DesiredClient`: id, `peer_id`, required IPv4 host-prefix
+    `assigned_address`, optional IPv6 host-prefix `assigned_ipv6_address`, both
+    inside matching interface tunnel prefixes and covered by that peer's
+    server-side AllowedIPs; client-side `route_policy` remains separate.
   - `DesiredInterface`: id, name, ownership, lifecycle, `admin_up:
     Option<bool>`, server `PrivateKey`, `listen_port`, `manage_all_peers`,
     `tunnel_prefixes`, exactly-managed `addresses`/`routes`, `peers`,

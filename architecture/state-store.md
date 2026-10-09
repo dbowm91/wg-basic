@@ -88,7 +88,7 @@ The initial schema is created entirely by migration 1. Singleton rows are enforc
 | `managed_routes` | destination, optional gateway, presence |
 | `peers` | identity, public key, optional private/preshared key, keepalive, endpoint |
 | `peer_allowed_ips` | server-side WireGuard AllowedIPs only |
-| `clients` | identity, owning interface, peer, assigned tunnel address |
+| `clients` | identity, owning interface, peer, required IPv4 and optional IPv6 assigned tunnel addresses |
 | `client_route_prefixes` | client-side route policy, deliberately separate from server AllowedIPs |
 | `client_global_route_prefixes` | client routes not attached to a single client |
 | `network_policy` | singleton IPv4 forwarding/NAT/egress intent |
@@ -101,6 +101,12 @@ existing managed interface. Disabling networking advances the desired
 generation and records a bounded audit event while retaining the server,
 clients, keys, addresses, and endpoint. Projection asks netd to remove the
 owned interface and firewall policy; enabling restores the same intent.
+
+Schema v6 adds nullable `clients.assigned_ipv6_address` with an interface-local
+unique index. The v1-v5 migration path preserves existing IPv4 assignments and
+loads them with no IPv6 assignment. The server IPv6 address is stored in the
+existing typed interface tunnel-prefix and managed-address collections; no
+new privileged operation or state authority is introduced.
 
 Session storage is bounded to 32 live sessions per principal; expired sessions
 are pruned at serve startup and before successful issuance. Enrollment storage

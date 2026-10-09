@@ -40,6 +40,8 @@
             <summary>Advanced network settings</summary>
             <label>Interface name <input name="interface_name" value="wg0" required maxlength="15" /></label>
             <label>Server VPN address <input name="server_address" value="10.77.0.1" required /></label>
+            <label>Optional IPv6 tunnel range <input name="ipv6_tunnel_prefix" placeholder="fd77::/64" /></label>
+            <label>Optional server IPv6 address <input name="ipv6_server_address" placeholder="fd77::1" /></label>
             <label>Internet egress interface <input name="egress_interface" value="eth0" required /></label>
             <label>Client routes <input name="routes" value="10.77.0.0/24" required /><span class="help">Comma separated. Use 0.0.0.0/0 to route all IPv4 traffic through this server.</span></label>
             <label class="check"><input name="ipv4_forwarding_required" type="checkbox" checked /> Enable IPv4 forwarding</label>
@@ -60,6 +62,7 @@
           <div class="section-heading"><h2>Clients</h2><button type="button" id="new-client">Add client</button></div>
           <form id="create-form" class="inline-form" hidden>
             <label>Client name <input name="label" maxlength="128" required /></label>
+            <label>Requested IPv6 address <input name="ipv6_address" placeholder="automatic" /></label>
             <label>DNS servers <input name="dns_servers" placeholder="1.1.1.1, 1.0.0.1" /></label>
             <button type="submit">Create client</button><button type="button" class="secondary" id="cancel-create">Cancel</button>
           </form>
@@ -80,6 +83,7 @@
           <input type="hidden" name="client_id" />
           <label>Client name <input name="label" maxlength="128" required /></label>
           <label>VPN address <input name="address" required /></label>
+          <label>VPN IPv6 address <input name="ipv6_address" /></label>
           <label>Client routes <input name="routes" /></label>
           <label>DNS servers <input name="dns_servers" /></label>
           <label>Keepalive seconds <input name="client_keepalive_seconds" type="number" min="1" max="65535" /></label>

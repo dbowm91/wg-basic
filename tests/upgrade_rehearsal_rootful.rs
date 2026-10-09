@@ -626,7 +626,7 @@ fn v4_product_traffic_rolls_back_and_reupgrades_as_one_transaction() {
         String::from_utf8_lossy(&backup_verify.stderr)
     );
     // Candidate migrates only after old roles stop. Withhold candidate netd to
-    // force the release health gate to fail after the v4→v5 migration.
+    // force the release health gate to fail after the v4→v6 migrations.
     drop(old_netd);
 
     // The candidate's real serve startup owns migration and the singleton
@@ -656,7 +656,7 @@ fn v4_product_traffic_rolls_back_and_reupgrades_as_one_transaction() {
     degraded_candidate.stop();
     checkpoint_state(&state);
     let migrated_snapshot = wg_basic::state::inspect_readonly(&state).unwrap();
-    assert_eq!(migrated_snapshot.schema_version, 5);
+    assert_eq!(migrated_snapshot.schema_version, 6);
     let migrated_interface = migrated_snapshot.desired.state.interfaces[0].id;
     assert_eq!(
         migrated_snapshot
@@ -664,7 +664,7 @@ fn v4_product_traffic_rolls_back_and_reupgrades_as_one_transaction() {
             .network_operational_enabled
             .get(&migrated_interface),
         Some(&true),
-        "v4→v5 migration must preserve the prior enabled network behavior"
+        "v4→v6 migration must preserve the prior enabled network behavior"
     );
     let auto_snapshot = state.with_file_name("state.db.pre-migration-v4");
     assert!(auto_snapshot.exists());
@@ -776,7 +776,7 @@ fn v4_product_traffic_rolls_back_and_reupgrades_as_one_transaction() {
         .args(["--json"])
         .output()
         .unwrap();
-    assert_doctor_has_no_required_failure(&candidate_doctor, "candidate-v5");
+    assert_doctor_has_no_required_failure(&candidate_doctor, "candidate-v6");
     drop(candidate_client_netd);
     drop(candidate_netd);
 

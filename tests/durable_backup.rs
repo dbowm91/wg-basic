@@ -515,6 +515,7 @@ fn server_desired_state(keys: &Keys, interface_id: InterfaceId) -> DesiredState 
                 id: ClientId::new(),
                 peer_id,
                 assigned_address: client_address,
+                assigned_ipv6_address: None,
                 route_policy: Default::default(),
             }],
         }],

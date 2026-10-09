@@ -95,9 +95,11 @@ management/auth substrate (Phase 7), product/enrollment/UI (Phase 8), and
 operational hardening (Phase 9) are closed. Phase 10 M001–M004 technical
 implementation and qualification are closed, including signed-fixture
 systemd update, rollback, interruption recovery, and native x86_64/aarch64
-release artifacts. M005 lifecycle qualification is active. Production updates
-remain unavailable until a maintainer-provisioned trust root and signed release
-are available; technical M004 closure does not authorize publication.
+release artifacts. Phase 10 lifecycle qualification is closed, including
+native systemd install/uninstall/reinstall evidence on both supported targets.
+Production updates remain unavailable until a maintainer-provisioned trust
+root and signed release are available; technical Phase 10 closure does not
+authorize publication.
 Implementation status lives in
 [the planning registry](../plans/registry.md).
 

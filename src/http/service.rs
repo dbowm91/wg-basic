@@ -559,7 +559,10 @@ impl ManagementService {
                     let Some(generation) = DesiredGeneration::new(input.expected_generation) else {
                         return product_status(422, "invalid request");
                     };
-                    let requested_address = match input.address {
+                    if input.address.is_some() && input.ipv6_address.is_some() {
+                        return product_status(422, "invalid request");
+                    }
+                    let requested_address = match input.address.or(input.ipv6_address) {
                         Some(value) => match IpAddr::from_str(&value) {
                             Ok(address) => Some(address),
                             Err(_) => return product_status(422, "invalid request"),
@@ -606,6 +609,20 @@ impl ManagementService {
                 let Some(tunnel_prefix) = input.tunnel_prefix.parse::<NetworkPrefix>().ok() else {
                     return product_status(422, "invalid request");
                 };
+                let ipv6_tunnel_prefix = match input.ipv6_tunnel_prefix {
+                    Some(value) => match value.parse::<NetworkPrefix>() {
+                        Ok(prefix) if prefix.network().addr().is_ipv6() => Some(prefix),
+                        _ => return product_status(422, "invalid request"),
+                    },
+                    None => None,
+                };
+                let ipv6_server_address = match input.ipv6_server_address {
+                    Some(value) => match value.parse::<std::net::Ipv6Addr>() {
+                        Ok(address) => Some(address),
+                        Err(_) => return product_status(422, "invalid request"),
+                    },
+                    None => None,
+                };
                 let command = ServerSetupCommand {
                     principal_id,
                     expected_generation: generation,
@@ -614,7 +631,9 @@ impl ManagementService {
                         Err(_) => return product_status(422, "invalid request"),
                     },
                     tunnel_prefix,
+                    ipv6_tunnel_prefix,
                     server_address,
+                    ipv6_server_address,
                     listen_port: input.listen_port,
                     advertised_endpoint: match AdvertisedEndpoint::parse(&input.advertised_endpoint)
                     {
@@ -709,6 +728,13 @@ impl ManagementService {
                         },
                         None => None,
                     };
+                    let requested_ipv6_address = match input.ipv6_address {
+                        Some(value) => match value.parse::<std::net::Ipv6Addr>() {
+                            Ok(address) => Some(address),
+                            Err(_) => return product_status(422, "invalid request"),
+                        },
+                        None => None,
+                    };
                     let command = ClientUpdateCommand {
                         principal_id,
                         expected_generation: generation,
@@ -718,6 +744,7 @@ impl ManagementService {
                         dns_servers: dns,
                         client_keepalive_seconds: input.client_keepalive_seconds,
                         requested_address,
+                        requested_ipv6_address,
                     };
                     match self.api.worker().update_client(command).await {
                         Ok(reply) => mutation_response(200, 202, &reply.client, reply.receipt),
@@ -971,7 +998,11 @@ struct SetupBody {
     interface_name: String,
     tunnel_prefix: String,
     #[serde(default)]
+    ipv6_tunnel_prefix: Option<String>,
+    #[serde(default)]
     server_address: Option<String>,
+    #[serde(default)]
+    ipv6_server_address: Option<String>,
     listen_port: u16,
     advertised_endpoint: String,
     egress_interface: String,
@@ -989,6 +1020,8 @@ struct CreateBody {
     #[serde(default)]
     address: Option<String>,
     #[serde(default)]
+    ipv6_address: Option<String>,
+    #[serde(default)]
     route_policy: Option<ClientRoutePolicy>,
     #[serde(default)]
     dns_servers: Vec<String>,
@@ -1003,6 +1036,8 @@ struct PatchBody {
     label: Option<String>,
     #[serde(default)]
     address: Option<String>,
+    #[serde(default)]
+    ipv6_address: Option<String>,
     #[serde(default)]
     route_policy: Option<ClientRoutePolicy>,
     #[serde(default)]

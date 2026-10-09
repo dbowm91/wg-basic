@@ -6,6 +6,7 @@
 //! the rendered credential.
 
 use crate::domain::{NetworkPrefix, PresharedKey, PrivateKey, PublicKey};
+use ipnet::IpNet;
 use std::{fmt, net::IpAddr};
 use zeroize::Zeroize;
 
@@ -17,6 +18,7 @@ const QUIET_ZONE: i32 = 4;
 pub struct ClientConfigMaterial {
     pub private_key: PrivateKey,
     pub address: IpAddr,
+    pub ipv6_address: Option<IpNet>,
     pub dns_servers: Vec<IpAddr>,
     pub server_public_key: PublicKey,
     pub preshared_key: Option<PresharedKey>,
@@ -83,6 +85,9 @@ pub fn render_config(material: &ClientConfigMaterial) -> Result<SecretArtifact, 
         material.private_key.expose_secret()
     )
     .unwrap();
+    if let Some(address) = material.ipv6_address {
+        writeln!(&mut output, "Address = {address}").unwrap();
+    }
     writeln!(
         &mut output,
         "Address = {}/{}",
@@ -160,6 +165,7 @@ mod tests {
             private_key: PrivateKey::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".into())
                 .unwrap(),
             address: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
+            ipv6_address: None,
             dns_servers: vec!["1.1.1.1".parse().unwrap()],
             server_public_key: PublicKey::new(
                 "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".into(),

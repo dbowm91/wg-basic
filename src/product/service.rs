@@ -26,7 +26,7 @@ use crate::{
         NetworkPrefix, OwnershipDeclaration, PeerId, ResourcePresence,
     },
     product::{
-        allocator::{AddressRequest, AllocationContext},
+        allocator::{AddressRequest, AllocationContext, AllocationError},
         model::{
             AdvertisedEndpoint, AuditAction, ClientEnabled, ClientLabel, DegradedCategory,
             ProductClient, ProductMutationReceipt, ProductServer,
@@ -194,6 +194,7 @@ pub(crate) fn material_from_snapshots(
     Ok(super::export::ClientConfigMaterial {
         private_key,
         address: client.assigned_address.addr(),
+        ipv6_address: client.assigned_ipv6_address,
         dns_servers: settings.dns_servers.clone(),
         server_public_key,
         preshared_key: peer.preshared_key.clone(),
@@ -214,8 +215,10 @@ pub struct ServerSetupCommand {
     pub expected_generation: DesiredGeneration,
     pub interface_name: InterfaceName,
     pub tunnel_prefix: NetworkPrefix,
+    pub ipv6_tunnel_prefix: Option<NetworkPrefix>,
     /// Omitted means "allocate the first usable address inside the prefix".
     pub server_address: Option<IpAddr>,
+    pub ipv6_server_address: Option<std::net::Ipv6Addr>,
     pub listen_port: u16,
     pub advertised_endpoint: AdvertisedEndpoint,
     pub egress_interface: InterfaceName,
@@ -274,7 +277,9 @@ impl<'a> ProductService<'a> {
             expected_generation,
             interface_name,
             tunnel_prefix,
+            ipv6_tunnel_prefix,
             server_address,
+            ipv6_server_address,
             listen_port,
             advertised_endpoint,
             egress_interface,
@@ -297,6 +302,18 @@ impl<'a> ProductService<'a> {
             }
             None => AllocationContext::new(IpNet::V4(ipv4_prefix))?
                 .allocate(AddressRequest::Automatic)?,
+        };
+
+        let (server_ipv6, ipv6_tunnel_prefix) = match ipv6_tunnel_prefix {
+            Some(prefix) => {
+                let address = super::Ipv6AllocationContext::new(prefix.network())?
+                    .allocate(ipv6_server_address)?;
+                (Some(address), Some(prefix))
+            }
+            None if ipv6_server_address.is_some() => {
+                return Err(ProductError::Allocation(super::AllocationError::NotIpv6))
+            }
+            None => (None, None),
         };
 
         let interface_id = InterfaceId::new();
@@ -331,11 +348,18 @@ impl<'a> ProductService<'a> {
                     private_key: server_key.clone(),
                     listen_port: Some(listen_port),
                     manage_all_peers: true,
-                    tunnel_prefixes: vec![tunnel_prefix.clone()],
-                    addresses: vec![DesiredAddress {
+                    tunnel_prefixes: std::iter::once(tunnel_prefix.clone())
+                        .chain(ipv6_tunnel_prefix.clone())
+                        .collect(),
+                    addresses: std::iter::once(DesiredAddress {
                         address: host_v4(server_ipv4),
                         presence: ResourcePresence::Present,
-                    }],
+                    })
+                    .chain(server_ipv6.map(|address| DesiredAddress {
+                        address: host_v6(address),
+                        presence: ResourcePresence::Present,
+                    }))
+                    .collect(),
                     routes: Vec::new(),
                     peers: Vec::new(),
                     clients: Vec::new(),
@@ -406,6 +430,7 @@ pub struct ClientUpdateCommand {
     pub dns_servers: Option<Vec<IpAddr>>,
     pub client_keepalive_seconds: Option<Option<u16>>,
     pub requested_address: Option<IpAddr>,
+    pub requested_ipv6_address: Option<std::net::Ipv6Addr>,
 }
 
 /// Delete one managed client and release its address.
@@ -446,12 +471,10 @@ impl<'a> ProductService<'a> {
             return Err(ProductError::ServerNotConfigured);
         }
 
-        let requested = match command.requested_address {
-            Some(IpAddr::V4(v4)) => AddressRequest::Requested(v4),
-            Some(IpAddr::V6(_)) => {
-                return Err(ProductError::Allocation(super::AllocationError::NotIpv4))
-            }
-            None => AddressRequest::Automatic,
+        let (requested, requested_ipv6) = match command.requested_address {
+            Some(IpAddr::V4(v4)) => (AddressRequest::Requested(v4), None),
+            Some(IpAddr::V6(v6)) => (AddressRequest::Automatic, Some(v6)),
+            None => (AddressRequest::Automatic, None),
         };
         let client_id = ClientId::new();
         let peer_id = PeerId::new();
@@ -466,6 +489,7 @@ impl<'a> ProductService<'a> {
             .unwrap_or_else(|| loaded.state.client_routes.clone());
 
         let mut allocated_address = None;
+        let mut allocated_ipv6_address = None;
         let mut allocation_failure = None;
         let committed = self
             .store
@@ -488,6 +512,25 @@ impl<'a> ProductService<'a> {
                         }
                     };
                     allocated_address = Some(address);
+                    let ipv6_address = match ipv6_allocation_context(state, interface_id) {
+                        Ok(Some(allocation)) => match allocation.allocate(requested_ipv6) {
+                            Ok(address) => Some(address),
+                            Err(error) => {
+                                allocation_failure = Some(error);
+                                return Err(ProductError::Allocation(error).into_state());
+                            }
+                        },
+                        Ok(None) if requested_ipv6.is_some() => {
+                            let error = AllocationError::Ipv6NotConfigured;
+                            allocation_failure = Some(error);
+                            return Err(ProductError::Allocation(error).into_state());
+                        }
+                        Ok(None) => None,
+                        Err(error) => {
+                            return Err(error.into_state());
+                        }
+                    };
+                    allocated_ipv6_address = ipv6_address;
                     // The desired snapshot arrives by shared reference so the
                     // transaction owns the only mutable copy; the next state is
                     // built by editing a clone and returning it.
@@ -509,7 +552,9 @@ impl<'a> ProductService<'a> {
                         // Never projected, never returned, never logged.
                         private_key: Some(client_key.clone()),
                         preshared_key: None,
-                        allowed_ips: vec![NetworkPrefix::new(host_v4(address))],
+                        allowed_ips: std::iter::once(NetworkPrefix::new(host_v4(address)))
+                            .chain(ipv6_address.map(|address| NetworkPrefix::new(host_v6(address))))
+                            .collect(),
                         // Server-side keepalive stays independent of the client's.
                         persistent_keepalive_seconds: None,
                         endpoint: None,
@@ -518,6 +563,7 @@ impl<'a> ProductService<'a> {
                         id: client_id,
                         peer_id,
                         assigned_address: host_v4(address),
+                        assigned_ipv6_address: ipv6_address.map(host_v6),
                         route_policy: route_policy.clone(),
                     });
 
@@ -551,6 +597,7 @@ impl<'a> ProductService<'a> {
                 interface_id,
                 public_key: client_public,
                 assigned_address: host_v4(address),
+                assigned_ipv6_address: allocated_ipv6_address.map(host_v6),
                 settings: record.settings.clone(),
                 route_policy: route_policy.clone(),
                 dns_servers: record.dns_servers.clone(),
@@ -610,6 +657,12 @@ impl<'a> ProductService<'a> {
                     let IpAddr::V4(v4) = requested else {
                         return Err(StateError::Corrupt("IPv6 assignment is out of scope"));
                     };
+                    let current = next
+                        .interfaces
+                        .iter()
+                        .flat_map(|interface| &interface.clients)
+                        .find(|client| client.id == client_id)
+                        .map(|client| client.assigned_address.addr());
                     let interface_id = next
                         .interfaces
                         .iter()
@@ -618,9 +671,13 @@ impl<'a> ProductService<'a> {
                         .ok_or(StateError::Corrupt("client has no owning interface"))?;
                     let allocation = allocation_context(&next, interface_id)
                         .map_err(ProductError::into_state)?;
-                    let address = allocation
-                        .allocate(AddressRequest::Requested(v4))
-                        .map_err(|error| ProductError::from(error).into_state())?;
+                    let address = if current == Some(IpAddr::V4(v4)) {
+                        v4
+                    } else {
+                        allocation
+                            .allocate(AddressRequest::Requested(v4))
+                            .map_err(|error| ProductError::from(error).into_state())?
+                    };
                     let peer_id = next
                         .interfaces
                         .iter()
@@ -637,7 +694,74 @@ impl<'a> ProductService<'a> {
                         }
                         for peer in &mut interface.peers {
                             if peer.id == peer_id {
-                                peer.allowed_ips = vec![NetworkPrefix::new(host_v4(address))];
+                                let v6 = interface
+                                    .clients
+                                    .iter()
+                                    .find(|client| client.id == client_id)
+                                    .and_then(|client| client.assigned_ipv6_address);
+                                peer.allowed_ips =
+                                    std::iter::once(NetworkPrefix::new(host_v4(address)))
+                                        .chain(v6.map(NetworkPrefix::new))
+                                        .collect();
+                            }
+                        }
+                    }
+                }
+
+                if let Some(requested) = command.requested_ipv6_address {
+                    let interface_id = next
+                        .interfaces
+                        .iter()
+                        .find(|interface| interface.clients.iter().any(|c| c.id == client_id))
+                        .map(|interface| interface.id)
+                        .ok_or(StateError::Corrupt("client has no owning interface"))?;
+                    let allocation = ipv6_allocation_context(&next, interface_id)
+                        .map_err(ProductError::into_state)?
+                        .ok_or_else(|| {
+                            ProductError::Allocation(AllocationError::Ipv6NotConfigured)
+                                .into_state()
+                        })?;
+                    // The existing address belongs to this client and is not
+                    // a collision when an operator submits the same value.
+                    let current = next
+                        .interfaces
+                        .iter()
+                        .flat_map(|interface| &interface.clients)
+                        .find(|client| client.id == client_id)
+                        .and_then(|client| client.assigned_ipv6_address)
+                        .map(|address| address.addr());
+                    let address = if current == Some(IpAddr::V6(requested)) {
+                        requested
+                    } else {
+                        allocation
+                            .allocate(Some(requested))
+                            .map_err(|error| ProductError::from(error).into_state())?
+                    };
+                    let peer_id = next
+                        .interfaces
+                        .iter()
+                        .flat_map(|interface| &interface.clients)
+                        .find(|client| client.id == client_id)
+                        .map(|client| client.peer_id)
+                        .ok_or(StateError::Corrupt("client has no peer"))?;
+                    for interface in &mut next.interfaces {
+                        for client in &mut interface.clients {
+                            if client.id == client_id {
+                                client.assigned_ipv6_address = Some(host_v6(address));
+                            }
+                        }
+                        for peer in &mut interface.peers {
+                            if peer.id == peer_id {
+                                let v4 = interface
+                                    .clients
+                                    .iter()
+                                    .find(|client| client.id == client_id)
+                                    .map(|client| client.assigned_address);
+                                peer.allowed_ips = v4
+                                    .into_iter()
+                                    .map(NetworkPrefix::new)
+                                    .chain(std::iter::once(NetworkPrefix::new(host_v6(address))))
+                                    .collect();
                             }
                         }
                     }
@@ -772,6 +896,10 @@ fn host_v4(address: std::net::Ipv4Addr) -> IpNet {
     IpNet::V4(ipnet::Ipv4Net::new(address, 32).expect("a /32 is always a valid prefix"))
 }
 
+fn host_v6(address: std::net::Ipv6Addr) -> IpNet {
+    IpNet::V6(ipnet::Ipv6Net::new(address, 128).expect("a /128 is always a valid prefix"))
+}
+
 /// Builds the allocation context for one interface from *all* of its reserved
 /// addresses, enabled or not.
 fn allocation_context(
@@ -783,7 +911,12 @@ fn allocation_context(
         .iter()
         .find(|interface| interface.id == interface_id)
         .ok_or(ProductError::UnknownInterface(interface_id))?;
-    let Some(IpNet::V4(prefix)) = interface.tunnel_prefixes.first().map(|p| p.network()) else {
+    let Some(IpNet::V4(prefix)) = interface
+        .tunnel_prefixes
+        .iter()
+        .map(NetworkPrefix::network)
+        .find(|prefix| prefix.addr().is_ipv4())
+    else {
         return Err(ProductError::Allocation(super::AllocationError::NotIpv4));
     };
     let server_addresses = interface
@@ -798,13 +931,57 @@ fn allocation_context(
         .clients
         .iter()
         .filter_map(|client| match client.assigned_address.addr() {
-            IpAddr::V4(v4) => Some(v4),
+            IpAddr::V4(address) => Some(address),
             IpAddr::V6(_) => None,
         })
         .collect::<Vec<_>>();
     Ok(AllocationContext::new(IpNet::V4(prefix))?
         .with_server_addresses(server_addresses)
         .with_reserved_clients(client_addresses))
+}
+
+fn ipv6_allocation_context(
+    state: &DesiredState,
+    interface_id: InterfaceId,
+) -> Result<Option<super::Ipv6AllocationContext>, ProductError> {
+    let interface = state
+        .interfaces
+        .iter()
+        .find(|interface| interface.id == interface_id)
+        .ok_or(ProductError::UnknownInterface(interface_id))?;
+    let Some(prefix) = interface
+        .tunnel_prefixes
+        .iter()
+        .map(NetworkPrefix::network)
+        .find(|prefix| prefix.addr().is_ipv6())
+    else {
+        return Ok(None);
+    };
+    let server_addresses = interface
+        .addresses
+        .iter()
+        .filter_map(|address| match address.address.addr() {
+            IpAddr::V6(address) => Some(address),
+            IpAddr::V4(_) => None,
+        })
+        .collect::<Vec<_>>();
+    let client_addresses = interface
+        .clients
+        .iter()
+        .filter_map(|client| {
+            client
+                .assigned_ipv6_address
+                .and_then(|address| match address.addr() {
+                    IpAddr::V6(address) => Some(address),
+                    IpAddr::V4(_) => None,
+                })
+        })
+        .collect::<Vec<_>>();
+    Ok(Some(
+        super::Ipv6AllocationContext::new(prefix)?
+            .with_server_addresses(server_addresses)
+            .with_reserved_clients(client_addresses),
+    ))
 }
 
 fn assemble_server(state: &DesiredState, product: &ProductState) -> Option<ProductServer> {
@@ -815,6 +992,13 @@ fn assemble_server(state: &DesiredState, product: &ProductState) -> Option<Produ
         .iter()
         .find(|address| address.presence == ResourcePresence::Present)
         .map(|address| address.address.addr())?;
+    let ipv6_server_address = interface
+        .addresses
+        .iter()
+        .find(|address| {
+            address.presence == ResourcePresence::Present && address.address.addr().is_ipv6()
+        })
+        .map(|address| address.address.addr());
     let policy = state.network_policy.as_ref()?;
     // A server summary always carries a real prefix: the interface's first
     // tunnel prefix, or a /32 over the server's own address when the interface
@@ -832,7 +1016,13 @@ fn assemble_server(state: &DesiredState, product: &ProductState) -> Option<Produ
         interface_id: interface.id,
         name: interface.name.clone(),
         tunnel_prefix,
+        ipv6_tunnel_prefix: interface
+            .tunnel_prefixes
+            .iter()
+            .find(|prefix| prefix.network().addr().is_ipv6())
+            .cloned(),
         server_address,
+        ipv6_server_address,
         listen_port: interface.listen_port?,
         advertised_endpoint: settings.advertised_endpoint.clone(),
         public_key: crate::domain::derive_public_key(&interface.private_key).ok()?,
@@ -875,6 +1065,7 @@ fn assemble_client(
         interface_id: interface.id,
         public_key: peer.public_key.clone(),
         assigned_address: client.assigned_address,
+        assigned_ipv6_address: client.assigned_ipv6_address,
         settings: record.settings.clone(),
         route_policy: client.route_policy.clone(),
         dns_servers: record.dns_servers.clone(),
