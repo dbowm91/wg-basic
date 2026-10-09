@@ -1,6 +1,6 @@
 # Release Readiness, Supply-chain Security, and First Public Distribution Roadmap
 
-Status: active planning; R001–R003 implementation-ready within stated technical/operational limits, R004 blocked. No public release authorization.
+Status: active planning; R001 product-side preparation ready but producer-generated correction blocked on Eggpack CI M003j; R002–R003 nonsecret work ready with operational gates; R004 blocked. No public release authorization.
 Repository review baseline: `dbowm91/wg-basic@ff40f851508ccda52171c27cefdcdaf4ec1da2d5` (2026-10-09).
 Primary owner: `wg-basic` release and operator trust surface; Eggpack continues to own generator/producer mechanics, Eggup the consumer-side binary/service transaction.
 Governance: `plans/003-planning-process.md`; ADR-006; `plans/subsystems/distribution-install-update-roadmap.md`; `plans/002-long-term-roadmap.md`.
@@ -74,15 +74,15 @@ Phase 10 + Phase 11 technical closures [done]
                         operational: explicit maintainer publish authorization
 ```
 
-Eggpack generator input interpolation is owned upstream if confirmed there. R001 must register the upstream corrective (and its own blocking dependency) rather than hardcode a drift-prone local YAML fork. R002 and R003 can implement/qualify nonsecret fixture paths in parallel; neither may claim public readiness without actual trust material.
+Eggpack generator input interpolation has been confirmed at the pinned `eggstack/eggpack@d61ca71` in `crates/eggpack-ci/src/lib.rs` (two renderer sites). Upstream CI M003j `plans/implementation/ci-release-orchestration/003j-dispatch-tag-shell-injection-corrective.md` is registered on `plans/ci-m003j-dispatch-input-hardening`. **M003j strict closure and a new qualified immutable generator pin are a hard prerequisite for R001 workflow adoption/closure.** R001 product-side test/provenance preparations are independently executable; do not hand-edit generated YAML as the durable fix. R002 and R003 can implement/qualify nonsecret fixture paths in parallel; neither may claim public readiness without actual trust material.
 
 ## 7. Ordered milestones
 
 ### R001 — Workflow input and provenance hardening
 
 Plan: `plans/implementation/release-readiness/001-release-workflow-input-and-provenance-hardening.md`.
-Status: **ready**.
-Main gate: adversarial dispatch Bash expression rejected, immutable tag/source/artifact run proof, generator-owned correction, stage-token permission and provenance review, green current-head release-contract/CI.
+Status: **product-side work ready; workflow correction/closure blocked on Eggpack CI M003j**.
+Main gate: adversarial dispatch Bash expression rejected, immutable tag/source/artifact run proof, generator-owned correction with a qualified new pin, stage-token permission and provenance review, green current-head release-contract/CI.
 
 ### R002 — Offline signing and production trust root
 
@@ -117,7 +117,7 @@ Any unverified input or mismatched run blocks staging/signing; any invalid signa
 
 ## 10. Risks and decisions
 
-The highest risk is treating a self-consistent release receipt or a GitHub HTTPS download as independent authenticity. The recommended release path must have separate trust anchor and actor approval. Generator-owned Bash interpolation may require Eggpack upstream intervention; do not ship a local-only YAML patch as a permanent producer solution. The first public release can be staged in an unsigned draft for review but may never be marked publicly signed/authentic until all operational gates close. Future updater trust-key rotation requires a separately scoped ADR/plan if needed.
+The highest risk is treating a self-consistent release receipt or a GitHub HTTPS download as independent authenticity. The recommended release path must have separate trust anchor and actor approval. Generator-owned Bash interpolation **does require Eggpack CI M003j upstream intervention**; do not ship a local-only YAML patch as a permanent producer solution. The first public release can be staged in an unsigned draft for review but may never be marked publicly signed/authentic until all operational gates close. Future updater trust-key rotation requires a separately scoped ADR/plan if needed.
 
 ## 11. Completion definition
 
@@ -127,7 +127,7 @@ R001–R003 have strict technical evidence and R002/R003 operational key/signing
 
 | Milestone | Status | Implementation plan | Hard/operational blocker |
 |---|---|---|---|
-| R001 | ready | `plans/implementation/release-readiness/001-release-workflow-input-and-provenance-hardening.md` | Eggpack-owned generator remediation may be required |
+| R001 | product-side ready; producer adoption blocked | `plans/implementation/release-readiness/001-release-workflow-input-and-provenance-hardening.md` | Eggpack CI M003j corrective strict closure and qualified new producer pin required |
 | R002 | ready (non-secret); production signing blocked | `plans/implementation/release-readiness/002-production-trust-root-and-offline-signing-ceremony.md` | R001; independently provisioned key and signed draft |
 | R003 | ready (fixture/high-assurance UX); production acceptance blocked | `plans/implementation/release-readiness/003-bootstrap-installer-trust-and-root-execution-boundary.md` | R002 real trust-root/signed bytes |
 | R004 | blocked | `plans/implementation/release-readiness/004-first-production-release-security-qualification-and-authorization.md` | R001 closed + R002 operational + R003 production acceptance + maintainer publish decision |
