@@ -101,13 +101,16 @@ Phase 9 M002 `ServiceLease` module from `ae60e81` plus the small serve-entry
 acquisition call needed to prove the current updater's lease contract. The
 scratch-only patch also adds the three M002 unit CLI requirements (`state init`,
 `netd --allow-user`, and `doctor --allow-warnings`, accepting its legacy
-`unknown` lease diagnostic). State and doctor behavior remain from v4 source;
-the candidate is built from C002 source in a scratch archive with version 0.1.1
-and test-only fault hooks. For v4 identity assertions, the rootful fixture
-stages a temporary controller copy inside the service-owned state directory,
-because the hosted runner's Cargo target directory is not traversable by the
-management user. The helper is removed after qualification. None of these
-fixture adaptations alter repository history or production binaries.
+`unknown` lease diagnostic), plus `state identity` compatibility output needed
+to prove the restored v4 database. Its v4 network-enabled projection follows
+the legacy rule that a configured interface is enabled. State and doctor
+behavior remain from v4 source; the candidate is built from C002 source in a
+scratch archive with version 0.1.1 and test-only fault hooks. For v4 identity
+assertions, the rootful fixture stages a temporary controller copy inside the
+service-owned state directory, because the hosted runner's Cargo target
+directory is not traversable by the management user. The helper is removed
+after qualification. None of these fixture adaptations alter repository
+history or production binaries.
 
 Transport comparison at C002 implementation head `f5988c4` (x86_64 Linux,
 Rust 1.89.0, locked release profile): the current curl-linked `wg-basic` executable is
