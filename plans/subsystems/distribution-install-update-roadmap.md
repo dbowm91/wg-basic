@@ -1,6 +1,6 @@
 # Distribution, Installation, Update, and Rollback Roadmap
 
-Status: active; M001–M003 closed, M004 active, M005 blocked
+Status: active; M001–M003 closed; M004 active with C001 recovery corrective ready and C002 rootful qualification corrective blocked on C001; M005 blocked
 
 Canonical references:
 
@@ -205,11 +205,13 @@ Expected outcomes:
 
 ## 8. M004 — Transactional self-update and rollback orchestration
 
-Status: active; M003 is mechanically closed. Production update remains disabled until the production public key is provisioned.
+Status: active, corrective required; M003 is mechanically closed. M004 C001 retry/recovery invariant corrective is ready, M004 C002 rootful/CI/docs qualification corrective follows C001. Production update remains disabled until the production public key is provisioned.
 
 Implementation plan:
 
 - `plans/implementation/distribution/004-transactional-self-update-and-rollback.md`
+- `plans/implementation/distribution/004-c001-update-retry-recovery-invariants.md` (ready; terminal retry and crash-safety)
+- `plans/implementation/distribution/004-c002-rootful-update-qualification-and-doc-reconciliation.md` (blocked on C001; full systemd/traffic and operator-contract evidence)
 
 Objective:
 
@@ -576,5 +578,5 @@ A production release requires explicit maintainer authorization after:
 | M001 release identity/authenticity/targets | closed | `plans/implementation/distribution/001-release-identity-authenticity-and-targets.md` | `plans/closure/distribution/001-status.md` |
 | M002 system install/service layout | closed | `plans/implementation/distribution/002-system-install-and-service-layout.md` | `plans/closure/distribution/002-status.md` |
 | M003 Eggpack producer pipeline/signed draft | closed — mechanically qualified; production signing pending | `plans/implementation/distribution/003-eggpack-release-pipeline-and-signed-draft.md` | `plans/closure/distribution/003-final-status.md` |
-| M004 transactional self-update/rollback | active; production update disabled pending trust-root provisioning | `plans/implementation/distribution/004-transactional-self-update-and-rollback.md` | M001–M003 closed |
+| M004 transactional self-update/rollback | active; C001 corrective ready, C002 corrective blocked on C001; production update disabled pending trust-root provisioning | `plans/implementation/distribution/004-transactional-self-update-and-rollback.md`; `plans/implementation/distribution/004-c001-update-retry-recovery-invariants.md`; `plans/implementation/distribution/004-c002-rootful-update-qualification-and-doc-reconciliation.md` | M001–M003 closed; C001 before C002 before M004 closure |
 | M005 lifecycle E2E/Phase 10 closure | blocked on M004 closure | `plans/implementation/distribution/005-install-update-uninstall-e2e-and-phase10-closure.md` | M004 |
