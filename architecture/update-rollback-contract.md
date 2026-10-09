@@ -94,6 +94,12 @@ pre-migration snapshot; do not start an old binary against an uncertain schema.
 Update identity checks are read-only and do not migrate state. In particular,
 terminal rollback verification must inspect a restored v4 database as v4 before
 the old service is selected; only the candidate service may migrate it to v5.
+After a transaction is terminal, normal product operations may advance
+generation or change client/network identity. Future update attempts therefore
+validate the terminal receipt against the same InstallationId and compatible
+schema instead of requiring the old product identity to remain current. The
+transaction itself still proves exact rollback identity before it records
+`RolledBack`.
 
 ## Crash-window matrix
 
