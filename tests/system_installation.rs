@@ -272,8 +272,43 @@ fn systemd_installation_ownership_reinstall_and_service_credentials() {
 
     // Every file whose digest is registered in the install receipt must be
     // checked before uninstall stops services or removes any owned material.
+    // Linux rejects writes to an executable while a process is running from
+    // that inode. Stop the two product services only for this binary-digest
+    // case, then prove the refused uninstall retains the binary and units.
+    let stop_serve = Command::new("/usr/bin/systemctl")
+        .args(["stop", "wg-basic.service"])
+        .output()
+        .unwrap();
+    assert!(stop_serve.status.success(), "{}", output_text(&stop_serve));
+    let stop_netd = Command::new("/usr/bin/systemctl")
+        .args(["stop", "wg-basic-netd.service"])
+        .output()
+        .unwrap();
+    assert!(stop_netd.status.success(), "{}", output_text(&stop_netd));
+    let binary = Path::new("/usr/local/bin/wg-basic");
+    let original_binary = fs::read(binary).unwrap();
+    fs::write(
+        binary,
+        [original_binary.as_slice(), b"# local operator change\n"].concat(),
+    )
+    .unwrap();
+    let binary_refused = command(&["system", "uninstall"]);
+    fs::write(binary, original_binary).unwrap();
+    assert!(
+        !binary_refused.status.success(),
+        "modified executable must refuse uninstall: {}",
+        output_text(&binary_refused)
+    );
+    assert!(binary.is_file());
+    for service in ["wg-basic-netd.service", "wg-basic.service"] {
+        let start = Command::new("/usr/bin/systemctl")
+            .args(["start", service])
+            .output()
+            .unwrap();
+        assert!(start.status.success(), "{}", output_text(&start));
+    }
+
     for path in [
-        "/usr/local/bin/wg-basic",
         "/etc/systemd/system/wg-basic.service",
         "/etc/systemd/system/wg-basic-netd.service",
         "/etc/sysusers.d/wg-basic.conf",
