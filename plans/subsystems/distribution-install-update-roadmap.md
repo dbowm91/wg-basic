@@ -239,7 +239,7 @@ Expected outcomes:
 
 ## 9. M005 — Distribution lifecycle qualification and Phase 10 closure
 
-Status: active — M004 technical closure is complete; the production signing/publication gate remains external.
+Status: closed — M005 and Phase 10 technical lifecycle qualification are complete; the production signing/publication gate remains external.
 
 Implementation plan:
 
