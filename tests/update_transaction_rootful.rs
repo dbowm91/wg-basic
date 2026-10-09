@@ -987,9 +987,12 @@ fn make_signed_fixture() {
     }]);
     let bytes = serde_json::to_vec(&manifest).unwrap();
     println!(
-        "C002 signed fixture manifest: bytes={} sha256={:x}",
+        "C002 signed fixture manifest: bytes={} sha256={}",
         bytes.len(),
         Sha256::digest(&bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
     );
     let minisign::KeyPair { pk, sk } = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
     let signature = minisign::sign(
