@@ -24,7 +24,7 @@ Targets with `linux-integration` only compile/run under
 | `architecture_guards` | none | Static source-text invariants over shipped code (see categories below) |
 | `auth_sessions` | none | Real v1→v2 migration, Argon2id cost, credential/session persistence; no HTTP |
 | `authenticated_api` | none | Request policy directly: `Host`/`Origin`/`Sec-Fetch-*`, CSRF, cookie, limiter ordering |
-| `management_http` | none | Same perimeter over real HTTP/1.1 on a real TCP socket: routing, headers, `Origin`, CSRF, bounded 503 |
+| `management_http` | none | Same perimeter over real HTTP/1.1 on a real TCP socket: routing, headers, `Origin`, CSRF, bounded 503, rejected IPv6 routes preserve generation |
 | `service_session_restart` | none | Sessions across a real `serve` restart over real cookies; expiry/logout/reset still hold |
 | `service_resource_limits` | none | Admission/deadline boundaries: connections, in-flight, worker queue, body, timeouts, shutdown |
 | `service_e2e` | none (spawns binaries) | Real `admin` + `netd` + `serve` children: process topology, CLI→HTTP credential seam, startup reconcile, restart preserves cookie |
@@ -32,7 +32,7 @@ Targets with `linux-integration` only compile/run under
 | `service_lease` | none | Real `serve` lock: second process and restore refused while held; restore proceeds after kill |
 | `operational_events` | none (spawns binaries) | Stderr-only, line-delimited event format and secrecy |
 | `runtime_stability` | none (spawns binaries) | Bounded HTTP and state-row growth over repeated valid/rejected requests |
-| `product_management` | none | Product layer with no HTTP: setup, allocation, enable/disable, delete, audit atomicity, committed-vs-enforced receipts |
+| `product_management` | none | Product layer with no HTTP: setup, allocation, IPv6 route prerequisites and generation safety, enable/disable, delete, audit atomicity, committed-vs-enforced receipts |
 | `state_store` | none | Init, hardened open, migrations, generation CAS, rollback, secrets, projection |
 | `state_backup_restore` | none | Backup/restore/verify on temp SQLite files; corruption fails closed |
 | `state_durability` | none | Interrupted process leaves a cleanly reopening DB holding one whole generation (not power-cut safety) |

@@ -22,8 +22,8 @@ use wg_basic::{
     management::set_password_at,
     product::{
         AddressRequest, AllocationContext, AllocationError, ClientCreateCommand,
-        ClientDeleteCommand, ClientLabel, ClientUpdateCommand, ProductService, ServerSetupCommand,
-        SetClientEnabledCommand,
+        ClientDeleteCommand, ClientLabel, ClientUpdateCommand, ProductError, ProductService,
+        ServerSetupCommand, SetClientEnabledCommand,
     },
     state::{StateError, StateStore},
 };
@@ -638,6 +638,75 @@ fn update_changes_label_dns_keepalive_and_route_policy_without_rotating_keys() {
     assert_eq!(
         updated.public_key, original_public,
         "an update must never rotate a key implicitly"
+    );
+}
+
+#[test]
+fn invalid_ipv6_client_route_is_rejected_without_advancing_generation() {
+    let Setup { store, .. } = setup(|_| {});
+    let service = service(&store);
+    let client = create(&service, "ipv4-only");
+    let generation = store.current_generation().unwrap();
+    let result = service.update_client(ClientUpdateCommand {
+        principal_id: admin(&service),
+        expected_generation: generation,
+        client_id: client.client_id,
+        route_policy: Some(ClientRoutePolicy {
+            prefixes: vec!["::/0".parse().unwrap()],
+        }),
+        ..Default::default()
+    });
+    assert!(matches!(
+        result,
+        Err(ProductError::State(StateError::Validation(_)))
+    ));
+    assert_eq!(store.current_generation().unwrap(), generation);
+    assert!(service
+        .list_clients()
+        .unwrap()
+        .iter()
+        .find(|item| item.client_id == client.client_id)
+        .unwrap()
+        .route_policy
+        .prefixes
+        .is_empty());
+}
+
+#[test]
+fn ipv6_route_policy_requires_and_uses_explicit_ipv6_client_assignment() {
+    let Setup { scratch, store, .. } = setup(|command| {
+        command.ipv6_tunnel_prefix = Some(NetworkPrefix::new("fd77::/64".parse().unwrap()));
+        command.default_client_route_policy = ClientRoutePolicy::default();
+    });
+    let client_id = {
+        let product = service(&store);
+        let client = create(&product, "dual-stack");
+        assert!(client.assigned_ipv6_address.is_some());
+        let generation = store.current_generation().unwrap();
+        let (updated, _) = product
+            .update_client(ClientUpdateCommand {
+                principal_id: admin(&product),
+                expected_generation: generation,
+                client_id: client.client_id,
+                route_policy: Some(ClientRoutePolicy {
+                    prefixes: vec!["::/0".parse().unwrap()],
+                }),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(updated.route_policy.prefixes, vec!["::/0".parse().unwrap()]);
+        client.client_id
+    };
+    let reopened = StateStore::open(scratch.db()).unwrap();
+    let persisted = service(&reopened)
+        .list_clients()
+        .unwrap()
+        .into_iter()
+        .find(|item| item.client_id == client_id)
+        .unwrap();
+    assert_eq!(
+        persisted.route_policy.prefixes,
+        vec!["::/0".parse().unwrap()]
     );
 }
 

@@ -107,7 +107,12 @@ fn desired_state(interface_id: InterfaceId) -> DesiredState {
                 peer_id,
                 assigned_address: address,
                 assigned_ipv6_address: Some(ipv6_address),
-                route_policy: Default::default(),
+                route_policy: wg_basic::domain::ClientRoutePolicy {
+                    prefixes: vec![
+                        NetworkPrefix::new("::/0".parse().unwrap()),
+                        NetworkPrefix::new("2001:db8:abcd::/48".parse().unwrap()),
+                    ],
+                },
             }],
         }],
         client_routes: Default::default(),

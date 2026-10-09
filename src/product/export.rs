@@ -225,6 +225,26 @@ mod tests {
     }
 
     #[test]
+    fn renders_ipv6_route_dns_and_bracketed_endpoint_with_stable_order() {
+        let mut material = fixture();
+        material.endpoint = "[2001:db8::1]:51820".into();
+        material.dns_servers = vec![
+            "2001:4860:4860::8888".parse().unwrap(),
+            "1.1.1.1".parse().unwrap(),
+        ];
+        material.ipv6_address = Some("fd77::2/128".parse().unwrap());
+        material.allowed_ips = vec!["::/0".parse().unwrap(), "0.0.0.0/0".parse().unwrap()];
+        let config = render_config(&material).unwrap();
+        assert!(config.expose().contains("Address = fd77::2/128\n"));
+        assert!(config
+            .expose()
+            .contains("DNS = 2001:4860:4860::8888, 1.1.1.1\n"));
+        assert!(config.expose().contains("Endpoint = [2001:db8::1]:51820\n"));
+        assert!(config.expose().contains("AllowedIPs = 0.0.0.0/0, ::/0\n"));
+        assert!(!config.expose().contains("[[2001:db8::1]]"));
+    }
+
+    #[test]
     fn qr_rejects_input_that_exceeds_the_encoder_bound() {
         assert_eq!(
             render_qr_svg(&"x".repeat(MAX_CLIENT_CONFIG_BYTES + 1)).unwrap_err(),

@@ -82,6 +82,19 @@ impl DesiredInterface {
             .collect::<std::collections::HashSet<_>>();
         let mut assigned = std::collections::HashSet::new();
         for client in &self.clients {
+            client
+                .route_policy
+                .validate()
+                .map_err(|_| StateValidationError::ClientRoutePolicyInvalid)?;
+            if client
+                .route_policy
+                .prefixes
+                .iter()
+                .any(|prefix| prefix.network().addr().is_ipv6())
+                && client.assigned_ipv6_address.is_none()
+            {
+                return Err(StateValidationError::ClientIpv6RouteRequiresIpv6Assignment);
+            }
             if !client.assigned_address.addr().is_ipv4() {
                 return Err(StateValidationError::ClientPrimaryAddressNotIpv4);
             }
@@ -186,6 +199,12 @@ pub enum StateValidationError {
     ClientPrimaryAddressNotIpv4,
     #[error("client's optional secondary address must be IPv6")]
     ClientSecondaryAddressNotIpv6,
+    #[error("client route policy is invalid (maximum 64 unique unicast prefixes)")]
+    ClientRoutePolicyInvalid,
+    #[error("IPv6 client routes require a managed server IPv6 tunnel pool")]
+    ClientIpv6RouteRequiresServerIpv6Pool,
+    #[error("IPv6 client routes require an IPv6 address assigned to that client")]
+    ClientIpv6RouteRequiresIpv6Assignment,
     #[error("two managed interfaces share the name {0}")]
     DuplicateInterfaceName(InterfaceName),
     #[error("network policy references {0}, which is not a managed interface")]
@@ -206,6 +225,24 @@ pub enum StateValidationError {
 
 /// Validates a whole desired snapshot, including cross-interface relationships.
 pub fn validate_desired_state(state: &DesiredState) -> Result<(), StateValidationError> {
+    state
+        .client_routes
+        .validate()
+        .map_err(|_| StateValidationError::ClientRoutePolicyInvalid)?;
+    if state
+        .client_routes
+        .prefixes
+        .iter()
+        .any(|prefix| prefix.network().addr().is_ipv6())
+        && !state.interfaces.iter().any(|interface| {
+            interface
+                .tunnel_prefixes
+                .iter()
+                .any(|prefix| prefix.network().addr().is_ipv6())
+        })
+    {
+        return Err(StateValidationError::ClientIpv6RouteRequiresServerIpv6Pool);
+    }
     let mut names = std::collections::HashSet::new();
     let mut peer_ids = std::collections::HashSet::new();
     let mut client_ids = std::collections::HashSet::new();
@@ -332,5 +369,24 @@ mod tests {
             outside.validate(),
             Err(StateValidationError::ClientAddressOutsideTunnel(_))
         ));
+    }
+
+    #[test]
+    fn global_ipv6_routes_require_a_managed_server_ipv6_pool() {
+        let mut desired = DesiredState {
+            interfaces: vec![interface()],
+            client_routes: ClientRoutePolicy {
+                prefixes: vec!["::/0".parse().unwrap()],
+            },
+            network_policy: None,
+        };
+        assert_eq!(
+            validate_desired_state(&desired),
+            Err(StateValidationError::ClientIpv6RouteRequiresServerIpv6Pool)
+        );
+        desired.interfaces[0]
+            .tunnel_prefixes
+            .push(NetworkPrefix::new("fd77::/64".parse().unwrap()));
+        assert_eq!(validate_desired_state(&desired), Ok(()));
     }
 }
