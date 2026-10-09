@@ -352,11 +352,12 @@ sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo \
     signed_systemd_update_rolls_back_and_retries --nocapture --test-threads=1
 ```
 
-The old and candidate artifacts must be release-mode builds with strictly
-increasing fixture versions; both include `update-test-fixtures` only for the
-disposable-host run. The default old artifact is the current package version,
-and the candidate has its version raised in a scratch source archive. Release
-workflows must never enable that feature. The fixture signing key and fault markers exist only on the disposable host. The
+The old artifact is the immutable Phase 8 v4 binary at `e8fd6b1`, built from
+its own source and lockfile in release mode. The candidate is a release-mode
+build with its version raised in a scratch source archive. The current test
+controller and candidate include `update-test-fixtures` only for the
+disposable-host run; the old binary and release workflows do not. The fixture
+signing key and fault markers exist only on the disposable host. The
 test confirms an absolute root-owned curl binary is available without making a
 network request. It also proves release signing remains unavailable without
 the production key.

@@ -33,7 +33,9 @@ jobs:
           sudo ip link delete wgb-c002-probe
       - name: Build the exact release-mode old fixture
         run: |
-          cargo build --locked --release --features update-test-fixtures --bin wg-basic --target-dir "$RUNNER_TEMP/wg-basic-old-target"
+          mkdir -p "$RUNNER_TEMP/wg-basic-old-src"
+          git archive e8fd6b1 | tar -x -C "$RUNNER_TEMP/wg-basic-old-src"
+          cargo build --locked --release --manifest-path "$RUNNER_TEMP/wg-basic-old-src/Cargo.toml" --bin wg-basic --target-dir "$RUNNER_TEMP/wg-basic-old-target"
           stat -c 'old fixture bytes: %s' "$RUNNER_TEMP/wg-basic-old-target/release/wg-basic"
           sha256sum "$RUNNER_TEMP/wg-basic-old-target/release/wg-basic"
       - name: Build a strictly newer fixture candidate without changing repository history
