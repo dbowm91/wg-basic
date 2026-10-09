@@ -1029,6 +1029,7 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
         .namespace
         .device(&installation.scratch.netd_socket(), "wg0");
     assert_eq!(restored.listen_port, Some(51820));
+    assert_eq!(restored.public_key, Some(server_public_key.clone()));
     assert!(restored
         .peers
         .iter()
@@ -1099,6 +1100,10 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
         .expect("IPv6 ping after network re-enable");
     let client_after_recovery = client_ns.device(&client_scratch.netd_socket(), "wg-client");
     let client_peer_after_recovery = client_after_recovery.peers.first();
+    assert_eq!(
+        client_peer_after_recovery.and_then(|peer| peer.endpoint),
+        Some(endpoint)
+    );
     let server_after_recovery = installation
         .namespace
         .device(&installation.scratch.netd_socket(), "wg0");
