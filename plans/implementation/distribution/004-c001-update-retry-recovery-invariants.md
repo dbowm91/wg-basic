@@ -65,7 +65,7 @@ No production trust-root provisioning, unsigned/downgrade override, arbitrary re
 
 ### WP3 — Safe lifecycle and failure classification
 
-1. Audit Eggup-service's exact LifecycleState and Ownership classifications in the pinned version. A failed/inactive candidate must be stoppable or provably inactive without admitting unknown, foreign, or concurrently active services. Never use a generic systemctl kill/adopt fallback.
+1. Audit Eggup-service's exact LifecycleState and Ownership classifications in the pinned version. A failed/inactive candidate must be stoppable or provably inactive without admitting unknown, foreign, or concurrently active services. For an exactly owned unit observed during systemd auto-restart, call only Eggup's bounded typed stop and require its completed receipt, a fresh owned check and `Stopped` postcondition; an incomplete/stuck transition remains RecoveryRequired. Never use a generic systemctl kill/adopt fallback.
 2. On any nonterminal recovery failure, preserve the journal and recovery artifacts, stop uncertain services, attempt to persist RecoveryRequired, and expose a specific failure classification. If journaling itself fails, report that explicitly; never claim a clean terminal state.
 3. Classify and test durable points around Eggup's binary rollback callback, install metadata writes and phase transitions. Handle cases where Eggup already restored the old binary but candidate migration occurred.
 4. Require recover() on terminal Committed/RolledBack to verify the expected installed compatibility pair and service/product health; if services are stopped, either perform an explicitly safe documented reconciliation or refuse a success claim and direct recovery. No implicit downgrade from a durable Committed marker.
@@ -131,3 +131,21 @@ the pinned Eggup-service 0.1.2 adapter maps systemd `ActiveState=failed` to
 `LifecycleState::Unknown` and its stop confirmation only accepts `inactive`;
 the full signed-fixture updater rollback/retry and in-restore SIGKILL matrix has
 not been run. Do not unblock C002 or M005 from this partial evidence.
+
+### 12.2 Recovery evidence refinement (2026-10-09; strict closure still pending)
+
+The C001a fixture reproduced an owned `wg-basic.service` in systemd's
+`activating (auto-restart)` state immediately after candidate startup failure.
+Eggup 0.1.3's typed `stop` revalidates registration and polls for inactivity,
+but wg-basic's earlier preflight rejected every `Transitioning` lifecycle
+classification before calling it. The adapter now permits only an
+exact-owned transition into that Eggup stop path and accepts the result only
+when Eggup reports completion and a fresh inspection reports `Stopped`.
+Timeout, ownership change and a remaining transition still fail closed.
+
+Hosted run `37894224120` on commit `388da30` showed this race at the interrupted
+SQLite restore recovery checkpoint; service diagnostics recorded
+`activating (auto-restart)`. The fix and updated lifecycle regression are in
+`f9a00b3`; hosted verification is pending. This is a scoped clarification of
+the C001 recovery contract, not permission to stop unowned or ambiguous
+services. C001/C001a remain active until the expanded hosted matrix passes.
