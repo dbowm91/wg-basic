@@ -810,7 +810,7 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
                 values["Endpoint"]
             )
         });
-    let allowed_ips = values["AllowedIPs"]
+    let allowed_ips: Vec<NetworkPrefix> = values["AllowedIPs"]
         .split(", ")
         .map(|ip| {
             ip.parse::<NetworkPrefix>().unwrap_or_else(|error| {
