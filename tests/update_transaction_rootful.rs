@@ -930,6 +930,32 @@ fn print_update_storage_receipt() {
     );
 }
 
+fn wait_for_update_phase(child: &mut std::process::Child, phase: &str) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        if let Ok(bytes) = fs::read(wg_basic::update::UPDATE_JOURNAL_PATH) {
+            if serde_json::from_slice::<serde_json::Value>(&bytes)
+                .ok()
+                .and_then(|journal| journal["phase"].as_str().map(str::to_owned))
+                .as_deref()
+                == Some(phase)
+            {
+                print_update_storage_receipt();
+                return;
+            }
+        }
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "updater exited before durable phase {phase}"
+        );
+        assert!(
+            Instant::now() < deadline,
+            "updater did not reach durable phase {phase}"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
 fn make_signed_fixture() {
     use sha2::{Digest, Sha256};
     let candidate = std::env::var("WGB_CANDIDATE_BINARY").expect("candidate binary");
@@ -1177,11 +1203,13 @@ fn signed_systemd_update_rolls_back_and_retries() {
         format!("{CANDIDATE_VERSION}\n").as_bytes(),
         management.uid.as_raw(),
     );
-    let timed_out_start = Command::new(BINARY)
+    let mut timed_out_start = Command::new(BINARY)
         .args(["update", "run"])
         .env("WGB_UPDATE_FIXTURE_DIR", FIXTURE)
-        .output()
+        .spawn()
         .unwrap();
+    wait_for_update_phase(&mut timed_out_start, "binary_committed");
+    let timed_out_start = timed_out_start.wait_with_output().unwrap();
     fs::remove_file(&startup_timeout).unwrap();
     let timeout_result = output_text(&timed_out_start);
     assert!(
