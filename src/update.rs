@@ -926,8 +926,29 @@ fn reject_unresolved_journal() -> Result<Option<PathBuf>, String> {
                     .ok_or("terminal rollback lacks typed pre-update state evidence; manual recovery required")?;
                 let actual_state = read_state_identity(Path::new(crate::distribution::STATE_PATH))?;
                 if &actual_state != expected_state {
+                    let mut mismatches = Vec::new();
+                    if actual_state.installation_id != expected_state.installation_id {
+                        mismatches.push("installation_id");
+                    }
+                    if actual_state.schema_version != expected_state.schema_version {
+                        mismatches.push("schema_version");
+                    }
+                    if actual_state.desired_generation != expected_state.desired_generation {
+                        mismatches.push("desired_generation");
+                    }
+                    if actual_state.network_enabled != expected_state.network_enabled {
+                        mismatches.push("network_enabled");
+                    }
+                    if actual_state.product_identity_sha256
+                        != expected_state.product_identity_sha256
+                    {
+                        mismatches.push("product_identity_sha256");
+                    }
                     return Err(
-                        "rolled-back state identity does not match its pre-update receipt".into(),
+                        format!(
+                            "rolled-back state identity does not match its pre-update receipt (mismatched fields: {})",
+                            mismatches.join(", ")
+                        ),
                     );
                 }
                 validate_running_product_health(expected_state)?;
