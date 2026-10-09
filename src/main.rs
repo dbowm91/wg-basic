@@ -537,6 +537,8 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
             allowed_uids,
             allowed_users,
         }) => {
+            #[cfg(all(target_os = "linux", feature = "update-test-fixtures"))]
+            fail_fixture_netd_start()?;
             let mut policy = AuthorizationPolicy::current_user_and_root();
             policy.extend(allowed_uids);
             let resolved = wg_basic::distribution::resolve_allowed_user_uids(&allowed_users)
@@ -1178,6 +1180,31 @@ fn fail_fixture_candidate_start() -> Result<(), String> {
         std::fs::read_to_string(&marker).map_err(|_| "fixture startup marker cannot be read")?;
     if version.trim() == wg_basic::release::PACKAGE_VERSION {
         return Err("test fixture requested candidate startup failure".into());
+    }
+    Ok(())
+}
+
+#[cfg(all(target_os = "linux", feature = "update-test-fixtures"))]
+fn fail_fixture_netd_start() -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+
+    let marker = std::path::Path::new("/run/wg-basic/.update-fixture-fail-netd");
+    let metadata = match std::fs::symlink_metadata(marker) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Err("fixture network startup marker is unsafe".into()),
+    };
+    if !metadata.is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.uid() != 0
+        || metadata.mode() & 0o777 != 0o644
+    {
+        return Err("fixture network startup marker is unsafe".into());
+    }
+    let version = std::fs::read_to_string(marker)
+        .map_err(|_| "fixture network startup marker cannot be read")?;
+    if version.trim() == wg_basic::release::PACKAGE_VERSION {
+        return Err("test fixture requested network service startup failure".into());
     }
     Ok(())
 }

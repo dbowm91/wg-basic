@@ -199,3 +199,12 @@ removes the lease path while serve is live, proves update refuses before
 service mutation, restarts the service, and confirms lease recreation. The
 check/all-target clippy gates passed after this addition; hosted verification
 is still pending.
+
+The fixture-only candidate seam now also permits a specifically versioned
+netd startup failure on the disposable rootful host. The test drives a real
+signed update through candidate netd failure, verifies the old state identity
+and both old services return, then removes the fault marker. Its marker is
+root-owned, read-only to the service group, and compiled only with
+`update-test-fixtures`; the production release contract remains unchanged.
+The updated rootful test and default integration targets compile locally;
+hosted execution is pending.
