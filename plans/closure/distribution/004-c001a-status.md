@@ -12,8 +12,10 @@ Date: 2026-10-09
   recovery behavior), `7749317` (stale restore-stage and altered `ExecStart`
   rootful negatives), `83d5b69` (operator and architecture contract).
 - Qualification commit: `77493172ee5c578c8d361cd2e21004bdb7a5fe2e`.
-- Final documentation/closure commit is recorded in Git history after this
-  evidence was written.
+- C001a formal closure commit: `540c98ce7790ffb14cb82c98ec5167854555972b`
+  (`fix(distribution): harden recovery receipt and cutpoint matrix`), which
+  committed the plan status, additive closure record, registry, roadmap, and
+  historical C001 disposition addendum.
 
 ## Requirement-to-evidence matrix
 
