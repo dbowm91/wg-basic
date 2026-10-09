@@ -1,9 +1,11 @@
 # CLI roles
 
 This document describes **current implemented behavior** for every `wg-basic`
-subcommand in `src/main.rs`. Native system installation is implemented under
-M002 qualification; M004 update commands are implemented but fail closed
-while the production trust root is unprovisioned and qualification remains open.
+subcommand in `src/main.rs`. Native system installation and M005 lifecycle
+qualification are closed with native x86_64/aarch64 systemd evidence. M004
+update, rollback, and recovery are closed with rootful systemd evidence.
+Update commands are implemented; production `check` and `run` fail closed
+while the production trust root is unprovisioned.
 See [overview](overview.md) for status.
 
 Part of the [architecture overview](overview.md). Role internals live in
@@ -33,13 +35,14 @@ Part of the [architecture overview](overview.md). Role internals live in
 | Role / subcommand | Key flags (defaults) | Touches | Never touches |
 |---|---|---|---|
 | `serve` | `--state`, `--socket`, `--http-bind` (`127.0.0.1:8000`), `--canonical-origin` (none), `--allow-non-loopback` (false) | state DB via bounded worker, netd via UDS client, TCP listener | kernel/netlink/nft directly; never spawns or elevates netd |
-| `netd` | `--socket`, `--allow-uid UID`, `--allow-user NAME` (repeatable) | UDS socket bind, kernel via typed backends (Generic Netlink, RTNETLINK, bounded `nft`, `/proc/sys/net/ipv4/ip_forward` fixed write) | state DB (database-free) |
-| `doctor` | `--state`, `--socket`, `--json`, `--http-bind`, `--canonical-origin`, `--allow-non-loopback` | read-only SQLite inspection, netd plan-only/observe requests, read-only `/proc/sys/net/ipv4/ip_forward` | migrations, kernel applies, state writes |
+| `netd` | `--socket`, `--allow-uid UID`, `--allow-user NAME` (repeatable) | UDS socket bind, kernel via typed backends (Generic Netlink, RTNETLINK, bounded `nft`, fixed IPv4/IPv6 forwarding writes) | state DB (database-free) |
+| `doctor` | `--state`, `--socket`, `--json`, `--http-bind`, `--canonical-origin`, `--allow-non-loopback` | read-only SQLite inspection, netd plan-only/observe requests, read-only fixed IPv4/IPv6 forwarding observations | migrations, kernel applies, state writes |
 | `reconcile` | `--state`, `--socket` | state DB open, one aggregate reconcile via UDS | kernel directly |
 | `health` | `--state`, `--socket` | state DB open, health projection | netd, kernel |
 | `admin set-password` | `--username`, `--password-stdin` (required), `--state` | state DB credential row + session revocation | argv/env password sources, verifier/token output |
 | `admin status` | `--state` | state DB safe projection | verifiers, tokens |
 | `state status` | `--state` | state DB metadata/convergence | keys, row contents, kernel |
+| `state identity` | `--state` | secret-free typed compatibility identity for update recovery | product rows, keys, sessions, kernel |
 | `state init` | `--state` | create current schema or validate/migrate existing owned DB | network IPC, kernel |
 | `state backup <dest>` | `--state` | consistent snapshot write (fails if dest exists, owner-only `0600`) | kernel |
 | `state restore <cand>` | `--state` | validate-then-replace, retains `<state>.pre-restore` | kernel |
@@ -49,6 +52,17 @@ Part of the [architecture overview](overview.md). Role internals live in
 | `network disable/enable` | `--state`, `--socket` | durable flag commit + reconcile attempt | kernel directly |
 | `system install` | `--candidate` (current executable by default) | root-owned system layout, sysusers, systemd units and services | automatic sudo, release discovery, signature claims |
 | `system status` | none | installation receipt, file ownership and systemd lifecycle inspection | state mutation, kernel mutation |
+| `system uninstall` | none | removes verified owned units, sysusers definition, receipt, and binary | state database, service identities, foreign/modified installation material |
+| `update check` | none | bounded authenticated release discovery when a production key exists | install mutation, service lifecycle |
+| `update run` | effective root | root-owned lock, signed artifact and transactional binary/state update | automatic sudo, arbitrary release URLs/keys |
+| `update recover` | effective root | root-owned journal reconciliation and compatibility/health checks | implicit downgrade, ambiguous service adoption |
+
+The canonical forms are `wg-basic update check`, `wg-basic update run`, and
+`wg-basic update recover`. `check` is read-only; the production trust-root
+check occurs before transport is constructed, so an unprovisioned key causes a
+fail-closed result without network access. `run` and `recover` never invoke
+sudo. The root-owned transaction lock serializes mutating operations; contention
+returns an error and leaves the active transaction for its owner to finish.
 
 ## `system` (native installation)
 
@@ -61,6 +75,14 @@ Part of the [architecture overview](overview.md). Role internals live in
 - `status`: validates the root-owned receipt, executable and exact product
   definition digests, systemd registration/lifecycle, and state directory
   ownership. It does not mutate the installation.
+- `uninstall`: requires effective root and the systemd system manager. It
+  verifies the receipt and all owned files and both exact unit registrations
+  before stopping either service. It removes only owned unit/sysusers/binary
+  material, removes the executable last, and retains the state database,
+  management/network service identities, and installation lock directory so
+  state ownership and safe reinstall remain possible. Any foreign or modified
+  registration/file causes refusal. Destructive state removal remains the
+  separately guarded `state purge` operation.
 
 ## `serve` (unprivileged management role)
 

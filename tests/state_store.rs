@@ -102,6 +102,7 @@ fn sample_state() -> DesiredState {
                 id: ClientId::new(),
                 peer_id,
                 assigned_address: address,
+                assigned_ipv6_address: None,
                 route_policy: Default::default(),
             }],
         }],
@@ -111,6 +112,7 @@ fn sample_state() -> DesiredState {
         network_policy: Some(DesiredNetworkPolicy {
             wireguard_interface: "wg0".parse().unwrap(),
             ipv4_forwarding_required: true,
+            ipv6_forwarding_required: false,
             egress_interface: "eth0".parse().unwrap(),
             source_prefixes: vec![NetworkPrefix::new("10.8.0.0/24".parse().unwrap())],
             masquerade: true,
@@ -158,8 +160,22 @@ fn reopen_preserves_the_installation_identity_and_generation() {
     let temp = TempDir::new();
     let first = StateStore::initialize(temp.db()).unwrap();
     let before = first.installation_metadata().unwrap();
+    let mut state = sample_state();
+    let ipv6_pool = NetworkPrefix::new("2001:db8:42::/64".parse().unwrap());
+    state.interfaces[0].tunnel_prefixes.push(ipv6_pool.clone());
+    state
+        .network_policy
+        .as_mut()
+        .unwrap()
+        .source_prefixes
+        .push(ipv6_pool);
+    state
+        .network_policy
+        .as_mut()
+        .unwrap()
+        .ipv6_forwarding_required = true;
     let committed = first
-        .mutate(INITIAL_DESIRED_GENERATION, |_| Ok(sample_state()))
+        .mutate(INITIAL_DESIRED_GENERATION, |_| Ok(state))
         .unwrap();
     assert_eq!(committed.generation, DesiredGeneration::new(2).unwrap());
     drop(first);
@@ -168,6 +184,12 @@ fn reopen_preserves_the_installation_identity_and_generation() {
     let after = reopened.installation_metadata().unwrap();
     assert_eq!(after.installation_id, before.installation_id);
     assert_eq!(after.desired_generation, DesiredGeneration::new(2).unwrap());
+    let policy = reopened.load().unwrap().state.network_policy.unwrap();
+    assert!(policy.ipv6_forwarding_required);
+    assert!(policy
+        .source_prefixes
+        .iter()
+        .any(|prefix| prefix.to_string() == "2001:db8:42::/64"));
 }
 
 #[test]
@@ -702,7 +724,7 @@ fn projection_produces_the_existing_kernel_intent_types() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn projection_refuses_ipv6_policy_prefixes_before_privileged_work() {
+fn projection_refuses_ipv6_policy_prefixes_without_explicit_forwarding_opt_in() {
     let mut state = sample_state();
     // Bypass validation to prove the projector independently refuses the shape.
     state.network_policy.as_mut().unwrap().source_prefixes =
@@ -714,7 +736,7 @@ fn projection_refuses_ipv6_policy_prefixes_before_privileged_work() {
     );
     assert!(matches!(
         result,
-        Err(ProjectionError::NonIpv4PolicyPrefix(_))
+        Err(ProjectionError::EmptyNetworkPolicyPrefixes)
     ));
 }
 

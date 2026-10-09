@@ -49,6 +49,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[cfg(feature = "update-test-fixtures")]
+use std::fs::OpenOptions;
+
 /// The restrictive mode every backup and restore artifact must carry.
 const SECRET_MODE: u32 = 0o600;
 
@@ -351,8 +354,44 @@ fn stage_restore(
         .map_err(|_| StateError::Corrupt("restored database permissions are unsafe"))?;
     sync_file(staging)?;
 
+    #[cfg(feature = "update-test-fixtures")]
+    wait_at_update_fixture_restore_gate(target)?;
+
     let previous = replace_target(staging, target)?;
     Ok((schema_version, previous))
+}
+
+#[cfg(feature = "update-test-fixtures")]
+fn wait_at_update_fixture_restore_gate(target: &Path) -> Result<(), StateError> {
+    use std::os::unix::fs::MetadataExt;
+
+    let parent = parent_of(target)?;
+    let gate = parent.join(".update-fixture-restore-gate");
+    let metadata = match fs::symlink_metadata(&gate) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Err(StateError::Corrupt("fixture restore gate is unsafe")),
+    };
+    if !metadata.is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.uid() != current_uid()
+        || metadata.mode() & 0o777 != 0o600
+        || fs::read(&gate).map_err(|_| StateError::Corrupt("fixture restore gate is unsafe"))?
+            != b"pause"
+    {
+        return Err(StateError::Corrupt("fixture restore gate is unsafe"));
+    }
+    let entered = parent.join(".update-fixture-restore-entered");
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(entered)
+        .map_err(|_| StateError::Corrupt("fixture restore gate is unsafe"))?;
+    while gate.exists() {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    Ok(())
 }
 
 /// Atomically installs `staging` as `target`, retaining the previous target.
@@ -707,5 +746,41 @@ mod tests {
             first,
             PathBuf::from("/var/lib/wg-basic/state.db.pre-restore")
         );
+    }
+
+    #[test]
+    fn offline_state_restore_can_be_replayed_after_an_interrupted_attempt() {
+        use crate::state::StateStore;
+        use std::os::unix::fs::PermissionsExt;
+
+        let root =
+            std::env::temp_dir().join(format!("wg-basic-restore-replay-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let target = root.join("state.db");
+        let backup = root.join("state-backup.db");
+        let store = StateStore::initialize(&target).unwrap();
+        let expected_id = store.installation_metadata().unwrap().installation_id;
+        store.backup(&backup).unwrap();
+        drop(store);
+
+        // Model a process dying after it has already replaced the live state:
+        // the next invocation must be able to apply the same verified backup.
+        fs::write(&target, b"partial or incompatible database").unwrap();
+        let first = restore(&backup, &target).unwrap();
+        assert_eq!(first.installation_id, expected_id);
+        let second = restore(&backup, &target).unwrap();
+        assert_eq!(second.installation_id, expected_id);
+        let restored = StateStore::open(&target).unwrap();
+        assert_eq!(
+            restored.installation_metadata().unwrap().installation_id,
+            expected_id
+        );
+        assert_eq!(
+            restored.schema_version().unwrap(),
+            schema::supported_version()
+        );
+        drop(restored);
+        fs::remove_dir_all(root).unwrap();
     }
 }

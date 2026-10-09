@@ -73,7 +73,10 @@ validates. `"wg0"` and 15-char names pass; 16-char names and
   so `"10.8.0.7/24"` parses to `"10.8.0.0/24"`. Helpers: `network()`,
   `contains(IpAddr)`, `family_matches(IpAddr)`.
 - `ClientRoutePolicy { prefixes: Vec<NetworkPrefix> }` is client-side routing
-  intent, kept separate from server-side peer `AllowedIPs`.
+  intent, kept separate from server-side peer `AllowedIPs`. Validation accepts
+  at most 64 unique unicast prefixes, including the explicit family defaults
+  `0.0.0.0/0` and `::/0`; IPv6 client routes require an IPv6 server pool and
+  address assigned to that client. Address assignment never selects routes.
 - `validate_unique_client_addresses` requires every assignment to be a host
   prefix (`/32` for v4, `/128` for v6) and rejects a repeated address:
   `ClientAddressMustBeHostPrefix` / `DuplicateClientAddress(IpAddr)`.
@@ -163,8 +166,10 @@ validates. `"wg0"` and 15-char names pass; 16-char names and
   - `DesiredPeer`: id, `PublicKey`, optional retained `PrivateKey` (only when
     wg-basic generated or was given it), optional `PresharedKey`,
     server-side `allowed_ips`, keepalive, endpoint.
-  - `DesiredClient`: id, `peer_id`, host-prefix `assigned_address` inside the
-    interface's tunnel prefixes, client-side `route_policy` (not AllowedIPs).
+  - `DesiredClient`: id, `peer_id`, required IPv4 host-prefix
+    `assigned_address`, optional IPv6 host-prefix `assigned_ipv6_address`, both
+    inside matching interface tunnel prefixes and covered by that peer's
+    server-side AllowedIPs; client-side `route_policy` remains separate.
   - `DesiredInterface`: id, name, ownership, lifecycle, `admin_up:
     Option<bool>`, server `PrivateKey`, `listen_port`, `manage_all_peers`,
     `tunnel_prefixes`, exactly-managed `addresses`/`routes`, `peers`,

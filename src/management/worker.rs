@@ -1319,6 +1319,7 @@ mod tests {
                 interface_id: crate::domain::InterfaceId::new(),
                 public_key: key.clone(),
                 assigned_address: "10.8.0.2/32".parse().unwrap(),
+                assigned_ipv6_address: None,
                 settings: crate::product::ClientProductSettings {
                     label: crate::product::ClientLabel::new("fixture").unwrap(),
                     enabled: crate::product::ClientEnabled::Enabled,

@@ -8,6 +8,9 @@ description = "A small Linux-native WireGuard management appliance"
 
 [features]
 linux-integration = []
+# Non-default hooks used only by the disposable systemd update transaction
+# qualification. Release workflows must never enable this feature.
+update-test-fixtures = []
 
 [dependencies]
 # Argon2id credential hashing (Phase 7 M002). Default features give the PHC
@@ -31,7 +34,7 @@ eggup-core = "=0.1.3"
 eggup-acquisition = "=0.1.3"
 eggup-curl = "=0.1.2"
 eggup-eggpack = "=0.1.3"
-eggup-service = "=0.1.2"
+eggup-service = "=0.1.3"
 minisign-verify = "=0.3.0"
 qrcodegen = "1.8.0"
 rusqlite = { version = "0.40", default-features = false, features = ["bundled", "backup"] }

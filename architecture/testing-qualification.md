@@ -24,7 +24,7 @@ Targets with `linux-integration` only compile/run under
 | `architecture_guards` | none | Static source-text invariants over shipped code (see categories below) |
 | `auth_sessions` | none | Real v1→v2 migration, Argon2id cost, credential/session persistence; no HTTP |
 | `authenticated_api` | none | Request policy directly: `Host`/`Origin`/`Sec-Fetch-*`, CSRF, cookie, limiter ordering |
-| `management_http` | none | Same perimeter over real HTTP/1.1 on a real TCP socket: routing, headers, `Origin`, CSRF, bounded 503 |
+| `management_http` | none | Same perimeter over real HTTP/1.1 on a real TCP socket: routing, headers, `Origin`, CSRF, bounded 503, rejected IPv6 routes preserve generation |
 | `service_session_restart` | none | Sessions across a real `serve` restart over real cookies; expiry/logout/reset still hold |
 | `service_resource_limits` | none | Admission/deadline boundaries: connections, in-flight, worker queue, body, timeouts, shutdown |
 | `service_e2e` | none (spawns binaries) | Real `admin` + `netd` + `serve` children: process topology, CLI→HTTP credential seam, startup reconcile, restart preserves cookie |
@@ -32,21 +32,22 @@ Targets with `linux-integration` only compile/run under
 | `service_lease` | none | Real `serve` lock: second process and restore refused while held; restore proceeds after kill |
 | `operational_events` | none (spawns binaries) | Stderr-only, line-delimited event format and secrecy |
 | `runtime_stability` | none (spawns binaries) | Bounded HTTP and state-row growth over repeated valid/rejected requests |
-| `product_management` | none | Product layer with no HTTP: setup, allocation, enable/disable, delete, audit atomicity, committed-vs-enforced receipts |
+| `product_management` | none | Product layer with no HTTP: setup, allocation, IPv6 route prerequisites and generation safety, enable/disable, delete, audit atomicity, committed-vs-enforced receipts |
 | `state_store` | none | Init, hardened open, migrations, generation CAS, rollback, secrets, projection |
 | `state_backup_restore` | none | Backup/restore/verify on temp SQLite files; corruption fails closed |
 | `state_durability` | none | Interrupted process leaves a cleanly reopening DB holding one whole generation (not power-cut safety) |
 | `privileged_protocol` | Linux, unprivileged | UDS capability/auth IPC: peer-credential authorization, socket lifecycle, fail-closed collisions |
 | `upgrade_rehearsal` | none, `#[ignore]`d, needs `WGB_OLD_BINARY` | v4 preservation, config hashes, old-binary refusal, explicit restore, repeated migration |
+| `update_transaction_rootful` | root, isolated systemd VM, `#[ignore]`d | Signed-fixture installed update with disabled and enabled health profiles, real client traffic, startup timeout, post-migration rollback, crash recovery, retained session, and retry to Committed |
 | `wireguard_kernel` | root | Real-kernel handshake, telemetry, peer update/preservation in temp namespaces; netd workers run inside the namespaces |
 | `network_reconcile` | root | Link/address/route lifecycle and reconciliation in a namespace |
-| `network_control_e2e` | root | Forwarding, NAT, firewall ownership across namespaces |
 | `durable_owner` | root | Owner tags and generation-aware aggregate reconcile against the real kernel |
 | `durable_restart` | root, needs built `wg-basic` binary | Startup reconciliation and crash/restart recovery via real `netd` + `reconcile` child processes |
 | `durable_backup` | root | Restored database drives real traffic (3 namespaces, handshake, forwarding, NAT); foreign same-name link fails closed |
-| `product_management_rootful` | root | Real-device client lifecycle via HTTP: setup, create, export, enrollment consume/replay, handshake traffic, telemetry/audit, disable/re-enable/delete |
+| `product_management_rootful` | root | Authenticated API exports an explicit dual-family full-tunnel config; real client handshake/IPv4+IPv6 tunnel traffic; client disable stops IPv6 traffic and re-enable restores it; enrollment consume/replay, telemetry/audit, whole-network restart/reapply |
 | `maintenance_rootful` | root | CLI disable/re-enable through a real handshake; disabled state survives restart; purge needs disabled+converged+no-op plan |
 | `doctor_readonly` | mixed: first case unprivileged, rest root | Empty-install checks unprivileged; configured-but-unapplied install in a disposable namespace plans repair without applying; snapshots unchanged |
+| `network_control_e2e` | root | Three namespaces qualify IPv4 NAT and IPv4/IPv6 full and split client routes, positive/negative split traffic, routed IPv6 without NAT66, global forwarding persistence, foreign-state preservation, independent firewall drops, restart, and retry after injected nft failure |
 | `service_rootful_e2e` | root | HTTP surface reflects real network state (`ok` vs `degraded`), survives backend loss without restart, leaks no key material; `serve` on host, `netd` in namespace |
 | `upgrade_rehearsal_rootful` | root, `#[ignore]`d, needs `WGB_OLD_BINARY` + `WGB_CANDIDATE_BINARY` | Real v4 product traffic, backup verification, candidate migration/failed health, v4 restore, doctor, old-service recovery, re-upgrade |
 
@@ -62,7 +63,7 @@ source-text assertions that run in the ordinary suite. By category:
 | No shell-out / no escape hatch | No `wg`/`wg-quick`/`ip` invocation; process execution isolated to `src/firewall/nft.rs`; no `sh`/`bash`; the nft backend spawns exactly `nft` |
 | Closed privileged protocol | No generic `Exec`/`Shell`/`RawNetlink`/`WriteFile`/`Sysctl`/etc. operation in `src/protocol/wire.rs`; operation vocabulary and `PROTOCOL_VERSION = 1` pinned |
 | Privilege separation and layering | Aggregate coordinator database-free; `src/state/` never reaches the privileged boundary; privileged path never opens the DB; management never becomes an HTTP surface; HTTP reaches management only through the bounded worker (`mpsc::channel(capacity)` + `try_send`); backup/restore stay local; store submodules stay one-directional |
-| Authentication secrecy | Closed secret-safe event schema; secret wrappers redact `Debug`/`Display`; raw `SessionToken` has no path into `store::auth` (digests only, one `expose_once`); auth only via the worker thread; no plaintext password parameter reaches a query; migration list is exactly real v1+v2; admin password arrives on stdin only |
+| Authentication secrecy | Closed secret-safe event schema; secret wrappers redact `Debug`/`Display`; raw `SessionToken` has no path into `store::auth` (digests only, one `expose_once`); auth only via the worker thread; no plaintext password parameter reaches a query; migrations are ordered immutable v1-v7 steps; admin password arrives on stdin only |
 | Doctor read-only | Doctor dispatch uses `Plan…` ops and `inspect_readonly` only; no `StateStore::open`, no apply ops, no process spawn |
 | HTTP perimeter (M003) | No CORS headers at all; no JWT/OAuth/session-crate dependencies; session-cookie attributes pinned (`HttpOnly`, `SameSite=Strict`, `Path=/`, no `Domain`, `Secure` from origin profile); no forwarded-header trust; one `headers::seal` call site; limiter consulted before worker authentication; bounded limiter peer map; routable bind refused without acknowledgement; response bodies only from `response.rs`/`api.rs`; failed logins always spend one Argon2 verification |
 | Embedded UI shell (M005) | Assets name no external origin; no inline script/style or event handlers (no CSP concession); no build toolchain or manifest build step; assets are `include_str!` constants with no filesystem reads; shell served through the single seal point; shell uses product/telemetry/audit routes only |

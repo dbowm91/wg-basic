@@ -347,6 +347,8 @@ pub struct ProductClient {
     pub interface_id: InterfaceId,
     pub public_key: PublicKey,
     pub assigned_address: IpNet,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assigned_ipv6_address: Option<IpNet>,
     pub settings: ClientProductSettings,
     pub route_policy: crate::domain::ClientRoutePolicy,
     pub dns_servers: Vec<IpAddr>,
@@ -358,12 +360,17 @@ pub struct ProductServer {
     pub interface_id: InterfaceId,
     pub name: crate::domain::InterfaceName,
     pub tunnel_prefix: NetworkPrefix,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ipv6_tunnel_prefix: Option<NetworkPrefix>,
     pub server_address: IpAddr,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ipv6_server_address: Option<IpAddr>,
     pub listen_port: u16,
     pub advertised_endpoint: AdvertisedEndpoint,
     pub public_key: PublicKey,
     pub egress_interface: crate::domain::InterfaceName,
     pub ipv4_forwarding_required: bool,
+    pub ipv6_forwarding_required: bool,
     pub masquerade: bool,
     pub default_client_route_policy: crate::domain::ClientRoutePolicy,
 }

@@ -101,6 +101,10 @@ fn doctor_json_does_not_change_database_or_host_network_state() {
         check.id == wg_basic::doctor::DoctorCheckId::NetworkOwnership
             && check.disposition == wg_basic::doctor::DoctorDisposition::Pass
     }));
+    assert!(report.checks.iter().any(|check| {
+        check.id == wg_basic::doctor::DoctorCheckId::Ipv6Forwarding
+            && check.disposition == wg_basic::doctor::DoctorDisposition::Pass
+    }));
 
     assert_eq!(std::fs::read(&database).unwrap(), database_before);
     assert_eq!(entries(&temporary.0), entries_before);
@@ -189,11 +193,14 @@ fn doctor_plan_only_diagnoses_managed_drift_without_mutating_the_namespace() {
             expected_generation: DesiredGeneration::default(),
             interface_name: "wg0".parse().unwrap(),
             tunnel_prefix: NetworkPrefix::new("10.239.0.0/24".parse().unwrap()),
+            ipv6_tunnel_prefix: None,
             server_address: None,
+            ipv6_server_address: None,
             listen_port: 51820,
             advertised_endpoint: AdvertisedEndpoint::new("198.18.0.1", 51820).unwrap(),
             egress_interface: "lo".parse().unwrap(),
             ipv4_forwarding_required: false,
+            ipv6_forwarding_required: false,
             masquerade: false,
             default_client_route_policy: ClientRoutePolicy::default(),
         })

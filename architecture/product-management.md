@@ -11,11 +11,28 @@ allocate addresses, generate keys, or call `netd`. The single management worker
 commits a compare-and-swap mutation and then reconciles it. The receipt keeps
 the durable commit generation separate from kernel enforcement.
 
-Client creation allocates the lowest free IPv4 address within the configured
-tunnel prefix unless the caller requests a specific available address. Disabled
-clients retain their row, peer identity, key, and address reservation; only the
-peer's projected kernel intent is removed. Deletion removes the durable client
-and peer and returns the worker's enforcement result.
+Client creation always allocates an IPv4 address and, when an IPv6 tunnel prefix
+is configured, also allocates an IPv6 address. An exact address can be requested
+per family. Disabled clients retain both address reservations, their row, peer
+identity, and key; only the peer's projected kernel intent is removed. Deletion
+removes the durable client and peer and returns the worker's enforcement result.
+IPv6 tunnel addressing is independent from forwarding. Server setup keeps IPv6
+forwarding disabled by default; an explicit setting persists IPv6 forwarding
+policy for the managed tunnel prefix. Forwarding uses the host-global Linux
+control, remains enabled when policy is disabled, requires upstream routing,
+and does not use NAT66.
+
+Client route policy is explicit and independent for IPv4 and IPv6. Operators
+may select no route, the family's full-tunnel default (`0.0.0.0/0` or `::/0`),
+or split prefixes; every policy is limited to 64 unique unicast prefixes.
+IPv6 routes are accepted only when the server has a managed IPv6 tunnel pool
+and the client has an assigned IPv6 tunnel address. Assigning that address
+does not enable any route. Client routes are rendered as the client's
+`AllowedIPs`; server peer `AllowedIPs` continue to contain only assigned client
+tunnel addresses. Route selection does not itself prove upstream IPv6
+reachability; M004 namespace qualification proves the supported full/split
+route behavior with explicit upstream and return routes. Operators must arrange
+those upstream routes in their own network.
 
 ## HTTP contract
 
@@ -87,7 +104,8 @@ inside the writing transaction. Retention does not advance DesiredGeneration.
 ## Operator UI
 
 The embedded operator page is a buildless same-origin client of these routes.
-It provides login, first-server setup, server and client status, client
+It provides login, first-server setup, separate IPv4 and IPv6 route controls for
+no route, full tunnel, and split prefixes, server and client status, client
 create/edit/enable/disable/delete, explicit config/QR export, one-time link
 create/revoke, bounded visible-page telemetry refresh, and recent audit
 history. Mutations carry the generation from the latest API read; a `409`
@@ -102,5 +120,6 @@ from the dialog on close; the UI does not persist them in browser storage.
 Administrator bootstrap and reset remain local CLI operations. The HTTP setup
 route configures the WireGuard server only after login; it does not create the
 administrator. The product API does not add arbitrary hooks, firewall rules,
-TLS termination, installation, or update behavior. IPv6 production
-qualification and multi-interface product workflows remain deferred.
+TLS termination, installation, or update behavior. Multi-interface product
+workflows remain deferred. Dual-family client route selection is explicit and
+does not claim end-to-end routed traffic.

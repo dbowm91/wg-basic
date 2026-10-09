@@ -515,6 +515,7 @@ fn server_desired_state(keys: &Keys, interface_id: InterfaceId) -> DesiredState 
                 id: ClientId::new(),
                 peer_id,
                 assigned_address: client_address,
+                assigned_ipv6_address: None,
                 route_policy: Default::default(),
             }],
         }],
@@ -523,6 +524,7 @@ fn server_desired_state(keys: &Keys, interface_id: InterfaceId) -> DesiredState 
         network_policy: Some(DesiredNetworkPolicy {
             wireguard_interface: "wg-server".parse().unwrap(),
             ipv4_forwarding_required: true,
+            ipv6_forwarding_required: false,
             egress_interface: "v-e".parse().unwrap(),
             source_prefixes: vec![NetworkPrefix::new("10.8.0.0/24".parse().unwrap())],
             masquerade: true,

@@ -56,10 +56,26 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "network_operational_state",
         sql: include_str!("../migrations/005_network_operational_state.sql"),
     },
+    Migration {
+        version: 6,
+        name: "client_ipv6_address",
+        sql: include_str!("../migrations/006_client_ipv6_address.sql"),
+    },
+    Migration {
+        version: 7,
+        name: "ipv6_forwarding_policy",
+        sql: include_str!("../migrations/007_ipv6_forwarding_policy.sql"),
+    },
 ];
 
 /// The highest schema version this binary understands.
 pub(crate) fn supported_version() -> i64 {
+    #[cfg(feature = "update-test-fixtures")]
+    if let Ok(version) = std::fs::read_to_string("/var/lib/wg-basic/.update-fixture-schema-v4") {
+        if version.trim() == crate::release::PACKAGE_VERSION {
+            return 4;
+        }
+    }
     MIGRATIONS.last().map_or(0, |m| m.version)
 }
 /// Creates a recovery snapshot before a schema-changing migration runs.
@@ -144,6 +160,13 @@ pub fn recovery_snapshot_path(database: &Path, from_version: i64) -> PathBuf {
 }
 /// Applies every production migration in order.
 pub(super) fn run_migrations(connection: &mut Connection) -> Result<(), StateError> {
+    #[cfg(feature = "update-test-fixtures")]
+    {
+        let supported = supported_version();
+        let count = MIGRATIONS.partition_point(|migration| migration.version <= supported);
+        apply_migrations(connection, &MIGRATIONS[..count])
+    }
+    #[cfg(not(feature = "update-test-fixtures"))]
     apply_migrations(connection, MIGRATIONS)
 }
 

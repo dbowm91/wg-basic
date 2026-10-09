@@ -136,7 +136,7 @@ enum Command {
         #[command(subcommand)]
         action: SystemCommand,
     },
-    /// Fail-closed authenticated update commands (available after M004 qualification).
+    /// Fail-closed authenticated update commands; mutation requires effective root.
     Update {
         #[command(subcommand)]
         action: UpdateCommand,
@@ -163,6 +163,8 @@ enum SystemCommand {
     },
     /// Read-only installation ownership and service status.
     Status,
+    /// Remove owned system files and units while preserving VPN state.
+    Uninstall,
 }
 
 #[derive(Subcommand)]
@@ -205,6 +207,11 @@ enum StateCommand {
     ///
     /// Never prints private keys, preshared keys, or any row contents.
     Status {
+        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        state: PathBuf,
+    },
+    /// Emit the updater's secret-free typed compatibility identity as JSON.
+    Identity {
         #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
         state: PathBuf,
     },
@@ -343,6 +350,7 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
                 wg_basic::distribution::install_local(&candidate)
             }
             SystemCommand::Status => wg_basic::distribution::install_status(),
+            SystemCommand::Uninstall => wg_basic::distribution::uninstall_local(),
         },
         Some(Command::Update { action }) => {
             match action {
@@ -386,6 +394,8 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
             canonical_origin,
             allow_non_loopback,
         }) => {
+            #[cfg(all(target_os = "linux", feature = "update-test-fixtures"))]
+            delay_fixture_candidate_doctor_start(&state)?;
             let (mut checks, state_snapshot) = doctor_state_checks(&state);
             match request(&socket, RequestOperation::InspectCapabilities, 2) {
                 Ok(ResponseBody::Capabilities(snapshot)) => {
@@ -426,6 +436,7 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
             if let Some(snapshot) = state_snapshot.as_ref() {
                 append_network_plan_checks(&mut checks, &socket, snapshot);
                 append_forwarding_check(&mut checks, snapshot);
+                append_ipv6_forwarding_check(&mut checks, snapshot);
             } else {
                 checks.push(wg_basic::doctor::DoctorCheck::new(
                     wg_basic::doctor::DoctorCheckId::NetworkOwnership,
@@ -438,6 +449,13 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
                     wg_basic::doctor::DoctorCheckId::Forwarding,
                     wg_basic::doctor::DoctorDisposition::Unknown,
                     "forwarding requirement is unknown",
+                    "the state snapshot is unavailable",
+                    "resolve the state diagnostic first, then rerun doctor",
+                ));
+                checks.push(wg_basic::doctor::DoctorCheck::new(
+                    wg_basic::doctor::DoctorCheckId::Ipv6Forwarding,
+                    wg_basic::doctor::DoctorDisposition::Unknown,
+                    "IPv6 forwarding requirement is unknown",
                     "the state snapshot is unavailable",
                     "resolve the state diagnostic first, then rerun doctor",
                 ));
@@ -532,6 +550,8 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
             allowed_uids,
             allowed_users,
         }) => {
+            #[cfg(all(target_os = "linux", feature = "update-test-fixtures"))]
+            fail_fixture_netd_start()?;
             let mut policy = AuthorizationPolicy::current_user_and_root();
             policy.extend(allowed_uids);
             let resolved = wg_basic::distribution::resolve_allowed_user_uids(&allowed_users)
@@ -1053,6 +1073,54 @@ fn append_forwarding_check(
     ));
 }
 
+#[cfg(target_os = "linux")]
+fn append_ipv6_forwarding_check(
+    checks: &mut Vec<wg_basic::doctor::DoctorCheck>,
+    snapshot: &wg_basic::state::StateDiagnostic,
+) {
+    use wg_basic::doctor::{DoctorCheck, DoctorCheckId as Id, DoctorDisposition as D};
+    let required = snapshot
+        .desired
+        .state
+        .network_policy
+        .as_ref()
+        .is_some_and(|policy| policy.ipv6_forwarding_required);
+    let value = required.then(|| std::fs::read_to_string("/proc/sys/net/ipv6/conf/all/forwarding"));
+    let (disposition, summary, evidence, remediation) = match (required, value) {
+        (false, _) => (
+            D::Pass,
+            "IPv6 forwarding is not required by desired state",
+            "no forwarding observation required".to_owned(),
+            "none",
+        ),
+        (true, Some(Ok(setting))) if setting.trim() == "1" => (
+            D::Pass,
+            "required global IPv6 forwarding is enabled",
+            "read-only procfs value 1".to_owned(),
+            "none",
+        ),
+        (true, Some(Ok(setting))) if setting.trim() == "0" => (
+            D::Fail,
+            "desired network policy requires IPv6 forwarding, but it is disabled",
+            "read-only global procfs value 0".to_owned(),
+            "enable IPv6 forwarding through wg-basic policy or host configuration; the global setting remains enabled after network disable",
+        ),
+        (true, Some(Ok(_))) | (true, Some(Err(_))) | (true, None) => (
+            D::Unknown,
+            "IPv6 forwarding state could not be read",
+            "the expected global procfs setting is unavailable".to_owned(),
+            "run doctor on the Linux host that owns the WireGuard network",
+        ),
+    };
+    checks.push(DoctorCheck::new(
+        Id::Ipv6Forwarding,
+        disposition,
+        summary,
+        evidence,
+        remediation,
+    ));
+}
+
 /// Reads a password from standard input, trimming exactly one trailing newline.
 ///
 /// Only the trailing newline a terminal or `echo` adds is removed; every other
@@ -1092,6 +1160,9 @@ fn serve(
     allow_non_loopback: bool,
 ) -> Result<(), String> {
     use wg_basic::http::ServeConfig;
+
+    #[cfg(feature = "update-test-fixtures")]
+    fail_fixture_candidate_start()?;
 
     // Three shapes, and only three. Each is chosen by what the operator stated,
     // never inferred:
@@ -1148,6 +1219,89 @@ fn serve(
     Ok(())
 }
 
+#[cfg(all(target_os = "linux", feature = "update-test-fixtures"))]
+fn fail_fixture_candidate_start() -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+
+    let marker =
+        std::path::Path::new(wg_basic::distribution::STATE_DIR).join(".update-fixture-fail-start");
+    let metadata = match std::fs::symlink_metadata(&marker) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Err("fixture startup marker is unsafe".into()),
+    };
+    if !metadata.is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.uid() != nix::unistd::geteuid().as_raw()
+        || metadata.mode() & 0o777 != 0o600
+    {
+        return Err("fixture startup marker is unsafe".into());
+    }
+    let version =
+        std::fs::read_to_string(&marker).map_err(|_| "fixture startup marker cannot be read")?;
+    if version.trim() == wg_basic::release::PACKAGE_VERSION {
+        return Err("test fixture requested candidate startup failure".into());
+    }
+    Ok(())
+}
+
+#[cfg(all(target_os = "linux", feature = "update-test-fixtures"))]
+fn delay_fixture_candidate_doctor_start(state: &std::path::Path) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+
+    let marker = state
+        .parent()
+        .ok_or("fixture state path has no parent")?
+        .join(".update-fixture-start-timeout");
+    let metadata = match std::fs::symlink_metadata(&marker) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Err("fixture startup timeout marker is unsafe".into()),
+    };
+    if !metadata.is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.uid() != nix::unistd::geteuid().as_raw()
+        || metadata.mode() & 0o777 != 0o600
+        || metadata.len() > 128
+    {
+        return Err("fixture startup timeout marker is unsafe".into());
+    }
+    let version = std::fs::read_to_string(marker)
+        .map_err(|_| "fixture startup timeout marker cannot be read")?;
+    if version.trim() == wg_basic::release::PACKAGE_VERSION {
+        std::thread::sleep(std::time::Duration::from_secs(32));
+    }
+    Ok(())
+}
+
+#[cfg(all(target_os = "linux", feature = "update-test-fixtures"))]
+fn fail_fixture_netd_start() -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+
+    // `/run/wg-basic` is a systemd RuntimeDirectory and is removed when netd
+    // stops during update. Keep this fixture-only switch outside that tree so
+    // it persists across the candidate stop/start boundary.
+    let marker = std::path::Path::new("/run/.wg-basic-update-fixture-fail-netd");
+    let metadata = match std::fs::symlink_metadata(marker) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Err("fixture network startup marker is unsafe".into()),
+    };
+    if !metadata.is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.uid() != 0
+        || metadata.mode() & 0o777 != 0o644
+    {
+        return Err("fixture network startup marker is unsafe".into());
+    }
+    let version = std::fs::read_to_string(marker)
+        .map_err(|_| "fixture network startup marker cannot be read")?;
+    if version.trim() == wg_basic::release::PACKAGE_VERSION {
+        return Err("test fixture requested network service startup failure".into());
+    }
+    Ok(())
+}
+
 /// Runs the state-focused operator surface.
 ///
 /// None of these paths ever contacts the kernel, and none of them prints row
@@ -1200,6 +1354,15 @@ fn run_state_action(action: StateCommand) -> Result<(), String> {
             );
             println!("integrity:          ok");
             println!("\nThis projection never includes private or preshared keys.");
+            Ok(())
+        }
+        StateCommand::Identity { state } => {
+            let identity = wg_basic::update::state_identity(&state)?;
+            println!(
+                "{}",
+                serde_json::to_string(&identity)
+                    .map_err(|_| "could not format state identity".to_owned())?
+            );
             Ok(())
         }
         StateCommand::Backup { destination, state } => {

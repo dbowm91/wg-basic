@@ -12,7 +12,7 @@ pub mod export;
 pub mod model;
 pub mod service;
 
-pub use allocator::{AddressRequest, AllocationContext, AllocationError};
+pub use allocator::{AddressRequest, AllocationContext, AllocationError, Ipv6AllocationContext};
 pub use enrollment::{
     CreatedEnrollmentLink, EnrollmentToken, EnrollmentTokenError, DEFAULT_ENROLLMENT_TTL_SECONDS,
     MAX_ENROLLMENT_TTL_SECONDS,

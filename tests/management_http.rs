@@ -890,7 +890,7 @@ async fn authenticated_product_crud_uses_generation_cas_and_reports_degraded_com
         );
     }
 
-    let setup_body = r#"{"expected_generation":1,"interface_name":"wg0","tunnel_prefix":"10.77.0.0/24","listen_port":51820,"advertised_endpoint":"vpn.example.test:51820","egress_interface":"eth0","ipv4_forwarding_required":true,"masquerade":true,"default_client_route_policy":{"prefixes":["10.77.0.0/24"]}}"#;
+    let setup_body = r#"{"expected_generation":1,"interface_name":"wg0","tunnel_prefix":"10.77.0.0/24","listen_port":51820,"advertised_endpoint":"[2001:db8::1]:51820","egress_interface":"eth0","ipv4_forwarding_required":true,"masquerade":true,"default_client_route_policy":{"prefixes":["10.77.0.0/24"]}}"#;
     let setup = unsafe_request("POST", "/api/v1/setup", setup_body, true);
     assert_eq!(
         setup.status, 202,
@@ -913,7 +913,7 @@ async fn authenticated_product_crud_uses_generation_cas_and_reports_degraded_com
     );
 
     let create_body = format!(
-        r#"{{"expected_generation":{generation},"interface_id":"{interface_id}","label":"phone","dns_servers":["1.1.1.1"],"client_keepalive_seconds":25}}"#
+        r#"{{"expected_generation":{generation},"interface_id":"{interface_id}","label":"phone","dns_servers":["2001:4860:4860::8888","1.1.1.1"],"client_keepalive_seconds":25}}"#
     );
     let created = unsafe_request("POST", "/api/v1/clients", &create_body, true);
     assert_eq!(
@@ -930,6 +930,23 @@ async fn authenticated_product_crud_uses_generation_cas_and_reports_degraded_com
     let client_id = created_json["data"]["client_id"].as_str().unwrap();
     let generation = created_json["generation"].as_u64().unwrap();
 
+    let invalid_ipv6_route = unsafe_request(
+        "PATCH",
+        &format!("/api/v1/clients/{client_id}"),
+        &format!(
+            r#"{{"expected_generation":{generation},"route_policy":{{"prefixes":["::/0"]}}}}"#
+        ),
+        true,
+    );
+    assert_eq!(
+        invalid_ipv6_route.status, 422,
+        "invalid route policy must be rejected: {}",
+        invalid_ipv6_route.body
+    );
+    let unchanged = unsafe_request("GET", "/api/v1/clients", "", true);
+    let unchanged_json: serde_json::Value = serde_json::from_str(&unchanged.body).unwrap();
+    assert_eq!(unchanged_json["generation"].as_u64().unwrap(), generation);
+
     let config = request_on(
         addr,
         &wire(
@@ -942,6 +959,10 @@ async fn authenticated_product_crud_uses_generation_cas_and_reports_degraded_com
     assert_eq!(config.status, 200);
     assert!(config.body.contains("[Interface]"));
     assert!(config.body.contains("PrivateKey = "));
+    assert!(config.body.contains("Endpoint = [2001:db8::1]:51820\n"));
+    assert!(config
+        .body
+        .contains("DNS = 2001:4860:4860::8888, 1.1.1.1\n"));
     assert_eq!(config.header("cache-control"), Some("no-store"));
     assert!(config
         .header("content-disposition")

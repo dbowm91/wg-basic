@@ -22,8 +22,8 @@ use wg_basic::{
     management::set_password_at,
     product::{
         AddressRequest, AllocationContext, AllocationError, ClientCreateCommand,
-        ClientDeleteCommand, ClientLabel, ClientUpdateCommand, ProductService, ServerSetupCommand,
-        SetClientEnabledCommand,
+        ClientDeleteCommand, ClientLabel, ClientUpdateCommand, ProductError, ProductService,
+        ServerSetupCommand, SetClientEnabledCommand,
     },
     state::{StateError, StateStore},
 };
@@ -84,12 +84,15 @@ fn setup(command_overrides: impl FnOnce(&mut ServerSetupCommand)) -> Setup {
         expected_generation: DesiredGeneration::default(),
         interface_name: "wg0".parse().unwrap(),
         tunnel_prefix: NetworkPrefix::new("10.8.0.0/24".parse().unwrap()),
+        ipv6_tunnel_prefix: None,
         server_address: None,
+        ipv6_server_address: None,
         listen_port: 51820,
         advertised_endpoint: wg_basic::product::AdvertisedEndpoint::new("vpn.example.com", 51820)
             .unwrap(),
         egress_interface: "eth0".parse().unwrap(),
         ipv4_forwarding_required: true,
+        ipv6_forwarding_required: false,
         masquerade: true,
         default_client_route_policy: ClientRoutePolicy::default(),
     };
@@ -265,12 +268,15 @@ fn setup_is_one_time() {
         expected_generation: store.current_generation().unwrap(),
         interface_name: "wg1".parse().unwrap(),
         tunnel_prefix: NetworkPrefix::new("10.9.0.0/24".parse().unwrap()),
+        ipv6_tunnel_prefix: None,
         server_address: None,
+        ipv6_server_address: None,
         listen_port: 51821,
         advertised_endpoint: wg_basic::product::AdvertisedEndpoint::new("other.example.com", 51821)
             .unwrap(),
         egress_interface: "eth0".parse().unwrap(),
         ipv4_forwarding_required: true,
+        ipv6_forwarding_required: false,
         masquerade: true,
         default_client_route_policy: ClientRoutePolicy::default(),
     });
@@ -472,6 +478,102 @@ fn a_requested_address_is_honoured_and_a_conflict_is_refused() {
 }
 
 #[test]
+fn dual_stack_setup_allocates_persists_and_reassigns_client_addresses() {
+    let Setup {
+        scratch: _scratch,
+        store,
+        ..
+    } = setup(|command| {
+        command.ipv6_tunnel_prefix = Some(NetworkPrefix::new("2001:db8:42::/64".parse().unwrap()));
+        command.ipv6_forwarding_required = true;
+    });
+    let service = service(&store);
+    let server = service.server().unwrap().unwrap();
+    assert_eq!(
+        server.ipv6_tunnel_prefix.unwrap().to_string(),
+        "2001:db8:42::/64"
+    );
+    assert_eq!(
+        server.ipv6_server_address.unwrap().to_string(),
+        "2001:db8:42::1"
+    );
+    let network_policy = store.load().unwrap().state.network_policy.unwrap();
+    assert!(network_policy.ipv6_forwarding_required);
+    assert!(network_policy
+        .source_prefixes
+        .iter()
+        .any(|prefix| prefix.to_string() == "2001:db8:42::/64"));
+
+    let client = create(&service, "dual-stack");
+    assert_eq!(client.assigned_address.to_string(), "10.8.0.2/32");
+    assert_eq!(
+        client.assigned_ipv6_address.unwrap().to_string(),
+        "2001:db8:42::2/128"
+    );
+    let desired = store.load().unwrap();
+    let interface = &desired.state.interfaces[0];
+    assert!(interface
+        .routes
+        .iter()
+        .any(|route| route.destination.to_string() == "2001:db8:42::/64"));
+    let peer = interface
+        .peers
+        .iter()
+        .find(|peer| peer.id == client.peer_id)
+        .unwrap();
+    assert!(peer
+        .allowed_ips
+        .iter()
+        .any(|prefix| prefix.to_string() == "2001:db8:42::2/128"));
+    assert_eq!(
+        interface.clients[0]
+            .assigned_ipv6_address
+            .unwrap()
+            .to_string(),
+        "2001:db8:42::2/128"
+    );
+
+    let generation = store.current_generation().unwrap();
+    let (updated, _) = service
+        .update_client(ClientUpdateCommand {
+            principal_id: admin(&service),
+            expected_generation: generation,
+            client_id: client.client_id,
+            requested_ipv6_address: Some("2001:db8:42::55".parse().unwrap()),
+            ..ClientUpdateCommand::default()
+        })
+        .unwrap();
+    assert_eq!(
+        updated.assigned_ipv6_address.unwrap().to_string(),
+        "2001:db8:42::55/128"
+    );
+
+    let generation = store.current_generation().unwrap();
+    let (same, _) = service
+        .update_client(ClientUpdateCommand {
+            principal_id: admin(&service),
+            expected_generation: generation,
+            client_id: client.client_id,
+            requested_ipv6_address: Some("2001:db8:42::55".parse().unwrap()),
+            ..ClientUpdateCommand::default()
+        })
+        .unwrap();
+    assert_eq!(
+        same.assigned_ipv6_address.unwrap().to_string(),
+        "2001:db8:42::55/128"
+    );
+
+    let reopened = StateStore::open(store.path()).unwrap();
+    assert_eq!(
+        ProductService::new(&reopened).list_clients().unwrap()[0]
+            .assigned_ipv6_address
+            .unwrap()
+            .to_string(),
+        "2001:db8:42::55/128"
+    );
+}
+
+#[test]
 fn two_clients_never_share_a_peer_or_a_client_identifier() {
     let Setup {
         scratch: _scratch,
@@ -525,6 +627,7 @@ fn update_changes_label_dns_keepalive_and_route_policy_without_rotating_keys() {
             ]),
             client_keepalive_seconds: Some(Some(25)),
             requested_address: None,
+            requested_ipv6_address: None,
         })
         .unwrap();
 
@@ -535,6 +638,75 @@ fn update_changes_label_dns_keepalive_and_route_policy_without_rotating_keys() {
     assert_eq!(
         updated.public_key, original_public,
         "an update must never rotate a key implicitly"
+    );
+}
+
+#[test]
+fn invalid_ipv6_client_route_is_rejected_without_advancing_generation() {
+    let Setup { store, .. } = setup(|_| {});
+    let service = service(&store);
+    let client = create(&service, "ipv4-only");
+    let generation = store.current_generation().unwrap();
+    let result = service.update_client(ClientUpdateCommand {
+        principal_id: admin(&service),
+        expected_generation: generation,
+        client_id: client.client_id,
+        route_policy: Some(ClientRoutePolicy {
+            prefixes: vec!["::/0".parse().unwrap()],
+        }),
+        ..Default::default()
+    });
+    assert!(matches!(
+        result,
+        Err(ProductError::State(StateError::Validation(_)))
+    ));
+    assert_eq!(store.current_generation().unwrap(), generation);
+    assert!(service
+        .list_clients()
+        .unwrap()
+        .iter()
+        .find(|item| item.client_id == client.client_id)
+        .unwrap()
+        .route_policy
+        .prefixes
+        .is_empty());
+}
+
+#[test]
+fn ipv6_route_policy_requires_and_uses_explicit_ipv6_client_assignment() {
+    let Setup { scratch, store, .. } = setup(|command| {
+        command.ipv6_tunnel_prefix = Some(NetworkPrefix::new("fd77::/64".parse().unwrap()));
+        command.default_client_route_policy = ClientRoutePolicy::default();
+    });
+    let client_id = {
+        let product = service(&store);
+        let client = create(&product, "dual-stack");
+        assert!(client.assigned_ipv6_address.is_some());
+        let generation = store.current_generation().unwrap();
+        let (updated, _) = product
+            .update_client(ClientUpdateCommand {
+                principal_id: admin(&product),
+                expected_generation: generation,
+                client_id: client.client_id,
+                route_policy: Some(ClientRoutePolicy {
+                    prefixes: vec!["::/0".parse().unwrap()],
+                }),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(updated.route_policy.prefixes, vec!["::/0".parse().unwrap()]);
+        client.client_id
+    };
+    let reopened = StateStore::open(scratch.db()).unwrap();
+    let persisted = service(&reopened)
+        .list_clients()
+        .unwrap()
+        .into_iter()
+        .find(|item| item.client_id == client_id)
+        .unwrap();
+    assert_eq!(
+        persisted.route_policy.prefixes,
+        vec!["::/0".parse().unwrap()]
     );
 }
 
