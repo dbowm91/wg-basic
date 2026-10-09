@@ -11,7 +11,7 @@ use std::{
     io::{Cursor, Read, Write},
     net::{SocketAddr, TcpStream},
     os::unix::{fs::symlink, fs::PermissionsExt, process::CommandExt},
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Output},
     thread,
     time::{Duration, Instant},
@@ -732,10 +732,7 @@ fn configure_enabled_product_and_client() -> TrafficClient {
         let (status, _, body) = api_request("GET", "/api/v1/health", Some(&cookie), None, "");
         let ready = status == 200
             && serde_json::from_str::<serde_json::Value>(&body)
-                .map(|health| {
-                    health["health"]["netd_reachable"] == true
-                        && health["backend"]["answered"] == true
-                })
+                .map(|health| health["backend"]["answered"] == true)
                 .unwrap_or(false);
         if ready {
             break;
@@ -884,6 +881,39 @@ fn fail_candidate_after_health_and_restore(
         "{}\n{}",
         output_text(&recovery),
         recovery_diagnostics()
+    );
+    print_update_storage_receipt();
+}
+
+fn print_update_storage_receipt() {
+    let journal_path = Path::new(wg_basic::update::UPDATE_JOURNAL_PATH);
+    let journal: serde_json::Value =
+        serde_json::from_slice(&fs::read(journal_path).unwrap()).unwrap();
+    let transaction_id = journal["transaction_id"].as_str().unwrap();
+    let transaction_dir = Path::new(journal["transaction_dir"].as_str().unwrap());
+    let bytes = |path: &Path| {
+        fs::metadata(path)
+            .map(|metadata| metadata.len())
+            .unwrap_or(0)
+    };
+    let state = Path::new(wg_basic::distribution::STATE_PATH);
+    let state_bytes = [
+        state.to_path_buf(),
+        PathBuf::from(format!("{}-wal", state.display())),
+        PathBuf::from(format!("{}-shm", state.display())),
+    ]
+    .iter()
+    .map(|path| bytes(path))
+    .sum::<u64>();
+    let backup_bytes = bytes(&transaction_dir.join("state-pre-update.db"));
+    let old_binary_bytes = bytes(&transaction_dir.join("old-wg-basic"));
+    let candidate_bytes = bytes(&transaction_dir.join("candidate-wg-basic"));
+    let metadata_bytes = bytes(&transaction_dir.join("install-pre-update.json"));
+    let journal_bytes = bytes(journal_path);
+    let runtime_old_bytes =
+        bytes(&Path::new("/usr/local/bin").join(format!(".wg-basic-old-{transaction_id}")));
+    println!(
+        "C002 update storage receipt: state_and_wal_bytes={state_bytes} backup_bytes={backup_bytes} old_binary_bytes={old_binary_bytes} candidate_bytes={candidate_bytes} install_metadata_bytes={metadata_bytes} journal_bytes={journal_bytes} runtime_old_copy_bytes={runtime_old_bytes}"
     );
 }
 

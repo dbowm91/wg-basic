@@ -95,6 +95,34 @@ Make fixture version/signature/manifest generation repeatable, record exact scri
 
 Compare Eggup curl vs alternative transport link/footprint/host availability as required by M004; record binary bytes, per-service RSS, startup/readiness, storage amplification during backup/rollback and idle CPU. Do not weaken Argon2id, root/service capability separation, authenticity, or TLS restrictions to hit footprint targets.
 
+Transport comparison at C002 implementation head `f5988c4` (x86_64 Linux,
+locked release profile): the current curl-linked `wg-basic` executable is
+12,218,768 bytes (SHA-256
+`a67304092fbb9276a28dc4b777b7b8078e0b07996691d5d5269a5ca5ecf56729`). A
+disposable source archive replacing only the acquisition adapter with
+`eggup-eggfetch 0.1.3` and the same 10s connect / 300s total / five-redirect
+limits builds to 14,002,368 bytes (SHA-256
+`b70158b3489309ca1f644b29cb5d99f8e5dcd73c73940cfce1f4e59d38aa4196`), an
+increase of 1,783,600 bytes (14.6%). The resolved normal dependency graph is
+176 unique package/version lines for the current locked application and 241
+for that alternative build. This is a whole-application comparison using the
+same host toolchain and release profile, with an isolated re-resolved
+alternative lockfile; it is not a shipping lockfile proposal. The hosted
+rootful updater selected `/usr/bin/curl`; on the measured host it is a root
+owned, non-writable regular executable (mode 0755). The curl adapter remains
+selected for the smaller release binary/dependency graph. Eggfetch would
+remove the runtime curl package assumption but increase static linked size and
+dependency surface; production transport policy is unchanged.
+
+Release service footprint on the local x86_64 Linux host at the same source
+head: serve 9.81 MiB RSS, netd 5.48 MiB RSS, combined 15.29 MiB; cold serve
+readiness 56.6 ms, median `/healthz` 1.11 ms, authenticated API health 20.2
+ms, login including Argon2id 66.4 ms, and zero idle CPU ticks for both
+services over two seconds. The rootful fixture now emits exact live state,
+verified backup, old/candidate binary, journal, and runtime recovery-copy byte
+counts after a post-migration rollback so storage amplification is measured
+from the real update transaction rather than inferred.
+
 ## 6. Verification gates and responsibility split
 
 C002 is a systemd/update qualification slice, not M005 full clean-install/uninstall release-lifecycle qualification. The latter keeps its separate acceptance gate. Re-run:
