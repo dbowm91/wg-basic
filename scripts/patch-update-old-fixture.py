@@ -127,7 +127,7 @@ source = replace_once(
     '                "installation_id": metadata.installation_id.to_string(),\n'
     '                "schema_version": store.schema_version().map_err(|error| error.to_string())?,\n'
     '                "desired_generation": metadata.desired_generation.to_storage(),\n'
-    '                "network_enabled": false,\n'
+    '                "network_enabled": !product.state.interfaces.is_empty(),\n'
     '                "product_identity_sha256": digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>(),\n'
     '            });\n'
     '            println!("{}", serde_json::to_string(&identity).map_err(|_| "could not format state identity".to_owned())?);\n'
