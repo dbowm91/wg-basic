@@ -74,14 +74,14 @@ Phase 10 + Phase 11 technical closures [done]
                         operational: explicit maintainer publish authorization
 ```
 
-Eggpack generator input interpolation has been confirmed at the pinned `eggstack/eggpack@d61ca71` in `crates/eggpack-ci/src/lib.rs` (two renderer sites). Upstream CI M003j `plans/implementation/ci-release-orchestration/003j-dispatch-tag-shell-injection-corrective.md` is registered on `plans/ci-m003j-dispatch-input-hardening`. **M003j strict closure and a new qualified immutable generator pin are a hard prerequisite for R001 workflow adoption/closure.** R001 product-side test/provenance preparations are independently executable; do not hand-edit generated YAML as the durable fix. R002 and R003 can implement/qualify nonsecret fixture paths in parallel; neither may claim public readiness without actual trust material.
+Eggpack generator input interpolation was confirmed at `eggstack/eggpack@d61ca71`. Upstream CI M003j is closed at `eggstack/eggpack@559d940af0fe6a2951eb17de1fcbecbf9e0bb6ce` (hosted run `37987890305`, all required lanes green). **The producer prerequisite for R001 is discharged.** R001 may repin/regenerate and complete its consumer-owned tests/provenance proof; do not hand-edit generated YAML as the durable fix. R002 and R003 can implement/qualify nonsecret fixture paths in parallel; neither may claim public readiness without actual trust material.
 
 ## 7. Ordered milestones
 
 ### R001 — Workflow input and provenance hardening
 
 Plan: `plans/implementation/release-readiness/001-release-workflow-input-and-provenance-hardening.md`.
-Status: **product-side work ready; workflow correction/closure blocked on Eggpack CI M003j**.
+Status: **ready** — Eggpack CI M003j is closed; R001 owns consumer repinning, regeneration, proof, and strict closure.
 Main gate: adversarial dispatch Bash expression rejected, immutable tag/source/artifact run proof, generator-owned correction with a qualified new pin, stage-token permission and provenance review, green current-head release-contract/CI.
 
 ### R002 — Offline signing and production trust root
