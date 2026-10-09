@@ -481,7 +481,7 @@ fn start_owned_service(
 }
 
 #[allow(dead_code)] // Used by the M004 candidate-health callback.
-fn validate_candidate_health() -> Result<(), String> {
+fn validate_candidate_health(expected: &StateIdentity) -> Result<(), String> {
     use eggup_service::{LifecycleState, Ownership, ServiceManager};
     for endpoint in [
         service_endpoint("wg-basic-netd.service", false)?,
@@ -531,26 +531,60 @@ fn validate_candidate_health() -> Result<(), String> {
     }
     let health: serde_json::Value = serde_json::from_slice(health.stdout())
         .map_err(|_| "candidate management health projection is invalid")?;
-    if !health_projection_healthy(&health) {
+    if !health_projection_healthy(&health, expected) {
         return Err("candidate management state or backend is not healthy".into());
     }
-    if health_endpoint_token()? != "ok" {
+    let observed = read_state_identity(Path::new(crate::distribution::STATE_PATH))?;
+    if observed.installation_id != expected.installation_id
+        || observed.desired_generation != expected.desired_generation
+        || observed.product_identity_sha256 != expected.product_identity_sha256
+        || observed.network_enabled != expected.network_enabled
+        || observed.schema_version < expected.schema_version
+    {
+        return Err("candidate state identity is incompatible with the pre-update state".into());
+    }
+    let endpoint = health_endpoint_token()?;
+    if endpoint != "ok" && (expected.network_enabled || endpoint != "degraded") {
         return Err("candidate /healthz is not healthy".into());
     }
     Ok(())
 }
 
-fn health_projection_healthy(value: &serde_json::Value) -> bool {
-    value
-        .get("database_healthy")
-        .and_then(serde_json::Value::as_bool)
-        == Some(true)
+fn health_projection_healthy(value: &serde_json::Value, expected: &StateIdentity) -> bool {
+    let identity_matches = value
+        .get("installation_id")
+        .and_then(serde_json::Value::as_str)
+        == Some(expected.installation_id.as_str())
         && value
-            .get("netd_reachable")
+            .get("current_desired_generation")
+            .and_then(serde_json::Value::as_i64)
+            == Some(expected.desired_generation);
+    identity_matches
+        && value
+            .get("database_healthy")
             .and_then(serde_json::Value::as_bool)
             == Some(true)
-        && value.get("installation_id").is_some_and(|id| !id.is_null())
-        && value.get("convergence").and_then(serde_json::Value::as_str) == Some("converged")
+        && (!expected.network_enabled
+            || (value
+                .get("netd_reachable")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+                && value.get("convergence").and_then(serde_json::Value::as_str)
+                    == Some("converged")))
+}
+
+fn read_state_identity(path: &Path) -> Result<StateIdentity, String> {
+    read_state_identity_program(Path::new(crate::distribution::BINARY_PATH), path)
+}
+
+fn read_state_identity_program(program: &Path, path: &Path) -> Result<StateIdentity, String> {
+    let path = path.to_str().ok_or("state path is invalid")?;
+    let output = run_as_management_program(program, &["state", "identity", "--state", path])?;
+    if !output.success() {
+        return Err("management state identity command failed".into());
+    }
+    serde_json::from_slice(output.stdout())
+        .map_err(|_| "management state identity projection is invalid".into())
 }
 
 fn run_as_management(arguments: &[&str]) -> Result<eggup_core::CommandOutput, String> {
@@ -675,19 +709,82 @@ fn reject_unresolved_journal() -> Result<Option<PathBuf>, String> {
         Ok(_) => {
             let journal = read_journal(path)
                 .map_err(|_| "an unsafe or invalid update journal requires operator recovery")?;
-            if journal.phase != UpdatePhase::Committed {
+            if !matches!(
+                journal.phase,
+                UpdatePhase::Committed | UpdatePhase::RolledBack
+            ) {
                 return Err("an unresolved update transaction requires `update recover`".into());
             }
             let directory = fs::symlink_metadata(&journal.transaction_dir)
-                .map_err(|_| "committed update evidence directory is unavailable")?;
+                .map_err(|_| "terminal update evidence directory is unavailable")?;
             if !directory.file_type().is_dir()
                 || directory.uid() != 0
                 || directory.mode() & 0o777 != 0o700
             {
-                return Err("committed update evidence directory is unsafe".into());
+                return Err("terminal update evidence directory is unsafe".into());
+            }
+            validate_transaction_artifacts(&journal)?;
+            if journal.state_backup_sha256.is_some() {
+                validate_state_backup(&journal)?;
+            } else if journal.phase != UpdatePhase::RolledBack {
+                return Err("terminal update lacks its required state backup".into());
+            }
+            let old_metadata = load_old_install_metadata(&journal)?;
+            let expected_version = if journal.phase == UpdatePhase::Committed {
+                &journal.version_to
+            } else {
+                &journal.version_from
+            };
+            let expected_digest = if journal.phase == UpdatePhase::Committed {
+                &journal.candidate_sha256
+            } else {
+                &journal.old_binary_sha256
+            };
+            let installed = crate::distribution::validate_owned_installation()
+                .map_err(|_| "terminal installation receipt is invalid")?;
+            let actual_digest = installed_binary_digest()?;
+            if installed.version != *expected_version
+                || installed.binary_sha256 != *expected_digest
+                || actual_digest != parse_digest(expected_digest)?
+            {
+                return Err(
+                    "terminal installed binary and receipt do not match journal evidence".into(),
+                );
+            }
+            if old_metadata.version != journal.version_from
+                || old_metadata.binary_sha256 != journal.old_binary_sha256
+            {
+                return Err("pre-update installation evidence does not match the journal".into());
+            }
+            if journal.phase == UpdatePhase::RolledBack {
+                let expected_state = journal.old_state_identity.as_ref()
+                    .ok_or("terminal rollback lacks typed pre-update state evidence; manual recovery required")?;
+                let actual_state = read_state_identity(Path::new(crate::distribution::STATE_PATH))?;
+                if &actual_state != expected_state {
+                    return Err(
+                        "rolled-back state identity does not match its pre-update receipt".into(),
+                    );
+                }
+                validate_running_product_health(expected_state)?;
+            } else {
+                let actual_state = read_state_identity(Path::new(crate::distribution::STATE_PATH))?;
+                let previous = journal.old_state_identity.as_ref()
+                    .ok_or("committed transaction lacks typed pre-update identity; manual recovery required")?;
+                if actual_state.schema_version < old_state_schema_minimum(&journal)?
+                    || actual_state.installation_id != previous.installation_id
+                    || actual_state.desired_generation != previous.desired_generation
+                    || actual_state.network_enabled != previous.network_enabled
+                    || actual_state.product_identity_sha256 != previous.product_identity_sha256
+                {
+                    return Err(
+                        "committed state schema is older than its pre-update identity".into(),
+                    );
+                }
+                validate_running_product_health(&actual_state)?;
             }
             let archive = journal.transaction_dir.join("journal.json");
-            if fs::symlink_metadata(&archive).is_ok() {
+            if !matches!(fs::symlink_metadata(&archive), Err(error) if error.kind() == io::ErrorKind::NotFound)
+            {
                 return Err("committed update evidence archive is already occupied".into());
             }
             fs::rename(path, &archive)
@@ -703,13 +800,65 @@ fn reject_unresolved_journal() -> Result<Option<PathBuf>, String> {
     }
 }
 
-fn fail_before_services(journal: &UpdateJournal, cause: String) -> Result<(), String> {
-    if start_owned_services().is_err() {
-        mark_recovery_required(Path::new(UPDATE_JOURNAL_PATH));
-        return Err(
-            "pre-update operation failed and previous services need operator recovery".into(),
-        );
+fn old_state_schema_minimum(journal: &UpdateJournal) -> Result<i64, String> {
+    journal
+        .old_state_identity
+        .as_ref()
+        .map(|identity| identity.schema_version)
+        .ok_or_else(|| {
+            "terminal transaction lacks typed state evidence; manual recovery required".into()
+        })
+}
+
+fn validate_running_product_health(expected: &StateIdentity) -> Result<(), String> {
+    require_running_owned_services()?;
+    let doctor = run_as_management(&[
+        "doctor",
+        "--state",
+        crate::distribution::STATE_PATH,
+        "--socket",
+        crate::distribution::SOCKET_PATH,
+        "--json",
+        "--allow-warnings",
+    ])?;
+    if !doctor.success() {
+        return Err("terminal doctor reported a required failure".into());
     }
+    let report: crate::doctor::DoctorReport =
+        serde_json::from_slice(doctor.stdout()).map_err(|_| "terminal doctor report is invalid")?;
+    if matches!(
+        report.overall,
+        crate::doctor::DoctorDisposition::Fail | crate::doctor::DoctorDisposition::Unknown
+    ) || report
+        .checks
+        .iter()
+        .any(|check| check.disposition == crate::doctor::DoctorDisposition::Fail)
+    {
+        return Err("terminal doctor did not pass required checks".into());
+    }
+    let output = run_as_management(&[
+        "health",
+        "--state",
+        crate::distribution::STATE_PATH,
+        "--socket",
+        crate::distribution::SOCKET_PATH,
+    ])?;
+    if !output.success() {
+        return Err("terminal product health command failed".into());
+    }
+    let value: serde_json::Value = serde_json::from_slice(output.stdout())
+        .map_err(|_| "terminal product health projection is invalid")?;
+    if !health_projection_healthy(&value, expected) {
+        return Err("terminal installed product health does not match its state identity".into());
+    }
+    let endpoint = health_endpoint_token()?;
+    if expected.network_enabled && endpoint != "ok" {
+        return Err("terminal enabled product health endpoint is degraded".into());
+    }
+    Ok(())
+}
+
+fn fail_before_services(journal: &UpdateJournal, cause: String) -> Result<(), String> {
     let path = Path::new(UPDATE_JOURNAL_PATH);
     let current = read_journal(path)
         .map_err(|_| "update journal is unavailable; manual recovery is required")?;
@@ -719,6 +868,33 @@ fn fail_before_services(journal: &UpdateJournal, cause: String) -> Result<(), St
         advance_journal(path, &current, UpdatePhase::RollingBack)
             .map_err(|_| "could not persist pre-update rollback phase")?
     };
+    let expected = journal
+        .old_state_identity
+        .as_ref()
+        .ok_or("pre-update rollback lacks state identity evidence")?;
+    let old_binary = crate::distribution::verify_owned_file(
+        Path::new(crate::distribution::BINARY_PATH),
+        &journal.old_binary_sha256,
+        0,
+    )
+    .is_ok();
+    let state = read_state_identity(Path::new(crate::distribution::STATE_PATH));
+    if !old_binary || state.as_ref() != Ok(expected) {
+        mark_recovery_required(path);
+        return Err(
+            "pre-update failure left an unproven binary/state pair; operator recovery is required"
+                .into(),
+        );
+    }
+    if let Err(error) =
+        start_owned_services().and_then(|_| validate_running_product_health(expected))
+    {
+        let _ = stop_owned_services();
+        mark_recovery_required(path);
+        return Err(format!(
+            "pre-update failure could not restore healthy services: {error}"
+        ));
+    }
     advance_journal(path, &rolling, UpdatePhase::RolledBack)
         .map_err(|_| "pre-update rollback result could not be persisted")?;
     let _ = journal;
@@ -825,7 +1001,11 @@ fn runtime_old_binary_path(transaction_id: &str) -> PathBuf {
     Path::new("/usr/local/bin").join(format!(".wg-basic-old-{transaction_id}"))
 }
 
-fn create_state_backup(transaction_id: &str, transaction_dir: &Path) -> Result<PathBuf, String> {
+fn create_state_backup(
+    transaction_id: &str,
+    transaction_dir: &Path,
+    expected_identity: &StateIdentity,
+) -> Result<PathBuf, String> {
     let state_dir = Path::new(crate::distribution::STATE_DIR);
     let source = state_dir.join(format!(".wg-basic-update-{transaction_id}.db"));
     if fs::symlink_metadata(&source).is_ok() {
@@ -846,6 +1026,10 @@ fn create_state_backup(transaction_id: &str, transaction_dir: &Path) -> Result<P
     if !verify.success() {
         let _ = fs::remove_file(&source);
         return Err("pre-update state backup did not validate".into());
+    }
+    if read_state_identity(&source)? != *expected_identity {
+        let _ = fs::remove_file(&source);
+        return Err("pre-update backup identity differs from the locked state".into());
     }
     let user = nix::unistd::User::from_name("wg-basic")
         .map_err(|_| "management account lookup failed")?
@@ -887,10 +1071,10 @@ fn restore_state_backup(
     transaction_id: &str,
 ) -> Result<(), String> {
     let state_dir = Path::new(crate::distribution::STATE_DIR);
-    let restore_path = state_dir.join(format!(".wg-basic-restore-{transaction_id}.db"));
-    if fs::symlink_metadata(&restore_path).is_ok() {
-        return Err("state restore temporary path is already occupied".into());
-    }
+    let restore_path = state_dir.join(format!(
+        ".wg-basic-restore-{transaction_id}-{}.db",
+        uuid::Uuid::new_v4()
+    ));
     durable_copy(backup, &restore_path, 0o600)?;
     let user = nix::unistd::User::from_name("wg-basic")
         .map_err(|_| "management account lookup failed")?
@@ -900,9 +1084,24 @@ fn restore_state_backup(
         .ok_or("management group is missing")?;
     nix::unistd::chown(&restore_path, Some(user.uid), Some(group.gid))
         .map_err(|_| "state restore file ownership could not be assigned")?;
+    let staged = fs::symlink_metadata(&restore_path)
+        .map_err(|_| "state restore staging file cannot be inspected")?;
+    if !staged.file_type().is_file()
+        || staged.uid() != user.uid.as_raw()
+        || staged.mode() & 0o777 != 0o600
+        || staged.nlink() != 1
+    {
+        return Err("state restore staging file ownership or mode is unsafe".into());
+    }
     let restore_text = restore_path
         .to_str()
         .ok_or("state restore path is invalid")?;
+    let backup_verification =
+        run_as_management_program(old_binary, &["state", "verify", restore_text])?;
+    if !backup_verification.success() {
+        return Err("pre-update state backup failed offline validation".into());
+    }
+    let backup_identity = read_state_identity_program(old_binary, &restore_path)?;
     let restored = run_as_management_program(
         old_binary,
         &[
@@ -913,24 +1112,19 @@ fn restore_state_backup(
             crate::distribution::STATE_PATH,
         ],
     )?;
-    let _ = fs::remove_file(&restore_path);
     if !restored.success() {
         return Err("compatible pre-update state could not be restored".into());
     }
-    let verified = run_as_management_program(
-        old_binary,
-        &[
-            "state",
-            "status",
-            "--state",
-            crate::distribution::STATE_PATH,
-        ],
-    )?;
-    if !verified.success()
-        || !String::from_utf8_lossy(verified.stdout()).contains("integrity:          ok")
-    {
+    let restored_identity =
+        read_state_identity_program(old_binary, Path::new(crate::distribution::STATE_PATH))?;
+    if restored_identity != backup_identity {
         return Err("restored pre-update state did not pass integrity validation".into());
     }
+    fs::remove_file(&restore_path)
+        .map_err(|_| "state restore staging file could not be removed")?;
+    File::open(state_dir)
+        .and_then(|dir| dir.sync_all())
+        .map_err(|_| "state restore staging cleanup could not be made durable")?;
     Ok(())
 }
 
@@ -1040,6 +1234,59 @@ pub struct UpdateJournal {
     pub state_backup_sha256: Option<String>,
     pub manifest_sha256: Option<String>,
     pub signing_key_id: Option<String>,
+    /// Secret-free identity captured while the old schema is still live.
+    /// Missing on historical schema-1 journals, which then require manual
+    /// review before terminal success can be claimed.
+    #[serde(default)]
+    pub old_state_identity: Option<StateIdentity>,
+}
+
+/// Typed, non-secret compatibility evidence for the authoritative state.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct StateIdentity {
+    pub installation_id: String,
+    pub schema_version: i64,
+    pub desired_generation: i64,
+    pub network_enabled: bool,
+    pub product_identity_sha256: String,
+}
+
+/// Return a typed identity for one current state database without exposing
+/// desired rows, keys, credentials, or session data.
+pub fn state_identity(path: &Path) -> Result<StateIdentity, String> {
+    use crate::state::StateStore;
+    let store = StateStore::open(path).map_err(|_| "state identity could not be read")?;
+    let metadata = store
+        .installation_metadata()
+        .map_err(|_| "state installation identity could not be read")?;
+    let product = store
+        .load_product()
+        .map_err(|_| "state product identity could not be read")?;
+    let mut identities = serde_json::json!({
+        "interfaces": product.state.interfaces.keys().map(ToString::to_string).collect::<Vec<_>>(),
+        "clients": product.state.clients.keys().map(ToString::to_string).collect::<Vec<_>>(),
+    });
+    // JSON objects are deterministic here: keys and IDs are ordered maps.
+    let encoded = serde_json::to_vec(&identities)
+        .map_err(|_| "state product identity could not be encoded")?;
+    let product_identity_sha256 = sha256_hex(&encoded);
+    // Drop the value before returning so this projection has no accidental
+    // future path to secret-bearing product rows.
+    identities = serde_json::Value::Null;
+    let _ = identities;
+    Ok(StateIdentity {
+        installation_id: metadata.installation_id.to_string(),
+        schema_version: store
+            .schema_version()
+            .map_err(|_| "state schema identity could not be read")?,
+        desired_generation: metadata.desired_generation.to_storage(),
+        network_enabled: product
+            .state
+            .network_operational_enabled
+            .values()
+            .any(|enabled| *enabled),
+        product_identity_sha256,
+    })
 }
 
 impl UpdateJournal {
@@ -1081,6 +1328,19 @@ impl UpdateJournal {
             .as_deref()
             .is_some_and(|value| !valid_token(value, 64))
         {
+            return Err(invalid_journal());
+        }
+        if self.old_state_identity.as_ref().is_some_and(|identity| {
+            uuid::Uuid::parse_str(&identity.installation_id).is_err()
+                || identity.schema_version <= 0
+                || crate::domain::DesiredGeneration::from_storage(identity.desired_generation)
+                    .is_none()
+                || identity.product_identity_sha256.len() != 64
+                || !identity
+                    .product_identity_sha256
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        }) {
             return Err(invalid_journal());
         }
         Ok(())
@@ -1338,7 +1598,6 @@ pub fn apply() -> Result<(), String> {
     if install.version != crate::release::PACKAGE_VERSION {
         return Err("installed version does not match updater binary identity".into());
     }
-    require_running_owned_services()?;
     let public_key = require_production_key()?;
     let transport = system_transport()?;
     let selection = discover_latest(&transport)?;
@@ -1362,12 +1621,13 @@ pub fn apply() -> Result<(), String> {
     let lock_path = system_dir.join("install.lock");
     let _lock = crate::distribution::InstallLock::acquire(&lock_path)
         .map_err(|_| "another system transaction is active or the lock is unsafe")?;
-    let previous_recovery = reject_unresolved_journal()?;
+    let _previous_recovery = reject_unresolved_journal()?;
     let current_install = crate::distribution::validate_owned_installation()?;
     if current_install != install {
         return Err("installation changed during release acquisition; retry update".into());
     }
     require_running_owned_services()?;
+    let old_state_identity = read_state_identity(Path::new(crate::distribution::STATE_PATH))?;
     let rollback_root = Path::new(ROLLBACK_DIR);
     ensure_root_private_directory(rollback_root, system_dir)?;
     let transaction_id = uuid::Uuid::new_v4().to_string();
@@ -1391,6 +1651,7 @@ pub fn apply() -> Result<(), String> {
         state_backup_sha256: None,
         manifest_sha256: Some(release.manifest_sha256.clone()),
         signing_key_id: Some(signing_key_id.clone()),
+        old_state_identity: Some(old_state_identity.clone()),
     };
     write_journal(Path::new(UPDATE_JOURNAL_PATH), &journal)
         .map_err(|_| "could not persist update transaction journal")?;
@@ -1401,21 +1662,32 @@ pub fn apply() -> Result<(), String> {
     if let Err(error) = stop_management_service() {
         return fail_before_services(&journal, error);
     }
-    let backup = match create_state_backup(&transaction_id, &transaction_dir) {
+    let backup = match create_state_backup(&transaction_id, &transaction_dir, &old_state_identity) {
         Ok(path) => path,
         Err(error) => return fail_before_services(&journal, error),
     };
-    let backup_digest =
-        eggup_core::hash_file(&backup).map_err(|_| "pre-update state backup digest failed")?;
+    let backup_digest = match eggup_core::hash_file(&backup) {
+        Ok(digest) => digest,
+        Err(_) => {
+            return fail_before_services(&journal, "pre-update state backup digest failed".into())
+        }
+    };
     journal.state_backup_sha256 = Some(digest_hex(&backup_digest));
     journal.phase = UpdatePhase::BackupVerified;
-    replace_journal(
+    match replace_journal(
         Path::new(UPDATE_JOURNAL_PATH),
         &read_journal(Path::new(UPDATE_JOURNAL_PATH))
             .map_err(|_| "update journal could not be revalidated")?,
         journal.clone(),
-    )
-    .map_err(|_| "could not persist verified update backups")?;
+    ) {
+        Ok(_) => {}
+        Err(_) => {
+            return fail_before_services(
+                &journal,
+                "could not persist verified update backups".into(),
+            )
+        }
+    }
 
     if let Err(error) = stop_network_service() {
         return fail_before_services(&journal, error);
@@ -1451,7 +1723,7 @@ pub fn apply() -> Result<(), String> {
             start_owned_services()?;
             journal = advance_journal(&journal_path, &journal, UpdatePhase::CandidateStarted)
                 .map_err(|_| "could not persist candidate startup phase")?;
-            validate_candidate_health()?;
+            validate_candidate_health(&old_state_identity)?;
             journal = advance_journal(&journal_path, &journal, UpdatePhase::CandidateHealthy)
                 .map_err(|_| "could not persist candidate health phase")?;
             crate::distribution::write_metadata(system_dir, &new_install)
@@ -1512,21 +1784,20 @@ pub fn apply() -> Result<(), String> {
     match transaction {
         Ok(receipt) if receipt.disposition() == eggup_core::TransactionDisposition::Committed => {
             let _ = fs::remove_file(&old_binary_for_restore);
-            if let Some(previous) = previous_recovery {
-                if fs::remove_dir_all(&previous).is_ok() {
-                    let _ = File::open(rollback_root).and_then(|dir| dir.sync_all());
-                } else {
-                    eprintln!(
-                        "previous update recovery generation was retained after cleanup failure"
-                    );
-                }
-            }
             println!("updated wg-basic to {}", release.version);
             Ok(())
         }
         Ok(receipt) if receipt.disposition() == eggup_core::TransactionDisposition::RolledBack => {
             if restore_succeeded.get() {
-                start_owned_services()?;
+                let healthy = start_owned_services()
+                    .and_then(|_| validate_running_product_health(&old_state_identity));
+                if let Err(error) = healthy {
+                    let _ = stop_owned_services();
+                    mark_recovery_required(&journal_path);
+                    return Err(format!(
+                        "old generation was restored but product health is unproven: {error}"
+                    ));
+                }
                 advance_journal(&journal_path, &journal, UpdatePhase::RolledBack)
                     .map_err(|_| "rolled-back update journal could not be persisted")?;
                 let _ = fs::remove_file(&old_binary_for_restore);
@@ -1550,14 +1821,14 @@ pub fn apply() -> Result<(), String> {
             )
             .is_ok();
             let old_state_valid = old_binary_live
-                && run_as_management(&[
-                    "state",
-                    "status",
-                    "--state",
-                    crate::distribution::STATE_PATH,
-                ])
-                .is_ok_and(|output| output.success());
-            if old_binary_live && old_state_valid && start_owned_services().is_ok() {
+                && read_state_identity(Path::new(crate::distribution::STATE_PATH))
+                    .is_ok_and(|identity| identity == old_state_identity);
+            if old_binary_live
+                && old_state_valid
+                && start_owned_services()
+                    .and_then(|_| validate_running_product_health(&old_state_identity))
+                    .is_ok()
+            {
                 let current =
                     read_journal(&journal_path).map_err(|_| "update journal is unavailable")?;
                 let rolling = advance_journal(&journal_path, &current, UpdatePhase::RollingBack)
@@ -1603,7 +1874,7 @@ pub fn recover() -> Result<(), String> {
     .map_err(|_| "another system transaction is active or the lock is unsafe")?;
     let mut journal =
         read_journal(journal_path).map_err(|_| "update journal changed or became unsafe")?;
-    if journal.transaction_id != initial.transaction_id {
+    if journal != initial {
         return Err("update journal changed while acquiring the transaction lock".into());
     }
     if journal.phase == UpdatePhase::Committed || journal.phase == UpdatePhase::RolledBack {
@@ -1617,6 +1888,23 @@ pub fn recover() -> Result<(), String> {
         } else {
             &journal.old_binary_sha256
         };
+        if let Err(error) = validate_transaction_artifacts(&journal)
+            .and_then(|_| load_old_install_metadata(&journal).map(|_| ()))
+            .and_then(|_| {
+                if journal.state_backup_sha256.is_some() {
+                    validate_state_backup(&journal)
+                } else if journal.phase == UpdatePhase::RolledBack {
+                    Ok(())
+                } else {
+                    Err("terminal update lacks its required state backup".into())
+                }
+            })
+        {
+            let _ = stop_owned_services();
+            return Err(format!(
+                "terminal recovery artifacts are invalid; services were stopped: {error}"
+            ));
+        }
         let receipt = match crate::distribution::validate_owned_installation() {
             Ok(receipt) => receipt,
             Err(_) => {
@@ -1648,6 +1936,31 @@ pub fn recover() -> Result<(), String> {
                     .into(),
             );
         }
+        let previous = journal
+            .old_state_identity
+            .as_ref()
+            .ok_or("terminal transaction lacks typed state evidence; manual recovery required")?;
+        let identity = read_state_identity(Path::new(crate::distribution::STATE_PATH))?;
+        if (journal.phase == UpdatePhase::RolledBack && identity != *previous)
+            || (journal.phase == UpdatePhase::Committed
+                && (identity.installation_id != previous.installation_id
+                    || identity.desired_generation != previous.desired_generation
+                    || identity.network_enabled != previous.network_enabled
+                    || identity.product_identity_sha256 != previous.product_identity_sha256
+                    || identity.schema_version < previous.schema_version))
+        {
+            let _ = stop_owned_services();
+            return Err(
+                "terminal state identity is incompatible with its journal; services were stopped"
+                    .into(),
+            );
+        }
+        if let Err(error) = validate_running_product_health(&identity) {
+            let _ = stop_owned_services();
+            return Err(format!(
+                "terminal product health is unproven; services were stopped: {error}"
+            ));
+        }
         println!(
             "update transaction {} is already {}",
             journal.transaction_id,
@@ -1662,8 +1975,21 @@ pub fn recover() -> Result<(), String> {
 
     // An interrupted transaction must not leave a possibly unknown generation
     // serving while its bytes and recovery artifacts are classified.
-    stop_owned_services()?;
-    validate_transaction_directory(&journal)?;
+    if let Err(error) = stop_owned_services() {
+        mark_recovery_required(journal_path);
+        return Err(format!(
+            "could not establish stopped owned services; recovery classification required: {error}"
+        ));
+    }
+    if let Err(error) = validate_transaction_directory(&journal)
+        .and_then(|_| validate_transaction_artifacts(&journal))
+        .and_then(|_| load_old_install_metadata(&journal).map(|_| ()))
+    {
+        mark_recovery_required(journal_path);
+        return Err(format!(
+            "update recovery artifacts are invalid; services remain stopped: {error}"
+        ));
+    }
     let current_digest = match installed_binary_digest() {
         Ok(digest) => digest,
         Err(_) => {
@@ -1683,21 +2009,35 @@ pub fn recover() -> Result<(), String> {
     let needs_state_restore =
         recovery_requires_state_restore(journal.phase, current_digest == candidate_digest);
     if needs_state_restore {
-        validate_state_backup(&journal)?;
-        ensure_runtime_old_binary(&journal)?;
+        if let Err(error) = validate_state_backup(&journal)
+            .and_then(|_| ensure_runtime_old_binary(&journal).map(|_| ()))
+        {
+            mark_recovery_required(journal_path);
+            return Err(format!(
+                "rollback artifacts are invalid; services remain stopped: {error}"
+            ));
+        }
         if journal.phase != UpdatePhase::RollingBack {
             journal = advance_journal(journal_path, &journal, UpdatePhase::RollingBack)
                 .map_err(|_| "could not persist recovery rollback phase")?;
         }
         let backup = journal.transaction_dir.join("state-pre-update.db");
         let old_runtime = runtime_old_binary_path(&journal.transaction_id);
-        restore_state_backup(&old_runtime, &backup, &journal.transaction_id)?;
+        if let Err(error) = restore_state_backup(&old_runtime, &backup, &journal.transaction_id) {
+            mark_recovery_required(journal_path);
+            return Err(format!(
+                "pre-update database restore failed; services remain stopped: {error}"
+            ));
+        }
         let old_install = load_old_install_metadata(&journal)?;
         crate::distribution::write_metadata(
             Path::new(crate::distribution::SYSTEM_DIR),
             &old_install,
         )
-        .map_err(|_| "pre-update installation receipt could not be restored")?;
+        .map_err(|_| {
+            mark_recovery_required(journal_path);
+            "pre-update installation receipt could not be restored"
+        })?;
         if current_digest == candidate_digest {
             let old_binary = journal.transaction_dir.join("old-wg-basic");
             let receipt = eggup_commit_binary(
@@ -1732,7 +2072,45 @@ pub fn recover() -> Result<(), String> {
         }
     }
 
-    if let Err(error) = start_owned_services().and_then(|_| validate_candidate_health()) {
+    let old_identity = journal
+        .old_state_identity
+        .as_ref()
+        .ok_or("update journal lacks typed pre-update state evidence")?;
+    let restored_identity = match read_state_identity(Path::new(crate::distribution::STATE_PATH)) {
+        Ok(identity) => identity,
+        Err(error) => {
+            mark_recovery_required(journal_path);
+            return Err(format!(
+                "restored state identity could not be verified: {error}"
+            ));
+        }
+    };
+    if &restored_identity != old_identity {
+        mark_recovery_required(journal_path);
+        return Err(
+            "restored state identity differs from the pre-update record; services remain stopped"
+                .into(),
+        );
+    }
+    let old_install = match load_old_install_metadata(&journal) {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            mark_recovery_required(journal_path);
+            return Err(format!(
+                "pre-update installation receipt is unavailable: {error}"
+            ));
+        }
+    };
+    match crate::distribution::validate_owned_installation() {
+        Ok(receipt) if receipt == old_install => {}
+        _ => {
+            mark_recovery_required(journal_path);
+            return Err("installed receipt does not match the pre-update generation; services remain stopped".into());
+        }
+    }
+    if let Err(error) =
+        start_owned_services().and_then(|_| validate_running_product_health(old_identity))
+    {
         let _ = stop_owned_services();
         mark_recovery_required(journal_path);
         return Err(format!(
@@ -1770,6 +2148,29 @@ fn validate_transaction_directory(journal: &UpdateJournal) -> Result<(), String>
         .map_err(|_| "update recovery directory is unavailable")?;
     if !metadata.file_type().is_dir() || metadata.uid() != 0 || metadata.mode() & 0o777 != 0o700 {
         return Err("update recovery directory is unsafe".into());
+    }
+    Ok(())
+}
+
+fn validate_transaction_artifacts(journal: &UpdateJournal) -> Result<(), String> {
+    let old = journal.transaction_dir.join("old-wg-basic");
+    let candidate = journal.transaction_dir.join("candidate-wg-basic");
+    for (path, expected, label) in [
+        (&old, &journal.old_binary_sha256, "old binary"),
+        (&candidate, &journal.candidate_sha256, "candidate binary"),
+    ] {
+        let metadata = fs::symlink_metadata(path)
+            .map_err(|_| format!("{label} recovery artifact is unavailable"))?;
+        if !metadata.file_type().is_file()
+            || metadata.uid() != 0
+            || metadata.mode() & 0o777 != 0o700
+            || metadata.nlink() != 1
+            || eggup_core::hash_file(path)
+                .map_err(|_| format!("{label} recovery artifact digest failed"))?
+                != parse_digest(expected)?
+        {
+            return Err(format!("{label} recovery artifact is unsafe or mismatched"));
+        }
     }
     Ok(())
 }
@@ -1884,6 +2285,7 @@ mod tests {
             state_backup_sha256: None,
             manifest_sha256: None,
             signing_key_id: None,
+            old_state_identity: None,
         }
     }
 
@@ -1899,6 +2301,35 @@ mod tests {
         assert!(value.validate(root).is_err());
         let mut value = journal(root);
         value.candidate_sha256 = "not-a-digest".into();
+        assert!(value.validate(root).is_err());
+    }
+
+    #[test]
+    fn historical_schema_one_journals_remain_parseable_without_typed_identity() {
+        let root = Path::new("/var/lib/wg-basic-system/rollback");
+        let value = journal(root);
+        let mut encoded = serde_json::to_value(&value).unwrap();
+        encoded
+            .as_object_mut()
+            .unwrap()
+            .remove("old_state_identity");
+        let parsed: UpdateJournal = serde_json::from_value(encoded).unwrap();
+        assert_eq!(parsed.schema, JOURNAL_SCHEMA);
+        assert_eq!(parsed.old_state_identity, None);
+        assert!(parsed.validate(root).is_ok());
+    }
+
+    #[test]
+    fn journal_rejects_malformed_typed_state_identity() {
+        let root = Path::new("/var/lib/wg-basic-system/rollback");
+        let mut value = journal(root);
+        value.old_state_identity = Some(StateIdentity {
+            installation_id: "not-a-uuid".into(),
+            schema_version: 5,
+            desired_generation: 4,
+            network_enabled: true,
+            product_identity_sha256: "d".repeat(64),
+        });
         assert!(value.validate(root).is_err());
     }
 
@@ -2041,21 +2472,56 @@ mod tests {
 
     #[test]
     fn product_health_projection_requires_database_backend_identity_and_convergence() {
+        let identity = StateIdentity {
+            installation_id: "fixture-installation".into(),
+            schema_version: 5,
+            desired_generation: 4,
+            network_enabled: true,
+            product_identity_sha256: "d".repeat(64),
+        };
         let healthy = serde_json::json!({
             "database_healthy": true,
             "netd_reachable": true,
             "installation_id": "fixture-installation",
+            "current_desired_generation": 4,
             "convergence": "converged"
         });
-        assert!(health_projection_healthy(&healthy));
+        assert!(health_projection_healthy(&healthy, &identity));
         for altered in [
             serde_json::json!({"database_healthy": false, "netd_reachable": true, "installation_id": "x", "convergence": "converged"}),
             serde_json::json!({"database_healthy": true, "netd_reachable": false, "installation_id": "x", "convergence": "converged"}),
             serde_json::json!({"database_healthy": true, "netd_reachable": true, "installation_id": null, "convergence": "converged"}),
             serde_json::json!({"database_healthy": true, "netd_reachable": true, "installation_id": "x", "convergence": "pending"}),
         ] {
-            assert!(!health_projection_healthy(&altered));
+            assert!(!health_projection_healthy(&altered, &identity));
         }
+    }
+
+    #[test]
+    fn intentionally_disabled_product_health_does_not_require_live_convergence() {
+        let identity = StateIdentity {
+            installation_id: "fixture-installation".into(),
+            schema_version: 5,
+            desired_generation: 4,
+            network_enabled: false,
+            product_identity_sha256: "d".repeat(64),
+        };
+        let healthy_disabled = serde_json::json!({
+            "database_healthy": true,
+            "netd_reachable": false,
+            "installation_id": "fixture-installation",
+            "current_desired_generation": 4,
+            "convergence": "pending"
+        });
+        assert!(health_projection_healthy(&healthy_disabled, &identity));
+        let wrong_generation = serde_json::json!({
+            "database_healthy": true,
+            "netd_reachable": false,
+            "installation_id": "fixture-installation",
+            "current_desired_generation": 3,
+            "convergence": "pending"
+        });
+        assert!(!health_projection_healthy(&wrong_generation, &identity));
     }
 
     #[test]

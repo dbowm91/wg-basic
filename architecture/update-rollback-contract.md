@@ -18,6 +18,24 @@ remain fail-closed until a trust root is provisioned. M004 rootful lifecycle,
 crash-window, and rollback qualification is still required before update is
 available to operators.
 
+The updater's C001 retry/recovery hardening records a secret-free state
+identity (installation ID, schema, desired generation, enabled intent, and a
+digest of product identifiers) in the schema-1 journal. Before a new update,
+the updater accepts only a terminal Committed or RolledBack journal whose
+binary, install receipt, retained transaction artifacts, state compatibility,
+and running product health all match. It archives the previous terminal
+journal inside its transaction directory and retains that recovery set.
+Active, RecoveryRequired, mismatched, or incomplete transactions remain
+blocking and require `update recover` or operator review.
+
+Interrupted SQLite restoration uses a unique transaction-bound staging file in
+the state directory. A stale file cannot occupy the next recovery attempt's
+name; the backup is checked by digest, copied to private staging, assigned to
+the management identity, and validated through the old compatible binary
+before restore. Recovery verifies the restored typed identity before starting
+the old services. Historical schema-1 journals without the new typed identity
+remain readable, but cannot be treated as a proven terminal rollback.
+
 ## Transaction rule
 
 The executable and state database form one compatibility pair. A candidate is
@@ -86,6 +104,21 @@ pre-migration snapshot; do not start an old binary against an uncertain schema.
 
 The marker is the sole commit discriminator. PID files, process names, or
 “service appears to be running” observations cannot infer transaction state.
+
+For an enabled network, the release health gate requires current-generation
+convergence, reachable netd, and `/healthz` `ok`. For an intentionally disabled
+network, the updater still requires owned running services, a healthy database,
+typed state identity preservation, and a passing doctor report; a degraded
+`/healthz` liveness token caused only by the disabled network is not by itself
+a candidate failure.
+
+If recovery is interrupted while preparing its database staging file, the next
+recovery uses a distinct private name and validates the original transaction
+backup again. A failed, transitioning, or otherwise ambiguous systemd service
+classification is not treated as stopped. The pinned Eggup-service 0.1.2
+adapter maps systemd `ActiveState=failed` to `Unknown`; its stop receipt only
+confirms `inactive`, so wg-basic refuses terminal success and leaves the
+journal for operator recovery when that state cannot be resolved safely.
 
 ## Secret and ownership handling
 

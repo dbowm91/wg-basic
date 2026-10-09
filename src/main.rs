@@ -208,6 +208,11 @@ enum StateCommand {
         #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
         state: PathBuf,
     },
+    /// Emit the updater's secret-free typed compatibility identity as JSON.
+    Identity {
+        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        state: PathBuf,
+    },
     /// Writes a consistent snapshot of the database to <destination>.
     ///
     /// The destination must not already exist. The snapshot contains VPN
@@ -1200,6 +1205,15 @@ fn run_state_action(action: StateCommand) -> Result<(), String> {
             );
             println!("integrity:          ok");
             println!("\nThis projection never includes private or preshared keys.");
+            Ok(())
+        }
+        StateCommand::Identity { state } => {
+            let identity = wg_basic::update::state_identity(&state)?;
+            println!(
+                "{}",
+                serde_json::to_string(&identity)
+                    .map_err(|_| "could not format state identity".to_owned())?
+            );
             Ok(())
         }
         StateCommand::Backup { destination, state } => {

@@ -1,8 +1,10 @@
 # Operations and recovery runbook
 
-This runbook describes the current CLI operations used by Phase 9. It does not
-assume shipped systemd units; Phase 10 owns unit installation and automatic
-update orchestration.
+This runbook describes current state and recovery operations. Native systemd
+installation is implemented, but production update/check remain fail-closed
+because the production release trust root is unprovisioned and M004 qualification
+is open. The installed CLI currently spells the commands `update check`,
+`update run`, and `update recover`.
 
 ## Protect a pre-update backup
 
@@ -40,6 +42,24 @@ authenticated product health, and a real client handshake/traffic before
 declaring recovery complete. If an old binary refuses a newer schema,
 that is expected: restore a compatible database first; never start the old
 binary against a migrated database and call the refusal rollback.
+
+For an interrupted M004 transaction, run recovery as root and repeat it if the
+first attempt reports an interruption:
+
+```sh
+sudo wg-basic update recover
+```
+
+Recovery returns success only after checking the journaled binary and install
+receipt, typed state identity, retained transaction artifacts, owned running
+services, and product health. A refusal leaves the journal and recovery set in
+place. Do not remove or rename journaled files to make another update proceed.
+Restore staging files are named
+`.wg-basic-restore-<transaction-id>-<unique-id>.db` in the state directory and
+contain VPN secrets; protect them like the database. If recovery cannot prove
+that both services are stopped and owned, leave the system untouched and use
+the failure classification from the command before attempting manual service
+operations.
 
 After restoring an old state, the next startup still validates netd ownership
 tags. A backup does not authorize taking over a foreign same-name interface,
