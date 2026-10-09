@@ -1425,7 +1425,7 @@ pub use crate::state::StateIdentity;
 /// desired rows, keys, credentials, or session data.
 pub fn state_identity(path: &Path) -> Result<StateIdentity, String> {
     crate::state::inspect_identity_readonly(path)
-        .map_err(|_| "state identity could not be read".into())
+        .map_err(|error| format!("state identity could not be read: {error}"))
 }
 
 impl UpdateJournal {
