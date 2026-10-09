@@ -91,6 +91,10 @@ safe action is to start that old pair and validate it. If the migration failed
 inside SQLite, first preserve the live file and inspect the automatic
 pre-migration snapshot; do not start an old binary against an uncertain schema.
 
+Update identity checks are read-only and do not migrate state. In particular,
+terminal rollback verification must inspect a restored v4 database as v4 before
+the old service is selected; only the candidate service may migrate it to v5.
+
 ## Crash-window matrix
 
 | Crash point | Authoritative pair/artifact | Safe next action |

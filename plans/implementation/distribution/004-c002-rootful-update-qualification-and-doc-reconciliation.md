@@ -114,6 +114,14 @@ Cargo target directory is not traversable by the management user. The helper
 is removed after qualification. None of these fixture adaptations alter
 repository history or production binaries.
 
+Rootful rollback qualification exposed a production identity-read bug: the
+current `state identity` command opened historical databases through the normal
+migrating store opener. Terminal verification therefore upgraded restored v4
+state before checking it. The updater now uses a dedicated read-only identity
+inspection that reads committed WAL state without changing SQLite pragmas or
+schema. A regression test keeps a v4 database and live WAL at v4 across that
+inspection.
+
 Transport comparison at C002 implementation head `f5988c4` (x86_64 Linux,
 Rust 1.89.0, locked release profile): the current curl-linked `wg-basic` executable is
 12,218,768 bytes (SHA-256

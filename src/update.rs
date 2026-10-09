@@ -737,6 +737,10 @@ fn read_state_identity(path: &Path) -> Result<StateIdentity, String> {
 }
 
 fn read_state_identity_program(program: &Path, path: &Path) -> Result<StateIdentity, String> {
+    if program == Path::new(crate::distribution::BINARY_PATH) {
+        return crate::state::inspect_identity_readonly(path)
+            .map_err(|_| "state identity could not be read".into());
+    }
     let path = path.to_str().ok_or("state path is invalid")?;
     let output = run_as_management_program(program, &["state", "identity", "--state", path])?;
     if !output.success() {
@@ -1415,51 +1419,13 @@ pub struct UpdateJournal {
 }
 
 /// Typed, non-secret compatibility evidence for the authoritative state.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct StateIdentity {
-    pub installation_id: String,
-    pub schema_version: i64,
-    pub desired_generation: i64,
-    pub network_enabled: bool,
-    pub product_identity_sha256: String,
-}
+pub use crate::state::StateIdentity;
 
 /// Return a typed identity for one current state database without exposing
 /// desired rows, keys, credentials, or session data.
 pub fn state_identity(path: &Path) -> Result<StateIdentity, String> {
-    use crate::state::StateStore;
-    let store = StateStore::open(path).map_err(|_| "state identity could not be read")?;
-    let metadata = store
-        .installation_metadata()
-        .map_err(|_| "state installation identity could not be read")?;
-    let product = store
-        .load_product()
-        .map_err(|_| "state product identity could not be read")?;
-    let mut identities = serde_json::json!({
-        "interfaces": product.state.interfaces.keys().map(ToString::to_string).collect::<Vec<_>>(),
-        "clients": product.state.clients.keys().map(ToString::to_string).collect::<Vec<_>>(),
-    });
-    // JSON objects are deterministic here: keys and IDs are ordered maps.
-    let encoded = serde_json::to_vec(&identities)
-        .map_err(|_| "state product identity could not be encoded")?;
-    let product_identity_sha256 = sha256_hex(&encoded);
-    // Drop the value before returning so this projection has no accidental
-    // future path to secret-bearing product rows.
-    identities = serde_json::Value::Null;
-    let _ = identities;
-    Ok(StateIdentity {
-        installation_id: metadata.installation_id.to_string(),
-        schema_version: store
-            .schema_version()
-            .map_err(|_| "state schema identity could not be read")?,
-        desired_generation: metadata.desired_generation.to_storage(),
-        network_enabled: product
-            .state
-            .network_operational_enabled
-            .values()
-            .any(|enabled| *enabled),
-        product_identity_sha256,
-    })
+    crate::state::inspect_identity_readonly(path)
+        .map_err(|_| "state identity could not be read".into())
 }
 
 impl UpdateJournal {
