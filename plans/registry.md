@@ -125,9 +125,10 @@ M004 and its corrective slices are closed: `plans/closure/distribution/004-statu
 - Distribution M002 strict closure: `plans/closure/distribution/002-status.md` (implementation head `d1813da`; systemd qualification and full CI run `37799075225`).
 - Distribution M003 historical blocked disposition: `plans/closure/distribution/003-status.md`; prerequisite re-review/unblock: `plans/closure/distribution/003-unblock-review.md`.
 - Distribution M003 mechanical closure: `plans/closure/distribution/003-final-status.md` (implementation head `568d568`; native target run `37853066003`; full CI run `37853066011`).
-- Distribution M004 C001 implementation disposition (strict closure not achieved): `plans/closure/distribution/004-c001-status.md`.
-- Distribution M004 C002 rootful qualification: `plans/closure/distribution/004-c002-status.md` (head `0b01078`; dedicated rootful run `37929914324`).
-- Distribution M004 strict technical closure: `plans/closure/distribution/004-status.md` (full CI `37929917248`; native targets `37929920418`; production signing/publication pending).
+- Distribution M004 C001 initial corrective-required disposition and superseding strict closure: `plans/closure/distribution/004-c001-status.md` (implementation head `e26e9f2`; rootful/full CI run `37900751408`).
+- Distribution M004 C001a strict scoped closure: `plans/closure/distribution/004-c001a-status.md` (hosted actual-updater run `37896480910`; upstream Eggup 0.1.3 typed failed-unit adoption).
+- Distribution M004 C002 strict rootful qualification: `plans/closure/distribution/004-c002-status.md` (head `0b01078`; dedicated rootful run `37929914324`).
+- Distribution M004 strict technical closure: `plans/closure/distribution/004-status.md` (final qualified head `0b01078`; full CI `37929917248`; native targets `37929920418`; production signing/publication pending).
 
 - M001 strict closure: `plans/closure/network-control/001-status.md`.
 - M002 strict closure: `plans/closure/network-control/002-status.md`.
