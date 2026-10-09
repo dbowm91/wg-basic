@@ -1,6 +1,6 @@
 # IPv6 M004 — Dual-Stack E2E and Phase 11 Closure
 
-Status: active
+Status: closed
 
 Repository baseline: `7bfa28f` (M003 implementation head; M003 strict closure
 and hosted evidence are recorded in `plans/closure/ipv6-route-policy/003-status.md`).
@@ -203,3 +203,7 @@ When all criteria pass, create
 the subsystem roadmap, registry, and Phase 11 macro status, and record Phase 11
 as technically closed. Production release signing remains an independent
 external gate.
+
+Closure evidence is recorded in `plans/closure/ipv6-route-policy/004-status.md`.
+M004 and Phase 11 are technically closed; production release signing/publication
+remains an independent external gate, and Phase 12 remains deferred.

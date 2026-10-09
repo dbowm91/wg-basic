@@ -1,6 +1,6 @@
 # IPv6 and Route-Policy Qualification Roadmap
 
-Status: active; M001–M003 closed, M004 active for Phase 11 closure
+Status: closed; M001–M004 closed; Phase 11 technically closed
 
 Canonical references:
 
@@ -141,4 +141,4 @@ to complete the feature.
 | M001 dual-stack product/domain persistence and tunnel reconciliation | closed | `plans/implementation/ipv6-route-policy/001-dual-stack-domain-and-kernel-reconciliation.md` | `plans/closure/ipv6-route-policy/001-status.md` | — |
 | M002 IPv6 forwarding/firewall/ownership | closed | `plans/implementation/ipv6-route-policy/002-ipv6-forwarding-firewall-and-ownership.md` | `plans/closure/ipv6-route-policy/002-status.md` | — |
 | M003 client route policy/product surface | closed | `plans/implementation/ipv6-route-policy/003-client-route-policy-and-product-surface.md` | `plans/closure/ipv6-route-policy/003-status.md` | — |
-| M004 dual-stack E2E/Phase 11 closure | active | `plans/implementation/ipv6-route-policy/004-dual-stack-e2e-and-phase-11-closure.md` | — | M003 strict closure |
+| M004 dual-stack E2E/Phase 11 closure | closed | `plans/implementation/ipv6-route-policy/004-dual-stack-e2e-and-phase-11-closure.md` | `plans/closure/ipv6-route-policy/004-status.md` | — |
