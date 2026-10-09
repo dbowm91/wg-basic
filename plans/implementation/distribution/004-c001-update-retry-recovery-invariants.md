@@ -1,6 +1,6 @@
 # Distribution M004 C001 — Update Retry and Crash-Recovery Invariants
 
-Status: corrective required — implementation hardening is recorded in `plans/closure/distribution/004-c001-status.md`; Eggup's failed-service lifecycle prerequisite is now resolved through C001a, but updater-level retry/crash qualification remains outstanding.
+Status: corrective required — implementation hardening is recorded in `plans/closure/distribution/004-c001-status.md`; C001a is closed with hosted updater retry/recovery evidence, while the broader C001 phase and adversarial qualification remains outstanding.
 Repository baseline: dbowm91/wg-basic main at 7b69c75634242bf0d5c0d35374b96346c73f20c6 (2026-10-08).
 Primary work class: corrective / invariant (durability, rollback safety, update retry).
 
@@ -146,6 +146,49 @@ Timeout, ownership change and a remaining transition still fail closed.
 Hosted run `37894224120` on commit `388da30` showed this race at the interrupted
 SQLite restore recovery checkpoint; service diagnostics recorded
 `activating (auto-restart)`. The fix and updated lifecycle regression are in
-`f9a00b3`; hosted verification is pending. This is a scoped clarification of
-the C001 recovery contract, not permission to stop unowned or ambiguous
-services. C001/C001a remain active until the expanded hosted matrix passes.
+`f9a00b3`; the expanded hosted verification passed. This is a scoped
+clarification of the C001 recovery contract, not permission to stop unowned or
+ambiguous services. C001 remains corrective-required until its full acceptance
+matrix is reconciled; C001a's bounded adoption/evidence plan is now closed.
+
+### 12.3 C001a hosted closure evidence (2026-10-09)
+
+The C001a rootful qualification passed on `7749317` in hosted run
+`37896480910`: five actual updater SIGKILL cutpoints, recovery twice after each,
+candidate migration failure, interrupted SQLite restoration, rollback identity,
+retry to Committed, corrupted old binary/backup, malformed journal, modified
+owned `ExecStart`, and stale restore staging sentinel. Environment was Ubuntu
+24.04.5 x86_64, kernel `6.17.0-1022-azure`, systemd `255.4-1ubuntu8.17`;
+1 test passed in 573.43 seconds. The immutable run is
+https://github.com/dbowm91/wg-basic/actions/runs/37896480910. See
+`plans/closure/distribution/004-c001a-status.md` for the scoped requirement
+matrix and disposition.
+
+This satisfies the focused C001a evidence handoff but does not prove every
+C001 acceptance item: Prepared/RollingBack crash points and additional wrong
+owner/mode/symlink and receipt negatives remain in the parent matrix. These
+two actual-updater cutpoints and wrong journal owner/mode/symlink plus install
+receipt refusal checks have now been added to
+`tests/update_transaction_rootful.rs`. The new rootful test compiles; hosted
+execution and the remaining missing-lease, failed-netd, and startup-timeout
+cases are still pending. C001 stays corrective-required and C002/M005 stay
+blocked until the expanded current-head run passes and the remaining cases are
+reconciled.
+
+### 12.4 Parent-matrix implementation follow-up (2026-10-09)
+
+Recovery now validates the current installation receipt after quiescing owned
+services and before classifying or restoring recovery artifacts. The receipt
+must be valid and identify either the old or candidate version/digest for the
+journal target; malformed or unrelated receipt state is retained for manual
+recovery rather than silently overwritten. This closes the observed gap where
+a nonterminal recovery could replace a corrupt current receipt while restoring
+the old generation.
+
+The rootful fixture now gates the actual updater at `Prepared` and
+`RollingBack`, in addition to the five C001a cutpoints. Its recovery negatives
+also cover wrong journal owner, mode, and symlink, and a malformed current
+install receipt. Formatting and the focused updater integration target compile
+passed locally; `cargo test --locked update::tests -- --nocapture` passed 16
+focused unit tests. Hosted destructive execution remains required before
+claiming these new matrix entries as passed.

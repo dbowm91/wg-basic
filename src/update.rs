@@ -1891,6 +1891,8 @@ pub fn apply() -> Result<(), String> {
     };
     write_journal(Path::new(UPDATE_JOURNAL_PATH), &journal)
         .map_err(|_| "could not persist update transaction journal")?;
+    #[cfg(feature = "update-test-fixtures")]
+    wait_at_update_test_gate(UpdatePhase::Prepared);
 
     // Stop the only state writer before taking the snapshot. A live online
     // backup followed by a later service stop could lose accepted writes if
@@ -2219,6 +2221,26 @@ pub fn recover() -> Result<(), String> {
         return Err(format!(
             "could not establish stopped owned services; recovery classification required: {error}"
         ));
+    }
+    let current_install = match crate::distribution::validate_owned_installation() {
+        Ok(install) => install,
+        Err(_) => {
+            mark_recovery_required(journal_path);
+            return Err(
+                "installed receipt is invalid; services remain stopped for manual recovery".into(),
+            );
+        }
+    };
+    if current_install.target != journal.target
+        || !((current_install.version == journal.version_from
+            && current_install.binary_sha256 == journal.old_binary_sha256)
+            || (current_install.version == journal.version_to
+                && current_install.binary_sha256 == journal.candidate_sha256))
+    {
+        mark_recovery_required(journal_path);
+        return Err(
+            "installed receipt matches neither journaled release; services remain stopped".into(),
+        );
     }
     if let Err(error) = validate_transaction_directory(&journal)
         .and_then(|_| validate_transaction_artifacts(&journal))

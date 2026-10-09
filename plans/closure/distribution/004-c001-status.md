@@ -138,3 +138,22 @@ disposable systemd VM, so destructive suites were not run here. C001 remains
 blocked on M004 closure. Exact next work is to add/run C001a's isolated actual-
 updater systemd fixture and record its disposable runner, systemd/kernel,
 cutpoints, state-identity checks, and immutable CI run before deciding closure.
+
+## Addendum — C001a result (2026-10-09)
+
+The follow-up C001a plan is now closed in
+`plans/closure/distribution/004-c001a-status.md`. Hosted rootful run
+`37896480910` on implementation `7749317` passed the expanded actual-updater
+signed-fixture rollback, interrupted restore, five selected SIGKILL cutpoints,
+recover-twice, retry, and service/artifact negative matrix on disposable Ubuntu
+24.04.5 x86_64 with kernel `6.17.0-1022-azure` and systemd
+`255.4-1ubuntu8.17`.
+
+This resolves the historical Eggup failed-unit limitation and supplies the
+focused updater evidence that was absent when this original disposition was
+written. It does not prove all C001 acceptance cases: Prepared/RollingBack
+crash points and additional metadata owner/mode/symlink, receipt, lease,
+failed-netd, and startup-timeout negatives remain for C001/C002 reconciliation.
+Accordingly, the C001 disposition above remains period-accurate and current:
+C001 is corrective-required, C002 is blocked on C001 strict closure, and M005
+is blocked on M004 closure. This addendum does not close C001 or M004.
