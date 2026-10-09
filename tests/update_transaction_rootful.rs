@@ -100,6 +100,12 @@ fn kill_update_at_phase(phase: &str, expected_identity: &(i64, String, i64, i64)
         );
     }
     assert_eq!(database_identity(), *expected_identity);
+    assert!(
+        eggup_core::MutationLock::observe(Path::new("/usr/local/bin"))
+            .unwrap()
+            .is_none(),
+        "recovery must resolve its journal-proven Eggup lock record"
+    );
     let _ = fs::remove_dir_all(gate);
 }
 

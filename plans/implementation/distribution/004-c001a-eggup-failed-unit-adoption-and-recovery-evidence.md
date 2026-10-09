@@ -130,3 +130,15 @@ sidecars exist and reports State, NetworkOwnership, and Forwarding as Unknown.
 the already-run systemd `ExecStartPre` doctor check plus owned-service state,
 live management health, typed identity, and the product health endpoint while
 services are active. Hosted verification of this correction is pending.
+
+Hosted run `37889231874` then passed the BackupVerified and ServicesStopped
+recovery cutpoints and reached BinaryCommitted. SIGKILL there left Eggup's
+transaction lock record, as expected when the updater dies inside Eggup's
+post-commit callback. Recovery now authorizes Eggup's own stale-lock claim only
+while holding wg-basic's exclusive install lock and after validating the update
+journal, candidate/old binaries, backup, root-private lock record, exact
+wg-basic product/release identity, and absence of the recorded PID. Unknown,
+malformed, mismatched, or live records remain blocked. The rootful matrix now
+asserts Eggup removes the claimed record after each recovery. This correction
+has not yet been hosted-verified; C001/C001a remain corrective-required and
+C002/M005 remain blocked.

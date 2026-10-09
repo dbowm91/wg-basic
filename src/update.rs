@@ -267,6 +267,32 @@ pub(crate) fn eggup_commit_binary<F>(
 where
     F: FnOnce() -> Result<(), String>,
 {
+    eggup_commit_binary_inner(
+        install_root,
+        destination_name,
+        candidate,
+        version,
+        expected_old_sha256,
+        expected_candidate_sha256,
+        post_commit,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)] // Mirrors the typed Eggup transaction inputs.
+fn eggup_commit_binary_inner<F>(
+    install_root: &Path,
+    destination_name: &str,
+    candidate: &Path,
+    version: &str,
+    expected_old_sha256: [u8; 32],
+    expected_candidate_sha256: [u8; 32],
+    post_commit: F,
+    stale_lock_verifier: Option<&dyn eggup_core::StaleLockVerifier>,
+) -> Result<eggup_core::TransactionReceipt, String>
+where
+    F: FnOnce() -> Result<(), String>,
+{
     use eggup_core::{
         AbsentPolicy, ArtifactMember, ArtifactSet, CommitOwnership, ExactDigestVerifier,
         InstallPlan, IntegrityRequirement, MemberId, PermissionsIntent, ProductId, ReleaseId,
@@ -299,13 +325,23 @@ where
         .and_then(|verified| verified.validate(&validator))
         .map_err(|_| "Eggup candidate integrity or identity validation failed")?;
     let verifier = ExactDigestVerifier::new(vec![(member_id, expected_old_sha256)]);
-    let receipt = validated
-        .commit_with_post_commit(
-            CommitOwnership::new(&verifier, AbsentPolicy::DenyCreate),
+    let ownership = CommitOwnership::new(&verifier, AbsentPolicy::DenyCreate);
+    let receipt = match stale_lock_verifier {
+        Some(stale_lock_verifier) => validated.commit_with_post_commit_and_stale_lock_recovery(
+            ownership,
             eggup_core::PostCommitFailurePolicy::RollBack,
+            stale_lock_verifier,
             post_commit,
-        )
-        .map_err(|_| "Eggup binary transaction could not prove a terminal result")?;
+        ),
+        None => validated
+            .commit_with_post_commit(
+                ownership,
+                eggup_core::PostCommitFailurePolicy::RollBack,
+                post_commit,
+            )
+            .map_err(Into::into),
+    }
+    .map_err(|_| "Eggup binary transaction could not prove a terminal result")?;
     Ok(receipt)
 }
 
@@ -470,6 +506,50 @@ fn stop_preflight_state_allowed(state: eggup_service::LifecycleState) -> bool {
         state,
         LifecycleState::Running | LifecycleState::Stopped | LifecycleState::Unknown
     )
+}
+
+/// Recovery-only authorization for the exact Eggup lock an interrupted,
+/// journaled updater can leave behind while its binary callback is running.
+/// `update recover` holds wg-basic's exclusive install lock before constructing
+/// this verifier and has already validated the journal, installed candidate,
+/// old-binary copy, and backup.
+struct UpdateJournalStaleLockVerifier {
+    expected_release: String,
+}
+
+impl eggup_core::StaleLockVerifier for UpdateJournalStaleLockVerifier {
+    fn classify(&self, observed: &eggup_core::LockObservation) -> eggup_core::StaleLockDecision {
+        use eggup_core::StaleLockDecision;
+
+        let expected_path = Path::new(crate::distribution::BINARY_PATH)
+            .parent()
+            .unwrap_or_else(|| Path::new("/usr/local/bin"))
+            .join(".eggup-mutation.lock");
+        if observed.path() != expected_path
+            || !observed.format_known()
+            || observed.product() != Some(crate::release::PRODUCT_ID)
+            || observed.release() != Some(self.expected_release.as_str())
+        {
+            return StaleLockDecision::Unknown;
+        }
+        match fs::symlink_metadata(observed.path()) {
+            Ok(metadata)
+                if metadata.is_file()
+                    && !metadata.file_type().is_symlink()
+                    && metadata.uid() == 0
+                    && metadata.mode() & 0o777 == 0o600
+                    && metadata.nlink() == 1 => {}
+            _ => return StaleLockDecision::Unknown,
+        }
+        let Some(pid) = observed.pid() else {
+            return StaleLockDecision::Unknown;
+        };
+        match fs::symlink_metadata(Path::new("/proc").join(pid.to_string())) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => StaleLockDecision::ProvenStale,
+            Ok(_) => StaleLockDecision::Active,
+            Err(_) => StaleLockDecision::Unknown,
+        }
+    }
 }
 
 fn stop_postcondition_allowed(
@@ -2171,7 +2251,10 @@ pub fn recover() -> Result<(), String> {
         })?;
         if current_digest == candidate_digest {
             let old_binary = journal.transaction_dir.join("old-wg-basic");
-            let receipt = eggup_commit_binary(
+            let stale_lock_verifier = UpdateJournalStaleLockVerifier {
+                expected_release: journal.version_to.clone(),
+            };
+            let receipt = eggup_commit_binary_inner(
                 Path::new("/usr/local/bin"),
                 "wg-basic",
                 &old_binary,
@@ -2179,6 +2262,7 @@ pub fn recover() -> Result<(), String> {
                 candidate_digest,
                 old_digest,
                 || Ok(()),
+                Some(&stale_lock_verifier),
             )?;
             if receipt.disposition() != eggup_core::TransactionDisposition::Committed {
                 mark_recovery_required(journal_path);
