@@ -172,13 +172,21 @@ fn assert_recovery_refuses_tampering(label: &str) {
 }
 
 fn qualify_tampered_recovery_refusal(expected_identity: &(i64, String, i64, i64)) {
-    use std::io::Write;
-
     interrupt_update_at_phase("BinaryCommitted");
     let journal_path = Path::new(wg_basic::update::UPDATE_JOURNAL_PATH);
     let journal_bytes = fs::read(journal_path).unwrap();
     let journal: serde_json::Value = serde_json::from_slice(&journal_bytes).unwrap();
     let transaction = Path::new(journal["transaction_dir"].as_str().unwrap());
+    let stale_restore = Path::new(wg_basic::distribution::STATE_DIR).join(format!(
+        ".wg-basic-restore-{}.db",
+        journal["transaction_id"].as_str().unwrap()
+    ));
+    let management = nix::unistd::User::from_name("wg-basic").unwrap().unwrap();
+    private_file(
+        &stale_restore,
+        b"stale restore staging sentinel",
+        management.uid.as_raw(),
+    );
 
     for artifact in ["old-wg-basic", "state-pre-update.db"] {
         let path = transaction.join(artifact);
@@ -191,11 +199,23 @@ fn qualify_tampered_recovery_refusal(expected_identity: &(i64, String, i64, i64)
 
     let unit = Path::new(wg_basic::distribution::SERVE_UNIT_PATH);
     let original_unit = fs::read(unit).unwrap();
-    let mut changed_unit = fs::OpenOptions::new().append(true).open(unit).unwrap();
-    changed_unit
-        .write_all(b"\n# altered during updater recovery qualification\n")
-        .unwrap();
-    changed_unit.sync_all().unwrap();
+    let original_text = String::from_utf8(original_unit.clone()).unwrap();
+    let mut changed_exec_start = false;
+    let changed_unit = original_text
+        .lines()
+        .map(|line| {
+            if line.starts_with("ExecStart=") {
+                changed_exec_start = true;
+                "ExecStart=/bin/false"
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(changed_exec_start, "owned unit must declare ExecStart");
+    fs::write(unit, changed_unit).unwrap();
+    fs::File::open(unit).unwrap().sync_all().unwrap();
     let reload = Command::new("/usr/bin/systemctl")
         .args(["daemon-reload"])
         .status()
@@ -225,6 +245,11 @@ fn qualify_tampered_recovery_refusal(expected_identity: &(i64, String, i64, i64)
         );
     }
     assert_eq!(database_identity(), *expected_identity);
+    assert_eq!(
+        fs::read(&stale_restore).unwrap(),
+        b"stale restore staging sentinel"
+    );
+    fs::remove_file(stale_restore).unwrap();
 }
 
 fn recovery_diagnostics() -> String {
