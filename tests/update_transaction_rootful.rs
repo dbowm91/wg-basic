@@ -58,7 +58,7 @@ fn typed_state_identity() -> serde_json::Value {
             "--user",
             "wg-basic",
             "--",
-            BINARY,
+            wg_basic::distribution::BINARY_PATH,
             "state",
             "identity",
             "--state",
@@ -209,9 +209,10 @@ fn qualify_tampered_recovery_refusal(expected_identity: &(i64, String, i64, i64)
         .unwrap();
     assert!(reload.success());
 
+    let valid_journal = fs::read(journal_path).unwrap();
     fs::write(journal_path, b"{").unwrap();
     assert_recovery_refuses_tampering("journal");
-    fs::write(journal_path, journal_bytes).unwrap();
+    fs::write(journal_path, valid_journal).unwrap();
     fs::File::open(journal_path).unwrap().sync_all().unwrap();
 
     for _ in 0..2 {
