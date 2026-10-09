@@ -2,21 +2,23 @@
 
 This contract is Phase 9 output for Phase 10. It describes the required
 transaction around a candidate binary and the authoritative SQLite database.
-The CLI exposes `update --check`, `update`, and `update recover`. The updater
+The CLI exposes `update check`, `update run`, and `update recover`. The updater
 contains bounded release discovery, signature-before-projection, candidate
 integrity validation, durable journaling, service lifecycle, state backup and
 restore, health gating, and crash recovery. The production trust root is still
-unprovisioned, so `update --check` and `update` fail before network access.
-The implementation remains under M004 qualification and is unavailable to
-operators until the trust root and required transaction tests are qualified.
+unprovisioned, so `update check` and `update run` fail before network access.
+C001's retry/recovery invariants are closed; the remaining M004 C002
+installed-system traffic and target qualification is active. Production update
+remains unavailable until the trust root is provisioned and M004 closes.
 
 The M001 verify-only release foundation is strictly closed and implemented in
 `src/release.rs`: stable version policy, the two canonical GNU target mappings,
 Minisign verification, and Eggpack ReleaseManifest projection after signature
-verification. M004's updater composes those primitives, but production release operations
-remain fail-closed until a trust root is provisioned. M004 rootful lifecycle,
-crash-window, and rollback qualification is still required before update is
-available to operators.
+verification. M004's updater composes those primitives, but production release
+operations remain fail-closed until a trust root is provisioned. C001's real
+systemd crash-window, retry, rollback, and recovery matrix passed hosted CI;
+C002 still owns final enabled/disabled traffic, target, and operator-document
+qualification before M004 can close.
 
 The updater's C001 retry/recovery hardening records a secret-free state
 identity (installation ID, schema, desired generation, enabled intent, and a

@@ -1,6 +1,6 @@
 # Distribution M004 C002 — Rootful Transaction Qualification and Operator-Contract Reconciliation
 
-Status: ready — M004 C001 strict closure is recorded in `plans/closure/distribution/004-c001-status.md`; execute the remaining systemd/traffic, docs, and M004 qualification contract.
+Status: active — M004 C001 strict closure is recorded in `plans/closure/distribution/004-c001-status.md`; systemd/traffic, docs, and M004 qualification are underway.
 Repository baseline: dbowm91/wg-basic main at 7b69c75634242bf0d5c0d35374b96346c73f20c6 (2026-10-08). Rebase/re-review at C001's verified implementation head.
 Primary work class: corrective / capability qualification / documentation polish.
 
@@ -12,6 +12,13 @@ Architecture: plans/adr/006-distribution-install-authenticity-and-update.md; arc
 Previous closure: plans/closure/distribution/003-final-status.md (mechanical release producer).
 Hard predecessor: plans/implementation/distribution/004-c001-update-retry-recovery-invariants.md closes with supported rollback/recovery state machine and exact state-identity contract.
 Successor: Distribution M005 remains blocked until M004 strict technical closure.
+
+CLI decision: retain the implemented explicit `wg-basic update check`,
+`wg-basic update run`, and `wg-basic update recover` forms as the single
+canonical operator contract. `run` and `recover` require effective root and
+never invoke sudo; `check` is read-only. Do not add `update`/`update --check`
+aliases in this corrective, which avoids changing the established clap
+surface while keeping each operation unambiguous.
 
 ## 1. Verified gap and cause
 

@@ -326,6 +326,38 @@ It verifies service UIDs and effective capabilities, state/socket ownership,
 unrelated-UID socket denial, exact-version reinstall, modified-unit refusal,
 doctor, and `/healthz`.
 
+### M004 updater qualification
+
+The installed CLI is `wg-basic update check`, `wg-basic update run`, and
+`wg-basic update recover`. `check` is read-only; `run` and `recover` require
+effective root and never invoke sudo. The production check/run paths currently
+fail closed before network access because the production Minisign public key is
+not provisioned. C001 retry/recovery is closed; C002 systemd, enabled/disabled
+traffic, target, and operator-contract qualification is active.
+
+The destructive signed-fixture test installs under `/usr/local/bin`, creates
+systemd units and `/var/lib/wg-basic`, configures a real WireGuard server, and
+creates a client namespace. It then exercises rollback, service-start timeout,
+candidate migration failure, recovery, and a committed retry. Run it only on a
+disposable Ubuntu systemd VM; the hosted CI job is the supported qualification
+environment:
+
+```sh
+sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo \
+  CARGO_TARGET_DIR=/tmp/wg-basic-update-rootful-target \
+  WGB_CANDIDATE_BINARY=/path/to/strictly-newer-fixture/wg-basic \
+  cargo test --locked --features linux-integration,update-test-fixtures \
+    --test update_transaction_rootful -- --ignored --exact \
+    signed_systemd_update_rolls_back_and_retries --nocapture --test-threads=1
+```
+
+The candidate must be strictly newer than the built-in test binary and include
+`update-test-fixtures`; release workflows must never enable that feature. The
+fixture signing key and fault markers exist only on the disposable host. The
+test confirms an absolute root-owned curl binary is available without making a
+network request. It also proves release signing remains unavailable without
+the production key.
+
 The Phase 10 foundation workflow validates the Eggpack producer inputs and
 builds each Linux GNU candidate with cargo-zigbuild 0.23.3 and Zig 0.14.1 at a
 glibc 2.17 floor. Each artifact runs `scripts/release-smoke.py` on a native

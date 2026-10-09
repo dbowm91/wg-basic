@@ -1021,6 +1021,14 @@ fn signed_systemd_update_rolls_back_and_retries() {
         Some(false),
         "fixture explicitly qualifies an intentionally disabled healthy profile"
     );
+    // Doctor inspects the database immutably and correctly refuses live WAL
+    // contents. Stop the writer cleanly so the disabled-profile check measures
+    // the profile itself rather than an active service lease/WAL.
+    let stop_serve = Command::new("/usr/bin/systemctl")
+        .args(["stop", "wg-basic.service"])
+        .output()
+        .unwrap();
+    assert!(stop_serve.status.success(), "{}", output_text(&stop_serve));
     let disabled_doctor = Command::new("/usr/bin/setpriv")
         .args([
             "--reuid",
@@ -1043,6 +1051,15 @@ fn signed_systemd_update_rolls_back_and_retries() {
         disabled_doctor.status.success(),
         "intentionally disabled profile must pass required doctor checks: {}",
         output_text(&disabled_doctor)
+    );
+    let start_serve = Command::new("/usr/bin/systemctl")
+        .args(["start", "wg-basic.service"])
+        .output()
+        .unwrap();
+    assert!(
+        start_serve.status.success(),
+        "{}",
+        output_text(&start_serve)
     );
     fail_candidate_after_health_and_restore(&disabled_before, &disabled_identity, None);
 

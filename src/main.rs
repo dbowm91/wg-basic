@@ -136,7 +136,7 @@ enum Command {
         #[command(subcommand)]
         action: SystemCommand,
     },
-    /// Fail-closed authenticated update commands (available after M004 qualification).
+    /// Fail-closed authenticated update commands; mutation requires effective root.
     Update {
         #[command(subcommand)]
         action: UpdateCommand,

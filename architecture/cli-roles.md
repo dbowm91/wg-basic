@@ -2,8 +2,9 @@
 
 This document describes **current implemented behavior** for every `wg-basic`
 subcommand in `src/main.rs`. Native system installation is implemented under
-M002 qualification; M004 update commands are implemented but fail closed
-while the production trust root is unprovisioned and qualification remains open.
+M002 qualification; C001's M004 retry/recovery contract is closed and C002
+qualification remains active. Update commands are implemented; production
+`check` and `run` fail closed while the production trust root is unprovisioned.
 See [overview](overview.md) for status.
 
 Part of the [architecture overview](overview.md). Role internals live in
@@ -51,8 +52,15 @@ Part of the [architecture overview](overview.md). Role internals live in
 | `system install` | `--candidate` (current executable by default) | root-owned system layout, sysusers, systemd units and services | automatic sudo, release discovery, signature claims |
 | `system status` | none | installation receipt, file ownership and systemd lifecycle inspection | state mutation, kernel mutation |
 | `update check` | none | bounded authenticated release discovery when a production key exists | install mutation, service lifecycle |
-| `update run` | none | root-owned lock, signed artifact and transactional binary/state update | automatic sudo, arbitrary release URLs/keys |
-| `update recover` | none | root-owned journal reconciliation and compatibility/health checks | implicit downgrade, ambiguous service adoption |
+| `update run` | effective root | root-owned lock, signed artifact and transactional binary/state update | automatic sudo, arbitrary release URLs/keys |
+| `update recover` | effective root | root-owned journal reconciliation and compatibility/health checks | implicit downgrade, ambiguous service adoption |
+
+The canonical forms are `wg-basic update check`, `wg-basic update run`, and
+`wg-basic update recover`. `check` is read-only; the production trust-root
+check occurs before transport is constructed, so an unprovisioned key causes a
+fail-closed result without network access. `run` and `recover` never invoke
+sudo. The root-owned transaction lock serializes mutating operations; contention
+returns an error and leaves the active transaction for its owner to finish.
 
 ## `system` (native installation)
 

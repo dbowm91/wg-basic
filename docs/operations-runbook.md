@@ -1,10 +1,11 @@
 # Operations and recovery runbook
 
 This runbook describes current state and recovery operations. Native systemd
-installation is implemented, but production update/check remain fail-closed
-because the production release trust root is unprovisioned and M004 qualification
-is open. The installed CLI currently spells the commands `update check`,
-`update run`, and `update recover`.
+installation and update recovery are implemented. C001's retry/recovery matrix
+is closed; the broader M004 C002 systemd/traffic qualification remains active.
+Production update discovery and mutation remain fail-closed because the
+production release trust root is unprovisioned. The canonical CLI commands are
+`wg-basic update check`, `wg-basic update run`, and `wg-basic update recover`.
 
 ## Protect a pre-update backup
 
@@ -49,6 +50,14 @@ first attempt reports an interruption:
 ```sh
 sudo wg-basic update recover
 ```
+
+`update run` and `update recover` require effective root; wg-basic does not
+invoke sudo. `update check` is read-only and does not stop services or acquire
+the mutating transaction lock. With the current unprovisioned production key,
+`update check` and `update run` fail closed before network access. Do not run an
+update until the maintainer-provisioned key and M004 release gate are complete.
+When a transaction owns the root lock, competing mutating commands return a
+contention error and leave the journal for the current owner.
 
 Recovery returns success only after checking the journaled binary and install
 receipt, typed state identity, retained transaction artifacts, owned running

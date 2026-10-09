@@ -92,10 +92,11 @@ Two invariants shape everything:
 
 Network control, durable state/restart reconciliation (Phases 6),
 management/auth substrate (Phase 7), product/enrollment/UI (Phase 8), and
-operational hardening (Phase 9) are closed. Phase 10 M001–M003 are mechanically
-closed. M004 transaction implementation is active and unqualified; production
-updates remain unavailable until the trust root is provisioned and lifecycle
-qualification passes. M005 remains blocked on M004 closure. Implementation
+operational hardening (Phase 9) are closed. Phase 10 M001–M003 and the corrective
+M004 C001 retry/recovery slice are closed. M004 C002 is active for full
+installed-system traffic, rollback, target, and operator-contract
+qualification. Production updates remain unavailable until a trust root is
+provisioned and M004 closes. M005 remains blocked on M004 closure. Implementation
 status lives in
 [the planning registry](../plans/registry.md).
 

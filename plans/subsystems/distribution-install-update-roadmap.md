@@ -1,6 +1,6 @@
 # Distribution, Installation, Update, and Rollback Roadmap
 
-Status: active; M001–M003 and C001 closed; C002 ready; M004 closure and M005 remain open/blocked pending their own qualification
+Status: active; M001–M003 and C001 closed; C002 active; M004 closure and M005 remain open/blocked pending their own qualification
 
 Canonical references:
 
