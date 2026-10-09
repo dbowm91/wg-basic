@@ -1,7 +1,7 @@
 # Distribution M004 C001a — Eggup Failed-unit Recovery Adoption and C001 Closure Evidence
 
-Status: blocked on upstream Eggup Service M010 strict closure, and on M011 publication **only if** Eggup M010 changes shipped service behavior.
-Repository baseline: `dbowm91/wg-basic` branch `plans/m004-update-correctives` at C001 implementation commit `e3ff649d063a6ce54560e012a7b14cf2697f3421` (2026-10-09), with `plans/closure/distribution/004-c001-status.md` disposition `corrective required`. Rebase on current branch head at execution.
+Status: active — Eggup prerequisites closed; typed failed-unit adoption implemented; updater-level rootful rollback/retry and SIGKILL evidence pending.
+Repository baseline: `dbowm91/wg-basic` branch `plans/m004-update-correctives` at `297af6c` (2026-10-09), with `plans/closure/distribution/004-c001-status.md` disposition `corrective required`.
 Source milestone: `plans/implementation/distribution/004-transactional-self-update-and-rollback.md`.
 Corrective predecessor: `plans/implementation/distribution/004-c001-update-retry-recovery-invariants.md`; unresolved evidence in `plans/closure/distribution/004-c001-status.md`.
 Next handoff: `plans/implementation/distribution/004-c002-rootful-update-qualification-and-doc-reconciliation.md`.
@@ -14,8 +14,8 @@ Integrate Eggup's **proven** owned failed-service quiescence contract into the w
 ## 2. Upstream dependency and discriminating choice
 
 Eggup owner: `eggstack/eggup`.
-- Service M010: `plans/implementation/service-lifecycle/010-owned-failed-systemd-service-quiescence-corrective.md` on `plans/service-m010-failed-unit-recovery`.
-- Conditional Service M011: `plans/implementation/service-lifecycle/011-verified-service-patch-publication.md`. If Eggup M010 closes proving existing published `eggup-service = "=0.1.2"` fully sufficient, M011 is not required and this plan adapts only the wg-basic pre-stop guard. If M010 requires upstream production changes, wait for exact published and registry-proven replacement (expected 0.1.3, subject to release preflight).
+- Service M010: closed at source `eggstack/eggup@0bde3fefbda07019529ad7566c02e6e4ec141fd6`; hosted run `37875012280` passed all five jobs, including the real-systemd failed-state matrix.
+- Service M011: required and closed. `eggup-service = "=0.1.3"` is published; registry SHA-256 is `9f7f7ea854577158e66aa202709ab1c97a3aedcf00b06c1ab914d25b132124dc`, package source `feb6ae5aea4c9b61c4051957f3662ca49d845f9e`, post-publication hosted run `37883703334` passed all five jobs. Closure records: Eggup `plans/closure/service-lifecycle/010-status.md` and `011-status.md`.
 - C001 closure record notes Eggup 0.1.2 `ActiveState=failed -> LifecycleState::Unknown`, a failed-state `is-active` stop-confirmation ambiguity, and a downstream `stop_owned_services()` preflight accepting only `Running | Stopped`. These are **distinct** checks. Do not change both to permissive Unknown acceptance.
 
 This is a bounded corrective that does not replace M004 C002's wider x86_64/aarch64 release qualification, full systemd/traffic CI or final CLI/doc reconciliation.
@@ -32,15 +32,15 @@ This is a bounded corrective that does not replace M004 C002's wider x86_64/aarc
 
 ## 4. Ordered work packages
 
-### WP1 — Rebaseline on Eggup closure
+### WP1 — Rebaseline on Eggup closure — complete
 
-Review Eggup M010 observed real-systemd failed-state matrix and final API/semantics, compare against published 0.1.2. If upstream changed, consume M011's exact version/checksum using registry-only `cargo update -p eggup-service --precise <version>` and frozen `Cargo.toml` exact requirement; record `cargo tree -i eggup-service` and locked Eggup core graph. If upstream no-change closure, retain the existing 0.1.2 pin and cite its native proof.
+M010 proved published 0.1.2 insufficient and introduced the private typed systemd failed-state stop proof without changing public lifecycle variants. M011 published 0.1.3. `Cargo.toml` and `Cargo.lock` pin/resolve the exact registry release and checksum above; no path/Git dependency is used. Record `cargo tree -i eggup-service --locked` with closure evidence.
 
-### WP2 — Repair the local pre-stop gate without widening authority
+### WP2 — Repair the local pre-stop gate without widening authority — implementation complete; focused integration evidence pending
 
 Audit `src/update.rs` `stop_owned_services`, `stop_owned_service`, `start_owned_service`, `recover`, `apply`, `fail_before_services`, `mark_recovery_required`, and Eggup binary callback failure path. Replace the unconditional `Running|Stopped` rejection with a narrow, typed **known owned failed** transition that consumes Eggup M010's successful stop/quiescence proof. Leave truly Unknown/Transitioning and failed ownership blocked. Recheck exact service identity after mutation, and validate actual stopped lease/socket. Factor service-stop handling into one shared safe path to prevent different terminal/nonterminal recovery semantics.
 
-Do not assume the `LifecycleState` enum gained a `Failed` variant; M010 explicitly avoids a breaking variant. If the upstream selected API requires a narrower helper or diagnosis, follow its reviewed contract.
+The public enum still has no `Failed` variant. wg-basic allows `Unknown` only through exact-owned `SystemdManager::stop`; it requires `TransitionResult::completed()`, rechecks ownership, accepts a still-Unknown post-state only for that completed path, and checks serve lease release/netd socket inactivity. Ambiguous and transitioning states fail closed.
 
 ### WP3 — Real signed-fixture rollback/retry
 

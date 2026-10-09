@@ -131,6 +131,12 @@ impl ServiceLease {
     /// Returns whether a live process holds the lock. Missing and stale lock
     /// files are free; their contents are not consulted.
     pub fn is_held(state: &Path) -> Result<bool, LeaseError> {
+        Self::is_held_by_uid(state, nix::unistd::geteuid().as_raw())
+    }
+
+    /// Returns whether `owner_uid` holds the lease. The root-owned updater
+    /// uses this because the management service owns the lock file.
+    pub(crate) fn is_held_by_uid(state: &Path, owner_uid: u32) -> Result<bool, LeaseError> {
         let path = Self::path_for_state(state)?;
         let metadata = match fs::symlink_metadata(&path) {
             Ok(metadata) => metadata,
@@ -139,7 +145,7 @@ impl ServiceLease {
         };
         if metadata.file_type().is_symlink()
             || !metadata.is_file()
-            || metadata.uid() != nix::unistd::geteuid().as_raw()
+            || metadata.uid() != owner_uid
             || metadata.mode() & 0o022 != 0
         {
             return Err(LeaseError::Unsafe);
@@ -150,7 +156,7 @@ impl ServiceLease {
             .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC)
             .open(path)
             .map_err(|_| LeaseError::Unsafe)?;
-        verify_file(&file)?;
+        verify_file_for_uid(&file, owner_uid)?;
         match nix::fcntl::Flock::lock(file, nix::fcntl::FlockArg::LockExclusiveNonblock) {
             Ok(_lock) => Ok(false),
             Err((_, error)) if error == nix::errno::Errno::EWOULDBLOCK => Ok(true),
@@ -164,11 +170,12 @@ impl ServiceLease {
 }
 
 fn verify_file(file: &File) -> Result<(), LeaseError> {
+    verify_file_for_uid(file, nix::unistd::geteuid().as_raw())
+}
+
+fn verify_file_for_uid(file: &File, owner_uid: u32) -> Result<(), LeaseError> {
     let metadata = file.metadata().map_err(|_| LeaseError::Io)?;
-    if !metadata.is_file()
-        || metadata.uid() != nix::unistd::geteuid().as_raw()
-        || metadata.mode() & 0o022 != 0
-    {
+    if !metadata.is_file() || metadata.uid() != owner_uid || metadata.mode() & 0o022 != 0 {
         return Err(LeaseError::Unsafe);
     }
     Ok(())
@@ -188,6 +195,7 @@ mod tests {
         let state = root.join("state.db");
         let first = ServiceLease::acquire(&state).unwrap();
         assert!(ServiceLease::is_held(&state).unwrap());
+        assert!(ServiceLease::is_held_by_uid(&state, nix::unistd::geteuid().as_raw()).unwrap());
         assert!(matches!(
             ServiceLease::acquire(&state),
             Err(LeaseError::Busy)

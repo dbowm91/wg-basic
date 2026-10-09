@@ -319,7 +319,7 @@ fn stop_network_service() -> Result<(), String> {
 }
 
 fn stop_owned_services() -> Result<(), String> {
-    use eggup_service::{LifecycleState, Ownership, ServiceManager};
+    use eggup_service::{Ownership, ServiceManager};
     for endpoint in [
         service_endpoint("wg-basic.service", true)?,
         service_endpoint("wg-basic-netd.service", false)?,
@@ -328,12 +328,7 @@ fn stop_owned_services() -> Result<(), String> {
             .0
             .inspect(&endpoint.1)
             .map_err(|_| "could not inspect product services before stop")?;
-        if snapshot.ownership != Ownership::Owned
-            || !matches!(
-                snapshot.state,
-                LifecycleState::Running | LifecycleState::Stopped
-            )
-        {
+        if snapshot.ownership != Ownership::Owned || !stop_preflight_state_allowed(snapshot.state) {
             return Err("product service ownership or lifecycle is ambiguous".into());
         }
     }
@@ -439,18 +434,84 @@ fn stop_owned_service(
     if before.ownership != Ownership::Owned {
         return Err("product service registration is not owned".into());
     }
-    if before.state == LifecycleState::Running {
-        manager
+    let stop_completed = if matches!(
+        before.state,
+        LifecycleState::Running | LifecycleState::Unknown
+    ) {
+        let result = manager
             .stop(&spec, Duration::from_secs(30))
             .map_err(|_| "could not stop product service")?;
-    }
+        if !result.completed() {
+            return Err("product service stop did not prove quiescence".into());
+        }
+        true
+    } else {
+        false
+    };
     let after = manager
         .inspect(&spec)
         .map_err(|_| "could not confirm product service stop")?;
-    if after.ownership != Ownership::Owned || after.state != LifecycleState::Stopped {
+    if after.ownership != Ownership::Owned
+        || !stop_postcondition_allowed(before.state, stop_completed, after.state)
+    {
         return Err("product service did not stop cleanly".into());
     }
+    match spec.id().as_str() {
+        "wg-basic.service" => confirm_serve_lease_released()?,
+        "wg-basic-netd.service" => confirm_netd_socket_inactive()?,
+        _ => return Err("unexpected product service identity".into()),
+    }
     Ok(())
+}
+
+fn stop_preflight_state_allowed(state: eggup_service::LifecycleState) -> bool {
+    use eggup_service::LifecycleState;
+    matches!(
+        state,
+        LifecycleState::Running | LifecycleState::Stopped | LifecycleState::Unknown
+    )
+}
+
+fn stop_postcondition_allowed(
+    before: eggup_service::LifecycleState,
+    stop_completed: bool,
+    after: eggup_service::LifecycleState,
+) -> bool {
+    use eggup_service::LifecycleState;
+    (after == LifecycleState::Stopped
+        && ((before == LifecycleState::Running && stop_completed)
+            || (before == LifecycleState::Stopped && !stop_completed)))
+        || (before == LifecycleState::Unknown && stop_completed && after == LifecycleState::Unknown)
+}
+
+fn confirm_serve_lease_released() -> Result<(), String> {
+    let owner = nix::unistd::User::from_name("wg-basic")
+        .map_err(|_| "management account lookup failed")?
+        .ok_or("management account is missing")?;
+    match crate::state::ServiceLease::is_held_by_uid(
+        Path::new(crate::distribution::STATE_PATH),
+        owner.uid.as_raw(),
+    ) {
+        Ok(false) => Ok(()),
+        Ok(true) => Err("management service still holds its state lease".into()),
+        Err(_) => Err("management service lease state is ambiguous".into()),
+    }
+}
+
+fn confirm_netd_socket_inactive() -> Result<(), String> {
+    use std::os::unix::net::UnixStream;
+    match UnixStream::connect(crate::distribution::SOCKET_PATH) {
+        Ok(_stream) => Err("network service socket is still accepting connections".into()),
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::ConnectionRefused | io::ErrorKind::NotFound
+            ) =>
+        {
+            Ok(())
+        }
+        Err(_) => Err("network service socket state is ambiguous".into()),
+    }
 }
 
 fn start_owned_service(
@@ -2359,6 +2420,26 @@ mod tests {
             UpdatePhase::RolledBack,
             UpdatePhase::CandidateStarted
         ));
+    }
+
+    #[test]
+    fn failed_service_stop_requires_eggup_quiescence_receipt_and_stable_owned_state() {
+        use eggup_service::LifecycleState::{Running, Stopped, Transitioning, Unknown};
+
+        assert!(stop_preflight_state_allowed(Running));
+        assert!(stop_preflight_state_allowed(Stopped));
+        // Eggup 0.1.3 keeps a proven systemd failed state classified Unknown;
+        // only its typed stop result can distinguish it from other ambiguity.
+        assert!(stop_preflight_state_allowed(Unknown));
+        assert!(!stop_preflight_state_allowed(Transitioning));
+
+        assert!(stop_postcondition_allowed(Running, true, Stopped));
+        assert!(stop_postcondition_allowed(Stopped, false, Stopped));
+        assert!(stop_postcondition_allowed(Unknown, true, Unknown));
+        assert!(!stop_postcondition_allowed(Unknown, false, Unknown));
+        assert!(!stop_postcondition_allowed(Unknown, true, Running));
+        assert!(!stop_postcondition_allowed(Running, true, Unknown));
+        assert!(!stop_postcondition_allowed(Transitioning, true, Stopped));
     }
 
     #[test]
