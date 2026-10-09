@@ -565,20 +565,13 @@ fn validate_candidate_health(expected: &StateIdentity) -> Result<(), String> {
         "--json",
         "--allow-warnings",
     ])?;
-    if !doctor.success() {
-        return Err("candidate doctor reported a required failure".into());
-    }
     let report: crate::doctor::DoctorReport = serde_json::from_slice(doctor.stdout())
         .map_err(|_| "candidate doctor report is invalid")?;
-    if matches!(
-        report.overall,
-        crate::doctor::DoctorDisposition::Fail | crate::doctor::DoctorDisposition::Unknown
-    ) || report
-        .checks
-        .iter()
-        .any(|check| check.disposition == crate::doctor::DoctorDisposition::Fail)
-    {
-        return Err("candidate doctor did not pass required checks".into());
+    if doctor_requires_rejection(&doctor, &report) {
+        return Err(format!(
+            "candidate doctor did not pass required checks: {}",
+            doctor_failure_summary(&report)
+        ));
     }
     let health = run_as_management(&[
         "health",
@@ -636,6 +629,38 @@ fn health_projection_healthy(value: &serde_json::Value, expected: &StateIdentity
                 == Some(true)
                 && value.get("convergence").and_then(serde_json::Value::as_str)
                     == Some("converged")))
+}
+
+fn doctor_requires_rejection(
+    output: &eggup_core::CommandOutput,
+    report: &crate::doctor::DoctorReport,
+) -> bool {
+    !output.success()
+        || matches!(
+            report.overall,
+            crate::doctor::DoctorDisposition::Fail | crate::doctor::DoctorDisposition::Unknown
+        )
+        || report.checks.iter().any(|check| {
+            matches!(
+                check.disposition,
+                crate::doctor::DoctorDisposition::Fail | crate::doctor::DoctorDisposition::Unknown
+            )
+        })
+}
+
+fn doctor_failure_summary(report: &crate::doctor::DoctorReport) -> String {
+    let checks = report
+        .checks
+        .iter()
+        .filter(|check| {
+            matches!(
+                check.disposition,
+                crate::doctor::DoctorDisposition::Fail | crate::doctor::DoctorDisposition::Unknown
+            )
+        })
+        .map(|check| format!("{:?}:{:?}", check.id, check.disposition))
+        .collect::<Vec<_>>();
+    format!("overall={:?}; checks={}", report.overall, checks.join(","))
 }
 
 fn read_state_identity(path: &Path) -> Result<StateIdentity, String> {
@@ -886,20 +911,13 @@ fn validate_running_product_health(expected: &StateIdentity) -> Result<(), Strin
         "--json",
         "--allow-warnings",
     ])?;
-    if !doctor.success() {
-        return Err("terminal doctor reported a required failure".into());
-    }
     let report: crate::doctor::DoctorReport =
         serde_json::from_slice(doctor.stdout()).map_err(|_| "terminal doctor report is invalid")?;
-    if matches!(
-        report.overall,
-        crate::doctor::DoctorDisposition::Fail | crate::doctor::DoctorDisposition::Unknown
-    ) || report
-        .checks
-        .iter()
-        .any(|check| check.disposition == crate::doctor::DoctorDisposition::Fail)
-    {
-        return Err("terminal doctor did not pass required checks".into());
+    if doctor_requires_rejection(&doctor, &report) {
+        return Err(format!(
+            "terminal doctor did not pass required checks: {}",
+            doctor_failure_summary(&report)
+        ));
     }
     let output = run_as_management(&[
         "health",
