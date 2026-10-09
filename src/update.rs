@@ -925,50 +925,19 @@ fn reject_unresolved_journal() -> Result<Option<PathBuf>, String> {
                 let expected_state = journal.old_state_identity.as_ref()
                     .ok_or("terminal rollback lacks typed pre-update state evidence; manual recovery required")?;
                 let actual_state = read_state_identity(Path::new(crate::distribution::STATE_PATH))?;
-                if &actual_state != expected_state {
-                    let mut mismatches = Vec::new();
-                    if actual_state.installation_id != expected_state.installation_id {
-                        mismatches.push("installation_id");
-                    }
-                    if actual_state.schema_version != expected_state.schema_version {
-                        mismatches.push("schema_version");
-                    }
-                    if actual_state.desired_generation != expected_state.desired_generation {
-                        mismatches.push("desired_generation");
-                    }
-                    if actual_state.network_enabled != expected_state.network_enabled {
-                        mismatches.push("network_enabled");
-                    }
-                    if actual_state.product_identity_sha256
-                        != expected_state.product_identity_sha256
-                    {
-                        mismatches.push("product_identity_sha256");
-                    }
+                if !terminal_state_compatible(journal.phase, expected_state, &actual_state) {
                     return Err(
-                        format!(
-                            "rolled-back state identity does not match its pre-update receipt (mismatched fields: {}; desired_generation {}->{}, network_enabled {}->{}, product_identity_matches {})",
-                            mismatches.join(", "),
-                            expected_state.desired_generation,
-                            actual_state.desired_generation,
-                            expected_state.network_enabled,
-                            actual_state.network_enabled,
-                            expected_state.product_identity_sha256 == actual_state.product_identity_sha256
-                        ),
+                        "rolled-back state is incompatible with its terminal receipt".into(),
                     );
                 }
-                validate_running_product_health(expected_state)?;
+                validate_running_product_health(&actual_state)?;
             } else {
                 let actual_state = read_state_identity(Path::new(crate::distribution::STATE_PATH))?;
                 let previous = journal.old_state_identity.as_ref()
                     .ok_or("committed transaction lacks typed pre-update identity; manual recovery required")?;
-                if actual_state.schema_version < old_state_schema_minimum(&journal)?
-                    || actual_state.installation_id != previous.installation_id
-                    || actual_state.desired_generation != previous.desired_generation
-                    || actual_state.network_enabled != previous.network_enabled
-                    || actual_state.product_identity_sha256 != previous.product_identity_sha256
-                {
+                if !terminal_state_compatible(journal.phase, previous, &actual_state) {
                     return Err(
-                        "committed state schema is older than its pre-update identity".into(),
+                        "committed state is incompatible with its terminal release identity".into(),
                     );
                 }
                 validate_running_product_health(&actual_state)?;
@@ -991,14 +960,17 @@ fn reject_unresolved_journal() -> Result<Option<PathBuf>, String> {
     }
 }
 
-fn old_state_schema_minimum(journal: &UpdateJournal) -> Result<i64, String> {
-    journal
-        .old_state_identity
-        .as_ref()
-        .map(|identity| identity.schema_version)
-        .ok_or_else(|| {
-            "terminal transaction lacks typed state evidence; manual recovery required".into()
-        })
+fn terminal_state_compatible(
+    phase: UpdatePhase,
+    previous: &StateIdentity,
+    current: &StateIdentity,
+) -> bool {
+    current.installation_id == previous.installation_id
+        && match phase {
+            UpdatePhase::RolledBack => current.schema_version == previous.schema_version,
+            UpdatePhase::Committed => current.schema_version >= previous.schema_version,
+            _ => false,
+        }
 }
 
 fn validate_running_product_health(expected: &StateIdentity) -> Result<(), String> {
@@ -2188,14 +2160,7 @@ pub fn recover() -> Result<(), String> {
             .as_ref()
             .ok_or("terminal transaction lacks typed state evidence; manual recovery required")?;
         let identity = read_state_identity(Path::new(crate::distribution::STATE_PATH))?;
-        if (journal.phase == UpdatePhase::RolledBack && identity != *previous)
-            || (journal.phase == UpdatePhase::Committed
-                && (identity.installation_id != previous.installation_id
-                    || identity.desired_generation != previous.desired_generation
-                    || identity.network_enabled != previous.network_enabled
-                    || identity.product_identity_sha256 != previous.product_identity_sha256
-                    || identity.schema_version < previous.schema_version))
-        {
+        if !terminal_state_compatible(journal.phase, previous, &identity) {
             let _ = stop_owned_services();
             return Err(
                 "terminal state identity is incompatible with its journal; services were stopped"
@@ -2658,6 +2623,58 @@ mod tests {
             product_identity_sha256: "d".repeat(64),
         });
         assert!(value.validate(root).is_err());
+    }
+
+    #[test]
+    fn terminal_transactions_allow_later_product_mutations_but_pin_identity_and_schema() {
+        let previous = StateIdentity {
+            installation_id: "fixture-installation".into(),
+            schema_version: 4,
+            desired_generation: 1,
+            network_enabled: false,
+            product_identity_sha256: "a".repeat(64),
+        };
+        let later = StateIdentity {
+            installation_id: previous.installation_id.clone(),
+            schema_version: 4,
+            desired_generation: 3,
+            network_enabled: true,
+            product_identity_sha256: "b".repeat(64),
+        };
+        assert!(terminal_state_compatible(
+            UpdatePhase::RolledBack,
+            &previous,
+            &later
+        ));
+        assert!(terminal_state_compatible(
+            UpdatePhase::Committed,
+            &previous,
+            &later
+        ));
+
+        let migrated = StateIdentity {
+            schema_version: 5,
+            ..later.clone()
+        };
+        assert!(terminal_state_compatible(
+            UpdatePhase::Committed,
+            &previous,
+            &migrated
+        ));
+        assert!(!terminal_state_compatible(
+            UpdatePhase::RolledBack,
+            &previous,
+            &migrated
+        ));
+        let replaced_installation = StateIdentity {
+            installation_id: "other-installation".into(),
+            ..later
+        };
+        assert!(!terminal_state_compatible(
+            UpdatePhase::RolledBack,
+            &previous,
+            &replaced_installation
+        ));
     }
 
     #[test]
