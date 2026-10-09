@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-08 (Phase 10 M001–M003 closed; M004 active; M005 blocked)
+Last planning reconciliation: 2026-10-08 (Phase 10 M001–M003 closed; M004 corrective C001 ready, C002 blocked on C001; M005 blocked)
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -79,13 +79,17 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
-| Distribution/install/update | M004 transactional self-update/rollback | active | `plans/implementation/distribution/004-transactional-self-update-and-rollback.md` | M001–M003 closed; production update remains disabled until the production key is provisioned; rootful transaction/crash qualification remains outstanding |
+| Distribution/install/update | M004 transactional self-update/rollback | active — corrective required | `plans/implementation/distribution/004-transactional-self-update-and-rollback.md` | M001–M003 closed; apply C001 then C002; production signing/public update remain gated |
+| Distribution/install/update | M004 C001 — updater retry and recovery invariants | ready | `plans/implementation/distribution/004-c001-update-retry-recovery-invariants.md` | Unresolved RolledBack retry, idempotent restore, failure-classification and typed health/state-identity gaps; baseline `7b69c75` |
 
 ## 6. Blocked implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Hard blocker |
 |---|---|---|---|---|
-| Distribution/install/update | M005 install/update/uninstall E2E + Phase 10 closure | blocked | `plans/implementation/distribution/005-install-update-uninstall-e2e-and-phase10-closure.md` | Phase 10 M004 |
+| Distribution/install/update | M004 C002 — rootful update qualification and docs | blocked | `plans/implementation/distribution/004-c002-rootful-update-qualification-and-doc-reconciliation.md` | M004 C001 strict closure; then signed-fixture systemd update/rollback/SIGKILL evidence, CLI/docs and CI |
+| Distribution/install/update | M005 install/update/uninstall E2E + Phase 10 closure | blocked | `plans/implementation/distribution/005-install-update-uninstall-e2e-and-phase10-closure.md` | Phase 10 M004 closure |
+
+M004 corrective ordering: C001 first (terminal retry/recover/state safety), C002 second (rootful signed-fixture transaction qualification, CLI/docs, CI). These are registered planning handoffs, not implemented fixes or proof of M004 closure. Do not begin M005 from these plans alone.
 
 Production public-release readiness additionally requires maintainer provisioning of the real release signing trust root. Fixture signing is sufficient to implement and qualify the mechanics but MUST NOT be described as production signing.
 
