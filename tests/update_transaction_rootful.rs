@@ -757,7 +757,12 @@ fn configure_enabled_product_and_client() -> TrafficClient {
             traffic.host_link
         ),
     );
-    assert_eq!(setup_status, 200, "{setup_body}");
+    assert_eq!(
+        setup_status,
+        200,
+        "{setup_body}\n{}",
+        recovery_diagnostics()
+    );
     let setup: serde_json::Value = serde_json::from_str(&setup_body).unwrap();
     let generation = setup["generation"].as_u64().unwrap();
     let interface_id = setup["data"]["interface_id"].as_str().unwrap();
