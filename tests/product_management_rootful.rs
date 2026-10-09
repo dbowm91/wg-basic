@@ -857,7 +857,7 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
                 private_key: FieldUpdate::Set(private_key),
                 listen_port: FieldUpdate::Set(51821),
                 peer: Some(PeerMutation::Add(DesiredWireGuardPeer {
-                    public_key: server_public_key,
+                    public_key: server_public_key.clone(),
                     preshared_key,
                     allowed_ips,
                     persistent_keepalive_seconds: keepalive,
