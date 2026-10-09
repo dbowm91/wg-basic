@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      update_only:
+        description: Run only the destructive distribution updater qualification
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   update-transaction-rootful:
@@ -28,6 +34,7 @@ jobs:
         run: sudo chmod 0755 /usr/local/bin && sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo CARGO_TARGET_DIR="$RUNNER_TEMP/wg-basic-rootful-target" WGB_CANDIDATE_BINARY="$RUNNER_TEMP/wg-basic-candidate-target/release/wg-basic" cargo test --locked --features linux-integration,update-test-fixtures --test update_transaction_rootful -- --ignored --exact signed_systemd_update_rolls_back_and_retries --nocapture --test-threads=1
 
   dependency-audit:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.update_only != true }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,6 +46,7 @@ jobs:
         run: cargo audit
 
   upgrade-rehearsal:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.update_only != true }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -61,6 +69,7 @@ jobs:
         run: cargo test --locked --test upgrade_rehearsal -- --ignored --nocapture
 
   upgrade-rehearsal-rootful:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.update_only != true }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -81,6 +90,7 @@ jobs:
         run: sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo CARGO_TARGET_DIR="$RUNNER_TEMP/wg-basic-upgrade-rootful-target" WGB_OLD_BINARY="$RUNNER_TEMP/wg-basic-phase8-target/release/wg-basic" WGB_CANDIDATE_BINARY="$RUNNER_TEMP/wg-basic-candidate-target/release/wg-basic" cargo test --locked --features linux-integration --test upgrade_rehearsal_rootful -- --ignored --nocapture --test-threads=1
 
   rust:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.update_only != true }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -94,6 +104,7 @@ jobs:
       - run: cargo test --locked
 
   system-install-systemd:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.update_only != true }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -107,6 +118,7 @@ jobs:
         run: sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo cargo test --locked --test system_installation -- --ignored --exact systemd_installation_ownership_reinstall_and_service_credentials --nocapture --test-threads=1
 
   doctor-readonly:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.update_only != true }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -119,6 +131,7 @@ jobs:
         run: sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo cargo test --locked --features linux-integration --test doctor_readonly -- --test-threads=1
 
   maintenance-rootful:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.update_only != true }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -131,6 +144,7 @@ jobs:
         run: sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo cargo test --locked --features linux-integration --test maintenance_rootful -- --test-threads=1 --nocapture
 
   wireguard-kernel:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.update_only != true }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -143,6 +157,7 @@ jobs:
         run: sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo cargo test --locked --features linux-integration --test wireguard_kernel -- --nocapture
 
   network-reconcile-kernel:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.update_only != true }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -155,6 +170,7 @@ jobs:
         run: sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo cargo test --locked --features linux-integration --test network_reconcile -- --nocapture
 
   network-control-e2e:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.update_only != true }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -167,6 +183,7 @@ jobs:
         run: sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo cargo test --locked --features linux-integration --test network_control_e2e -- --nocapture
 
   durable-owner:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.update_only != true }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -179,6 +196,7 @@ jobs:
         run: sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo cargo test --locked --features linux-integration --test durable_owner -- --test-threads=1
 
   durable-restart:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.update_only != true }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -191,6 +209,7 @@ jobs:
         run: sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo cargo test --locked --features linux-integration --test durable_restart -- --test-threads=1 --nocapture
 
   durable-backup:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.update_only != true }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -203,6 +222,7 @@ jobs:
         run: sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo cargo test --locked --features linux-integration --test durable_backup -- --test-threads=1 --nocapture
 
   product-management-rootful:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.update_only != true }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
