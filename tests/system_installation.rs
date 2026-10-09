@@ -154,12 +154,22 @@ fn systemd_installation_ownership_reinstall_and_service_credentials() {
 
     let netd = systemd_property("wg-basic-netd.service", "MainPID");
     let serve = systemd_property("wg-basic.service", "MainPID");
+    let binary_bytes = fs::metadata("/usr/local/bin/wg-basic").unwrap().len();
+    let metadata_bytes = fs::metadata("/etc/systemd/system/wg-basic.service")
+        .unwrap()
+        .len()
+        + fs::metadata("/etc/systemd/system/wg-basic-netd.service")
+            .unwrap()
+            .len()
+        + fs::metadata("/etc/sysusers.d/wg-basic.conf").unwrap().len()
+        + fs::metadata("/var/lib/wg-basic-system/install.json")
+            .unwrap()
+            .len();
     println!(
-        "M005 fresh install footprint: binary_bytes={} unit_bytes={} idle_rss_kib={{serve:{},netd:{}}} install_elapsed_ms={}",
-        fs::metadata("/usr/local/bin/wg-basic").unwrap().len(),
-        fs::metadata("/etc/systemd/system/wg-basic.service").unwrap().len()
-            + fs::metadata("/etc/systemd/system/wg-basic-netd.service").unwrap().len()
-            + fs::metadata("/etc/sysusers.d/wg-basic.conf").unwrap().len(),
+        "M005 fresh install footprint: binary_bytes={} metadata_bytes={} installed_product_bytes={} idle_rss_kib={{serve:{},netd:{}}} install_elapsed_ms={}",
+        binary_bytes,
+        metadata_bytes,
+        binary_bytes + metadata_bytes,
         proc_rss_kib(&serve),
         proc_rss_kib(&netd),
         install_elapsed.as_millis()
