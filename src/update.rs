@@ -454,7 +454,7 @@ fn service_endpoint(
         definition.as_bytes().to_vec(),
         false,
         false,
-        Duration::from_secs(20),
+        Duration::from_secs(60),
     )
     .map_err(|_| "invalid product service definition")?;
     let spec = ServiceSpec::new(
@@ -488,7 +488,7 @@ fn stop_owned_service(
         LifecycleState::Running | LifecycleState::Unknown | LifecycleState::Transitioning
     ) {
         let result = manager
-            .stop(&spec, Duration::from_secs(30))
+            .stop(&spec, Duration::from_secs(60))
             .map_err(|error| format!("could not stop product service: {error}"))?;
         if !result.completed() {
             return Err(format!(
