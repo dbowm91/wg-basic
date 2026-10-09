@@ -451,6 +451,13 @@ fn signed_systemd_update_rolls_back_and_retries() {
     let before = database_identity();
     let typed_before = typed_state_identity();
     assert_eq!(before.0, 4);
+    assert_eq!(
+        typed_before
+            .get("network_enabled")
+            .and_then(serde_json::Value::as_bool),
+        Some(false),
+        "fixture explicitly qualifies an intentionally disabled healthy profile"
+    );
 
     for phase in [
         "BackupVerified",
