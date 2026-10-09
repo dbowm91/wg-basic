@@ -186,5 +186,6 @@ assignment, if client route policy must be merged into server peer
 `AllowedIPs`, if the existing authenticated generation contract cannot reject
 invalid policy before commit, or if preserving IPv4-only exported output
 requires a breaking change. M003 is strictly closed in
-`plans/closure/ipv6-route-policy/003-status.md`; M004 is unblocked under
-`plans/implementation/ipv6-route-policy/004-dual-stack-e2e-and-phase-11-closure.md`.
+`plans/closure/ipv6-route-policy/003-status.md`; its successor M004 was
+unblocked at handoff and is now strictly closed in
+`plans/closure/ipv6-route-policy/004-status.md`.
