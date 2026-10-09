@@ -34,7 +34,8 @@ jobs:
       - name: Build the exact release-mode schema-v4 old fixture
         run: |
           mkdir -p "$RUNNER_TEMP/wg-basic-old-src"
-          git archive ae60e81 | tar -x -C "$RUNNER_TEMP/wg-basic-old-src"
+          git archive 3e5b21c | tar -x -C "$RUNNER_TEMP/wg-basic-old-src"
+          git show ae60e81:src/state/service_lease.rs > "$RUNNER_TEMP/wg-basic-old-src/src/state/service_lease.rs"
           python3 scripts/patch-update-old-fixture.py "$RUNNER_TEMP/wg-basic-old-src/src/main.rs"
           cargo build --locked --release --manifest-path "$RUNNER_TEMP/wg-basic-old-src/Cargo.toml" --bin wg-basic --target-dir "$RUNNER_TEMP/wg-basic-old-target"
           stat -c 'old fixture bytes: %s' "$RUNNER_TEMP/wg-basic-old-target/release/wg-basic"
