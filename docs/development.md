@@ -332,8 +332,9 @@ The installed CLI is `wg-basic update check`, `wg-basic update run`, and
 `wg-basic update recover`. `check` is read-only; `run` and `recover` require
 effective root and never invoke sudo. The production check/run paths currently
 fail closed before network access because the production Minisign public key is
-not provisioned. C001 retry/recovery is closed; C002 systemd, enabled/disabled
-traffic, target, and operator-contract qualification is active.
+not provisioned. M004 transaction, enabled/disabled traffic, target, and
+operator-contract qualification is closed; M005 fresh-install and
+uninstall/reinstall lifecycle qualification is active.
 
 The destructive signed-fixture test installs under `/usr/local/bin`, creates
 systemd units and `/var/lib/wg-basic`, configures a real WireGuard server, and
@@ -353,8 +354,11 @@ sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo \
 ```
 
 The old artifact is a release-mode build of pre-v5 source `3e5b21c`, with the
-small M002 startup CLI additions applied in a scratch source tree by
-`scripts/patch-update-old-fixture.py`. This preserves the real v4 product and
+small M002 startup CLI additions and restore-interruption gate applied in a
+scratch source tree by `scripts/patch-update-old-fixture.py`. The gate pauses
+after the old database is durably retained and before the validated staging
+database replaces it; it is absent from production binaries. This preserves
+the real v4 product and
 state behavior while allowing the exact installed M002 units to start it. The
 candidate is a release-mode build with its version raised in a scratch source
 archive. The current test controller and candidate include

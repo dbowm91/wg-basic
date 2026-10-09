@@ -1,10 +1,11 @@
 # Operations and recovery runbook
 
 This runbook describes current state and recovery operations. Native systemd
-installation and update recovery are implemented. C001's retry/recovery matrix
-is closed; the broader M004 C002 systemd/traffic qualification remains active.
-Production update discovery and mutation remain fail-closed because the
-production release trust root is unprovisioned. The canonical CLI commands are
+installation and the M004 transactional update/recovery contract are qualified
+on disposable systemd hosts. M005 is active for fresh installation and
+uninstall/reinstall lifecycle qualification. Production update discovery and
+mutation remain fail-closed because the production release trust root is
+unprovisioned. The canonical CLI commands are
 `wg-basic update check`, `wg-basic update run`, and `wg-basic update recover`.
 
 ## Protect a pre-update backup
@@ -45,7 +46,9 @@ that is expected: restore a compatible database first; never start the old
 binary against a migrated database and call the refusal rollback.
 
 For an interrupted M004 transaction, run recovery as root and repeat it if the
-first attempt reports an interruption:
+first attempt reports an interruption. The disposable-host qualification
+verified repeated recovery at durable journal cutpoints, including interruption
+between retaining the old database and installing the restored database:
 
 ```sh
 sudo wg-basic update recover
@@ -55,7 +58,8 @@ sudo wg-basic update recover
 invoke sudo. `update check` is read-only and does not stop services or acquire
 the mutating transaction lock. With the current unprovisioned production key,
 `update check` and `update run` fail closed before network access. Do not run an
-update until the maintainer-provisioned key and M004 release gate are complete.
+update until the maintainer-provisioned key and production-signed release are
+available. M004 technical qualification does not authorize a public release.
 When a transaction owns the root lock, competing mutating commands return a
 contention error and leave the journal for the current owner.
 

@@ -1,6 +1,6 @@
 # Distribution M004 C002 — Rootful Transaction Qualification and Operator-Contract Reconciliation
 
-Status: active — M004 C001 strict closure is recorded in `plans/closure/distribution/004-c001-status.md`; systemd/traffic, docs, and M004 qualification are underway.
+Status: closed — evidence is recorded in `plans/closure/distribution/004-c002-status.md`; M004 technical closure is recorded in `plans/closure/distribution/004-status.md`.
 Repository baseline: dbowm91/wg-basic main at 7b69c75634242bf0d5c0d35374b96346c73f20c6 (2026-10-08). Rebase/re-review at C001's verified implementation head.
 Primary work class: corrective / capability qualification / documentation polish.
 
@@ -11,7 +11,7 @@ Roadmap: plans/subsystems/distribution-install-update-roadmap.md, M004.
 Architecture: plans/adr/006-distribution-install-authenticity-and-update.md; architecture/update-rollback-contract.md; architecture/service-hardening.md.
 Previous closure: plans/closure/distribution/003-final-status.md (mechanical release producer).
 Hard predecessor: plans/implementation/distribution/004-c001-update-retry-recovery-invariants.md closes with supported rollback/recovery state machine and exact state-identity contract.
-Successor: Distribution M005 remains blocked until M004 strict technical closure.
+Successor: Distribution M005; closing C002 and M004 satisfies its hard technical dependency.
 
 CLI decision: retain the implemented explicit `wg-basic update check`,
 `wg-basic update run`, and `wg-basic update recover` forms as the single
@@ -74,7 +74,11 @@ Prove successful old/new transaction does not change session/admin policy or exp
 
 ### WP5 — Operator CLI and documentation reconciliation
 
-Resolve the actual CLI contract deliberately. Canonical recommendation is `wg-basic update` (mutating), `wg-basic update --check` (read-only), and `wg-basic update recover`; optionally retain existing `update run` and `update check` as documented compatibility aliases. If clap syntax or compatibility merits a different choice, document a single canonical operator contract and amend the active implementation plan explicitly, with unit/CLI integration tests. Never conflate `update recover` with another update or make `--check` mutating.
+The CLI review selected the existing explicit `wg-basic update check`,
+`wg-basic update run`, and `wg-basic update recover` contract. The M004
+implementation plan and operator docs now match it. `check` is read-only;
+`run` and `recover` require effective root. No aliases or version-selection
+option were added, and CLI tests cover the observed subcommand effects.
 
 Update README, plans/002-long-term-roadmap.md (status snapshot only), architecture/cli-roles.md, architecture/overview.md, architecture/update-rollback-contract.md, docs/operations-runbook.md, docs/development.md, and installation/update guidance to state:
 - current Phase 10 M001–M003 closed / M004 qualified or active / M005 blocked status;
@@ -205,4 +209,7 @@ C002 completion alone does not automatically authorize the first public release.
 
 After implementation, write C002 evidence with implementation baseline/final commit, defect/evidence mapping, test fixture binaries/versions/target manifest digests, old-v4/candidate-v5 migration path, rootful systemd journal/traffic receipts, forced-failure and SIGKILL matrix, 2x recover/re-update, transport+footprint measurements, exact CI/run URLs, redaction/security findings, documentation and CLI version, unresolved severity classification, release trust-root disposition, and M004/M005 readiness.
 
-If both C001 and C002 pass, write the separate canonical M004 closure record per plans/003-planning-process.md. Do not register M005 as ready until that disposition supports it.
+Both C001 and C002 pass; the separate canonical M004 closure record is
+`plans/closure/distribution/004-status.md`. That disposition supports M005's
+technical handoff while leaving production signing/publication externally
+gated.
