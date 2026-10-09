@@ -858,8 +858,8 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
                 listen_port: FieldUpdate::Set(51821),
                 peer: Some(PeerMutation::Add(DesiredWireGuardPeer {
                     public_key: server_public_key.clone(),
-                    preshared_key,
-                    allowed_ips,
+                    preshared_key: preshared_key.clone(),
+                    allowed_ips: allowed_ips.clone(),
                     persistent_keepalive_seconds: keepalive,
                     endpoint: Some(endpoint),
                 })),
@@ -1062,6 +1062,36 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
                     && String::from_utf8_lossy(&output.stdout).contains("2001:db8:67::/64")
             })
     });
+    // Recreating the server interface loses its kernel session keys. A client
+    // that still holds the old session does not know that yet, so recreate its
+    // peer state to model a normal client reconnect and force a fresh handshake.
+    for peer in [
+        PeerMutation::Remove {
+            public_key: server_public_key.clone(),
+        },
+        PeerMutation::Add(DesiredWireGuardPeer {
+            public_key: server_public_key.clone(),
+            preshared_key: preshared_key.clone(),
+            allowed_ips: allowed_ips.clone(),
+            persistent_keepalive_seconds: keepalive,
+            endpoint: Some(endpoint),
+        }),
+    ] {
+        let response = wg_basic::protocol::request(
+            client_scratch.netd_socket(),
+            RequestOperation::ApplyWireGuardDevice {
+                interface: "wg-client".parse().unwrap(),
+                patch: WireGuardDevicePatch {
+                    private_key: FieldUpdate::Keep,
+                    listen_port: FieldUpdate::Keep,
+                    peer: Some(peer),
+                },
+            },
+            9004,
+        )
+        .expect("reconnect exported client peer");
+        assert!(matches!(response, ResponseBody::WireGuardApplied(_)));
+    }
     let ping = Command::new("ip")
         .args([
             "netns",
