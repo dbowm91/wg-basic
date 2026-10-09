@@ -2,21 +2,43 @@
 
 This contract is Phase 9 output for Phase 10. It describes the required
 transaction around a candidate binary and the authoritative SQLite database.
-The CLI exposes `update --check`, `update`, and `update recover`. The updater
+The CLI exposes `update check`, `update run`, and `update recover`. The updater
 contains bounded release discovery, signature-before-projection, candidate
 integrity validation, durable journaling, service lifecycle, state backup and
 restore, health gating, and crash recovery. The production trust root is still
-unprovisioned, so `update --check` and `update` fail before network access.
-The implementation remains under M004 qualification and is unavailable to
-operators until the trust root and required transaction tests are qualified.
+unprovisioned, so `update check` and `update run` fail before network access.
+M004's C001 retry/recovery invariants and C002 installed-system traffic, target,
+and operator-contract qualification are closed. Production update remains
+unavailable until the trust root is provisioned. M005 lifecycle qualification
+is closed; its evidence is recorded in
+`plans/closure/distribution/005-status.md`.
 
 The M001 verify-only release foundation is strictly closed and implemented in
 `src/release.rs`: stable version policy, the two canonical GNU target mappings,
 Minisign verification, and Eggpack ReleaseManifest projection after signature
-verification. M004's updater composes those primitives, but production release operations
-remain fail-closed until a trust root is provisioned. M004 rootful lifecycle,
-crash-window, and rollback qualification is still required before update is
-available to operators.
+verification. M004's updater composes those primitives, but production release
+operations remain fail-closed until a trust root is provisioned. C001 and C002's
+real systemd crash-window, retry, rollback, enabled/disabled traffic, target,
+and operator-document qualifications passed hosted CI. M005 also closed the
+broader install/update/uninstall lifecycle proof.
+
+The updater's C001 retry/recovery hardening records a secret-free state
+identity (installation ID, schema, desired generation, enabled intent, and a
+digest of product identifiers) in the schema-1 journal. Before a new update,
+the updater accepts only a terminal Committed or RolledBack journal whose
+binary, install receipt, retained transaction artifacts, state compatibility,
+and running product health all match. It archives the previous terminal
+journal inside its transaction directory and retains that recovery set.
+Active, RecoveryRequired, mismatched, or incomplete transactions remain
+blocking and require `update recover` or operator review.
+
+Interrupted SQLite restoration uses a unique transaction-bound staging file in
+the state directory. A stale file cannot occupy the next recovery attempt's
+name; the backup is checked by digest, copied to private staging, assigned to
+the management identity, and validated through the old compatible binary
+before restore. Recovery verifies the restored typed identity before starting
+the old services. Historical schema-1 journals without the new typed identity
+remain readable, but cannot be treated as a proven terminal rollback.
 
 ## Transaction rule
 
@@ -71,6 +93,22 @@ safe action is to start that old pair and validate it. If the migration failed
 inside SQLite, first preserve the live file and inspect the automatic
 pre-migration snapshot; do not start an old binary against an uncertain schema.
 
+Update identity checks are read-only and do not migrate state. In particular,
+terminal rollback verification must inspect a restored v4 database as v4 before
+the old service is selected; only the candidate service may migrate it to v5.
+After a transaction is terminal, normal product operations may advance
+generation or change client/network identity. Future update attempts therefore
+validate the terminal receipt against the same InstallationId and compatible
+schema instead of requiring the old product identity to remain current. The
+transaction itself still proves exact rollback identity before it records
+`RolledBack`.
+
+Before starting an owned stopped systemd unit during update recovery, wg-basic
+clears that exact owned unit's failed-start counter through the bounded
+Eggup-service command executor. This lets a healthy prior generation recover
+after candidate retries exhausted systemd's start limit; it does not change
+unit contents or ownership.
+
 ## Crash-window matrix
 
 | Crash point | Authoritative pair/artifact | Safe next action |
@@ -86,6 +124,30 @@ pre-migration snapshot; do not start an old binary against an uncertain schema.
 
 The marker is the sole commit discriminator. PID files, process names, or
 “service appears to be running” observations cannot infer transaction state.
+
+For an enabled network, the release health gate requires current-generation
+convergence, reachable netd, and `/healthz` `ok`. For an intentionally disabled
+network, the updater still requires owned running services, a healthy database,
+typed state identity preservation, and a passing doctor report; a degraded
+`/healthz` liveness token caused only by the disabled network is not by itself
+a candidate failure.
+
+If recovery is interrupted while preparing its database staging file, the next
+recovery uses a distinct private name and validates the original transaction
+backup again. A failed, transitioning, or otherwise ambiguous systemd service
+classification is never treated as stopped. The pinned Eggup-service 0.1.3
+adapter keeps `ActiveState=failed` classified as `Unknown`, but its typed stop
+operation recognizes that exact owned manager state and reports completion
+only after rechecking ownership, manager state, pending jobs, process IDs, and
+cgroup task evidence. wg-basic accepts that still-`Unknown` post-state only
+when Eggup returned a completed stop receipt and the exact registration remains
+owned. If systemd reports an exactly owned unit as `Transitioning` during an
+auto-restart, wg-basic uses Eggup's bounded typed stop and accepts quiescence
+only after a completed receipt, fresh owned registration, and `Stopped`
+post-state. Incomplete or still-transitioning results remain unresolved.
+Before database rollback, wg-basic also confirms the serve lease is released
+and netd's Unix socket no longer accepts connections. Foreign or otherwise
+unproven registrations remain fail-closed.
 
 ## Secret and ownership handling
 

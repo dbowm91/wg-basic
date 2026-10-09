@@ -352,7 +352,7 @@ Phase 9 does not install systemd units or implement self-update; it produces the
 
 ## 12. Phase 10 — Distribution, installation, update, and rollback
 
-Status: planned; M001 ready.
+Status: Phase 10 technical implementation and qualification closed; production signing/publication pending maintainer provisioning.
 
 Owned by:
 
@@ -409,7 +409,7 @@ Docker/container distribution MAY be added later as secondary packaging only.
 
 ## 13. Phase 11 — IPv6 and route-policy production qualification
 
-Status: deferred until the IPv4 appliance path is stable.
+Status: closed — Phase 11 M001–M004 are technically closed with dual-stack end-to-end qualification. Public release signing remains an independent operational gate.
 
 Expected outcomes:
 
@@ -501,6 +501,6 @@ Before the first public production claim:
 | 7 service/security substrate | closed | `plans/subsystems/management-service-security-roadmap.md` | — |
 | 8 management API/UI/enrollment | closed | `plans/subsystems/product-management-enrollment-ui-roadmap.md` | — |
 | 9 operational hardening | closed | `plans/subsystems/operational-hardening-roadmap.md` | — |
-| 10 distribution/update | planned / M001 ready | `plans/subsystems/distribution-install-update-roadmap.md` | — |
-| 11 IPv6/route-policy qualification | deferred | future roadmap | stable product baseline |
+| 10 distribution/update | closed — release-mechanically complete, public publication blocked | `plans/subsystems/distribution-install-update-roadmap.md` | `plans/closure/distribution/005-status.md`; production signing pending |
+| 11 IPv6/route-policy qualification | closed | `plans/subsystems/ipv6-route-policy-roadmap.md`; `plans/closure/ipv6-route-policy/004-status.md` | — |
 | 12 advanced capabilities | deferred | separate future research | explicit product decision |

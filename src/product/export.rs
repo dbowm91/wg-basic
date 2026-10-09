@@ -6,6 +6,7 @@
 //! the rendered credential.
 
 use crate::domain::{NetworkPrefix, PresharedKey, PrivateKey, PublicKey};
+use ipnet::IpNet;
 use std::{fmt, net::IpAddr};
 use zeroize::Zeroize;
 
@@ -17,6 +18,7 @@ const QUIET_ZONE: i32 = 4;
 pub struct ClientConfigMaterial {
     pub private_key: PrivateKey,
     pub address: IpAddr,
+    pub ipv6_address: Option<IpNet>,
     pub dns_servers: Vec<IpAddr>,
     pub server_public_key: PublicKey,
     pub preshared_key: Option<PresharedKey>,
@@ -83,6 +85,9 @@ pub fn render_config(material: &ClientConfigMaterial) -> Result<SecretArtifact, 
         material.private_key.expose_secret()
     )
     .unwrap();
+    if let Some(address) = material.ipv6_address {
+        writeln!(&mut output, "Address = {address}").unwrap();
+    }
     writeln!(
         &mut output,
         "Address = {}/{}",
@@ -160,6 +165,7 @@ mod tests {
             private_key: PrivateKey::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".into())
                 .unwrap(),
             address: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
+            ipv6_address: None,
             dns_servers: vec!["1.1.1.1".parse().unwrap()],
             server_public_key: PublicKey::new(
                 "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".into(),
@@ -216,6 +222,26 @@ mod tests {
         let (interface, peer) = config.expose().split_once("[Peer]\n").unwrap();
         assert!(!interface.contains("PresharedKey = "));
         assert!(peer.contains("PresharedKey = "));
+    }
+
+    #[test]
+    fn renders_ipv6_route_dns_and_bracketed_endpoint_with_stable_order() {
+        let mut material = fixture();
+        material.endpoint = "[2001:db8::1]:51820".into();
+        material.dns_servers = vec![
+            "2001:4860:4860::8888".parse().unwrap(),
+            "1.1.1.1".parse().unwrap(),
+        ];
+        material.ipv6_address = Some("fd77::2/128".parse().unwrap());
+        material.allowed_ips = vec!["::/0".parse().unwrap(), "0.0.0.0/0".parse().unwrap()];
+        let config = render_config(&material).unwrap();
+        assert!(config.expose().contains("Address = fd77::2/128\n"));
+        assert!(config
+            .expose()
+            .contains("DNS = 2001:4860:4860::8888, 1.1.1.1\n"));
+        assert!(config.expose().contains("Endpoint = [2001:db8::1]:51820\n"));
+        assert!(config.expose().contains("AllowedIPs = 0.0.0.0/0, ::/0\n"));
+        assert!(!config.expose().contains("[[2001:db8::1]]"));
     }
 
     #[test]

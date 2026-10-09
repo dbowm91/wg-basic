@@ -1,6 +1,6 @@
 # Distribution M004 — Transactional Self-Update and Rollback
 
-Status: active — M003 is mechanically closed. Transaction orchestration is implemented; strict closure remains blocked on production trust-root provisioning and rootful service, crash-window, rollback, and lifecycle qualification. The updater stays fail-closed until the production public key is provisioned.
+Status: closed — M004 technical transaction and recovery acceptance is recorded in `plans/closure/distribution/004-status.md`. Production update remains fail-closed until the maintainer-provisioned public key is available.
 
 Source roadmap:
 
@@ -55,16 +55,15 @@ No Git dependencies in production release builds.
 Add:
 
 ```text
-wg-basic update --check
-wg-basic update
+wg-basic update check
+wg-basic update run
 wg-basic update recover
 ```
 
-Optional explicit version selection may be added only for a strictly newer stable release:
-
-```text
-wg-basic update --version X.Y.Z
-```
+The qualified operator contract retains these explicit `check`, `run`, and
+`recover` subcommands. `check` is read-only; `run` and `recover` require
+effective root and never invoke sudo. No `update --check`, default mutating
+`update`, or caller-selected version option is exposed.
 
 Do not add:
 
@@ -447,7 +446,7 @@ If destination ownership cannot be proven, return RecoveryRequired without overw
 
 ## 21. Update check
 
-`update --check` is read-only.
+`update check` is read-only.
 
 Output:
 

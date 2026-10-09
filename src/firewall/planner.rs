@@ -5,7 +5,7 @@
 
 use super::policy::{
     DesiredNetworkPolicy, FirewallActionKind, FirewallError, FirewallOwner, FirewallPlanSummary,
-    FirewallWarning, Ipv4Forwarding, NatMode, TABLE_NAME,
+    FirewallWarning, Ipv4Forwarding, Ipv6Forwarding, NatMode, TABLE_NAME,
 };
 use crate::domain::InterfaceName;
 use std::collections::{BTreeMap, BTreeSet};
@@ -27,6 +27,7 @@ pub(crate) struct TableObservation {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct FirewallObservation {
     pub(crate) forwarding_enabled: bool,
+    pub(crate) ipv6_forwarding_enabled: Option<bool>,
     pub(crate) table: TableObservation,
 }
 
@@ -67,11 +68,18 @@ pub(crate) fn plan_firewall(
         if policy.ipv4_forwarding == Ipv4Forwarding::Required && !observation.forwarding_enabled {
             actions.push(FirewallActionKind::EnableIpv4Forwarding);
         }
+        if policy.ipv6_forwarding == Ipv6Forwarding::Required {
+            match observation.ipv6_forwarding_enabled {
+                Some(true) => {}
+                Some(false) => actions.push(FirewallActionKind::EnableIpv6Forwarding),
+                None => return Err(FirewallError::BackendFailure),
+            }
+        }
         let expected_chains = 1 + usize::from(policy.nat == NatMode::Masquerade);
         let expected_rules = 2
-            + policy.source_prefixes.len()
+            + policy.sorted_allowed_prefixes().len()
             + if policy.nat == NatMode::Masquerade {
-                policy.source_prefixes.len()
+                policy.sorted_ipv4_prefixes().len()
             } else {
                 0
             };
@@ -97,7 +105,16 @@ pub(crate) fn plan_firewall(
         summary: FirewallPlanSummary {
             wireguard_interface: wireguard_interface.clone(),
             actions,
-            warnings: vec![FirewallWarning::IndependentFirewallMayStillBlockForwardedTraffic],
+            warnings: if policy
+                .is_some_and(|policy| policy.ipv6_forwarding == Ipv6Forwarding::Required)
+            {
+                vec![
+                    FirewallWarning::IndependentFirewallMayStillBlockForwardedTraffic,
+                    FirewallWarning::Ipv6ForwardingIsHostGlobalAndRemainsEnabled,
+                ]
+            } else {
+                vec![FirewallWarning::IndependentFirewallMayStillBlockForwardedTraffic]
+            },
         },
         desired_hash,
     })
@@ -111,6 +128,8 @@ pub(crate) fn matches_policy(
 ) -> Result<bool, FirewallError> {
     if let Some(policy) = policy {
         if (policy.ipv4_forwarding == Ipv4Forwarding::Required && !observation.forwarding_enabled)
+            || (policy.ipv6_forwarding == Ipv6Forwarding::Required
+                && observation.ipv6_forwarding_enabled != Some(true))
             || !observation.table.present
             || !observation.table.owned
         {
@@ -119,9 +138,9 @@ pub(crate) fn matches_policy(
         let hash = policy_hash(policy, interface);
         let expected_chains = 1 + usize::from(policy.nat == NatMode::Masquerade);
         let expected_rules = 2
-            + policy.source_prefixes.len()
+            + policy.sorted_allowed_prefixes().len()
             + if policy.nat == NatMode::Masquerade {
-                policy.source_prefixes.len()
+                policy.sorted_ipv4_prefixes().len()
             } else {
                 0
             };
@@ -141,9 +160,10 @@ pub(crate) fn matches_policy(
 
 pub(crate) fn policy_hash(policy: &DesiredNetworkPolicy, interface: &InterfaceName) -> String {
     let mut bytes = format!(
-        "{}|{:?}|{:?}|",
+        "{}|{:?}|{:?}|{:?}|",
         interface.as_str(),
         policy.ipv4_forwarding,
+        policy.ipv6_forwarding,
         policy.nat
     )
     .into_bytes();
@@ -215,12 +235,17 @@ pub(crate) fn expected_objects(
             ]
         }),
     );
-    for (index, prefix) in policy.sorted_prefixes().iter().enumerate() {
+    for (index, prefix) in policy.sorted_allowed_prefixes().iter().enumerate() {
         let network = prefix.network();
+        let family = if network.addr().is_ipv4() {
+            "ip"
+        } else {
+            "ip6"
+        };
         let prefix_expr = serde_json::json!({
             "match": {
                 "op": "==",
-                "left": {"payload": {"protocol": "ip", "field": "saddr"}},
+                "left": {"payload": {"protocol": family, "field": "saddr"}},
                 "right": {"prefix": {"addr": network.addr().to_string(), "len": network.prefix_len()}}
             }
         });
@@ -240,7 +265,10 @@ pub(crate) fn expected_objects(
                 ]
             }),
         );
-        if policy.nat == NatMode::Masquerade {
+    }
+    if policy.nat == NatMode::Masquerade {
+        for (index, prefix) in policy.sorted_ipv4_prefixes().iter().enumerate() {
+            let network = prefix.network();
             let nat_comment = format!("{owner}:rule:nat:{index}:{hash}");
             rules.insert(
                 nat_comment.clone(),
@@ -251,7 +279,7 @@ pub(crate) fn expected_objects(
                     "comment": nat_comment,
                     "expr": [
                         {"match": {"op": "==", "left": {"meta": {"key": "oifname"}}, "right": policy.egress_interface.as_str()}},
-                        prefix_expr,
+                        {"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "saddr"}}, "right": {"prefix": {"addr": network.addr().to_string(), "len": network.prefix_len()}}}},
                         {"masquerade": null}
                     ]
                 }),
@@ -295,6 +323,7 @@ mod tests {
             "wg0".parse().unwrap(),
             DesiredNetworkPolicy {
                 ipv4_forwarding: Ipv4Forwarding::Required,
+                ipv6_forwarding: Ipv6Forwarding::NotRequired,
                 egress_interface: "eth0".parse().unwrap(),
                 source_prefixes: vec!["10.8.0.0/24".parse().unwrap()],
                 nat: NatMode::Masquerade,
@@ -307,6 +336,7 @@ mod tests {
         let (interface, policy) = fixture();
         let observation = FirewallObservation {
             forwarding_enabled: false,
+            ipv6_forwarding_enabled: None,
             table: TableObservation {
                 present: false,
                 owned: false,
@@ -333,6 +363,7 @@ mod tests {
         );
         let collision = FirewallObservation {
             forwarding_enabled: false,
+            ipv6_forwarding_enabled: None,
             table: TableObservation {
                 present: true,
                 owned: false,
@@ -358,6 +389,7 @@ mod tests {
         let (chains, rules) = expected_objects(&owner(), &policy, &interface, &hash);
         let observation = FirewallObservation {
             forwarding_enabled: true,
+            ipv6_forwarding_enabled: None,
             table: TableObservation {
                 present: true,
                 owned: true,
@@ -377,8 +409,22 @@ mod tests {
                 .actions
                 .is_empty()
         );
+        let hash = policy_hash(&policy, &interface);
+        let (chains, rules) = expected_objects(&owner(), &policy, &interface, &hash);
+        let mut applied = observation.clone();
+        applied.table = TableObservation {
+            present: true,
+            owned: true,
+            legacy_marker: false,
+            rule_markers: policy.rule_markers(&owner(), &hash, &interface),
+            chain_count: chains.len(),
+            rule_count: rules.len(),
+            chain_names: chains.keys().cloned().collect(),
+            chains,
+            rules,
+        };
         assert_eq!(
-            plan_firewall(&owner(), &interface, None, &observation)
+            plan_firewall(&owner(), &interface, None, &applied)
                 .unwrap()
                 .summary
                 .actions,
@@ -396,6 +442,7 @@ mod tests {
             .unwrap()["expr"][0]["match"]["right"] = serde_json::json!("wg-other");
         let observation = FirewallObservation {
             forwarding_enabled: true,
+            ipv6_forwarding_enabled: None,
             table: TableObservation {
                 present: true,
                 owned: true,
@@ -414,6 +461,88 @@ mod tests {
                 .summary
                 .actions,
             vec![FirewallActionKind::ReplaceOwnedNftablesTable]
+        );
+    }
+
+    #[test]
+    fn ipv6_policy_enables_forwarding_and_renders_routed_v6_without_nat66() {
+        let (interface, mut policy) = fixture();
+        policy.ipv6_forwarding = Ipv6Forwarding::Required;
+        policy
+            .source_prefixes
+            .push("2001:db8:42::/64".parse().unwrap());
+        let observation = FirewallObservation {
+            forwarding_enabled: true,
+            ipv6_forwarding_enabled: Some(false),
+            table: TableObservation {
+                present: false,
+                owned: false,
+                legacy_marker: false,
+                rule_markers: BTreeSet::new(),
+                chain_count: 0,
+                rule_count: 0,
+                chain_names: BTreeSet::new(),
+                chains: BTreeMap::new(),
+                rules: BTreeMap::new(),
+            },
+        };
+        let plan = plan_firewall(&owner(), &interface, Some(&policy), &observation).unwrap();
+        assert_eq!(
+            plan.summary.actions,
+            vec![
+                FirewallActionKind::EnableIpv6Forwarding,
+                FirewallActionKind::ReplaceOwnedNftablesTable
+            ]
+        );
+        assert!(plan
+            .summary
+            .warnings
+            .contains(&FirewallWarning::Ipv6ForwardingIsHostGlobalAndRemainsEnabled));
+        let (_, rules) = expected_objects(
+            &owner(),
+            &policy,
+            &interface,
+            plan.desired_hash.as_deref().unwrap(),
+        );
+        let allow_v6 = rules
+            .values()
+            .find(|rule| rule.to_string().contains("ip6"))
+            .expect("IPv6 allow rule is rendered");
+        assert!(allow_v6.to_string().contains("2001:db8:42::"));
+        let nat_rules = rules
+            .values()
+            .filter(|rule| rule.to_string().contains("masquerade"))
+            .collect::<Vec<_>>();
+        assert_eq!(nat_rules.len(), 1);
+        assert!(!nat_rules[0].to_string().contains("ip6"));
+        let (chains, rules) = expected_objects(
+            &owner(),
+            &policy,
+            &interface,
+            plan.desired_hash.as_deref().unwrap(),
+        );
+        let mut applied = observation.clone();
+        applied.table = TableObservation {
+            present: true,
+            owned: true,
+            legacy_marker: false,
+            rule_markers: policy.rule_markers(
+                &owner(),
+                plan.desired_hash.as_deref().unwrap(),
+                &interface,
+            ),
+            chain_count: chains.len(),
+            rule_count: rules.len(),
+            chain_names: chains.keys().cloned().collect(),
+            chains,
+            rules,
+        };
+        assert_eq!(
+            plan_firewall(&owner(), &interface, None, &applied)
+                .unwrap()
+                .summary
+                .actions,
+            vec![FirewallActionKind::RemoveOwnedNftablesTable]
         );
     }
 }

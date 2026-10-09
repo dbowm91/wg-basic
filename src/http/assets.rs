@@ -45,9 +45,10 @@ pub const ENROLL_JS: &str = include_str!("assets/enroll.js");
 
 /// The total embedded payload, as a ceiling rather than an observation.
 ///
-/// 32 KiB bounds the full management shell, including product forms and client
-/// actions, while keeping the complete same-origin UI small enough to review.
-pub const MAX_EMBEDDED_ASSET_BYTES: usize = 32 * 1024;
+/// 36 KiB bounds the full management shell, including independent IPv4/IPv6
+/// route controls, while keeping the complete same-origin UI small enough to
+/// review.
+pub const MAX_EMBEDDED_ASSET_BYTES: usize = 36 * 1024;
 
 /// The largest single embedded asset, as a ceiling.
 pub const MAX_EMBEDDED_ASSET_BYTES_EACH: usize = 24 * 1024;

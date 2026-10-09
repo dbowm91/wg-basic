@@ -50,6 +50,7 @@ exits with `report.exit_code()`.
 | `WireGuard` | Generic Netlink observation succeeded (also Pass when nothing is managed) | — | — | interface absent / probe incomplete |
 | `ListenPort` | observed port matches configured port | managed port differs from desired | — | ambiguous (no managed interface observed, or no configured value) |
 | `Forwarding` | forwarding not required, or required and `/proc/.../ip_forward == 1` | — | required but `0` (remediation: enable via host config; doctor did not write it) | procfs unreadable, or no snapshot |
+| `Ipv6Forwarding` | not required, or required and fixed global IPv6 forwarding is `1` | — | required but `0` (the global value remains enabled after policy disable) | procfs unreadable/malformed, or no snapshot |
 | `ServiceLease` | lease free | a serve process holds the lease | — | lease could not be inspected safely |
 | `HttpPolicy` | only emitted when `--http-bind` is given and the same `ServeConfig` policy `serve` uses accepts the bind/origin | — | policy rejected | — |
 

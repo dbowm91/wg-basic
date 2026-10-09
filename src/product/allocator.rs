@@ -12,7 +12,7 @@
 //! independent of that number.
 
 use ipnet::{IpNet, Ipv4Net};
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 /// What allocation was asked for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -167,6 +167,95 @@ impl AllocationContext {
     }
 }
 
+/// Deterministic, bounded IPv6 address allocation. It advances over sorted
+/// reservations and never walks the address space, so a `/64` costs the same
+/// as a small pool. The subnet-router anycast address at the prefix base is
+/// reserved; the first candidate is therefore base + 1.
+#[derive(Clone, Debug)]
+pub struct Ipv6AllocationContext {
+    prefix: Ipv6Addr,
+    prefix_len: u8,
+    server_addresses: Vec<Ipv6Addr>,
+    reserved_clients: Vec<Ipv6Addr>,
+}
+
+impl Ipv6AllocationContext {
+    pub fn new(prefix: IpNet) -> Result<Self, AllocationError> {
+        let IpNet::V6(prefix) = prefix else {
+            return Err(AllocationError::NotIpv6);
+        };
+        if prefix.prefix_len() > 126
+            || prefix.network().is_unspecified()
+            || prefix.network().is_multicast()
+        {
+            return Err(AllocationError::Ipv6PrefixTooSmall(prefix.prefix_len()));
+        }
+        Ok(Self {
+            prefix: prefix.network(),
+            prefix_len: prefix.prefix_len(),
+            server_addresses: Vec::new(),
+            reserved_clients: Vec::new(),
+        })
+    }
+
+    pub fn with_server_addresses(mut self, addresses: impl IntoIterator<Item = Ipv6Addr>) -> Self {
+        self.server_addresses.extend(addresses);
+        self
+    }
+
+    pub fn with_reserved_clients(mut self, addresses: impl IntoIterator<Item = Ipv6Addr>) -> Self {
+        self.reserved_clients.extend(addresses);
+        self
+    }
+
+    pub fn allocate(&self, request: Option<Ipv6Addr>) -> Result<Ipv6Addr, AllocationError> {
+        let network = u128::from(self.prefix);
+        let host_bits = 128 - u32::from(self.prefix_len);
+        let mask = if host_bits == 128 {
+            u128::MAX
+        } else {
+            (1u128 << host_bits) - 1
+        };
+        let last = network | mask;
+        let used = self
+            .server_addresses
+            .iter()
+            .chain(&self.reserved_clients)
+            .map(|address| u128::from(*address))
+            .collect::<std::collections::BTreeSet<_>>();
+
+        if let Some(address) = request {
+            let value = u128::from(address);
+            if address.is_unspecified() || address.is_multicast() {
+                return Err(AllocationError::InvalidIpv6Address(address));
+            }
+            if value <= network || value > last {
+                return Err(AllocationError::Ipv6OutsidePrefix(address));
+            }
+            if used.contains(&value) {
+                return Err(AllocationError::Ipv6AlreadyUsed(address));
+            }
+            return Ok(address);
+        }
+
+        // No broadcast address exists in IPv6. Starting after the reserved
+        // subnet-router anycast address, skip only actual occupied addresses.
+        let mut candidate = network.checked_add(1).ok_or(AllocationError::Exhausted)?;
+        for value in used.range(candidate..=last) {
+            if *value > candidate {
+                break;
+            }
+            if *value == candidate {
+                candidate = candidate.checked_add(1).ok_or(AllocationError::Exhausted)?;
+            }
+        }
+        if candidate > last {
+            return Err(AllocationError::Exhausted);
+        }
+        Ok(Ipv6Addr::from(candidate))
+    }
+}
+
 /// Allocates one IPv4 client address inside `prefix`.
 ///
 /// Convenience over [`AllocationContext::allocate`] for the common case.
@@ -192,8 +281,12 @@ pub fn ipv4_of(address: IpAddr) -> Option<Ipv4Addr> {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum AllocationError {
-    #[error("Phase 8 M001 allocates IPv4 addresses only")]
+    #[error("IPv4 address allocation requires an IPv4 prefix")]
     NotIpv4,
+    #[error("IPv6 address allocation requires an IPv6 prefix")]
+    NotIpv6,
+    #[error("no IPv6 tunnel prefix is configured for this interface")]
+    Ipv6NotConfigured,
     #[error("prefix length /{0} is too small to allocate a client address")]
     PrefixTooSmall(u8),
     #[error("every usable address inside the prefix is already assigned")]
@@ -202,6 +295,14 @@ pub enum AllocationError {
     OutsidePrefix(Ipv4Addr),
     #[error("address {0} is already assigned or reserved")]
     AlreadyUsed(Ipv4Addr),
+    #[error("IPv6 prefix length /{0} must leave server and client host addresses")]
+    Ipv6PrefixTooSmall(u8),
+    #[error("address {0} is outside the selected IPv6 prefix")]
+    Ipv6OutsidePrefix(Ipv6Addr),
+    #[error("address {0} is already assigned or reserved")]
+    Ipv6AlreadyUsed(Ipv6Addr),
+    #[error("address {0} is not a usable IPv6 host address")]
+    InvalidIpv6Address(Ipv6Addr),
 }
 
 #[cfg(test)]
@@ -421,6 +522,66 @@ mod tests {
         assert_eq!(
             ctx.allocate(AddressRequest::Automatic),
             Ok(Ipv4Addr::new(10, 8, 0, 1))
+        );
+    }
+
+    fn ipv6_context(value: &str) -> Ipv6AllocationContext {
+        Ipv6AllocationContext::new(net(value)).unwrap()
+    }
+
+    #[test]
+    fn ipv6_allocator_is_bounded_and_chooses_lowest_free_host() {
+        let context = ipv6_context("2001:db8::/64")
+            .with_server_addresses(["2001:db8::1".parse().unwrap()])
+            .with_reserved_clients(["2001:db8::2".parse().unwrap()]);
+        assert_eq!(context.allocate(None), Ok("2001:db8::3".parse().unwrap()));
+    }
+
+    #[test]
+    fn ipv6_exact_requests_reject_reserved_invalid_and_out_of_prefix_values() {
+        let context =
+            ipv6_context("2001:db8::/126").with_server_addresses(["2001:db8::1".parse().unwrap()]);
+        assert_eq!(
+            context.allocate(Some("2001:db8::1".parse().unwrap())),
+            Err(AllocationError::Ipv6AlreadyUsed(
+                "2001:db8::1".parse().unwrap()
+            ))
+        );
+        assert_eq!(
+            context.allocate(Some("2001:db8::".parse().unwrap())),
+            Err(AllocationError::Ipv6OutsidePrefix(
+                "2001:db8::".parse().unwrap()
+            ))
+        );
+        assert_eq!(
+            context.allocate(Some("2001:db8::5".parse().unwrap())),
+            Err(AllocationError::Ipv6OutsidePrefix(
+                "2001:db8::5".parse().unwrap()
+            ))
+        );
+        assert!(matches!(
+            context.allocate(Some(Ipv6Addr::UNSPECIFIED)),
+            Err(AllocationError::InvalidIpv6Address(_))
+        ));
+        assert!(matches!(
+            context.allocate(Some("ff02::1".parse().unwrap())),
+            Err(AllocationError::InvalidIpv6Address(_))
+        ));
+    }
+
+    #[test]
+    fn ipv6_prefix_shape_must_leave_server_and_client_addresses() {
+        assert!(matches!(
+            Ipv6AllocationContext::new(net("2001:db8::/127")),
+            Err(AllocationError::Ipv6PrefixTooSmall(127))
+        ));
+        assert!(matches!(
+            Ipv6AllocationContext::new(net("::/64")),
+            Err(AllocationError::Ipv6PrefixTooSmall(64))
+        ));
+        assert_eq!(
+            ipv6_context("2001:db8::/126").allocate(None),
+            Ok("2001:db8::1".parse().unwrap())
         );
     }
 }

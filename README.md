@@ -49,14 +49,20 @@ as root plus server setup; see
 
 Network control, durable state/restart reconciliation, management/auth,
 product/enrollment/UI, and operational hardening are implemented and
-qualified in Linux namespaces. Transactional self-update is **not implemented**;
-native installation is under implementation and not yet release-qualified (see
-[plans/registry.md](plans/registry.md)).
+qualified in Linux namespaces. Native systemd installation and M004's signed
+update, rollback, and recovery transaction are technically qualified on
+current x86_64 and aarch64 GNU release artifacts. Phase 10 lifecycle
+qualification is closed, including fresh install, state-preserving
+uninstall/reinstall, and guarded purge. Production `update check` and
+`update run` remain fail-closed because the maintainer-provisioned Minisign
+public key is still pending; no public release is ready. See
+[plans/registry.md](plans/registry.md).
 
 ## Docs
 
 | Document | Covers |
 |---|---|
+| [docs/installation.md](docs/installation.md) | Native installation, authenticity status, state-preserving uninstall/reinstall |
 | [docs/development.md](docs/development.md) | Gates, local `netd`/`serve`, credentials, test fixtures |
 | [docs/operations-runbook.md](docs/operations-runbook.md) | Backup, recovery, disable/purge |
 | [docs/state-backup-restore.md](docs/state-backup-restore.md) | Backup/restore/verify mechanics |

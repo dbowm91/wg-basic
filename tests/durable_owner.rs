@@ -558,6 +558,7 @@ fn the_owned_nftables_table_marker_binds_to_the_installation() {
             present_desired(owner, keys.private_key.clone()),
             Some(DesiredNetworkPolicy {
                 ipv4_forwarding: Ipv4Forwarding::NotRequired,
+                ipv6_forwarding: wg_basic::firewall::Ipv6Forwarding::NotRequired,
                 egress_interface: "veth-a".parse().unwrap(),
                 source_prefixes: vec![NetworkPrefix::new("10.44.0.0/24".parse().unwrap())],
                 nat: NatMode::Disabled,
@@ -631,6 +632,7 @@ fn a_foreign_installation_table_marker_is_a_conflict() {
                 present_desired(owner, keys.private_key),
                 Some(DesiredNetworkPolicy {
                     ipv4_forwarding: Ipv4Forwarding::NotRequired,
+                    ipv6_forwarding: wg_basic::firewall::Ipv6Forwarding::NotRequired,
                     egress_interface: "veth-a".parse().unwrap(),
                     source_prefixes: vec![NetworkPrefix::new("10.44.0.0/24".parse().unwrap())],
                     nat: NatMode::Disabled,
@@ -690,6 +692,7 @@ fn equal_generation_reapply_is_idempotent_and_lower_generation_is_rejected() {
             present_desired(owner.clone(), keys.private_key.clone()),
             Some(DesiredNetworkPolicy {
                 ipv4_forwarding: Ipv4Forwarding::NotRequired,
+                ipv6_forwarding: wg_basic::firewall::Ipv6Forwarding::NotRequired,
                 egress_interface: "veth-a".parse().unwrap(),
                 source_prefixes: vec![NetworkPrefix::new("10.44.0.0/24".parse().unwrap())],
                 nat: NatMode::Disabled,
@@ -778,6 +781,7 @@ fn the_disable_aggregate_path_removes_firewall_before_the_interface() {
             present_desired(owner.clone(), keys.private_key.clone()),
             Some(DesiredNetworkPolicy {
                 ipv4_forwarding: Ipv4Forwarding::NotRequired,
+                ipv6_forwarding: wg_basic::firewall::Ipv6Forwarding::NotRequired,
                 egress_interface: "veth-a".parse().unwrap(),
                 source_prefixes: vec![NetworkPrefix::new("10.44.0.0/24".parse().unwrap())],
                 nat: NatMode::Disabled,

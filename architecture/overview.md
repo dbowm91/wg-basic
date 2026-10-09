@@ -92,11 +92,15 @@ Two invariants shape everything:
 
 Network control, durable state/restart reconciliation (Phases 6),
 management/auth substrate (Phase 7), product/enrollment/UI (Phase 8), and
-operational hardening (Phase 9) are closed. Phase 10 M001–M003 are mechanically
-closed. M004 transaction implementation is active and unqualified; production
-updates remain unavailable until the trust root is provisioned and lifecycle
-qualification passes. M005 remains blocked on M004 closure. Implementation
-status lives in
+operational hardening (Phase 9) are closed. Phase 10 M001–M004 technical
+implementation and qualification are closed, including signed-fixture
+systemd update, rollback, interruption recovery, and native x86_64/aarch64
+release artifacts. Phase 10 lifecycle qualification is closed, including
+native systemd install/uninstall/reinstall evidence on both supported targets.
+Production updates remain unavailable until a maintainer-provisioned trust
+root and signed release are available; technical Phase 10 closure does not
+authorize publication.
+Implementation status lives in
 [the planning registry](../plans/registry.md).
 
 ## Full deep-dive index
@@ -107,7 +111,7 @@ status lives in
 - [privilege-boundary](privilege-boundary.md) — UDS protocol, peer auth, intended service contract
 - [wireguard-control](wireguard-control.md) — backend selection, M003 contract, key/error handling
 - [reconciliation](reconciliation.md) — RTNETLINK lifecycle, ordering, receipts
-- [firewall](firewall.md) — IPv4 policy, nftables boundary, disable/preservation
+- [firewall](firewall.md) — dual-stack policy, IPv4-only NAT, nftables boundary, disable/preservation
 - [ownership](ownership.md) — interface/firewall ownership proof, aggregate rules
 - [management-http](management-http.md) — HTTP boundary, worker, pipeline, limits, lifecycle
 - [authentication](authentication.md) — credentials, sessions, cookies, CSRF, limiter

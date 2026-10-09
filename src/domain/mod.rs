@@ -28,7 +28,10 @@ pub use interface_name::InterfaceName;
 // unprivileged product service generates server and client identities and must
 // be able to do so without a network backend present.
 pub use keys::{derive_public_key, generate_keypair, WireGuardKeyPair};
-pub use network::{validate_unique_client_addresses, ClientRoutePolicy, NetworkPrefix};
+pub use network::{
+    validate_unique_client_addresses, ClientRoutePolicy, NetworkPrefix, RoutePolicyValidationError,
+    MAX_CLIENT_ROUTE_PREFIXES,
+};
 pub use owner::{AliasMatch, OwnerTag, OwnerTagError, MAX_OWNER_TAG_LENGTH};
 pub use secret::{KeyError, PresharedKey, PrivateKey, PublicKey};
 pub use state::{

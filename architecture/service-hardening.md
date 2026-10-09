@@ -2,8 +2,8 @@
 
 This is the Phase 10 service-manager contract established by Phase 9. The
 product-owned systemd definitions encode these controls at the canonical paths.
-Phase 10 qualification must validate their runtime ownership, capabilities,
-and ceilings against the installed services.
+Native systemd qualification validated runtime ownership, capabilities,
+service properties, and state access on x86_64 and aarch64 Ubuntu 24.04 hosts.
 
 | Directive | `serve` | `netd` | Reason / qualification |
 |---|---|---|---|
@@ -15,7 +15,7 @@ and ceilings against the installed services.
 | `ProtectHome=` | `yes` | `yes` | Neither role uses operator home directories. |
 | `PrivateTmp=` | `yes` | `yes` | Private temporary namespace. |
 | `RestrictAddressFamilies=` | `AF_UNIX AF_INET AF_INET6` | `AF_UNIX AF_NETLINK` | Serve needs its HTTP listener and privileged UDS; netd uses UDS and rtnetlink. Add a family only with runtime evidence. |
-| `ReadWritePaths=` | Explicit state directory and runtime/socket directory | Explicit runtime/socket directory and `/proc/sys/net/ipv4/ip_forward` | No broad writable filesystem paths. The state database belongs only to serve. |
+| `ReadWritePaths=` | Explicit state directory and runtime/socket directory | Explicit runtime/socket directory and the fixed IPv4/IPv6 forwarding sysctls | No broad writable filesystem paths. The state database belongs only to serve. |
 | `LimitCORE=` | `0` | `0` | State, keys, and process memory must not enter core dumps. |
 | `TasksMax=` | `64` | `32` | Conservative task ceilings above the measured single-worker service shape. |
 | `MemoryMax=` | `256M` | `128M` | Headroom above idle RSS and the 19 MiB Argon2 working set used by serve. Re-measure under release load before tightening. |
@@ -51,7 +51,7 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 RestrictAddressFamilies=AF_UNIX AF_NETLINK
-ReadWritePaths=/run/wg-basic /proc/sys/net/ipv4/ip_forward
+ReadWritePaths=/run/wg-basic /proc/sys/net/ipv4/ip_forward /proc/sys/net/ipv6/conf/all/forwarding
 LimitCORE=0
 TasksMax=32
 MemoryMax=128M
@@ -61,15 +61,18 @@ StartLimitIntervalSec=60s
 StartLimitBurst=5
 ```
 
-Netd directly writes `/proc/sys/net/ipv4/ip_forward` as part of the managed
-forwarding policy. Therefore `ProtectKernelTunables=yes` is incompatible with
-the current runtime contract and MUST NOT be claimed by the shipped netd unit.
-Any later change to forwarding ownership needs an explicit implementation and
-security review before changing this profile.
+Netd directly writes only `/proc/sys/net/ipv4/ip_forward` and the explicitly
+requested `/proc/sys/net/ipv6/conf/all/forwarding`, each to `1`, as part of the
+managed forwarding policy. Therefore `ProtectKernelTunables=yes` is incompatible
+with the current runtime contract and MUST NOT be claimed by the shipped netd
+unit. Any later change to forwarding ownership needs an explicit
+implementation and security review before changing this profile.
 
-The ceilings are initial conservative recommendations, not measured maxima.
-The ordinary release footprint and Argon2 qualification provide headroom
-evidence; Phase 10 must recheck them with final service units and cgroup
-accounting. Service-manager journald retention owns log storage and rotation;
+The ceilings are conservative limits, not measured maxima. The native M005
+release-candidate lifecycle runs measured installed product bytes of 9,937,817
+(x86_64) and 9,096,498 (aarch64), with idle serve/netd RSS of 9,192/6,556 KiB
+and 8,068/5,560 KiB respectively. Fresh install elapsed 2,387 ms and 5,195 ms
+on those runners. These are single-run engineering receipts, not performance
+SLOs. Service-manager journald retention owns log storage and rotation;
 the binary emits human or newline-delimited JSON events to stderr and owns no
 log files.

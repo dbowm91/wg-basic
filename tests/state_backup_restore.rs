@@ -12,9 +12,9 @@ use std::{
 };
 use wg_basic::{
     domain::{
-        ClientId, DesiredAddress, DesiredClient, DesiredGeneration, DesiredInterface, DesiredPeer,
-        DesiredState, InterfaceId, LinkLifecycle, NetworkPrefix, OwnershipDeclaration, PeerId,
-        PrivateKey, PublicKey, ResourcePresence,
+        ClientId, DesiredAddress, DesiredClient, DesiredGeneration, DesiredInterface,
+        DesiredNetworkPolicy, DesiredPeer, DesiredState, InterfaceId, LinkLifecycle, NetworkPrefix,
+        OwnershipDeclaration, PeerId, PrivateKey, PublicKey, ResourcePresence,
     },
     state::{
         restore, retained_previous_path, validate_candidate, verify_candidate_readonly,
@@ -64,6 +64,7 @@ impl Drop for TempDir {
 fn desired_state(interface_id: InterfaceId) -> DesiredState {
     let peer_id = PeerId::new();
     let address: ipnet::IpNet = "10.77.0.2/32".parse().unwrap();
+    let ipv6_address: ipnet::IpNet = "2001:db8:77::2/128".parse().unwrap();
     DesiredState {
         interfaces: vec![DesiredInterface {
             id: interface_id,
@@ -74,18 +75,30 @@ fn desired_state(interface_id: InterfaceId) -> DesiredState {
             private_key: PrivateKey::new(SECRET.into()).unwrap(),
             listen_port: Some(51888),
             manage_all_peers: true,
-            tunnel_prefixes: vec![NetworkPrefix::new("10.77.0.0/24".parse().unwrap())],
-            addresses: vec![DesiredAddress {
-                address: "10.77.0.1/24".parse().unwrap(),
-                presence: ResourcePresence::Present,
-            }],
+            tunnel_prefixes: vec![
+                NetworkPrefix::new("10.77.0.0/24".parse().unwrap()),
+                NetworkPrefix::new("2001:db8:77::/64".parse().unwrap()),
+            ],
+            addresses: vec![
+                DesiredAddress {
+                    address: "10.77.0.1/24".parse().unwrap(),
+                    presence: ResourcePresence::Present,
+                },
+                DesiredAddress {
+                    address: "2001:db8:77::1/128".parse().unwrap(),
+                    presence: ResourcePresence::Present,
+                },
+            ],
             routes: Vec::new(),
             peers: vec![DesiredPeer {
                 id: peer_id,
                 public_key: PublicKey::new(PEER_PUBLIC.into()).unwrap(),
                 private_key: None,
                 preshared_key: None,
-                allowed_ips: vec![NetworkPrefix::new(address)],
+                allowed_ips: vec![
+                    NetworkPrefix::new(address),
+                    NetworkPrefix::new(ipv6_address),
+                ],
                 persistent_keepalive_seconds: None,
                 endpoint: None,
             }],
@@ -93,11 +106,27 @@ fn desired_state(interface_id: InterfaceId) -> DesiredState {
                 id: ClientId::new(),
                 peer_id,
                 assigned_address: address,
-                route_policy: Default::default(),
+                assigned_ipv6_address: Some(ipv6_address),
+                route_policy: wg_basic::domain::ClientRoutePolicy {
+                    prefixes: vec![
+                        NetworkPrefix::new("::/0".parse().unwrap()),
+                        NetworkPrefix::new("2001:db8:abcd::/48".parse().unwrap()),
+                    ],
+                },
             }],
         }],
         client_routes: Default::default(),
-        network_policy: None,
+        network_policy: Some(DesiredNetworkPolicy {
+            wireguard_interface: "wg-backup".parse().unwrap(),
+            ipv4_forwarding_required: false,
+            ipv6_forwarding_required: true,
+            egress_interface: "eth0".parse().unwrap(),
+            source_prefixes: vec![
+                NetworkPrefix::new("10.77.0.0/24".parse().unwrap()),
+                NetworkPrefix::new("2001:db8:77::/64".parse().unwrap()),
+            ],
+            masquerade: false,
+        }),
     }
 }
 
@@ -387,6 +416,14 @@ fn a_restore_round_trips_identity_generation_and_typed_state() {
     );
     assert_eq!(loaded.generation, expected_state.generation);
     assert_eq!(loaded.state, expected_state.state);
+    assert!(
+        loaded
+            .state
+            .network_policy
+            .as_ref()
+            .unwrap()
+            .ipv6_forwarding_required
+    );
 }
 
 #[test]

@@ -12,7 +12,7 @@ cargo test --locked
 cargo +1.89.0 check --all-targets --locked
 ```
 
-The default unit/protocol suite does not require root or network namespace setup. The Linux WireGuard backend mutates only through typed requests to an existing device; the real-kernel integration test creates temporary namespaces and fixture links and requires root, `CAP_NET_ADMIN`, `iproute2`, `iputils-ping`, and kernel WireGuard support.
+The default unit/protocol suite does not require root or network namespace setup. The Linux WireGuard backend mutates only through typed requests to an existing device; real-kernel integration suites create temporary namespaces and fixture links and require root, `CAP_NET_ADMIN`, `iproute2`, `iputils-ping`, and kernel WireGuard support. Dual-stack tunnel addressing and explicit family-correct client route config are qualified by product and export tests. Hosted `product-management-rootful` exercises the authenticated full-tunnel export, real client handshake and dual-family tunnel traffic, disable/re-enable, and restart/reapply. The `network-control-e2e` fixture carries IPv4 and IPv6 full-tunnel traffic, then changes to split prefixes and proves selected destinations pass while destinations outside those prefixes do not. It also qualifies routed IPv6 forwarding, upstream return routing, foreign-state preservation, sticky forwarding, and absence of NAT66.
 
 The installed serve unit runs `doctor` as the management account before each
 start. `--allow-warnings` keeps advisory drift from blocking service recovery;
@@ -37,15 +37,18 @@ informational only. Online backups use a shared `<state>.maintenance.lock`, so
 they can run while serve is active. Restore and purge take the exclusive
 maintenance lock.
 
-Phase 10 M002 adds `wg-basic system install [--candidate PATH]` for a local
-executable and `wg-basic system status` for read-only ownership/service
-inspection. Installation requires effective root and an active systemd system
-manager; canonical destination parents must be root-owned and not group/world
-writable. It never invokes sudo. It installs the canonical `/usr/local/bin` and
-`/var/lib` layout, creates the `wg-basic` identities through
-`systemd-sysusers`, and starts netd before the management service. This local
-install path performs no release discovery or signature verification; a
-qualified public release path is part of the later release pipeline.
+`wg-basic system install [--candidate PATH]` installs a local executable;
+`wg-basic system status` inspects ownership/service state; and
+`wg-basic system uninstall` removes verified owned service/program files while
+preserving the state database and service identities for reinstall. Installation
+and uninstall require effective root and an active systemd system manager;
+canonical destination parents must be root-owned and not group/world writable.
+Neither command invokes sudo. Install creates the `wg-basic` identities through
+`systemd-sysusers`, installs the canonical `/usr/local/bin` and `/var/lib`
+layout, and starts netd before the management service. The local install path
+performs no release discovery or signature verification. Destructive state
+removal remains a separate guarded `state purge`; see the
+[installation guide](installation.md).
 
 ## Local administrator credentials
 
@@ -131,6 +134,16 @@ Run Linux IPC integration coverage with:
 
 ```sh
 cargo test --locked --test privileged_protocol -- --nocapture
+```
+
+Run the three-namespace network-control fixture for IPv4 and IPv6 full/split
+client routes, positive and negative split traffic, IPv4 NAT, routed IPv6,
+sticky global forwarding, foreign-state preservation, independent firewall
+denial, restart/reapply, and nft-failure retry evidence:
+
+```sh
+sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo \
+  cargo test --locked --features linux-integration --test network_control_e2e -- --test-threads=1
 ```
 
 Run the real kernel WireGuard handshake, telemetry, peer update, and preservation fixture with:
@@ -325,6 +338,50 @@ sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo \
 It verifies service UIDs and effective capabilities, state/socket ownership,
 unrelated-UID socket denial, exact-version reinstall, modified-unit refusal,
 doctor, and `/healthz`.
+
+### M004 updater qualification
+
+The installed CLI is `wg-basic update check`, `wg-basic update run`, and
+`wg-basic update recover`. `check` is read-only; `run` and `recover` require
+effective root and never invoke sudo. The production check/run paths currently
+fail closed before network access because the production Minisign public key is
+not provisioned. M004 transaction, enabled/disabled traffic, target, and
+operator-contract qualification is closed. Phase 10 lifecycle qualification
+is also closed, including native fresh-install and uninstall/reinstall on both
+supported GNU targets.
+
+The destructive signed-fixture test installs under `/usr/local/bin`, creates
+systemd units and `/var/lib/wg-basic`, configures a real WireGuard server, and
+creates a client namespace. It then exercises rollback, service-start timeout,
+candidate migration failure, recovery, and a committed retry. Run it only on a
+disposable Ubuntu systemd VM; the hosted CI job is the supported qualification
+environment:
+
+```sh
+sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo \
+  CARGO_TARGET_DIR=/tmp/wg-basic-update-rootful-target \
+  WGB_OLD_BINARY=/path/to/release-mode-old-fixture/wg-basic \
+  WGB_CANDIDATE_BINARY=/path/to/strictly-newer-fixture/wg-basic \
+  cargo test --locked --features linux-integration,update-test-fixtures \
+    --test update_transaction_rootful -- --ignored --exact \
+    signed_systemd_update_rolls_back_and_retries --nocapture --test-threads=1
+```
+
+The old artifact is a release-mode build of pre-v5 source `3e5b21c`, with the
+small M002 startup CLI additions and restore-interruption gate applied in a
+scratch source tree by `scripts/patch-update-old-fixture.py`. The gate pauses
+after the old database is durably retained and before the validated staging
+database replaces it; it is absent from production binaries. This preserves
+the real v4 product and
+state behavior while allowing the exact installed M002 units to start it. The
+candidate is a release-mode build with its version raised in a scratch source
+archive. The current test controller and candidate include
+`update-test-fixtures` only for the disposable-host run; the old binary and
+release workflows do not. The fixture signing key and fault markers exist
+only on the disposable host. The
+test confirms an absolute root-owned curl binary is available without making a
+network request. It also proves release signing remains unavailable without
+the production key.
 
 The Phase 10 foundation workflow validates the Eggpack producer inputs and
 builds each Linux GNU candidate with cargo-zigbuild 0.23.3 and Zig 0.14.1 at a

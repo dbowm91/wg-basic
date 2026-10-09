@@ -1,6 +1,6 @@
 # Distribution, Installation, Update, and Rollback Roadmap
 
-Status: active; M001–M003 closed, M004 active, M005 blocked
+Status: Phase 10 technically closed; production signing/publication pending maintainer provisioning; Phase 11 IPv6/route-policy work is ready
 
 Canonical references:
 
@@ -75,7 +75,7 @@ The implementation should prefer exact-compatible published versions proven toge
 At planning time:
 
 - core/acquisition/eggpack adapter are published at 0.1.3;
-- curl/service are published at 0.1.2.
+- curl is pinned at 0.1.2 and service at 0.1.3; the latter includes the closed M010 failed-unit quiescence correction and M011 publication evidence.
 
 M001/M004 must resolve and pin a registry-only compatible graph and record it.
 
@@ -205,11 +205,14 @@ Expected outcomes:
 
 ## 8. M004 — Transactional self-update and rollback orchestration
 
-Status: active; M003 is mechanically closed. Production update remains disabled until the production public key is provisioned.
+Status: closed — M004 implementation and rootful qualification are recorded in `plans/closure/distribution/004-status.md`. Production update remains disabled until the production public key is provisioned.
 
 Implementation plan:
 
 - `plans/implementation/distribution/004-transactional-self-update-and-rollback.md`
+- `plans/implementation/distribution/004-c001-update-retry-recovery-invariants.md` (closed; `plans/closure/distribution/004-c001-status.md`)
+- `plans/implementation/distribution/004-c001a-eggup-failed-unit-adoption-and-recovery-evidence.md` (closed; typed failed-unit quiescence and focused actual-updater recovery evidence; `plans/closure/distribution/004-c001a-status.md`)
+- `plans/implementation/distribution/004-c002-rootful-update-qualification-and-doc-reconciliation.md` (closed; full systemd/traffic and operator-contract evidence in `plans/closure/distribution/004-c002-status.md`)
 
 Objective:
 
@@ -236,7 +239,7 @@ Expected outcomes:
 
 ## 9. M005 — Distribution lifecycle qualification and Phase 10 closure
 
-Status: blocked on M004 closure.
+Status: closed — M005 and Phase 10 technical lifecycle qualification are complete; the production signing/publication gate remains external.
 
 Implementation plan:
 
@@ -576,5 +579,5 @@ A production release requires explicit maintainer authorization after:
 | M001 release identity/authenticity/targets | closed | `plans/implementation/distribution/001-release-identity-authenticity-and-targets.md` | `plans/closure/distribution/001-status.md` |
 | M002 system install/service layout | closed | `plans/implementation/distribution/002-system-install-and-service-layout.md` | `plans/closure/distribution/002-status.md` |
 | M003 Eggpack producer pipeline/signed draft | closed — mechanically qualified; production signing pending | `plans/implementation/distribution/003-eggpack-release-pipeline-and-signed-draft.md` | `plans/closure/distribution/003-final-status.md` |
-| M004 transactional self-update/rollback | active; production update disabled pending trust-root provisioning | `plans/implementation/distribution/004-transactional-self-update-and-rollback.md` | M001–M003 closed |
-| M005 lifecycle E2E/Phase 10 closure | blocked on M004 closure | `plans/implementation/distribution/005-install-update-uninstall-e2e-and-phase10-closure.md` | M004 |
+| M004 transactional self-update/rollback | closed — technical implementation and qualification; production trust-root provisioning pending | `plans/implementation/distribution/004-transactional-self-update-and-rollback.md` | `plans/closure/distribution/004-status.md` |
+| M005 lifecycle E2E/Phase 10 closure | closed — release-mechanically complete, public publication blocked | `plans/implementation/distribution/005-install-update-uninstall-e2e-and-phase10-closure.md` | `plans/closure/distribution/005-status.md`; production release readiness remains externally gated |

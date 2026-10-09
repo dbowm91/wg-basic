@@ -36,7 +36,10 @@ pub use backup::{
     restore, retained_previous_path, validate_candidate, verify_candidate_readonly,
     BackupDisposition, BackupReceipt, CandidateVerification, RestoreReceipt,
 };
-pub use diagnostic::{inspect_readonly, RecoveryArtifactStatus, StateDiagnostic};
+pub use diagnostic::{
+    inspect_identity_readonly, inspect_readonly, RecoveryArtifactStatus, StateDiagnostic,
+    StateIdentity,
+};
 pub use error::StateError;
 pub use service_lease::{LeaseError, MaintenanceLease, ServiceLease};
 // The identifiers themselves live in `crate::domain` so the privileged side can

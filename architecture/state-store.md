@@ -88,10 +88,10 @@ The initial schema is created entirely by migration 1. Singleton rows are enforc
 | `managed_routes` | destination, optional gateway, presence |
 | `peers` | identity, public key, optional private/preshared key, keepalive, endpoint |
 | `peer_allowed_ips` | server-side WireGuard AllowedIPs only |
-| `clients` | identity, owning interface, peer, assigned tunnel address |
+| `clients` | identity, owning interface, peer, required IPv4 and optional IPv6 assigned tunnel addresses |
 | `client_route_prefixes` | client-side route policy, deliberately separate from server AllowedIPs |
 | `client_global_route_prefixes` | client routes not attached to a single client |
-| `network_policy` | singleton IPv4 forwarding/NAT/egress intent |
+| `network_policy` | singleton IPv4/optional IPv6 forwarding, NAT, and egress intent |
 | `network_policy_source_prefixes` | explicit policy prefixes |
 | `network_operational_state` | durable whole-server enabled/disabled projection, keyed by interface identity |
 | `convergence_state` | reconciliation evidence: attempted generation, converged generation, attempt timestamp, and a disposition category |
@@ -101,6 +101,23 @@ existing managed interface. Disabling networking advances the desired
 generation and records a bounded audit event while retaining the server,
 clients, keys, addresses, and endpoint. Projection asks netd to remove the
 owned interface and firewall policy; enabling restores the same intent.
+
+Schema v6 adds nullable `clients.assigned_ipv6_address` with an interface-local
+unique index. The v1-v5 migration path preserves existing IPv4 assignments and
+loads them with no IPv6 assignment. The server IPv6 address is stored in the
+existing typed interface tunnel-prefix and managed-address collections; no
+new privileged operation or state authority is introduced.
+
+Client route policies remain in the existing typed prefix tables; M003 adds no
+schema migration. Desired-state validation bounds each policy to 64 unique
+unicast prefixes, allows explicit IPv4/IPv6 default routes, and rejects IPv6
+routes unless the managed server has an IPv6 tunnel pool and the client has an
+assigned IPv6 address. Backup restore and state reopen use the same validation.
+
+Schema v7 adds `network_policy.ipv6_forwarding_required`, defaulting existing
+rows to false. IPv6 forwarding is never inferred from an assigned tunnel
+address; enabling it requires the explicit server policy and managed IPv6
+prefix.
 
 Session storage is bounded to 32 live sessions per principal; expired sessions
 are pruned at serve startup and before successful issuance. Enrollment storage
@@ -162,6 +179,8 @@ The store is synchronous by design. It owns exactly one `rusqlite::Connection` b
 ## Backup, restore, and migration
 
 Backup uses SQLite's online backup API, never a file copy of a live WAL database, and holds the store's mutation lock so the receipt's generation is exactly the generation the file contains. Restore is offline and exclusive: it proves the candidate readable, integrity-clean, not-newer-than-this-binary, migratable, and fully loadable into typed state *before* anything is replaced, and it retains the previous database.
+
+The updater's `state identity` projection uses a separate SQLite read-only connection. It reads historical schema versions as they are stored and never runs pending migrations; while a service is live it reads committed WAL data only when both owner-private WAL sidecars are present. Recovery checks therefore cannot silently migrate a restored database before selecting the compatible binary.
 
 A schema-changing migration first writes a deterministic `<state>.pre-migration-v<N>` snapshot beside the database. Retention is bounded: the name carries the version, and wg-basic never accumulates automatic backups.
 
