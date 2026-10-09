@@ -24,6 +24,7 @@ use wg_basic::{
 
 const BINARY: &str = env!("CARGO_BIN_EXE_wg-basic");
 const FIXTURE: &str = "/run/wg-basic-update-fixture";
+const IDENTITY_HELPER: &str = "/var/lib/wg-basic/.update-fixture-controller";
 const CANDIDATE_VERSION: &str = "0.1.1";
 const ADMIN_PASSWORD: &str = "C002 disposable update qualification password";
 
@@ -66,7 +67,7 @@ fn typed_state_identity() -> serde_json::Value {
     // state CLI. Use the current test controller for its schema-4 projection;
     // after migration, use the installed candidate, which understands v5.
     let identity_binary = if database_identity().0 == 4 {
-        BINARY
+        IDENTITY_HELPER
     } else {
         wg_basic::distribution::BINARY_PATH
     };
@@ -1056,6 +1057,7 @@ fn signed_systemd_update_rolls_back_and_retries() {
         distribution::SERVE_UNIT_PATH,
         distribution::NETD_UNIT_PATH,
         FIXTURE,
+        IDENTITY_HELPER,
         "/run/.wg-basic-update-fixture-fail-netd",
     ] {
         assert!(
@@ -1090,6 +1092,9 @@ fn signed_systemd_update_rolls_back_and_retries() {
     )
     .unwrap();
     fs::set_permissions(distribution::STATE_DIR, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::copy(BINARY, IDENTITY_HELPER).unwrap();
+    fs::set_permissions(IDENTITY_HELPER, fs::Permissions::from_mode(0o755)).unwrap();
+    nix::unistd::chown(IDENTITY_HELPER, Some(management.uid), Some(group.gid)).unwrap();
     private_file(
         &Path::new(distribution::STATE_DIR).join(".update-fixture-schema-v4"),
         b"0.1.0\n",
@@ -1434,4 +1439,5 @@ fn signed_systemd_update_rolls_back_and_retries() {
         .status()
         .unwrap();
     assert!(stop.success());
+    fs::remove_file(IDENTITY_HELPER).unwrap();
 }
