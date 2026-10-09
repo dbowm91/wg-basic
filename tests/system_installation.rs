@@ -64,9 +64,15 @@ fn systemd_installation_ownership_reinstall_and_service_credentials() {
     assert!(systemd.status.success(), "{}", output_text(&systemd));
     let kernel = Command::new("/usr/bin/uname").arg("-a").output().unwrap();
     assert!(kernel.status.success(), "{}", output_text(&kernel));
+    let ldd = Command::new("/usr/bin/ldd")
+        .arg(&release_candidate)
+        .output()
+        .unwrap();
+    assert!(ldd.status.success(), "{}", output_text(&ldd));
     println!(
-        "M005 lifecycle host evidence: version={} sha256={} kernel={} systemd={}",
+        "M005 lifecycle artifact/host: version={} bytes={} sha256={} kernel={} systemd={} dependencies={}",
         String::from_utf8_lossy(&version.stdout).trim(),
+        fs::metadata(&release_candidate).unwrap().len(),
         String::from_utf8_lossy(&digest.stdout)
             .split_whitespace()
             .next()
@@ -74,8 +80,8 @@ fn systemd_installation_ownership_reinstall_and_service_credentials() {
         String::from_utf8_lossy(&kernel.stdout).trim(),
         String::from_utf8_lossy(&systemd.stdout)
             .lines()
-            .next()
-            .unwrap_or("unknown")
+            .next().unwrap_or("unknown"),
+        String::from_utf8_lossy(&ldd.stdout).replace('\n', "; ")
     );
     fs::copy("/bin/true", "/usr/local/bin/wg-basic").unwrap();
     fs::set_permissions("/usr/local/bin/wg-basic", fs::Permissions::from_mode(0o755)).unwrap();
@@ -86,7 +92,9 @@ fn systemd_installation_ownership_reinstall_and_service_credentials() {
     );
     fs::remove_file("/usr/local/bin/wg-basic").unwrap();
 
+    let install_started = std::time::Instant::now();
     let install = command(&["system", "install", "--candidate", &release_candidate]);
+    let install_elapsed = install_started.elapsed();
     assert!(
         install.status.success(),
         "{}\n{}",
@@ -146,6 +154,16 @@ fn systemd_installation_ownership_reinstall_and_service_credentials() {
 
     let netd = systemd_property("wg-basic-netd.service", "MainPID");
     let serve = systemd_property("wg-basic.service", "MainPID");
+    println!(
+        "M005 fresh install footprint: binary_bytes={} unit_bytes={} idle_rss_kib={{serve:{},netd:{}}} install_elapsed_ms={}",
+        fs::metadata("/usr/local/bin/wg-basic").unwrap().len(),
+        fs::metadata("/etc/systemd/system/wg-basic.service").unwrap().len()
+            + fs::metadata("/etc/systemd/system/wg-basic-netd.service").unwrap().len()
+            + fs::metadata("/etc/sysusers.d/wg-basic.conf").unwrap().len(),
+        proc_rss_kib(&serve),
+        proc_rss_kib(&netd),
+        install_elapsed.as_millis()
+    );
     for (unit, expected) in [
         (
             "wg-basic.service",
@@ -449,6 +467,18 @@ fn proc_field(pid: &str, key: &str) -> u64 {
         return value.split_whitespace().next().unwrap().parse().unwrap();
     }
     u64::from_str_radix(value.trim(), 16).unwrap()
+}
+
+fn proc_rss_kib(pid: &str) -> u64 {
+    fs::read_to_string(format!("/proc/{pid}/status"))
+        .unwrap()
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("VmRSS:")
+                .and_then(|value| value.split_whitespace().next())
+                .and_then(|value| value.parse().ok())
+        })
+        .expect("service process should report VmRSS")
 }
 
 #[test]
