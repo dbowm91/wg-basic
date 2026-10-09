@@ -62,6 +62,7 @@ use wg_basic::{
     wireguard::{DesiredWireGuardPeer, FieldUpdate, PeerMutation, WireGuardDevicePatch},
 };
 
+#[allow(clippy::too_many_arguments)]
 fn http(
     addr: SocketAddr,
     method: &str,
@@ -838,7 +839,7 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
     run(&["-n", &client_ns.0, "link", "set", "wg-client", "up"]);
     let interface: InterfaceName = "wg-client".parse().unwrap();
     let reply = wg_basic::protocol::request(
-        &client_scratch.netd_socket(),
+        client_scratch.netd_socket(),
         RequestOperation::ApplyWireGuardDevice {
             interface: interface.clone(),
             patch: WireGuardDevicePatch {
@@ -1061,7 +1062,7 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
         "telemetry reads do not persist observations"
     );
     let removed_enabled_peer = wg_basic::protocol::request(
-        &installation.scratch.netd_socket(),
+        installation.scratch.netd_socket(),
         RequestOperation::ApplyWireGuardDevice {
             interface: "wg0".parse().unwrap(),
             patch: WireGuardDevicePatch {
@@ -1154,7 +1155,7 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
     assert_eq!(disabled_row["drift"], false);
 
     let unexpected_peer = wg_basic::protocol::request(
-        &installation.scratch.netd_socket(),
+        installation.scratch.netd_socket(),
         RequestOperation::ApplyWireGuardDevice {
             interface: "wg0".parse().unwrap(),
             patch: WireGuardDevicePatch {
@@ -1175,7 +1176,7 @@ async fn exported_client_config_establishes_a_real_kernel_handshake() {
     assert!(matches!(unexpected_peer, ResponseBody::WireGuardApplied(_)));
     let extra_pair = wg_basic::wireguard::generate_keypair().unwrap();
     let extra_peer = wg_basic::protocol::request(
-        &installation.scratch.netd_socket(),
+        installation.scratch.netd_socket(),
         RequestOperation::ApplyWireGuardDevice {
             interface: "wg0".parse().unwrap(),
             patch: WireGuardDevicePatch {

@@ -95,7 +95,7 @@ fn require_root() {
     let uid = status
         .lines()
         .find_map(|line| line.strip_prefix("Uid:"))
-        .and_then(|value| value.trim().split_whitespace().next())
+        .and_then(|value| value.split_whitespace().next())
         .unwrap_or("0");
     assert_eq!(
         uid, "0",
@@ -845,7 +845,7 @@ fn no_key_material_reaches_the_management_surface() {
     let keys = generate_keypair().expect("the CSPRNG yields a keypair");
     let private = keys.private_key;
 
-    let state = StateStore::initialize(&scratch.state()).expect("the store initializes");
+    let state = StateStore::initialize(scratch.state()).expect("the store initializes");
     let peer_id = PeerId::new();
     state
         .mutate(INITIAL_DESIRED_GENERATION, |_| {
