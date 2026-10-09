@@ -126,6 +126,11 @@ identity reader uses a dedicated read-only SQLite path so verification never
 applies migrations; a regression test keeps v4 and live WAL at v4 across
 inspection.
 
+The rootful startup-timeout case also proved candidate restarts can exhaust
+systemd's per-unit start limit before old-generation recovery. Recovery now
+resets the failed-start counter only after revalidating exact ownership of the
+unit, using a bounded literal systemctl operation through Eggup's executor.
+
 Transport comparison at C002 implementation head `f5988c4` (x86_64 Linux,
 Rust 1.89.0, locked release profile): the current curl-linked `wg-basic` executable is
 12,218,768 bytes (SHA-256
