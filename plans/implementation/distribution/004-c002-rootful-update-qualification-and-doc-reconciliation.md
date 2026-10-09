@@ -126,10 +126,12 @@ Release service footprint on the local x86_64 Linux host at the same source
 head: serve 9.81 MiB RSS, netd 5.48 MiB RSS, combined 15.29 MiB; cold serve
 readiness 56.6 ms, median `/healthz` 1.11 ms, authenticated API health 20.2
 ms, login including Argon2id 66.4 ms, and zero idle CPU ticks for both
-services over two seconds. The rootful fixture now emits exact live state,
-verified backup, old/candidate binary, journal, and runtime recovery-copy byte
-counts after a post-migration rollback so storage amplification is measured
-from the real update transaction rather than inferred.
+services over two seconds. The rootful fixture emits exact live state, verified
+backup, old/candidate binary, journal, and runtime recovery-copy byte counts
+both after post-migration rollback and at the durable `BinaryCommitted`
+startup-timeout cutpoint, where the complete peak recovery set is present.
+Storage amplification is measured from the real update transaction rather than
+inferred.
 
 ## 6. Verification gates and responsibility split
 
