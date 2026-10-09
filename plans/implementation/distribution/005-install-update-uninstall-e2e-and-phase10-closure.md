@@ -1,6 +1,6 @@
 # Distribution M005 — Install/Update/Uninstall E2E and Phase 10 Closure
 
-Status: blocked on Distribution M004 closure
+Status: active — M004 technical closure is recorded in `plans/closure/distribution/004-status.md`; production release signing remains an external readiness gate.
 
 Source roadmap:
 

@@ -2,9 +2,10 @@
 
 This document describes **current implemented behavior** for every `wg-basic`
 subcommand in `src/main.rs`. Native system installation is implemented under
-M002 qualification; C001's M004 retry/recovery contract is closed and C002
-qualification remains active. Update commands are implemented; production
-`check` and `run` fail closed while the production trust root is unprovisioned.
+M002 qualification; M004 update, rollback, and recovery are technically closed
+with rootful systemd evidence. M005 lifecycle qualification is active. Update
+commands are implemented; production `check` and `run` fail closed while the
+production trust root is unprovisioned.
 See [overview](overview.md) for status.
 
 Part of the [architecture overview](overview.md). Role internals live in

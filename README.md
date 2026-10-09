@@ -49,12 +49,13 @@ as root plus server setup; see
 
 Network control, durable state/restart reconciliation, management/auth,
 product/enrollment/UI, and operational hardening are implemented and
-qualified in Linux namespaces. Native systemd installation is implemented.
-Transactional update and recovery are implemented and C001's recovery matrix is
-closed; the broader M004 C002 systemd/traffic/target qualification is active.
+qualified in Linux namespaces. Native systemd installation and M004's signed
+update, rollback, and recovery transaction are technically qualified on
+current x86_64 and aarch64 GNU release artifacts. M005 is active for complete
+fresh-install, uninstall/reinstall, and Phase 10 lifecycle qualification.
 Production `update check` and `update run` remain fail-closed because the
-production Minisign public key is not provisioned. Uninstall and Phase 10
-closure remain planned (see [plans/registry.md](plans/registry.md)).
+maintainer-provisioned Minisign public key is still pending; no public release
+is ready. See [plans/registry.md](plans/registry.md).
 
 ## Docs
 
