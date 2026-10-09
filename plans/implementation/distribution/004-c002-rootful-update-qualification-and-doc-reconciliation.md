@@ -95,14 +95,15 @@ Make fixture version/signature/manifest generation repeatable, record exact scri
 
 Compare Eggup curl vs alternative transport link/footprint/host availability as required by M004; record binary bytes, per-service RSS, startup/readiness, storage amplification during backup/rollback and idle CPU. Do not weaken Argon2id, root/service capability separation, authenticity, or TLS restrictions to hit footprint targets.
 
-The actual updater fixture uses Phase 9 M002 source `ae60e81`, whose old
-service includes the management lease required by current recovery. The
-scratch-only fixture patch caps its supported state schema at v4 and adds the
-three M002 unit CLI requirements (`state init`, `netd --allow-user`, and
-`doctor --allow-warnings`, accepting the legacy `unknown` lease diagnostic).
-The v4 product/state behavior and lease implementation remain from that source;
-the candidate is built from C002 source in a scratch archive with version
-0.1.1 and test-only fault hooks. For v4 identity assertions, the rootful fixture
+The actual updater fixture uses schema-v4/product source `3e5b21c` and its
+locked release-mode artifact as the old installation. It receives the exact
+Phase 9 M002 `ServiceLease` module from `ae60e81` plus the small serve-entry
+acquisition call needed to prove the current updater's lease contract. The
+scratch-only patch also adds the three M002 unit CLI requirements (`state init`,
+`netd --allow-user`, and `doctor --allow-warnings`, accepting its legacy
+`unknown` lease diagnostic). State and doctor behavior remain from v4 source;
+the candidate is built from C002 source in a scratch archive with version 0.1.1
+and test-only fault hooks. For v4 identity assertions, the rootful fixture
 stages a temporary controller copy inside the service-owned state directory,
 because the hosted runner's Cargo target directory is not traversable by the
 management user. The helper is removed after qualification. None of these

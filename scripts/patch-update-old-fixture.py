@@ -99,17 +99,23 @@ source = replace_once(
 )
 path.write_text(source)
 
-migrations_path = path.parent / "state" / "schema" / "migrations.rs"
-migrations = migrations_path.read_text()
-migrations = replace_once(
-    migrations,
-    "pub(super) fn run_migrations(connection: &mut Connection) -> Result<(), StateError> {\n"
-    "    apply_migrations(connection, MIGRATIONS)\n"
-    "}",
-    "pub(super) fn run_migrations(connection: &mut Connection) -> Result<(), StateError> {\n"
-    "    // This disposable old-release fixture intentionally models schema v4.\n"
-    "    let count = MIGRATIONS.partition_point(|migration| migration.version <= 4);\n"
-    "    apply_migrations(connection, &MIGRATIONS[..count])\n"
-    "}",
+state_path = path.parent / "state" / "mod.rs"
+state = state_path.read_text()
+state = replace_once(state, "mod schema;\nmod store;", "mod schema;\nmod service_lease;\nmod store;")
+state = replace_once(
+    state,
+    "pub use error::StateError;",
+    "pub use error::StateError;\npub use service_lease::ServiceLease;",
 )
-migrations_path.write_text(migrations)
+state_path.write_text(state)
+
+source = path.read_text()
+source = replace_once(
+    source,
+    "    };\n    let (signal, wait) = tokio::sync::oneshot::channel::<()>();",
+    "    };\n"
+    "    let _lease = wg_basic::state::ServiceLease::acquire(&config.state_path)\n"
+    "        .map_err(|error| error.to_string())?;\n"
+    "    let (signal, wait) = tokio::sync::oneshot::channel::<()>();",
+)
+path.write_text(source)
