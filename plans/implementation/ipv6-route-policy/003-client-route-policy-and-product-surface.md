@@ -1,6 +1,6 @@
 # IPv6 M003 — Client Route Policy and Product Surface
 
-Status: active
+Status: closed; strict closure evidence is recorded in `plans/closure/ipv6-route-policy/003-status.md`.
 
 Repository baseline: `306ec64` (M002 implementation head; M002 strict closure
 and hosted evidence are recorded in `plans/closure/ipv6-route-policy/002-status.md`).
@@ -185,4 +185,6 @@ Stop and revise the plan if IPv6 routing can only be inferred from address
 assignment, if client route policy must be merged into server peer
 `AllowedIPs`, if the existing authenticated generation contract cannot reject
 invalid policy before commit, or if preserving IPv4-only exported output
-requires a breaking change. M004 remains blocked until M003 strictly closes.
+requires a breaking change. M003 is strictly closed in
+`plans/closure/ipv6-route-policy/003-status.md`; M004 is unblocked under
+`plans/implementation/ipv6-route-policy/004-dual-stack-e2e-and-phase-11-closure.md`.
