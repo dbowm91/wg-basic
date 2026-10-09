@@ -130,13 +130,14 @@ The rootful startup-timeout case also proved candidate restarts can exhaust
 systemd's per-unit start limit before old-generation recovery. Recovery now
 resets the failed-start counter only after revalidating exact ownership of the
 unit, using a bounded literal systemctl operation through Eggup's executor.
-Hosted recovery diagnostics then exposed that Eggup's systemd manager-wide
-transition deadline was shorter than the separately bounded stop operation.
-The service endpoint now gives the manager a 60-second transition budget and
-uses the same 60-second bound for stopping the owned unit. Candidate start and
-updater health checks retain their 30-second bound, preserving the existing
-start acceptance window while allowing manager inspection and rollback stop to
-complete within the operation's declared limit.
+Hosted recovery diagnostics showed that systemd can keep service inspection
+blocked through the candidate's failed start transition, exhausting a
+60-second stop budget before Eggup can issue the stop command. The service
+endpoint and owned-service stop now both use Eggup's documented 300-second
+maximum transition bound, including manager inspection and stop confirmation.
+Candidate start and updater health checks retain their 30-second bound, so the
+larger deadline only allows bounded rollback quiescence to outlast systemd's
+failed-start transition.
 
 Transport comparison at C002 implementation head `f5988c4` (x86_64 Linux,
 Rust 1.89.0, locked release profile): the current curl-linked `wg-basic` executable is
