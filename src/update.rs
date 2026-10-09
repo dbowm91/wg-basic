@@ -200,7 +200,7 @@ pub fn acquire_candidate(
         256 * 1024,
         artifact.exact_size,
         Duration::from_secs(10),
-        Duration::from_secs(300),
+        Duration::from_secs(60),
     )
     .map_err(|_| "release artifact acquisition policy is invalid")?;
     match transport
@@ -454,7 +454,7 @@ fn service_endpoint(
         definition.as_bytes().to_vec(),
         false,
         false,
-        Duration::from_secs(300),
+        Duration::from_secs(60),
     )
     .map_err(|_| "invalid product service definition")?;
     let spec = ServiceSpec::new(
@@ -476,19 +476,65 @@ fn stop_owned_service(
         eggup_service::ServiceSpec,
     ),
 ) -> Result<(), String> {
-    use eggup_service::{LifecycleState, Ownership, ServiceManager};
+    use eggup_service::{CommandExecutor, LifecycleState, Ownership, ServiceManager};
     let before = manager
         .inspect(&spec)
         .map_err(|_| "could not inspect product service before stop")?;
     if before.ownership != Ownership::Owned {
         return Err("product service registration is not owned".into());
     }
-    let stop_completed = if matches!(
+    let stop_completed = if before.state == LifecycleState::Transitioning {
+        // Eggup's normal stop path re-inspects ownership before issuing the
+        // stop command. During a timed-out systemd start job, that inspection
+        // can wait behind the very job that recovery must cancel. Ownership
+        // was just proven above, so request cancellation for this exact unit
+        // without waiting for the job, then verify the stopped state below.
+        let install = manager.install_config();
+        let scope = match install.scope {
+            eggup_service::SystemdScope::System => "--system",
+            eggup_service::SystemdScope::User => "--user",
+        };
+        let output = eggup_service::SystemExecutor::new()
+            .run(
+                &[
+                    "systemctl".into(),
+                    scope.into(),
+                    "stop".into(),
+                    "--no-block".into(),
+                    install.unit_name.clone(),
+                ],
+                None,
+                Duration::from_secs(10),
+            )
+            .map_err(|_| "could not request stop of transitioning owned service")?;
+        if output.status != Some(0) {
+            return Err("could not request stop of transitioning owned service".into());
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        loop {
+            let current = manager
+                .inspect(&spec)
+                .map_err(|_| "could not verify transitioning product service stop")?;
+            if current.ownership != Ownership::Owned {
+                return Err("transitioning product service ownership changed during stop".into());
+            }
+            if current.state == LifecycleState::Stopped {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(
+                    "transitioning product service did not stop before its deadline".into(),
+                );
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        true
+    } else if matches!(
         before.state,
-        LifecycleState::Running | LifecycleState::Unknown | LifecycleState::Transitioning
+        LifecycleState::Running | LifecycleState::Unknown
     ) {
         let result = manager
-            .stop(&spec, Duration::from_secs(300))
+            .stop(&spec, Duration::from_secs(60))
             .map_err(|error| format!("could not stop product service: {error}"))?;
         if !result.completed() {
             return Err(format!(
