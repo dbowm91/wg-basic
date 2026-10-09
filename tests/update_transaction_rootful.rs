@@ -53,7 +53,19 @@ fn database_identity() -> (i64, String, i64, i64) {
 }
 
 fn typed_state_identity() -> serde_json::Value {
-    let identity = command(&["state", "identity", "--state", distribution_state_path()]);
+    let identity = Command::new("/usr/sbin/runuser")
+        .args([
+            "--user",
+            "wg-basic",
+            "--",
+            BINARY,
+            "state",
+            "identity",
+            "--state",
+            distribution_state_path(),
+        ])
+        .output()
+        .unwrap();
     assert!(identity.status.success(), "{}", output_text(&identity));
     serde_json::from_slice(&identity.stdout).unwrap()
 }
