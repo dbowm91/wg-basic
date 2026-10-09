@@ -1115,7 +1115,22 @@ fn signed_systemd_update_rolls_back_and_retries() {
 
     let old_release = std::env::var("WGB_OLD_BINARY").unwrap_or_else(|_| BINARY.to_owned());
     let install = command(&["system", "install", "--candidate", &old_release]);
-    assert!(install.status.success(), "{}", output_text(&install));
+    if !install.status.success() {
+        let status = Command::new("/usr/bin/systemctl")
+            .args(["status", "--no-pager", "wg-basic.service"])
+            .output()
+            .unwrap();
+        let journal = Command::new("/usr/bin/journalctl")
+            .args(["--no-pager", "-u", "wg-basic.service", "-n", "80"])
+            .output()
+            .unwrap();
+        panic!(
+            "{}\nservice status:\n{}\nservice journal:\n{}",
+            output_text(&install),
+            output_text(&status),
+            output_text(&journal)
+        );
+    }
     let installed_receipt: serde_json::Value = serde_json::from_slice(
         &fs::read(Path::new(distribution::SYSTEM_DIR).join("install.json")).unwrap(),
     )
