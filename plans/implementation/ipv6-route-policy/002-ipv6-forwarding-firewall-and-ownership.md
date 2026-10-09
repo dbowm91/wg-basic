@@ -1,6 +1,6 @@
 # IPv6 M002 — Forwarding, Firewall, and Host Ownership
 
-Status: active
+Status: closed; strict closure evidence is recorded in `plans/closure/ipv6-route-policy/002-status.md`.
 
 Repository planning baseline: `fa25918b824641e00944e3edf335f7055cb11dcc` (M001 strict closure)
 
@@ -200,5 +200,7 @@ be implemented without an arbitrary sysctl escape hatch; the kernel's global
 side effects cannot be represented truthfully; the independent firewall
 preservation test fails; IPv4 rules/defaults regress; or routed IPv6 return
 traffic requires NAT66 or an ownership mutation outside the selected prefix
-and egress. M003 remains blocked until M002 strictly closes. M004 remains
-blocked until M003 strictly closes.
+and egress. M002 strict closure is recorded in
+`plans/closure/ipv6-route-policy/002-status.md`. M003 is unblocked and active
+under `plans/implementation/ipv6-route-policy/003-client-route-policy-and-product-surface.md`;
+M004 remains blocked until M003 strictly closes.
