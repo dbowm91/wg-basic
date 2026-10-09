@@ -2053,6 +2053,11 @@ pub fn apply() -> Result<(), String> {
     let backup_for_restore = backup.clone();
     let restore_succeeded = std::cell::Cell::new(false);
     let rollback_failure = std::cell::RefCell::new(None);
+    // Eggup reports a rollback disposition after the callback rejects the
+    // candidate, but its public receipt does not retain the callback error.
+    // Keep the bounded, redacted product failure reason so the operator can
+    // distinguish a service start timeout from an application health failure.
+    let candidate_failure: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
     let callback = || -> Result<(), String> {
         let transaction = (|| {
             journal = advance_journal(&journal_path, &journal, UpdatePhase::BinaryCommitted)
@@ -2072,7 +2077,8 @@ pub fn apply() -> Result<(), String> {
         if transaction.is_ok() {
             return Ok(());
         }
-        let cause = transaction.unwrap_err();
+        let cause: String = transaction.unwrap_err();
+        *candidate_failure.borrow_mut() = Some(cause.clone());
         let mut recovery_ok = true;
         if journal.phase != UpdatePhase::RollingBack {
             match advance_journal(&journal_path, &journal, UpdatePhase::RollingBack) {
@@ -2148,10 +2154,13 @@ pub fn apply() -> Result<(), String> {
                 advance_journal(&journal_path, &journal, UpdatePhase::RolledBack)
                     .map_err(|_| "rolled-back update journal could not be persisted")?;
                 let _ = fs::remove_file(&old_binary_for_restore);
-                Err(
-                    "candidate failed health checks; previous binary and state were restored"
-                        .into(),
-                )
+                Err(format!(
+                    "candidate update failed ({}); previous binary and state were restored",
+                    candidate_failure
+                        .borrow()
+                        .as_deref()
+                        .unwrap_or("product health check failed")
+                ))
             } else {
                 Err(format!(
                     "update rollback requires operator recovery; services remain stopped ({})",
