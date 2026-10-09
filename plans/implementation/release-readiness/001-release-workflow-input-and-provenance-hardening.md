@@ -1,6 +1,6 @@
 # Release Readiness R001 — Workflow Input, Tag Authority, and Build/Stage Provenance Hardening
 
-Status: product-side security tests/provenance work ready; strict closure and generated-workflow update blocked on upstream Eggpack CI M003j.
+Status: **ready for implementation** — the upstream Eggpack CI M003j hard dependency closed with qualified immutable producer revision `eggstack/eggpack@559d940af0fe6a2951eb17de1fcbecbf9e0bb6ce` (hosted run `37987890305`, all required lanes green). This only unblocks R001; consumer workflow regeneration, provenance proof, and strict closure remain outstanding.
 Baseline: `dbowm91/wg-basic@ff40f851508ccda52171c27cefdcdaf4ec1da2d5` (2026-10-09).
 Primary class: invariant / security corrective.
 Source roadmap: `plans/subsystems/release-readiness-security-roadmap.md`.
