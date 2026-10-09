@@ -398,7 +398,7 @@ fn require_running_owned_services() -> Result<(), String> {
             return Err("both owned product services must be running before update".into());
         }
     }
-    Ok(())
+    confirm_serve_lease_held()
 }
 
 #[allow(dead_code)] // Used by the M004 mutating transaction orchestration.
@@ -591,6 +591,20 @@ fn confirm_serve_lease_released() -> Result<(), String> {
     ) {
         Ok(false) => Ok(()),
         Ok(true) => Err("management service still holds its state lease".into()),
+        Err(_) => Err("management service lease state is ambiguous".into()),
+    }
+}
+
+fn confirm_serve_lease_held() -> Result<(), String> {
+    let owner = nix::unistd::User::from_name("wg-basic")
+        .map_err(|_| "management account lookup failed")?
+        .ok_or("management account is missing")?;
+    match crate::state::ServiceLease::is_held_by_uid(
+        Path::new(crate::distribution::STATE_PATH),
+        owner.uid.as_raw(),
+    ) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err("management service does not hold its state lease".into()),
         Err(_) => Err("management service lease state is ambiguous".into()),
     }
 }
