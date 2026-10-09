@@ -221,7 +221,7 @@ fn apply_interface(
         RequestOperation::ApplyManagedInterface { desired },
         request_id,
     )
-    .unwrap()
+    .unwrap_or_else(|error| panic!("managed interface request {request_id} failed: {error}"))
     {
         ResponseBody::ManagedInterfaceApplied(receipt) => receipt,
         _ => panic!("unexpected interface response"),
@@ -778,10 +778,16 @@ fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
         admin_up: None,
         owner_tag: server_owner.clone(),
         wireguard: None,
-        addresses: vec![DesiredAddress {
-            address: "10.8.0.1/24".parse().unwrap(),
-            presence: ResourcePresence::Absent,
-        }],
+        addresses: vec![
+            DesiredAddress {
+                address: "10.8.0.1/24".parse().unwrap(),
+                presence: ResourcePresence::Absent,
+            },
+            DesiredAddress {
+                address: "2001:db8:42::1/64".parse().unwrap(),
+                presence: ResourcePresence::Absent,
+            },
+        ],
         routes: Vec::<ManagedRoute>::new(),
     };
     assert_eq!(
