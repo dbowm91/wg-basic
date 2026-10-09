@@ -119,6 +119,7 @@ jobs:
           TARGET: ${{ matrix.target }}
         run: |
           sudo chmod 0755 /usr/local/bin
+          chmod 0755 "$RUNNER_TEMP/wg-basic-$TARGET/wg-basic"
           sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo \
             CARGO_TARGET_DIR="$RUNNER_TEMP/wg-basic-system-install-target" \
             WGB_CANDIDATE_BINARY="$RUNNER_TEMP/wg-basic-$TARGET/wg-basic" \
