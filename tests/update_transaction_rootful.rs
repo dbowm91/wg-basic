@@ -543,6 +543,33 @@ fn signed_systemd_update_rolls_back_and_retries() {
     ] {
         kill_update_at_phase(phase, &before);
     }
+    let netd_failure = Path::new("/run/wg-basic/.update-fixture-fail-netd");
+    fs::write(netd_failure, format!("{CANDIDATE_VERSION}\n")).unwrap();
+    fs::set_permissions(netd_failure, fs::Permissions::from_mode(0o644)).unwrap();
+    let failed_netd_update = Command::new(BINARY)
+        .args(["update", "run"])
+        .env("WGB_UPDATE_FIXTURE_DIR", FIXTURE)
+        .output()
+        .unwrap();
+    assert!(
+        !failed_netd_update.status.success(),
+        "candidate netd startup failure must roll the update back"
+    );
+    assert_eq!(database_identity(), before);
+    for service in ["wg-basic-netd.service", "wg-basic.service"] {
+        let active = Command::new("/usr/bin/systemctl")
+            .args(["is-active", service])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&active.stdout).trim(),
+            "active",
+            "old service pair must recover after candidate netd failure: {}",
+            output_text(&failed_netd_update)
+        );
+    }
+    fs::remove_file(netd_failure).unwrap();
+
     private_file(
         &Path::new(distribution::STATE_DIR).join(".update-fixture-fail-start"),
         format!("{CANDIDATE_VERSION}\n").as_bytes(),
