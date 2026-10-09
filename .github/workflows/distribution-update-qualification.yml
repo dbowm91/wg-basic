@@ -1,0 +1,28 @@
+name: Distribution Update Qualification
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  update-transaction-rootful:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Build a strictly newer fixture candidate without changing repository history
+        run: |
+          mkdir -p "$RUNNER_TEMP/wg-basic-candidate-src"
+          git archive "$GITHUB_SHA" | tar -x -C "$RUNNER_TEMP/wg-basic-candidate-src"
+          sed -i '0,/^version = "0.1.0"$/s//version = "0.1.1"/' "$RUNNER_TEMP/wg-basic-candidate-src/Cargo.toml"
+          cargo update --manifest-path "$RUNNER_TEMP/wg-basic-candidate-src/Cargo.toml" -p wg-basic --precise 0.1.1
+          cargo build --locked --release --features update-test-fixtures --manifest-path "$RUNNER_TEMP/wg-basic-candidate-src/Cargo.toml" --target-dir "$RUNNER_TEMP/wg-basic-candidate-target" --bin wg-basic
+      - name: Qualify signed-fixture migration rollback, recovery, retry, and real systemd services
+        run: sudo chmod 0755 /usr/local/bin && sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo CARGO_TARGET_DIR="$RUNNER_TEMP/wg-basic-rootful-target" WGB_CANDIDATE_BINARY="$RUNNER_TEMP/wg-basic-candidate-target/release/wg-basic" cargo test --locked --features linux-integration,update-test-fixtures --test update_transaction_rootful -- --ignored --exact signed_systemd_update_rolls_back_and_retries --nocapture --test-threads=1

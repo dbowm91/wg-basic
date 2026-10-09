@@ -203,6 +203,10 @@ fn signed_systemd_update_rolls_back_and_retries() {
     }
     make_signed_fixture();
 
+    if !Path::new("/etc/sysusers.d").exists() {
+        fs::create_dir("/etc/sysusers.d").unwrap();
+        fs::set_permissions("/etc/sysusers.d", fs::Permissions::from_mode(0o755)).unwrap();
+    }
     fs::write("/etc/sysusers.d/wg-basic.conf", distribution::SYSUSERS).unwrap();
     fs::set_permissions(
         "/etc/sysusers.d/wg-basic.conf",
