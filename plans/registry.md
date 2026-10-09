@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-08 (Phase 10 M001–M003 closed; M004 corrective C001 ready, C002 blocked on C001; M005 blocked)
+Last planning reconciliation: 2026-10-09 (Phase 10 M001–M003 closed; C001 hardening implemented with strict closure corrective-required; C002 remains blocked on C001 strict closure; M005 remains blocked)
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -80,7 +80,7 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
 | Distribution/install/update | M004 transactional self-update/rollback | active — corrective required | `plans/implementation/distribution/004-transactional-self-update-and-rollback.md` | M001–M003 closed; apply C001 then C002; production signing/public update remain gated |
-| Distribution/install/update | M004 C001 — updater retry and recovery invariants | ready | `plans/implementation/distribution/004-c001-update-retry-recovery-invariants.md` | Unresolved RolledBack retry, idempotent restore, failure-classification and typed health/state-identity gaps; baseline `7b69c75` |
+| Distribution/install/update | M004 C001 — updater retry and recovery invariants | active — corrective required | `plans/implementation/distribution/004-c001-update-retry-recovery-invariants.md` | Code hardening and routine/Phase 9 regression evidence recorded; strict closure blocked on failed-service lifecycle proof and updater-level signed-fixture retry/crash matrix; baseline `237f5f4` |
 
 ## 6. Blocked implementation plans
 
@@ -104,6 +104,7 @@ Production public-release readiness additionally requires maintainer provisionin
 - Distribution M002 strict closure: `plans/closure/distribution/002-status.md` (implementation head `d1813da`; systemd qualification and full CI run `37799075225`).
 - Distribution M003 historical blocked disposition: `plans/closure/distribution/003-status.md`; prerequisite re-review/unblock: `plans/closure/distribution/003-unblock-review.md`.
 - Distribution M003 mechanical closure: `plans/closure/distribution/003-final-status.md` (implementation head `568d568`; native target run `37853066003`; full CI run `37853066011`).
+- Distribution M004 C001 implementation disposition (strict closure not achieved): `plans/closure/distribution/004-c001-status.md`.
 
 - M001 strict closure: `plans/closure/network-control/001-status.md`.
 - M002 strict closure: `plans/closure/network-control/002-status.md`.
