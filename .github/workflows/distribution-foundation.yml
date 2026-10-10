@@ -20,7 +20,7 @@ jobs:
       - name: Build pinned Eggpack validator
         run: |
           git clone --filter=blob:none https://github.com/eggstack/eggpack "$RUNNER_TEMP/eggpack"
-          git -C "$RUNNER_TEMP/eggpack" checkout --detach d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628
+          git -C "$RUNNER_TEMP/eggpack" checkout --detach 559d940af0fe6a2951eb17de1fcbecbf9e0bb6ce
           cargo build --locked --manifest-path "$RUNNER_TEMP/eggpack/Cargo.toml" -p eggpack-cli --bin eggpack
       - name: Check generated Eggpack workflow drift
         run: |
@@ -35,6 +35,14 @@ jobs:
         run: python3 scripts/test-release-installer.py
       - name: Check signing-request verifier syntax
         run: python3 scripts/test-signing-request.py
+      - name: Check generated release workflow input security
+        run: python3 scripts/test-release-workflow-security.py
+      - name: Check run-bound release provenance receipt
+        run: python3 scripts/test-release-provenance.py
+      - name: Check signing bundle source/run preflight
+        run: python3 scripts/test-release-signing-bundle.py
+      - name: Check verified-install instructions and wrapper trust labels
+        run: python3 scripts/test-verified-install.py
       - name: Check candidate source and manifest identity binding
         run: python3 scripts/test-release-smoke.py
 

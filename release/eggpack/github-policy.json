@@ -15,7 +15,7 @@
   "release_identity_mode": "v_prefixed_stable_semver",
   "eggpack_tool": {
     "repo": "https://github.com/eggstack/eggpack",
-    "revision": "d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628",
+    "revision": "559d940af0fe6a2951eb17de1fcbecbf9e0bb6ce",
     "package": "eggpack-cli",
     "install_timeout_minutes": 20
   },

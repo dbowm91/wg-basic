@@ -1,7 +1,7 @@
 # Release Readiness R001 — Workflow Input, Tag Authority, and Build/Stage Provenance Hardening
 
-Status: **ready for implementation** — the upstream Eggpack CI M003j hard dependency closed with qualified immutable producer revision `eggstack/eggpack@559d940af0fe6a2951eb17de1fcbecbf9e0bb6ce` (hosted run `37987890305`, all required lanes green). This only unblocks R001; consumer workflow regeneration, provenance proof, and strict closure remain outstanding.
-Baseline: `dbowm91/wg-basic@ff40f851508ccda52171c27cefdcdaf4ec1da2d5` (2026-10-09).
+Status: **consumer implementation complete; strict closure pending hosted CI, repository protection, and producer follow-up**. Eggpack CI M003j is qualified at `eggstack/eggpack@559d940af0fe6a2951eb17de1fcbecbf9e0bb6ce` (run `37987890305`). The consumer workflow is regenerated at that pin and product provenance checks are implemented. The generated `preflight` job still checks out the dispatch ref before the resolver's canonical-tag validator; it only runs `cargo --version` and does not execute checked-out code, but strict R001 ordering requires upstream support to validate before that checkout or remove it. GitHub reports no repository rulesets and `main` is not protected; no settings were changed. Exact-head hosted gates and maintainer-owned rulesets remain required before strict closure.
+Baseline: `dbowm91/wg-basic@0b814fe` (2026-10-10).
 Primary class: invariant / security corrective.
 Source roadmap: `plans/subsystems/release-readiness-security-roadmap.md`.
 Canonical authority: `plans/adr/006-distribution-install-authenticity-and-update.md`; `plans/subsystems/distribution-install-update-roadmap.md`; `plans/003-planning-process.md`.
@@ -11,11 +11,11 @@ Related completed evidence: `plans/closure/distribution/003-final-status.md`, `0
 
 Eliminate shell-expression injection from the generated Eggpack `workflow_dispatch` release workflow, enforce a tightly bounded release tag/commit identity from dispatch through staged draft, and prevent the privileged staging job from acting on a mismatched or unverifiable build. Keep the release pipeline producer-owned by Eggpack and the release-signing decision owned by wg-basic's maintainer.
 
-No new Eggup runtime features or rootful VPN implementation changes are required. The generated workflow security correction belongs to Eggpack, so R001's producer-dependent implementation and strict closure require upstream CI M003j: `eggstack/eggpack` `plans/implementation/ci-release-orchestration/003j-dispatch-tag-shell-injection-corrective.md` on `plans/ci-m003j-dispatch-input-hardening` (planning baseline `d61ca71`). Product-side tests/provenance work is independently authorable. R001 closure remains a hard prerequisite for R004 release authorization and R002's *production signing ceremony* (R002 fixture development may proceed against the stable contract).
+No new Eggup runtime features or rootful VPN implementation changes are required. The producer-dependent correction is closed upstream by Eggpack CI M003j at `559d940af0fe6a2951eb17de1fcbecbf9e0bb6ce`; this repository pins that revision, regenerates the workflow, and adds consumer-side provenance. Strict R001 closure remains a hard prerequisite for R004 release authorization and R002's *production signing ceremony*.
 
 ## 2. Verified source finding and detection gap
 
-In `.github/workflows/release-eggpack.yml`, both the `resolve` and the final write-authorized `stage` job contain:
+At the review baseline, `.github/workflows/release-eggpack.yml` interpolated `inputs.release_tag` into `run:` in both `resolve` and the final write-authorized `stage` job. Eggpack M003j corrected those producer sites; the repository now pins its qualified revision and regenerates the safe form. `scripts/test-release-workflow-security.py` executes the generated tag validator against a command-substitution payload and confirms it rejects the value without creating a marker.
 
 ```yaml
 run: "test -n \"${{ inputs.release_tag }}\""
@@ -23,7 +23,7 @@ run: "test -n \"${{ inputs.release_tag }}\""
 
 GitHub Actions interpolates the input into generated Bash script text rather than treating it as an opaque string. Shell syntax, including command substitutions, can therefore be interpreted. A manual-dispatch trigger limits who can invoke this, but it does not make the pattern acceptable inside release and `contents: write` staging paths. Inspect the full YAML for **all** `${{ inputs.* }}` / `${{ github.event.* }}` occurrences in `run:` bodies. `env: EGGPACK_RELEASE_TAG: "${{ inputs.release_tag }}"` with subsequent `"$EGGPACK_RELEASE_TAG"` use is the safe intended form.
 
-The existing `.github/workflows/distribution-foundation.yml` checks that the generated workflow conforms to a pinned Eggpack schema. This drift check does **not** itself assert shell-injection safety; the generated workflow is still vulnerable. The release flow currently checks out `inputs.release_tag` in many separate jobs and stages with a token having `contents: write`; tag movement, wrong-commit publication, or provenance mismatch must be explicitly rejected. The published `scripts/verify-signing-request.py` checks draft asset bytes against an unsigned staging receipt but does not independently establish that a tagged source revision is authorized.
+The generated workflow checks out the selected tag in each job, binds the resolved source revision in its release plan, and validates each later checkout before using it. Build artifacts are transferred within the same Actions run and the stage job remains the only `contents: write` job after `aggregate`. A read-only `workflow_run` workflow now binds the staging receipt to the release run/attempt and workflow SHA. The signer preflight independently checks both GitHub run records, the live tag OID, the live draft asset inventory, and freshly downloaded bytes. The JSON receipts remain consistency evidence; GitHub run/tag records and independently reviewed repository settings are still required.
 
 These are review findings from source, not a claim that an unauthorized actor already executed a command or compromised a release.
 
@@ -45,7 +45,7 @@ Use an isolated parsed/executable Bash-script fixture—not the live privileged 
 
 ### WP2 — Fix at the correct generator boundary
 
-Root cause confirmed in pinned `eggstack/eggpack@d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628`, `crates/eggpack-ci/src/lib.rs`, in the reusable resolver and write-scoped staging renderer. Eggpack CI M003j is registered and ready on its own branch. **Do not modify the checked-in generated YAML as the canonical fix while M003j remains unqualified**; implement product-side guards and wait for the new upstream source revision. If a product policy/template has an independent unsafe sink, fix that at the product-owned boundary. Require env-mediated dispatch handling and stable SemVer validation before any untrusted value reaches shell. Re-generate `.github/workflows/release-eggpack.yml` from the corrected pinned source and update `github-policy.json`/workflow-shape contract in lockstep. No silent local patch that `eggpack ci check` would later undo.
+Root cause was in Eggpack's reusable resolver and write-scoped staging renderer at `d61ca71`. Upstream M003j corrected both generator sites and passed its registered CI. The consumer pin and generated output are updated together; do not apply a local generated-YAML-only patch. A separate read-only `workflow_run` consumer records source run/attempt metadata without adding scripts to Eggpack-generated output.
 
 ### WP3 — Verify source and job-artifact binding
 
@@ -101,4 +101,4 @@ Stop if Eggpack CI M003j remains unqualified for the production build; canonical
 
 ## 11. Closure evidence
 
-Write `plans/closure/release-readiness/001-status.md` after implementation with SHA and exact workflows, before/after adversarial result, generator upstream pointer, tag/SHA binding, job token scopes, historical and new test runs, secret-exposure review, settings requiring manual work, and the final R002/R004 release gating disposition.
+Write `plans/closure/release-readiness/001-status.md` after exact-head hosted verification. Include the producer pin, generated-workflow drift result, before/after adversarial result, tag/source and run/artifact binding, token scopes, secret-exposure review, observed repository settings, any settings still requiring maintainer work, and the final R002/R004 disposition. The current API observation is recorded in `docs/release-signing.md`; strict closure stays pending until required settings and hosted evidence are present.

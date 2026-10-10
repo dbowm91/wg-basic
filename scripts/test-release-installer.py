@@ -48,10 +48,17 @@ def main() -> None:
         )
         for path in fake_bin.iterdir():
             path.chmod(0o755)
+        wrapper = root / "install.sh"
+        source = (ROOT / "release/eggpack/install.sh").read_text(encoding="utf-8")
+        safe_path = "PATH=/usr/sbin:/usr/bin:/sbin:/bin\nexport PATH"
+        if safe_path not in source:
+            raise RuntimeError("installer does not replace the inherited root PATH")
+        fixture_path = f"PATH='{fake_bin}:/usr/bin:/bin'\nexport PATH"
+        wrapper.write_text(source.replace(safe_path, fixture_path), encoding="utf-8")
+        wrapper.chmod(0o755)
         env = os.environ.copy()
-        env["PATH"] = f"{fake_bin}:{env['PATH']}"
         result = subprocess.run(
-            ["sh", str(ROOT / "release/eggpack/install.sh"), "--version", "1.2.3"],
+            ["sh", str(wrapper), "--version", "1.2.3"],
             env=env,
             capture_output=True,
             text=True,
@@ -60,6 +67,8 @@ def main() -> None:
         )
         if result.returncode:
             raise RuntimeError(f"installer wrapper failed: {result.stderr.strip()}")
+        if "LOWER-ASSURANCE" not in result.stderr:
+            raise RuntimeError("convenience mode did not disclose its bootstrap trust boundary")
         if urls.read_text(encoding="utf-8") != (
             "https://github.com/dbowm91/wg-basic/releases/download/v1.2.3/install-exact.sh\n"
         ):
@@ -78,25 +87,34 @@ def main() -> None:
         candidate.chmod(0o755)
         urls.write_text("", encoding="utf-8")
         installs.write_text("", encoding="utf-8")
-        result = subprocess.run(
-            [
+        unsafe_tmpdir = root / "unsafe-tmp"
+        unsafe_tmpdir.mkdir()
+        env["TMPDIR"] = str(unsafe_tmpdir)
+        digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
+        size = str(candidate.stat().st_size)
+
+        def run_candidate(path: Path, sha: str = digest, byte_count: str = size):
+            return subprocess.run(
+                [
                 "sh",
-                str(ROOT / "release/eggpack/install.sh"),
+                str(wrapper),
                 "--version",
                 "1.2.3",
                 "--candidate",
-                str(candidate),
+                str(path),
                 "--sha256",
-                hashlib.sha256(candidate.read_bytes()).hexdigest(),
+                sha,
                 "--size",
-                str(candidate.stat().st_size),
-            ],
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=15,
-            check=False,
-        )
+                byte_count,
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+
+        result = run_candidate(candidate)
         if result.returncode:
             raise RuntimeError(f"preverified installer path failed: {result.stderr.strip()}")
         if urls.read_text(encoding="utf-8"):
@@ -105,6 +123,21 @@ def main() -> None:
             "system install --candidate "
         ):
             raise RuntimeError("preverified candidate was not delegated to `system install`")
+        if list(unsafe_tmpdir.iterdir()):
+            raise RuntimeError("installer used attacker-selected TMPDIR")
+        installs.write_text("", encoding="utf-8")
+        if run_candidate(candidate, "0" * 64).returncode == 0:
+            raise RuntimeError("candidate with a mismatched digest was accepted")
+        symlink = root / "candidate-link"
+        symlink.symlink_to(candidate)
+        if run_candidate(symlink).returncode == 0:
+            raise RuntimeError("candidate symlink was accepted")
+        hardlink = root / "candidate-hardlink"
+        hardlink.hardlink_to(candidate)
+        if run_candidate(hardlink).returncode == 0:
+            raise RuntimeError("candidate with multiple hard links was accepted")
+        if installs.read_text(encoding="utf-8") or urls.read_text(encoding="utf-8"):
+            raise RuntimeError("rejected candidate reached install or download")
         print("release installer wrapper passed mocked exact-version delegation")
 
 

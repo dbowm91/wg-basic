@@ -1,8 +1,14 @@
 #!/bin/sh
 set -eu
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+umask 077
 
 usage() {
-    printf 'Usage: %s --version X.Y.Z [--candidate PATH --sha256 HEX --size BYTES]\n' "$0"
+    printf '%s\n' \
+        "Usage: $0 --version X.Y.Z [--candidate PATH --sha256 HEX --size BYTES]" \
+        'Candidate mode checks integrity only; authenticate the manifest and installer signature before running it.' \
+        'Version-only mode trusts the HTTPS/GitHub-delivered bootstrap and is lower assurance.'
 }
 version=
 candidate=
@@ -32,7 +38,6 @@ done
 [ "$(uname -s)" = Linux ] || { printf 'wg-basic supports Linux only\n' >&2; exit 2; }
 case "$(uname -m)" in x86_64|aarch64) ;; *) printf 'unsupported architecture\n' >&2; exit 2 ;; esac
 [ "$(id -u)" -eq 0 ] || { printf 'run this installer as root; it does not invoke sudo\n' >&2; exit 2; }
-command -v curl >/dev/null 2>&1 || { printf 'curl is required\n' >&2; exit 2; }
 if [ -n "$candidate" ] || [ -n "$expected_sha256" ] || [ -n "$expected_size" ]; then
     [ -n "$candidate" ] && [ -n "$expected_sha256" ] && [ -n "$expected_size" ] || {
         printf 'candidate, signed-manifest SHA-256, and signed-manifest size are required together\n' >&2
@@ -45,7 +50,12 @@ if [ -n "$candidate" ] || [ -n "$expected_sha256" ] || [ -n "$expected_size" ]; 
         printf 'candidate must be a regular executable file, not a symlink\n' >&2
         exit 2
     }
-    tmp=$(mktemp -d "${TMPDIR:-/tmp}/wg-basic-install.XXXXXX") || exit 1
+    candidate_links=$(stat -c '%h' -- "$candidate")
+    [ "$candidate_links" = 1 ] || {
+        printf 'candidate must not have additional hard links\n' >&2
+        exit 2
+    }
+    tmp=$(mktemp -d /tmp/wg-basic-install.XXXXXX) || exit 1
     chmod 700 "$tmp"
     cleanup() { rm -rf "$tmp"; }
     trap cleanup 0
@@ -77,7 +87,8 @@ fi
 command -v curl >/dev/null 2>&1 || { printf 'curl is required\n' >&2; exit 2; }
 tag="v$version"
 url="https://github.com/dbowm91/wg-basic/releases/download/$tag/install-exact.sh"
-tmp=$(mktemp -d "${TMPDIR:-/tmp}/wg-basic-install.XXXXXX") || exit 1
+printf '%s\n' 'LOWER-ASSURANCE: trusting the HTTPS/GitHub-delivered installer bootstrap.' >&2
+tmp=$(mktemp -d /tmp/wg-basic-install.XXXXXX) || exit 1
 chmod 700 "$tmp"
 cleanup() { rm -rf "$tmp"; }
 trap cleanup 0

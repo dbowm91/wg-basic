@@ -1,7 +1,7 @@
 # Release Readiness R002 — Production Trust Root and Offline Signing Ceremony
 
-Status: ready for non-secret implementation; production signing/activation blocked on maintainer-supplied key and R001 safe source/draft handoff.
-Repository baseline: `dbowm91/wg-basic@ff40f851508ccda52171c27cefdcdaf4ec1da2d5` (2026-10-09).
+Status: **non-secret engineering implemented; operational signing blocked** on R001 strict closure, maintainer-supplied key custody/fingerprint, and an approved production draft. `scripts/verify-release-signing-bundle.py` now checks source/run/tag/draft/asset identity; the separate provenance workflow supplies run/attempt metadata. No key was generated, embedded, or provisioned.
+Repository baseline: `dbowm91/wg-basic@0b814fe` (2026-10-10).
 Source roadmap: `plans/subsystems/release-readiness-security-roadmap.md`.
 Primary class: invariant / security / release operations.
 Authority: ADR-006; `plans/closure/distribution/001-status.md`, `003-final-status.md`, `004-status.md`, `005-status.md`.
@@ -15,7 +15,7 @@ Create a reviewed and repeatable **offline, maintainer-authorized** signing and 
 
 - `src/release.rs` deliberately declares `PRODUCTION_PUBLIC_KEY: Option<&str> = None`. Production `update check` and `update run` refuse before network; tests exercise fixture signing only.
 - ADR-006 §7 requires project-controlled Minisign/Ed25519, private key retained out of band, a committed embedded public key and independently published fingerprint, a draft-signature gate, and exact source/version/target identity.
-- `scripts/verify-signing-request.py` confirms unsigned Eggpack draft staging receipt entries, manifest identity, two selected GNU target asset digests, sidecars and every byte in the receipt inventory. This is a useful *consistency checker*, but does not itself authenticate GitHub release authorship, tagged commit, workflow run provenance, upstream source dependencies, or the person authorizing signing.
+- `scripts/verify-signing-request.py` confirms the unsigned staging receipt, manifest identity, two selected GNU target asset digests, sidecars and every byte in the receipt inventory. `scripts/verify-release-signing-bundle.py` layers GitHub run/attempt checks, live tag resolution, draft inventory comparison, fresh live-asset download, and optional detached-signature verification over that consistency checker. The human signer still reviews workflow provenance, repository protections, and approval authority; the tools do not authenticate those controls.
 - `release/eggpack/install.sh` currently downloads and runs an unverified installer script in convenience mode. R003 owns the user-facing bootstrap policy; R002 must sign the `install.sh` that users verify out of band and also verify the final bundle before any release authorization.
 - Public release naming must bind Cargo `X.Y.Z`, git tag `vX.Y.Z`, binary `wg-basic --version`, Eggpack release ID and exact source SHA. The repository currently declares `version = "0.1.0"`. This is not authority to publish a 0.1.0 tag without a maintained version decision and immutable tag checks.
 
@@ -105,4 +105,4 @@ Stop for a scoped design review if draft provenance cannot be independently esta
 
 ## 9. Closure evidence
 
-Write `plans/closure/release-readiness/002-status.md` after implementation with code SHA, source/tag/run/asset trust chain, functional and adversarial fixture receipts, exact public key fingerprint *only after maintainer input*, out-of-band custody confirmation *without secrets*, detached signature verification commands, host/tool versions, blocked/authorized disposition, key-rotation notes and R004 handoff. Preserve historical Phase 10 closure records.
+Write `plans/closure/release-readiness/002-status.md` after hosted verification of the non-secret tools. Record exact local/hosted fixture evidence and the supported preflight command. The production fingerprint and out-of-band custody confirmation must remain explicitly absent until the maintainer supplies and verifies them. Keep operational signing blocked, and preserve historical Phase 10 closure records.

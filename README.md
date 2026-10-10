@@ -58,11 +58,18 @@ uninstall/reinstall, and guarded purge. Production `update check` and
 public key is still pending; no public release is ready. See
 [plans/registry.md](plans/registry.md).
 
+The `--version` release installer is a lower-assurance HTTPS/GitHub bootstrap.
+The documented signed-manifest installation path is available only after
+maintainer-provisioned production signatures and an independently distributed
+trust key exist; see [docs/installation.md](docs/installation.md) and
+[docs/release-signing.md](docs/release-signing.md).
+
 ## Docs
 
 | Document | Covers |
 |---|---|
 | [docs/installation.md](docs/installation.md) | Native installation, authenticity status, state-preserving uninstall/reinstall |
+| [docs/release-signing.md](docs/release-signing.md) | Offline signing, source/run preflight, trust-key custody |
 | [docs/development.md](docs/development.md) | Gates, local `netd`/`serve`, credentials, test fixtures |
 | [docs/operations-runbook.md](docs/operations-runbook.md) | Backup, recovery, disable/purge |
 | [docs/state-backup-restore.md](docs/state-backup-restore.md) | Backup/restore/verify mechanics |
