@@ -32,18 +32,24 @@ jobs:
       contents: read
     timeout-minutes: 60
     steps:
+      - name: Validate exact-tag source
+        shell: bash
+        env:
+          EGGPACK_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          if [ "${#EGGPACK_RELEASE_TAG}" -gt 64 ] || [[ ! "$EGGPACK_RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo 'release_tag must be a canonical vX.Y.Z stable tag' >&2
+            exit 1
+          fi
       - name: Check out source
         uses: "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
         with:
           ref: "${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}"
-      - name: Validate exact-tag source
-        shell: bash
-        run: "test -n \"${{ inputs.release_tag }}\""
       - name: Install pinned Eggpack tool
         shell: bash
         timeout-minutes: 20
         run: |
-          cargo install --git https://github.com/eggstack/eggpack --rev d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628 --locked eggpack-cli
+          cargo install --git https://github.com/eggstack/eggpack --rev 559d940af0fe6a2951eb17de1fcbecbf9e0bb6ce --locked eggpack-cli
           eggpack --version
       - name: Create runtime identity directory
         shell: bash
@@ -135,7 +141,7 @@ jobs:
         shell: bash
         timeout-minutes: 20
         run: |
-          cargo install --git https://github.com/eggstack/eggpack --rev d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628 --locked eggpack-cli
+          cargo install --git https://github.com/eggstack/eggpack --rev 559d940af0fe6a2951eb17de1fcbecbf9e0bb6ce --locked eggpack-cli
           eggpack --version
       - name: Verify checked-out release source
         shell: bash
@@ -232,7 +238,7 @@ jobs:
         shell: bash
         timeout-minutes: 20
         run: |
-          cargo install --git https://github.com/eggstack/eggpack --rev d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628 --locked eggpack-cli
+          cargo install --git https://github.com/eggstack/eggpack --rev 559d940af0fe6a2951eb17de1fcbecbf9e0bb6ce --locked eggpack-cli
           eggpack --version
       - name: Verify checked-out release source
         shell: bash
@@ -278,7 +284,7 @@ jobs:
         shell: bash
         timeout-minutes: 20
         run: |
-          cargo install --git https://github.com/eggstack/eggpack --rev d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628 --locked eggpack-cli
+          cargo install --git https://github.com/eggstack/eggpack --rev 559d940af0fe6a2951eb17de1fcbecbf9e0bb6ce --locked eggpack-cli
           eggpack --version
       - name: Verify checked-out release source
         shell: bash
@@ -322,7 +328,7 @@ jobs:
         shell: bash
         timeout-minutes: 20
         run: |
-          cargo install --git https://github.com/eggstack/eggpack --rev d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628 --locked eggpack-cli
+          cargo install --git https://github.com/eggstack/eggpack --rev 559d940af0fe6a2951eb17de1fcbecbf9e0bb6ce --locked eggpack-cli
           eggpack --version
       - name: Verify checked-out release source
         shell: bash
@@ -366,7 +372,7 @@ jobs:
         shell: bash
         timeout-minutes: 20
         run: |
-          cargo install --git https://github.com/eggstack/eggpack --rev d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628 --locked eggpack-cli
+          cargo install --git https://github.com/eggstack/eggpack --rev 559d940af0fe6a2951eb17de1fcbecbf9e0bb6ce --locked eggpack-cli
           eggpack --version
       - name: Verify checked-out release source
         shell: bash
@@ -413,7 +419,7 @@ jobs:
         shell: bash
         timeout-minutes: 20
         run: |
-          cargo install --git https://github.com/eggstack/eggpack --rev d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628 --locked eggpack-cli
+          cargo install --git https://github.com/eggstack/eggpack --rev 559d940af0fe6a2951eb17de1fcbecbf9e0bb6ce --locked eggpack-cli
           eggpack --version
       - name: Verify checked-out release source
         shell: bash
@@ -459,7 +465,7 @@ jobs:
         shell: bash
         timeout-minutes: 20
         run: |
-          cargo install --git https://github.com/eggstack/eggpack --rev d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628 --locked eggpack-cli
+          cargo install --git https://github.com/eggstack/eggpack --rev 559d940af0fe6a2951eb17de1fcbecbf9e0bb6ce --locked eggpack-cli
           eggpack --version
       - name: Verify checked-out release source
         shell: bash
@@ -513,7 +519,7 @@ jobs:
         shell: bash
         timeout-minutes: 20
         run: |
-          cargo install --git https://github.com/eggstack/eggpack --rev d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628 --locked eggpack-cli
+          cargo install --git https://github.com/eggstack/eggpack --rev 559d940af0fe6a2951eb17de1fcbecbf9e0bb6ce --locked eggpack-cli
           eggpack --version
       - name: Verify checked-out release source
         shell: bash
@@ -561,6 +567,15 @@ jobs:
       contents: write
     timeout-minutes: 60
     steps:
+      - name: Validate exact-tag source
+        shell: bash
+        env:
+          EGGPACK_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          if [ "${#EGGPACK_RELEASE_TAG}" -gt 64 ] || [[ ! "$EGGPACK_RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo 'release_tag must be a canonical vX.Y.Z stable tag' >&2
+            exit 1
+          fi
       - name: Check out source
         uses: "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
         with:
@@ -571,14 +586,11 @@ jobs:
           name: "eggpack-runtime-identity"
           path: "./eggpack-runtime"
           if-no-files-found: error
-      - name: Validate exact-tag source
-        shell: bash
-        run: "test -n \"${{ inputs.release_tag }}\""
       - name: Install pinned Eggpack tool
         shell: bash
         timeout-minutes: 20
         run: |
-          cargo install --git https://github.com/eggstack/eggpack --rev d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628 --locked eggpack-cli
+          cargo install --git https://github.com/eggstack/eggpack --rev 559d940af0fe6a2951eb17de1fcbecbf9e0bb6ce --locked eggpack-cli
           eggpack --version
       - name: Verify checked-out release source
         shell: bash

@@ -7,16 +7,19 @@ until a maintainer provisions the real public trust root and its fingerprint.
 
 The generated `install-exact.sh` is an integrity bootstrap: it is bound to one
 release tag and verifies the selected binary's exact size and SHA-256. The
-product `install.sh` downloads that exact-version bootstrap over HTTPS and then
-delegates system setup to `wg-basic system install`. The convenience path trusts
-the downloaded script bytes; HTTPS and an embedded checksum do not authenticate
-the script or manifest.
+product `install.sh --version` path downloads that exact-version bootstrap over
+HTTPS and runs it as root. It is a lower-assurance convenience path; HTTPS and
+an embedded checksum do not authenticate the script or manifest. The wrapper
+prints this limitation and uses a fixed system `PATH` and private `/tmp`
+staging directory.
 
-A high-assurance installation must obtain the production public key
-independently, verify the `install.sh` detached signature before execution,
-verify the signed release manifest, and pass its selected artifact's exact
-size and SHA-256 to the wrapper with a local candidate. That path is not
-available until the production trust root has been provisioned and a
+A high-assurance installation obtains the production public key independently,
+verifies the `install.sh` and release-manifest detached signatures before
+execution or parsing, checks the live tag/source and artifact identity, and
+passes the selected artifact's exact size and SHA-256 to the wrapper with a
+local candidate. The copy staged for root execution is root-owned and verified
+again. Follow the complete procedure in `docs/installation.md`. That path is
+not available until the production trust root has been provisioned and a
 production-signed draft has been qualified. The key in
 `tests/fixtures/release-auth/` is test-only and must never be used for a public
 release.
@@ -40,11 +43,15 @@ manifest.
 ## Maintainer signing handoff
 
 The release workflow uploads an `eggpack-staging-receipt` Actions artifact
-after staging a draft. Download all assets from that exact draft into a private
-directory and verify them against the receipt before signing:
+after staging a draft. A separate read-only workflow binds that receipt to the
+source run and attempt. Download both receipts from their exact Actions runs,
+download all live draft assets into a private directory, and verify the run,
+live tag, draft asset inventory, and bytes before signing:
 
 ```sh
-python3 scripts/verify-signing-request.py signing-receipt.json ./draft-assets
+python3 scripts/verify-release-signing-bundle.py \
+  ./eggpack-staging-receipt.json ./release-provenance.json ./draft-assets \
+  --public-key /etc/wg-basic/release.pub
 ```
 
 The verifier checks the exact repository/tag/release/source identity, the two

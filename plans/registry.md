@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-09 (Phases 10–11 technical closures retained; R001 ready after Eggpack CI M003j closed; R002–R003 nonsecret work ready; R004 and public signing/publication blocked)
+Last planning reconciliation: 2026-10-10 (R001–R003 repository engineering implemented; hosted/policy closure, production trust root, signed draft, and R004 publication remain blocked)
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -74,7 +74,7 @@ Runtime dependency adoption remains evidence-driven.
 | Operational hardening | closed | `plans/subsystems/operational-hardening-roadmap.md` | M001–M005 closed; Phase 9 closed |
 | Distribution/install/update | closed (technical) | `plans/subsystems/distribution-install-update-roadmap.md` | M001–M005 closed; production release remains blocked on signing |
 | IPv6/route-policy qualification | closed | `plans/subsystems/ipv6-route-policy-roadmap.md` | M001–M004 closed; `plans/closure/ipv6-route-policy/004-status.md` |
-| Release readiness and supply-chain security | active planning | `plans/subsystems/release-readiness-security-roadmap.md` | R001 ready with qualified Eggpack pin `559d940af0fe6a2951eb17de1fcbecbf9e0bb6ce`; R002/R003 nonsecret work ready; R004 remains blocked |
+| Release readiness and supply-chain security | active planning (external gates) | `plans/subsystems/release-readiness-security-roadmap.md` | R001 consumer code complete; strict close needs producer preflight ordering, exact-head CI, and protected branch/tags; R002/R003 code complete, production blocked on key/signatures; R004 blocked |
 
 Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
 
@@ -82,18 +82,21 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
-| Release readiness/security | R001 workflow input/provenance hardening | **ready** | `plans/implementation/release-readiness/001-release-workflow-input-and-provenance-hardening.md` | Eggpack CI M003j is closed; pin `eggstack/eggpack@559d940af0fe6a2951eb17de1fcbecbf9e0bb6ce`, hosted run `37987890305`. R001 still owns workflow regeneration, source/provenance proof, and strict closure |
-| Release readiness/security | R002 offline signing and trust root | ready for nonsecret work; signing blocked | `plans/implementation/release-readiness/002-production-trust-root-and-offline-signing-ceremony.md` | Signing requires R001 closed plus maintainer key custody, independent source/receipt proof and real signed draft |
-| Release readiness/security | R003 verified first-install trust | ready for technical implementation; production blocked | `plans/implementation/release-readiness/003-bootstrap-installer-trust-and-root-execution-boundary.md` | High-assurance verified path and lower-assurance convenience separation; production acceptance requires R002 actual signatures |
+| Release readiness/security | R001 workflow input/provenance hardening | **consumer implementation complete; strict closure pending** | `plans/implementation/release-readiness/001-release-workflow-input-and-provenance-hardening.md` | Producer preflight still checks out dispatch ref before canonical-tag validation; exact-head hosted CI and maintainer branch/tag protections remain required; no repo settings changed |
+| Release readiness/security | R002 offline signing and trust root | non-secret engineering complete; operationally blocked | `plans/implementation/release-readiness/002-production-trust-root-and-offline-signing-ceremony.md` | R001 strict close, maintainer-provisioned key/fingerprint/custody, and approved draft/signatures |
+| Release readiness/security | R003 verified first-install trust | engineering procedure complete; production blocked | `plans/implementation/release-readiness/003-bootstrap-installer-trust-and-root-execution-boundary.md` | Production signatures and native signed-install evidence; fixture evidence does not qualify a public release |
 
 ## 6. External readiness blockers
 
 | Subsystem | Milestone | Status | Implementation plan | Hard blocker |
 |---|---|---|---|---|
+| Release readiness/security | R001 strict closure | pending external/hosted evidence | `plans/implementation/release-readiness/001-release-workflow-input-and-provenance-hardening.md` | Current-head hosted CI, protected `main` and immutable `v*` tag policy; stage reviewer gate needs supported producer contract |
 | Release readiness/security | R004 first public release qualification and authorization | blocked | `plans/implementation/release-readiness/004-first-production-release-security-qualification-and-authorization.md` | R001 strict closure + R002 operational key/signed draft + R003 real verified install + maintainer approval |
 | Distribution/install/update | Production signing and public release | blocked | `plans/subsystems/release-readiness-security-roadmap.md` and R002/R004 checklists | Maintainer-provisioned production Minisign public/private custody and independent key verification, production signed draft, current CI, explicit publication authorization |
 
-Release-readiness review of `main@ff40f85` found the generated release workflow interpolates `inputs.release_tag` into two Bash `run` blocks. Eggpack source inspection confirmed both vulnerable renderer sites at `eggstack/eggpack@d61ca71`; upstream CI M003j is now closed at producer pin `559d940af0fe6a2951eb17de1fcbecbf9e0bb6ce`, hosted run `37987890305`. R001 is ready to repin/regenerate and complete its consumer-owned provenance proof. The unsigned signing receipt does not independently authenticate trusted source/run provenance, and the convenience installer downloads and executes a bootstrap as root without signature verification. The roadmap RF-01–RF-06 and R001–R004 separate these first-public-release concerns from historical Phase 10/11 technical closure. No production key was generated, installed or stored, and no release was staged or published by the upstream producer closure.
+The initial 2026-10-09 release-readiness review at `main@ff40f85` found shell interpolation in the generated workflow and no independent source/run proof. Eggpack M003j later closed the producer finding at `559d940af0fe6a2951eb17de1fcbecbf9e0bb6ce` (run `37987890305`); consumer regeneration and provenance work are recorded below. No production key was generated, installed or stored, and no release was staged or published by the upstream producer closure.
+
+R001–R003 repository implementation now pins Eggpack M003j, regenerates the workflow with env-mediated canonical tag validation, rejects injection payloads, records source-run/asset provenance, adds a signer preflight, hardens and labels the convenience installer, and documents the signed first-install process. The provenance and signing tools do not replace GitHub run/tag records or maintainer approval. Read-only GitHub settings inspection on 2026-10-10 found no rulesets, an unprotected `main`, and no tag protection. R001 strict closure is pending exact-head hosted CI and maintainer-owned protection policy. No production key was generated or installed; no release was staged or published.
 
 M004 corrective ordering: upstream `eggstack/eggup` Service M010 owned-failed-systemd quiescence and required M011 publication are closed; wg-basic C001a, C001, and C002 have actual-updater hosted recovery evidence; M004 technical closure is recorded at `plans/closure/distribution/004-status.md`; M005 and Phase 10 are now strictly closed at `plans/closure/distribution/005-status.md`. Fixture evidence does not claim production signing or public release readiness.
 

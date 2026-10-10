@@ -339,6 +339,41 @@ It verifies service UIDs and effective capabilities, state/socket ownership,
 unrelated-UID socket denial, exact-version reinstall, modified-unit refusal,
 doctor, and `/healthz`.
 
+## Release workflow and signing trust checks
+
+The release workflow is generated from the pinned Eggpack revision in
+`release/eggpack/github-policy.json`. Regenerate the static shape and workflow
+with the exact qualified producer binary, then check for drift:
+
+```sh
+cargo install --git https://github.com/eggstack/eggpack \
+  --rev 559d940af0fe6a2951eb17de1fcbecbf9e0bb6ce --locked eggpack-cli
+python3 scripts/gen-release-workflow-shape.py
+eggpack ci check --workflow-shape release/eggpack/workflow-shape.json \
+  --contract release/eggpack/distribution.toml \
+  --github-policy release/eggpack/github-policy.json \
+  --workflow .github/workflows/release-eggpack.yml
+```
+
+Run the local non-network regression fixtures for dispatch input handling,
+provenance receipt binding, signing-bundle source/run checks, installer trust
+labels, and asset identity:
+
+```sh
+python3 scripts/test-release-workflow-security.py
+python3 scripts/test-release-provenance.py
+python3 scripts/test-release-signing-bundle.py
+python3 scripts/test-verified-install.py
+python3 scripts/test-release-installer.py
+python3 scripts/test-signing-request.py
+python3 scripts/test-release-smoke.py
+```
+
+The fixtures do not establish repository settings, production key custody,
+actual signing, or public release readiness. Maintainer signing procedures and
+the live GitHub run/draft preflight are documented in
+[release signing](release-signing.md).
+
 ### M004 updater qualification
 
 The installed CLI is `wg-basic update check`, `wg-basic update run`, and

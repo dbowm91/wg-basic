@@ -1,7 +1,7 @@
 # Release Readiness R003 — Bootstrap Installer Trust and Root Execution Boundary
 
-Status: ready for implementation (security hardening and documentation); final production authenticity test requires R002 operational signing.
-Repository baseline: `dbowm91/wg-basic@ff40f851508ccda52171c27cefdcdaf4ec1da2d5` (2026-10-09).
+Status: **wrapper hardening and high-assurance operator procedure implemented; production acceptance blocked** on R002's real trust root and signed draft. The rootless regression covers the documented verification order and trust labels; the existing Rust signing-handoff fixture now also rejects a wrong key, truncated signature, tampering, wrong product, and wrong release ID.
+Repository baseline: `dbowm91/wg-basic@0b814fe` (2026-10-10).
 Source roadmap: `plans/subsystems/release-readiness-security-roadmap.md`.
 Primary class: invariant / security corrective / operator ergonomics.
 Authority: ADR-006 §§6–11, 18; `plans/closure/distribution/003-final-status.md`, `004-status.md`, `005-status.md`.
@@ -14,9 +14,9 @@ Give operators a genuinely authenticated, reproducible high-assurance first-inst
 
 `release/eggpack/install.sh` has two modes:
 - `--candidate PATH --sha256 HEX --size BYTES`: copies a local executable into a temporary private directory, checks supplied size/digest, executes `--version`, and delegates to `wg-basic system install --candidate`. Correctly verifies *integrity against supplied inputs*; it does **not** independently authenticate the source of those inputs or prevent code execution from an operator-provided malicious candidate.
-- `--version X.Y.Z`: fetches `https://github.com/dbowm91/wg-basic/releases/download/vX.Y.Z/install-exact.sh`, then **runs it as root** with `sh`. It does not verify a detached signature on `install-exact.sh` first and implicitly trusts the GitHub/HTTPS delivery channel. ADR-006 explicitly acknowledges this bootstrap boundary. The script's phrase "verified release installer" is stronger than what the wrapper itself proves.
+- `--version X.Y.Z`: fetches `https://github.com/dbowm91/wg-basic/releases/download/vX.Y.Z/install-exact.sh`, then runs it as root with `sh`. It still does not verify a detached signature in this convenience mode and implicitly trusts the GitHub/HTTPS delivery channel. Help and stderr now label that trust boundary explicitly; the wrapper fixes `PATH`, ignores inherited `TMPDIR`, and stages in a private `/tmp` directory.
 - `scripts/test-release-installer.py` mocks `curl` to return shell script bytes and asserts that the wrapper executes them; it does not check a genuine Minisign-authenticated path or a compromised/malicious bootstrap.
-- `docs/installation.md` accurately warns users that no public signed release exists yet, but lacks a complete first-release verified download -> offline trust key -> detached signature -> manifest/hash -> binary -> root-install test path.
+- `docs/installation.md` now gives a full future signed-release command path: independent key installation, manifest and installer signature checks before parsing/execution, exact tag/source and target/hash checks, root-owned staging, and signature/hash rechecks before root execution. The script-order regression ensures these gates precede the root installer call. Production use remains unavailable without actual signed artifacts and independently published trust material.
 
 The current production `PRODUCTION_PUBLIC_KEY=None` protects **self-update** only; it does not authenticate a candidate executed by the first-install script. Do not conflate the two.
 
@@ -98,7 +98,7 @@ Repeat Eggpack generated installer/workflow drift checks and `distribution-found
 
 Update `docs/installation.md`, `README.md`, `release/eggpack/install.sh` help, `docs/release-signing.md` (R002), `plans/subsystems/release-readiness-security-roadmap.md` and `plans/registry.md` after implementation. Preserve historical M002–M005 closures.
 
-R003 technical closure requires a reproducible authenticated high-assurance installation path with tests proving signatures are checked *before* downloaded code execution; truthful convenience-mode trust description; source/target/version/digest binding; staging/path safety; and complete old native systemd install/uninstall/rollback regression. Its **production** acceptance requires the real R002 public key and valid signed release artifacts; maintain a separate blocked operational status until available.
+R003 technical closure requires the documented authenticated high-assurance command path, regression evidence that signature checks precede downloaded-code execution, truthful convenience-mode trust description, source/target/version/digest binding, staging/path safety, and complete old native systemd install/uninstall/rollback regression. Its **production** acceptance requires the real R002 public key and valid signed release artifacts; maintain a separate blocked operational status until available.
 
 Stop if no independent out-of-band public-key distribution exists, verification can be bypassed by fallback, generated installer changes need an unqualified upstream Eggpack revision, a file mutation race invalidates verification before exec, or an unverified candidate executes under root in the purported high-assurance path.
 
