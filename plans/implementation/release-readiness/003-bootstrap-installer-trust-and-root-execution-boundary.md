@@ -1,6 +1,6 @@
 # Release Readiness R003 — Bootstrap Installer Trust and Root Execution Boundary
 
-Status: **wrapper hardening and high-assurance operator procedure implemented; production acceptance blocked** on R002's real trust root and signed draft. The rootless regression covers the documented verification order and trust labels; the existing Rust signing-handoff fixture now also rejects a wrong key, truncated signature, tampering, wrong product, and wrong release ID.
+Status: **conditionally closed for repository engineering; production acceptance blocked** on R002's real trust root and signed draft. The rootless regression covers the documented verification order and trust labels; the existing Rust signing-handoff fixture rejects a wrong key, truncated signature, tampering, wrong product, and wrong release ID.
 Repository baseline: `dbowm91/wg-basic@0b814fe` (2026-10-10).
 Source roadmap: `plans/subsystems/release-readiness-security-roadmap.md`.
 Primary class: invariant / security corrective / operator ergonomics.
