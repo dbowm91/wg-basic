@@ -1,6 +1,6 @@
 # Release Readiness R002 — Production Trust Root and Offline Signing Ceremony
 
-Status: **non-secret engineering implemented; operational signing blocked** on R001 strict closure, maintainer-supplied key custody/fingerprint, and an approved production draft. `scripts/verify-release-signing-bundle.py` now checks source/run/tag/draft/asset identity; the separate provenance workflow supplies run/attempt metadata. No key was generated, embedded, or provisioned.
+Status: **conditionally closed for non-secret engineering; operational signing blocked** on R001 release readiness, maintainer-supplied key custody/fingerprint, and an approved production draft. `scripts/verify-release-signing-bundle.py` checks source/run/tag/draft/asset identity; the separate provenance workflow supplies run/attempt metadata. No key was generated, embedded, or provisioned.
 Repository baseline: `dbowm91/wg-basic@0b814fe` (2026-10-10).
 Source roadmap: `plans/subsystems/release-readiness-security-roadmap.md`.
 Primary class: invariant / security / release operations.

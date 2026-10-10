@@ -1,6 +1,6 @@
 # Release Readiness, Supply-chain Security, and First Public Distribution Roadmap
 
-Status: R001–R003 repository-owned engineering implemented; strict hosted/settings closure and production signing remain gated; R004 blocked. No public release authorization.
+Status: R001–R003 repository-owned work conditionally closed; R001 policy/producer ordering and R002/R003 production signing gates remain blocked; R004 blocked. No public release authorization.
 Repository review baseline: `dbowm91/wg-basic@0b814fe` (2026-10-10).
 Primary owner: `wg-basic` release and operator trust surface; Eggpack continues to own generator/producer mechanics, Eggup the consumer-side binary/service transaction.
 Governance: `plans/003-planning-process.md`; ADR-006; `plans/subsystems/distribution-install-update-roadmap.md`; `plans/002-long-term-roadmap.md`.
@@ -81,19 +81,19 @@ Eggpack generator input interpolation was confirmed at `eggstack/eggpack@d61ca71
 ### R001 — Workflow input and provenance hardening
 
 Plan: `plans/implementation/release-readiness/001-release-workflow-input-and-provenance-hardening.md`.
-Status: **implemented; strict closure pending**.
+Status: **conditionally closed for repository implementation**.
 Main gate: adversarial dispatch rejection, tag/source/run/artifact checks and qualified generator pin are in place. Strict closure also requires the producer to validate canonical tags before its current `preflight` checkout (which presently only runs `cargo --version`), exact-head hosted CI, and maintainer-configured protected `main`/immutable `v*` tags. No settings have been changed.
 
 ### R002 — Offline signing and production trust root
 
 Plan: `plans/implementation/release-readiness/002-production-trust-root-and-offline-signing-ceremony.md`.
-Status: **non-secret implementation complete; operational signing blocked** on R001 strict closure, maintainer-supplied key custody/fingerprint, and approved draft.
+Status: **conditionally closed for non-secret implementation; operational signing blocked** on R001 release readiness, maintainer-supplied key custody/fingerprint, and approved draft.
 Main gate: source/run/tag/live-asset preflight, fixture signature negative controls, and offline ceremony docs exist. Production key provisioning, embedded fingerprint, actual signing, and key custody remain maintainer work.
 
 ### R003 — High-assurance first-install bootstrap
 
 Plan: `plans/implementation/release-readiness/003-bootstrap-installer-trust-and-root-execution-boundary.md`.
-Status: **repository engineering implemented; production acceptance blocked** on R002 and signed-artifact qualification.
+Status: **conditionally closed for repository engineering; production acceptance blocked** on R002 and signed-artifact qualification.
 Main gate: signed command procedure checks manifest/installer before parsing or root execution, with tag/source/target/size/hash and root-owned rechecks. The regression asserts command order; actual production qualification awaits authenticated signatures.
 
 ### R004 — Signed production draft and release decision
@@ -121,15 +121,15 @@ The highest risk is treating a self-consistent release receipt or a GitHub HTTPS
 
 ## 11. Completion definition
 
-R001–R003 have strict technical evidence and R002/R003 operational key/signing evidence; R004 has actual current-SHA public-release source and asset checks, independent approved verification, both native host lifecycles, no high/medium issues, explicit maintainer publish approval and verified published URL/bytes. If the maintainer has not supplied a signing key or has not authorized publication, status remains **blocked externally** even when engineering preparation is complete.
+R001–R003 repository engineering may be conditionally closed with exact-head hosted evidence, while their external controls remain separately blocked. R002/R003 operational acceptance requires key custody and actual production signatures. R004 requires current-SHA public-release source and asset checks, independent approved verification, both native host lifecycles, no high/medium issues, explicit maintainer publish approval, and verified published URL/bytes. If the maintainer has not supplied a signing key or has not authorized publication, status remains **blocked externally** even when engineering preparation is complete.
 
 ## 12. Milestone status
 
 | Milestone | Status | Implementation plan | Hard/operational blocker |
 |---|---|---|---|
-| R001 | consumer implementation complete; strict closure pending | `plans/implementation/release-readiness/001-release-workflow-input-and-provenance-hardening.md` | Producer preflight ordering, current-head hosted CI, maintainer branch/tag protection; stage reviewer gate needs producer support |
-| R002 | non-secret engineering complete; signing blocked | `plans/implementation/release-readiness/002-production-trust-root-and-offline-signing-ceremony.md` | R001 strict closure; real key custody/fingerprint and approved signed draft |
-| R003 | technical procedure implemented; production acceptance blocked | `plans/implementation/release-readiness/003-bootstrap-installer-trust-and-root-execution-boundary.md` | R002 real key/signatures and current native signed-install qualification |
+| R001 | conditionally closed; release readiness blocked | `plans/implementation/release-readiness/001-release-workflow-input-and-provenance-hardening.md` | Producer preflight ordering and maintainer branch/tag protection; stage reviewer gate needs producer support |
+| R002 | conditionally closed for tooling; signing blocked | `plans/implementation/release-readiness/002-production-trust-root-and-offline-signing-ceremony.md` | R001 release readiness, real key custody/fingerprint, and approved signed draft |
+| R003 | conditionally closed technically; production acceptance blocked | `plans/implementation/release-readiness/003-bootstrap-installer-trust-and-root-execution-boundary.md` | Real R002 key/signatures and native signed-install evidence |
 | R004 | blocked | `plans/implementation/release-readiness/004-first-production-release-security-qualification-and-authorization.md` | R001 closed + R002 operational + R003 production acceptance + maintainer publish decision |
 
-Conditional closure records for repository-owned R001–R003 implementation belong under `plans/closure/release-readiness/`. Keep external settings, trust-root, signed-draft, and publication gates open; they cannot be marked complete by fixture results.
+Conditional closure records for repository-owned R001–R003 implementation are `plans/closure/release-readiness/001-status.md` through `003-status.md`. Keep external settings, trust-root, signed-draft, and publication gates open; they cannot be marked complete by fixture results.
