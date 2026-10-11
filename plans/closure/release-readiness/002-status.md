@@ -68,4 +68,7 @@ success at `1e034d0`. Local gates from the R001 strict-closure record apply
 unchanged (580 tests passed; seven release fixtures passed; fmt/check/clippy/
 MSRV/diff clean). No production key was generated, embedded, or provisioned;
 `src/release.rs::PRODUCTION_PUBLIC_KEY` remains `None`. No agent action
-substitutes fixture evidence for the R004 production sequence.
+substitutes fixture evidence for the R004 production sequence. Evidence
+chain to `main`: closure commit `342fec5` (CI `38108935557`, Distribution
+`38108935548` green) merged as `7b2146d` (main CI `38109447380`,
+Distribution `38109447352` green).

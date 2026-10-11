@@ -65,4 +65,6 @@ unchanged (`test-verified-install.py` signature-before-root ordering,
 `test-release-installer.py` wrapper hardening, `sh -n install.sh`,
 580 tests, fmt/check/clippy/MSRV clean). No production key or signed draft
 was used; no first-install was run against a live host outside the R004
-operation.
+operation. Evidence chain to `main`: closure commit `342fec5`
+(CI `38108935557`, Distribution `38108935548` green) merged as `7b2146d`
+(main CI `38109447380`, Distribution `38109447352` green).
