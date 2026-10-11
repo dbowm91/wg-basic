@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-11 (R001–R003 strictly closed at `1e034d0` with exact-head CI `38108270370` + Distribution Foundation `38108270368`; solo-maintainer policy with zero required PR approvals; R004a initial unsigned pre-release track executable, R004b production signing blocked on maintainer key)
+Last planning reconciliation: 2026-10-11 (R001–R003 strictly closed at `1e034d0` with exact-head CI `38108270370` + Distribution Foundation `38108270368`; solo-maintainer policy with zero required PR approvals; R004a initial unsigned pre-release track executable, R004b production signing blocked on maintainer key; RF-07 producer tag-fetch fix `eggstack/eggpack@a0fec98` re-pinned after first live dispatch failed closed in `resolve`)
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 

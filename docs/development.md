@@ -347,8 +347,12 @@ with the exact qualified producer binary, then check for drift:
 
 ```sh
 cargo install --git https://github.com/eggstack/eggpack \
-  --rev 1103a1affc62a210f1102a769457db80d9188bc8 --locked eggpack-cli
+  --rev a0fec987f2d13ed182ab4973cda363ff12b73870 --locked eggpack-cli
 python3 scripts/gen-release-workflow-shape.py
+eggpack ci generate --workflow-shape release/eggpack/workflow-shape.json \
+  --contract release/eggpack/distribution.toml \
+  --github-policy release/eggpack/github-policy.json \
+  --output .github/workflows/release-eggpack.yml
 eggpack ci check --workflow-shape release/eggpack/workflow-shape.json \
   --contract release/eggpack/distribution.toml \
   --github-policy release/eggpack/github-policy.json \
