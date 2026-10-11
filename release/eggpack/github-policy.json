@@ -1,21 +1,43 @@
 {
   "preflight_runner": "ubuntu-24.04",
   "runners": [
-    { "os": "linux", "arch": "x86_64", "label": "ubuntu-24.04", "cargo_zigbuild": false, "zig": false },
-    { "os": "linux", "arch": "aarch64", "label": "ubuntu-24.04-arm", "cargo_zigbuild": false, "zig": false }
+    {
+      "os": "linux",
+      "arch": "x86_64",
+      "label": "ubuntu-24.04",
+      "cargo_zigbuild": false,
+      "zig": false
+    },
+    {
+      "os": "linux",
+      "arch": "aarch64",
+      "label": "ubuntu-24.04-arm",
+      "cargo_zigbuild": false,
+      "zig": false
+    }
   ],
-  "checkout": { "reference": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262" },
-  "rust_toolchain": { "reference": "dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c" },
-  "upload_artifact": { "reference": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" },
-  "download_artifact": { "reference": "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093" },
-  "triggers": ["workflow_dispatch"],
+  "checkout": {
+    "reference": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
+  },
+  "rust_toolchain": {
+    "reference": "dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c"
+  },
+  "upload_artifact": {
+    "reference": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+  },
+  "download_artifact": {
+    "reference": "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
+  },
+  "triggers": [
+    "workflow_dispatch"
+  ],
   "timeout_minutes": 60,
   "cancel_in_progress": true,
   "artifact_retention_days": 7,
   "release_identity_mode": "v_prefixed_stable_semver",
   "eggpack_tool": {
     "repo": "https://github.com/eggstack/eggpack",
-    "revision": "d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628",
+    "revision": "1103a1affc62a210f1102a769457db80d9188bc8",
     "package": "eggpack-cli",
     "install_timeout_minutes": 20
   },
@@ -41,7 +63,8 @@
       "github_policy": "release/eggpack/github-template.json",
       "installer_presentation": "release/eggpack/installer-presentation.json"
     },
-    "receipt_retention_days": 7
+    "receipt_retention_days": 7,
+    "environment": "release-staging"
   },
   "cross_tools": {
     "cargo_install_timeout_minutes": 20,
