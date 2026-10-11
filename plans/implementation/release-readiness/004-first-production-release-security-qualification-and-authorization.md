@@ -95,6 +95,13 @@ approves staging → verify draft assets afresh → maintainer flips draft to
 public pre-release → re-verify public assets → write
 `plans/closure/release-readiness/004a-status.md` and close R004a.
 
+Corrective RF-07: the first live dispatch (run `38112750263`) failed closed
+in `resolve` because frozen-SHA checkouts never fetch tags while the pinned
+tool requires the tag locally — a producer defect, fixed upstream in
+`eggstack/eggpack@a0fec98` and consumed via re-pin + sanctioned regenerate.
+The `v0.1.0` tag still resolves to its frozen source; only the workflow
+advances on `main`, so the re-dispatch builds the identical source.
+
 R004a acceptance: frozen tag at a green-`main` SHA; release-workflow run
 green at that tag (both targets built + qualified); draft staged after
 maintainer staging approval; every draft asset digest-verified against the

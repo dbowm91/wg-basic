@@ -36,6 +36,12 @@ jobs:
         env:
           EGGPACK_EXPECTED_SOURCE_SHA: "${{ steps.resolve_tag.outputs.source_sha }}"
         run: test "$(git rev-parse --verify HEAD^{commit})" = "$EGGPACK_EXPECTED_SOURCE_SHA"
+      - name: Fetch release tag for local verification
+        shell: bash
+        env:
+          EGGPACK_RELEASE_TAG: "${{ inputs.release_tag }}"
+          EGGPACK_EXPECTED_SOURCE_SHA: "${{ steps.resolve_tag.outputs.source_sha }}"
+        run: "set -euo pipefail\ntag=\"$EGGPACK_RELEASE_TAG\"\nif [ -z \"$tag\" ] || [ \"${#tag}\" -gt 128 ]; then\n  echo 'release tag is empty or oversized' >&2\n  exit 1\nfi\nref=\"refs/tags/$tag\"\ngit check-ref-format \"$ref\"\ngit fetch --no-tags --depth=1 origin \"$ref:$ref\"\npeeled=\"$(git rev-parse --verify \"$ref^{commit}\")\"\nif [ \"$peeled\" != \"$EGGPACK_EXPECTED_SOURCE_SHA\" ]; then\n  echo 'release tag does not peel to the frozen source revision' >&2\n  exit 1\nfi\n"
 
       - name: Check Cargo availability
         shell: bash
@@ -58,12 +64,18 @@ jobs:
         env:
           EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.preflight.outputs.source_sha }}"
         run: test "$(git rev-parse --verify HEAD^{commit})" = "$EGGPACK_EXPECTED_SOURCE_SHA"
+      - name: Fetch release tag for local verification
+        shell: bash
+        env:
+          EGGPACK_RELEASE_TAG: "${{ inputs.release_tag }}"
+          EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.preflight.outputs.source_sha }}"
+        run: "set -euo pipefail\ntag=\"$EGGPACK_RELEASE_TAG\"\nif [ -z \"$tag\" ] || [ \"${#tag}\" -gt 128 ]; then\n  echo 'release tag is empty or oversized' >&2\n  exit 1\nfi\nref=\"refs/tags/$tag\"\ngit check-ref-format \"$ref\"\ngit fetch --no-tags --depth=1 origin \"$ref:$ref\"\npeeled=\"$(git rev-parse --verify \"$ref^{commit}\")\"\nif [ \"$peeled\" != \"$EGGPACK_EXPECTED_SOURCE_SHA\" ]; then\n  echo 'release tag does not peel to the frozen source revision' >&2\n  exit 1\nfi\n"
 
       - name: Install pinned Eggpack tool
         shell: bash
         timeout-minutes: 20
         run: |
-          cargo install --git https://github.com/eggstack/eggpack --rev 1103a1affc62a210f1102a769457db80d9188bc8 --locked eggpack-cli
+          cargo install --git https://github.com/eggstack/eggpack --rev a0fec987f2d13ed182ab4973cda363ff12b73870 --locked eggpack-cli
           eggpack --version
       - name: Create runtime identity directory
         shell: bash
@@ -99,6 +111,12 @@ jobs:
         env:
           EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
         run: test "$(git rev-parse --verify HEAD^{commit})" = "$EGGPACK_EXPECTED_SOURCE_SHA"
+      - name: Fetch release tag for local verification
+        shell: bash
+        env:
+          EGGPACK_RELEASE_TAG: "${{ inputs.release_tag }}"
+          EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
+        run: "set -euo pipefail\ntag=\"$EGGPACK_RELEASE_TAG\"\nif [ -z \"$tag\" ] || [ \"${#tag}\" -gt 128 ]; then\n  echo 'release tag is empty or oversized' >&2\n  exit 1\nfi\nref=\"refs/tags/$tag\"\ngit check-ref-format \"$ref\"\ngit fetch --no-tags --depth=1 origin \"$ref:$ref\"\npeeled=\"$(git rev-parse --verify \"$ref^{commit}\")\"\nif [ \"$peeled\" != \"$EGGPACK_EXPECTED_SOURCE_SHA\" ]; then\n  echo 'release tag does not peel to the frozen source revision' >&2\n  exit 1\nfi\n"
 
       - name: Download runtime release identity
         uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
@@ -161,7 +179,7 @@ jobs:
         shell: bash
         timeout-minutes: 20
         run: |
-          cargo install --git https://github.com/eggstack/eggpack --rev 1103a1affc62a210f1102a769457db80d9188bc8 --locked eggpack-cli
+          cargo install --git https://github.com/eggstack/eggpack --rev a0fec987f2d13ed182ab4973cda363ff12b73870 --locked eggpack-cli
           eggpack --version
       - name: Verify checked-out release source
         shell: bash
@@ -202,6 +220,12 @@ jobs:
         env:
           EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
         run: test "$(git rev-parse --verify HEAD^{commit})" = "$EGGPACK_EXPECTED_SOURCE_SHA"
+      - name: Fetch release tag for local verification
+        shell: bash
+        env:
+          EGGPACK_RELEASE_TAG: "${{ inputs.release_tag }}"
+          EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
+        run: "set -euo pipefail\ntag=\"$EGGPACK_RELEASE_TAG\"\nif [ -z \"$tag\" ] || [ \"${#tag}\" -gt 128 ]; then\n  echo 'release tag is empty or oversized' >&2\n  exit 1\nfi\nref=\"refs/tags/$tag\"\ngit check-ref-format \"$ref\"\ngit fetch --no-tags --depth=1 origin \"$ref:$ref\"\npeeled=\"$(git rev-parse --verify \"$ref^{commit}\")\"\nif [ \"$peeled\" != \"$EGGPACK_EXPECTED_SOURCE_SHA\" ]; then\n  echo 'release tag does not peel to the frozen source revision' >&2\n  exit 1\nfi\n"
 
       - name: Download runtime release identity
         uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
@@ -264,7 +288,7 @@ jobs:
         shell: bash
         timeout-minutes: 20
         run: |
-          cargo install --git https://github.com/eggstack/eggpack --rev 1103a1affc62a210f1102a769457db80d9188bc8 --locked eggpack-cli
+          cargo install --git https://github.com/eggstack/eggpack --rev a0fec987f2d13ed182ab4973cda363ff12b73870 --locked eggpack-cli
           eggpack --version
       - name: Verify checked-out release source
         shell: bash
@@ -305,6 +329,12 @@ jobs:
         env:
           EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
         run: test "$(git rev-parse --verify HEAD^{commit})" = "$EGGPACK_EXPECTED_SOURCE_SHA"
+      - name: Fetch release tag for local verification
+        shell: bash
+        env:
+          EGGPACK_RELEASE_TAG: "${{ inputs.release_tag }}"
+          EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
+        run: "set -euo pipefail\ntag=\"$EGGPACK_RELEASE_TAG\"\nif [ -z \"$tag\" ] || [ \"${#tag}\" -gt 128 ]; then\n  echo 'release tag is empty or oversized' >&2\n  exit 1\nfi\nref=\"refs/tags/$tag\"\ngit check-ref-format \"$ref\"\ngit fetch --no-tags --depth=1 origin \"$ref:$ref\"\npeeled=\"$(git rev-parse --verify \"$ref^{commit}\")\"\nif [ \"$peeled\" != \"$EGGPACK_EXPECTED_SOURCE_SHA\" ]; then\n  echo 'release tag does not peel to the frozen source revision' >&2\n  exit 1\nfi\n"
 
       - name: Download runtime release identity
         uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
@@ -316,7 +346,7 @@ jobs:
         shell: bash
         timeout-minutes: 20
         run: |
-          cargo install --git https://github.com/eggstack/eggpack --rev 1103a1affc62a210f1102a769457db80d9188bc8 --locked eggpack-cli
+          cargo install --git https://github.com/eggstack/eggpack --rev a0fec987f2d13ed182ab4973cda363ff12b73870 --locked eggpack-cli
           eggpack --version
       - name: Verify checked-out release source
         shell: bash
@@ -355,6 +385,12 @@ jobs:
         env:
           EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
         run: test "$(git rev-parse --verify HEAD^{commit})" = "$EGGPACK_EXPECTED_SOURCE_SHA"
+      - name: Fetch release tag for local verification
+        shell: bash
+        env:
+          EGGPACK_RELEASE_TAG: "${{ inputs.release_tag }}"
+          EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
+        run: "set -euo pipefail\ntag=\"$EGGPACK_RELEASE_TAG\"\nif [ -z \"$tag\" ] || [ \"${#tag}\" -gt 128 ]; then\n  echo 'release tag is empty or oversized' >&2\n  exit 1\nfi\nref=\"refs/tags/$tag\"\ngit check-ref-format \"$ref\"\ngit fetch --no-tags --depth=1 origin \"$ref:$ref\"\npeeled=\"$(git rev-parse --verify \"$ref^{commit}\")\"\nif [ \"$peeled\" != \"$EGGPACK_EXPECTED_SOURCE_SHA\" ]; then\n  echo 'release tag does not peel to the frozen source revision' >&2\n  exit 1\nfi\n"
 
       - name: Download runtime release identity
         uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
@@ -366,7 +402,7 @@ jobs:
         shell: bash
         timeout-minutes: 20
         run: |
-          cargo install --git https://github.com/eggstack/eggpack --rev 1103a1affc62a210f1102a769457db80d9188bc8 --locked eggpack-cli
+          cargo install --git https://github.com/eggstack/eggpack --rev a0fec987f2d13ed182ab4973cda363ff12b73870 --locked eggpack-cli
           eggpack --version
       - name: Verify checked-out release source
         shell: bash
@@ -405,6 +441,12 @@ jobs:
         env:
           EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
         run: test "$(git rev-parse --verify HEAD^{commit})" = "$EGGPACK_EXPECTED_SOURCE_SHA"
+      - name: Fetch release tag for local verification
+        shell: bash
+        env:
+          EGGPACK_RELEASE_TAG: "${{ inputs.release_tag }}"
+          EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
+        run: "set -euo pipefail\ntag=\"$EGGPACK_RELEASE_TAG\"\nif [ -z \"$tag\" ] || [ \"${#tag}\" -gt 128 ]; then\n  echo 'release tag is empty or oversized' >&2\n  exit 1\nfi\nref=\"refs/tags/$tag\"\ngit check-ref-format \"$ref\"\ngit fetch --no-tags --depth=1 origin \"$ref:$ref\"\npeeled=\"$(git rev-parse --verify \"$ref^{commit}\")\"\nif [ \"$peeled\" != \"$EGGPACK_EXPECTED_SOURCE_SHA\" ]; then\n  echo 'release tag does not peel to the frozen source revision' >&2\n  exit 1\nfi\n"
 
       - name: Download runtime release identity
         uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
@@ -416,7 +458,7 @@ jobs:
         shell: bash
         timeout-minutes: 20
         run: |
-          cargo install --git https://github.com/eggstack/eggpack --rev 1103a1affc62a210f1102a769457db80d9188bc8 --locked eggpack-cli
+          cargo install --git https://github.com/eggstack/eggpack --rev a0fec987f2d13ed182ab4973cda363ff12b73870 --locked eggpack-cli
           eggpack --version
       - name: Verify checked-out release source
         shell: bash
@@ -458,6 +500,12 @@ jobs:
         env:
           EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
         run: test "$(git rev-parse --verify HEAD^{commit})" = "$EGGPACK_EXPECTED_SOURCE_SHA"
+      - name: Fetch release tag for local verification
+        shell: bash
+        env:
+          EGGPACK_RELEASE_TAG: "${{ inputs.release_tag }}"
+          EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
+        run: "set -euo pipefail\ntag=\"$EGGPACK_RELEASE_TAG\"\nif [ -z \"$tag\" ] || [ \"${#tag}\" -gt 128 ]; then\n  echo 'release tag is empty or oversized' >&2\n  exit 1\nfi\nref=\"refs/tags/$tag\"\ngit check-ref-format \"$ref\"\ngit fetch --no-tags --depth=1 origin \"$ref:$ref\"\npeeled=\"$(git rev-parse --verify \"$ref^{commit}\")\"\nif [ \"$peeled\" != \"$EGGPACK_EXPECTED_SOURCE_SHA\" ]; then\n  echo 'release tag does not peel to the frozen source revision' >&2\n  exit 1\nfi\n"
 
       - name: Download runtime release identity
         uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
@@ -469,7 +517,7 @@ jobs:
         shell: bash
         timeout-minutes: 20
         run: |
-          cargo install --git https://github.com/eggstack/eggpack --rev 1103a1affc62a210f1102a769457db80d9188bc8 --locked eggpack-cli
+          cargo install --git https://github.com/eggstack/eggpack --rev a0fec987f2d13ed182ab4973cda363ff12b73870 --locked eggpack-cli
           eggpack --version
       - name: Verify checked-out release source
         shell: bash
@@ -510,6 +558,12 @@ jobs:
         env:
           EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
         run: test "$(git rev-parse --verify HEAD^{commit})" = "$EGGPACK_EXPECTED_SOURCE_SHA"
+      - name: Fetch release tag for local verification
+        shell: bash
+        env:
+          EGGPACK_RELEASE_TAG: "${{ inputs.release_tag }}"
+          EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
+        run: "set -euo pipefail\ntag=\"$EGGPACK_RELEASE_TAG\"\nif [ -z \"$tag\" ] || [ \"${#tag}\" -gt 128 ]; then\n  echo 'release tag is empty or oversized' >&2\n  exit 1\nfi\nref=\"refs/tags/$tag\"\ngit check-ref-format \"$ref\"\ngit fetch --no-tags --depth=1 origin \"$ref:$ref\"\npeeled=\"$(git rev-parse --verify \"$ref^{commit}\")\"\nif [ \"$peeled\" != \"$EGGPACK_EXPECTED_SOURCE_SHA\" ]; then\n  echo 'release tag does not peel to the frozen source revision' >&2\n  exit 1\nfi\n"
 
       - name: Download runtime release identity
         uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
@@ -521,7 +575,7 @@ jobs:
         shell: bash
         timeout-minutes: 20
         run: |
-          cargo install --git https://github.com/eggstack/eggpack --rev 1103a1affc62a210f1102a769457db80d9188bc8 --locked eggpack-cli
+          cargo install --git https://github.com/eggstack/eggpack --rev a0fec987f2d13ed182ab4973cda363ff12b73870 --locked eggpack-cli
           eggpack --version
       - name: Verify checked-out release source
         shell: bash
@@ -570,6 +624,12 @@ jobs:
         env:
           EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
         run: test "$(git rev-parse --verify HEAD^{commit})" = "$EGGPACK_EXPECTED_SOURCE_SHA"
+      - name: Fetch release tag for local verification
+        shell: bash
+        env:
+          EGGPACK_RELEASE_TAG: "${{ inputs.release_tag }}"
+          EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
+        run: "set -euo pipefail\ntag=\"$EGGPACK_RELEASE_TAG\"\nif [ -z \"$tag\" ] || [ \"${#tag}\" -gt 128 ]; then\n  echo 'release tag is empty or oversized' >&2\n  exit 1\nfi\nref=\"refs/tags/$tag\"\ngit check-ref-format \"$ref\"\ngit fetch --no-tags --depth=1 origin \"$ref:$ref\"\npeeled=\"$(git rev-parse --verify \"$ref^{commit}\")\"\nif [ \"$peeled\" != \"$EGGPACK_EXPECTED_SOURCE_SHA\" ]; then\n  echo 'release tag does not peel to the frozen source revision' >&2\n  exit 1\nfi\n"
 
       - name: Download runtime release identity
         uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
@@ -581,7 +641,7 @@ jobs:
         shell: bash
         timeout-minutes: 20
         run: |
-          cargo install --git https://github.com/eggstack/eggpack --rev 1103a1affc62a210f1102a769457db80d9188bc8 --locked eggpack-cli
+          cargo install --git https://github.com/eggstack/eggpack --rev a0fec987f2d13ed182ab4973cda363ff12b73870 --locked eggpack-cli
           eggpack --version
       - name: Verify checked-out release source
         shell: bash
@@ -648,6 +708,12 @@ jobs:
         env:
           EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
         run: test "$(git rev-parse --verify HEAD^{commit})" = "$EGGPACK_EXPECTED_SOURCE_SHA"
+      - name: Fetch release tag for local verification
+        shell: bash
+        env:
+          EGGPACK_RELEASE_TAG: "${{ inputs.release_tag }}"
+          EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
+        run: "set -euo pipefail\ntag=\"$EGGPACK_RELEASE_TAG\"\nif [ -z \"$tag\" ] || [ \"${#tag}\" -gt 128 ]; then\n  echo 'release tag is empty or oversized' >&2\n  exit 1\nfi\nref=\"refs/tags/$tag\"\ngit check-ref-format \"$ref\"\ngit fetch --no-tags --depth=1 origin \"$ref:$ref\"\npeeled=\"$(git rev-parse --verify \"$ref^{commit}\")\"\nif [ \"$peeled\" != \"$EGGPACK_EXPECTED_SOURCE_SHA\" ]; then\n  echo 'release tag does not peel to the frozen source revision' >&2\n  exit 1\nfi\n"
 
       - name: Download runtime release identity
         uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
@@ -659,7 +725,7 @@ jobs:
         shell: bash
         timeout-minutes: 20
         run: |
-          cargo install --git https://github.com/eggstack/eggpack --rev 1103a1affc62a210f1102a769457db80d9188bc8 --locked eggpack-cli
+          cargo install --git https://github.com/eggstack/eggpack --rev a0fec987f2d13ed182ab4973cda363ff12b73870 --locked eggpack-cli
           eggpack --version
       - name: Verify checked-out release source
         shell: bash
