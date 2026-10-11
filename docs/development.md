@@ -374,17 +374,18 @@ python3 scripts/test-release-smoke.py
 ```
 
 The fixtures do not establish repository settings, production key custody,
-actual signing, or public release readiness. Maintainer signing procedures and
+actual signing, or public release readiness. Maintainer release procedures and
 the live GitHub run/draft preflight are documented in
-[release signing](release-signing.md).
+[release signing](release-signing.md). Releases are checksums-only by
+maintainer decision; there is no production key to custody.
 
 ### M004 updater qualification
 
 The installed CLI is `wg-basic update check`, `wg-basic update run`, and
 `wg-basic update recover`. `check` is read-only; `run` and `recover` require
-effective root and never invoke sudo. The production check/run paths currently
-fail closed before network access because the production Minisign public key is
-not provisioned. M004 transaction, enabled/disabled traffic, target, and
+effective root and never invoke sudo. The production check/run paths
+permanently fail closed before network access because no production Minisign
+public key exists by maintainer decision (checksums-only releases). M004 transaction, enabled/disabled traffic, target, and
 operator-contract qualification is closed. Phase 10 lifecycle qualification
 is also closed, including native fresh-install and uninstall/reinstall on both
 supported GNU targets.
@@ -419,8 +420,8 @@ archive. The current test controller and candidate include
 release workflows do not. The fixture signing key and fault markers exist
 only on the disposable host. The
 test confirms an absolute root-owned curl binary is available without making a
-network request. It also proves release signing remains unavailable without
-the production key.
+network request. It also proves self-update stays fail-closed without
+a production key, which by maintainer decision will not be provisioned.
 
 The Phase 10 foundation workflow validates the Eggpack producer inputs and
 builds each Linux GNU candidate with cargo-zigbuild 0.23.3 and Zig 0.14.1 at a
@@ -437,6 +438,7 @@ python3 scripts/release-smoke.py \
   target/x86_64-unknown-linux-gnu/release/wg-basic
 ```
 
-The production signing key is not present in the repository. The committed
+The production signing key does not exist by maintainer decision and is not
+planned. The committed
 Minisign key under `tests/fixtures/release-auth/` is test-only material and
 cannot authenticate a production release.

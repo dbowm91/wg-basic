@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Guard the documented high-assurance bootstrap sequence and trust labels."""
+"""Guard the documented checksums-only bootstrap sequence and trust labels.
+
+Releases carry no signatures by maintainer decision (R004b waiver), so this
+pins manifest-consistency and digest checks ordered before root execution —
+not signature verification.
+"""
 
 import subprocess
 import sys
@@ -13,17 +18,17 @@ def main() -> None:
     docs = (ROOT / "docs/installation.md").read_text(encoding="utf-8")
     wrapper = (ROOT / "release/eggpack/install.sh").read_text(encoding="utf-8")
     checks = [
-        "minisign -Vm \"$WORK/release-manifest.json\"",
-        "minisign -Vm \"$WORK/install.sh\"",
+        '"$BASE/release-manifest.json"',
+        '"$BASE/install.sh"',
+        "# No signatures exist to check",
         "jq -e --arg version",
         "git ls-remote",
         "git clone --quiet",
-        '\"$BASE/$ARTIFACT\"',
+        '"$BASE/$ARTIFACT"',
         "readelf -h",
         '"$WORK/wg-basic" --version',
         "sudo install -o root -g root -m 500 \"$WORK/install.sh\"",
         "sudo install -o root -g root -m 500 \"$WORK/wg-basic\"",
-        "sudo minisign -Vm \"$STAGE/install.sh\"",
         "sudo sha256sum --check --status",
         "sudo sh \"$STAGE/install.sh\"",
     ]

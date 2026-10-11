@@ -1,9 +1,10 @@
 # Release trust root and installer bootstrap
 
-The production Minisign public key is not provisioned yet. No placeholder key
+By maintainer decision (2026-10-11) there is no production Minisign public
+key and none is planned: releases are checksums-only. No placeholder key
 is committed or trusted by production code. Release verification tests inject a
-separate fixture public key. Production self-update must remain unavailable
-until a maintainer provisions the real public trust root and its fingerprint.
+separate fixture public key. Production self-update is permanently
+unavailable; every release requires a fresh install.
 
 The generated `install-exact.sh` is an integrity bootstrap: it is bound to one
 release tag and verifies the selected binary's exact size and SHA-256. The
@@ -13,14 +14,13 @@ an embedded checksum do not authenticate the script or manifest. The wrapper
 prints this limitation and uses a fixed system `PATH` and private `/tmp`
 staging directory.
 
-A high-assurance installation obtains the production public key independently,
-verifies the `install.sh` and release-manifest detached signatures before
-execution or parsing, checks the live tag/source and artifact identity, and
-passes the selected artifact's exact size and SHA-256 to the wrapper with a
-local candidate. The copy staged for root execution is root-owned and verified
-again. Follow the complete procedure in `docs/installation.md`. That path is
-not available until the production trust root has been provisioned and a
-production-signed draft has been qualified. The key in
+Without a trust root there is no signature-authenticated installation path.
+The strongest available installation checks the live tag/source and artifact
+identity and passes the selected artifact's exact size and SHA-256 to the
+wrapper with a local candidate. The copy staged for root execution is
+root-owned and verified again. Follow the complete procedure in
+`docs/installation.md`. The signed procedure below is retained reference for
+a future trust root under a new plan, not current practice. The key in
 `tests/fixtures/release-auth/` is test-only and must never be used for a public
 release.
 
@@ -40,7 +40,7 @@ its exact size, digest, and version there, then delegates to
 operator must take the digest and size from the target record in the verified
 manifest.
 
-## Maintainer signing handoff
+## Maintainer verification handoff (reference — signing waived)
 
 The release workflow uploads an `eggpack-staging-receipt` Actions artifact
 after staging a draft. A separate read-only workflow binds that receipt to the
@@ -72,6 +72,6 @@ minisign -V -p production.pub -m ./draft-assets/install.sh \
 
 Upload both detached signatures to the same draft without replacing any
 existing asset, then download and verify them again. Keep the private key out
-of the repository and GitHub Actions. No production signing key is provisioned
-at present, so this procedure is specified but production signing has not been
-performed.
+of the repository and GitHub Actions. No production signing key exists by
+maintainer decision, so this procedure is retained reference only; signing has
+not been performed and is not planned.
