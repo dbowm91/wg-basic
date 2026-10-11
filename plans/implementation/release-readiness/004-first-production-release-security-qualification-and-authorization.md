@@ -1,6 +1,6 @@
 # Release Readiness R004 — First Production Release Security Qualification and Authorization
 
-Status: blocked on R001–R003 closure at the exact tagged candidate SHA and explicit maintainer approval. Production key custody, first signed draft, and first signed-install evidence are executed as R004 operations by the single maintainer, not as pre-existing external blockers.
+Status: R004a initial unsigned pre-release track is executable now (tag + staged draft + verified public pre-release, no signing key required). R004b full production signed release stays blocked until the maintainer provisions a release trust root. No second reviewer is required anywhere.
 Repository baseline: `dbowm91/wg-basic@ff40f851508ccda52171c27cefdcdaf4ec1da2d5` (2026-10-09); rebaseline on the exact tagged candidate source and requalify at that SHA.
 Source roadmap: `plans/subsystems/release-readiness-security-roadmap.md`.
 Primary class: invariant / end-to-end qualification / release operation.
@@ -71,7 +71,40 @@ Require a signed-off release checklist reviewed and approved by the maintainer a
 
 Document an emergency-stop plan for wrong key, tag movement, compromised hosting/signature key, urgent binary vulnerability, and accidental unsafe system install. Avoid reissuing a tag or silently changing a signed release at the same version.
 
-## 5. Dependency graph and execution state
+## 4A. Initial pre-release track (R004a) — slackened gate for `v0.1.0`
+
+R004a ships the first downloadable build as an explicitly **unsigned GitHub
+pre-release** (evaluation only), so the release blocker can be met without
+inventing trust. Every relaxed requirement below is a *reduced claim*, never
+a weaker check behind the same claim. The full production gate in §§4–10
+becomes the R004b follow-up and is unchanged.
+
+| Production (R004b) requirement | R004a substitution | Why it stays truthful |
+|---|---|---|
+| Maintainer Minisign key, signed manifest + installer | Ship unsigned; publish SHA256 checksums only; release notes state "no signatures; verify checksums out of band" | No authenticity is claimed, so none is faked. `PRODUCTION_PUBLIC_KEY=None` keeps the updater fail-closed: this build cannot self-update and the next release needs a fresh install. |
+| Disposable-host signed first install | Hosted CI systemd lifecycle on both targets (release-workflow qualification) + fresh-download byte verification of every draft asset against the manifest | Install qualification is exactly the hosted evidence, labeled as such; no bare-metal claim. |
+| Full WP2 security review | Focused review: candidate-vs-last-qualified diff (must be plans/docs-only or re-open review), `cargo audit`, dependency/license check | No new production code rides unreviewed; the review bound matches the diff. |
+| Offline-ceremony draft verification | Fresh draft download + tag/source/manifest/digest binding via `scripts/verify-release-signing-bundle.py` signature checks recorded as expected-fail (unsigned) | The verifier's unsigned verdict is evidence, not a failure to hide. |
+| Publish as stable release | Publish as GitHub **pre-release** (tick pre-release at publish time; template default stays `false` for R004b) | The pre-release flag is the honest channel for evaluation builds. |
+| Maintainer key/tag/sign/install/publish sequence | Maintainer does two one-click UI actions: approve `release-staging` (creates the draft) and flip draft → public pre-release | Both actions are reversible (draft deletable, pre-release editable); no key custody is created. |
+
+R004a execution order: land this plan → merge → confirm `main` CI green at
+the merge head → tag that exact head `v0.1.0` (Cargo `0.1.0` identity holds)
+→ dispatch `release-eggpack.yml` with `release_tag=v0.1.0` → maintainer
+approves staging → verify draft assets afresh → maintainer flips draft to
+public pre-release → re-verify public assets → write
+`plans/closure/release-readiness/004a-status.md` and close R004a.
+
+R004a acceptance: frozen tag at a green-`main` SHA; release-workflow run
+green at that tag (both targets built + qualified); draft staged after
+maintainer staging approval; every draft asset digest-verified against the
+manifest with tag/source identity bound; release notes carry the unsigned
+evaluation-only wording; maintainer flipped draft → public pre-release;
+public assets re-downloaded and re-verified; no unresolved high finding.
+Then R004b (production signing, §§4–10 as written) remains blocked only on
+maintainer key provisioning — a smaller, explicit gate.
+
+## 5. Dependency graph and execution state (R004b production track)
 
 R001 workflow/provenance tooling -> closed at the tagged SHA.
 R002 signing tooling/procedure -> closed at the tagged SHA; the maintainer generates custody, embeds the public key, and signs the draft as R004 operations.
@@ -104,7 +137,7 @@ Update `README.md`, `docs/installation.md`, `docs/release-signing.md`, `docs/ope
 
 ## 8. Acceptance criteria
 
-R004 may close as public-release-ready when:
+R004b may close as public-release-ready when:
 - R001–R003 are closed at the exact tagged source with current green CI;
 - the production key is embedded/authenticated with real maintainer-controlled signatures for manifest and installer;
 - the read-only verifier and exact target artifacts all match source/tag/commit/Cargo/version and current green CI on both architectures;
@@ -112,7 +145,7 @@ R004 may close as public-release-ready when:
 - no unresolved high or actively exploitable finding remains, with medium/low findings recorded and dispositioned;
 - the maintainer records sole review plus explicit go approval, followed by controlled publication and verified public-download postcheck. No second review is required.
 
-If publication is not explicitly authorized or key unavailable, finish the technical checklist as far as evidence allows and record **blocked**, not closed.
+If publication is not explicitly authorized or key unavailable, finish the technical checklist as far as evidence allows and record **blocked**, not closed. R004a closes separately under §4A with `004a-status.md`; it never closes R004b.
 
 ## 9. Stop conditions
 
@@ -120,4 +153,4 @@ Stop on release-tag movement, unstable source identity, unreviewed supply chain 
 
 ## 10. Closure and handoff
 
-Write `plans/closure/release-readiness/004-status.md` only after actual verification. Include full target/run digest matrix, source/lock/toolchain provenance, signed asset inventory/fingerprint (public only), individual technical controls with pass/fail/blocked, independent review record, disclosure/incident readiness, go/no-go signoff, release publication result and exact public asset verification. Preserve any blocked external keys/approvals as blockers, not defects hidden by an optimistic summary.
+Write `plans/closure/release-readiness/004-status.md` only after actual verification. R004a writes `plans/closure/release-readiness/004a-status.md` instead (unsigned pre-release evidence: tag/SHA, release-workflow run, draft receipt, digest matrix, notes wording, staging + publish approvals, public re-verification). Include full target/run digest matrix, source/lock/toolchain provenance, signed asset inventory/fingerprint (public only), individual technical controls with pass/fail/blocked, independent review record, disclosure/incident readiness, go/no-go signoff, release publication result and exact public asset verification. Preserve any blocked external keys/approvals as blockers, not defects hidden by an optimistic summary.
