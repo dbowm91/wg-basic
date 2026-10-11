@@ -1,6 +1,6 @@
 # Release Readiness R002 — Production Trust Root and Offline Signing Ceremony
 
-Status: **conditionally closed for non-secret engineering; operational signing blocked** on R001 release readiness, maintainer-supplied key custody/fingerprint, and an approved production draft. `scripts/verify-release-signing-bundle.py` checks source/run/tag/draft/asset identity; the separate provenance workflow supplies run/attempt metadata. No key was generated, embedded, or provisioned.
+Status: **conditionally closed for non-secret engineering; strict closure needs exact-head hosted CI only**. `scripts/verify-release-signing-bundle.py` checks source/run/tag/draft/asset identity; the separate provenance workflow supplies run/attempt metadata. No key was generated, embedded, or provisioned. Production key custody, fingerprint, and the first signed draft are R004 release-operation inputs, not R002 closure blockers.
 Repository baseline: `dbowm91/wg-basic@0b814fe` (2026-10-10).
 Source roadmap: `plans/subsystems/release-readiness-security-roadmap.md`.
 Primary class: invariant / security / release operations.
@@ -48,7 +48,7 @@ Implement a minimal, reviewable `src/release.rs` public-key provisioning seam: p
 
 Add static/type regression to guarantee no test key in a production release and to reject malformed production public key, truncated signature, wrong release key, and mismatched manifest. Retain the project-owned trust key without delegating authentication to GitHub alone.
 
-### WP3 — Offline operator ceremony (two-person or equivalent explicit approval)
+### WP3 — Offline operator ceremony (single-maintainer approval)
 
 Document in `docs/release-signing.md` an operator-facing ceremony:
 1. trusted-key generation/key custody by maintainer on a segregated system, public-key authentication, separately secured backup and rotation/revocation policy;
@@ -59,6 +59,10 @@ Document in `docs/release-signing.md` an operator-facing ceremony:
 6. uploads ONLY approved `.minisig` assets to draft through a bounded maintainer-authorized path; fetches every published draft asset back and re-verifies exact bytes/signatures, source OID and staged manifest;
 7. records human approval/abort, signed receipts, release notes/fingerprint instructions and disaster recovery contact/path without disclosing secrets;
 8. explicit, separate `publish` action only after R004 release authorization.
+
+The maintainer may act as signer, verifier, and approver in separate
+recorded steps; no second person is required. Record the maintainer identity,
+step, and decision at each stage.
 
 No signing action or actual key provisioning is part of this planning handoff.
 
@@ -97,9 +101,9 @@ No additional root/systemd privileges, WireGuard/management protocol changes, or
 
 ## 8. Documentation, acceptance and stop conditions
 
-Update `src/release.rs` only after key custody approval; add `docs/release-signing.md`, `docs/installation.md`, `architecture/update-rollback-contract.md`, release documentation and `plans/subsystems/release-readiness-security-roadmap.md`. Nonsecret tooling may close as technically implemented while **production signing remains blocked**; record two separate dispositions.
+Update `src/release.rs` only after key custody approval; add `docs/release-signing.md`, `docs/installation.md`, `architecture/update-rollback-contract.md`, release documentation and `plans/subsystems/release-readiness-security-roadmap.md`. R002 closes on the non-secret tooling, fixture negative matrix, fail-closed default, and repeatable ceremony docs with exact-head hosted evidence. Production key provisioning, embedded trust root, and the first signed draft are executed as R004 release operations; they do not keep R002 conditional.
 
-R002 technical acceptance requires: independent trusted source-run-artifact binding, valid offline Minisign verifier with wrong-key/tamper controls, no normal-CI private key, explicit stored fingerprint/key rotation plan, repeatable fail-closed signing procedure, and artifact/signature re-download tests. R002 operational closure requires maintainer-provisioned actual key, matched embedded public key, and a real production-signed draft from R001-qualified source. No R004 release authorization until both are proven.
+R002 acceptance requires: independent trusted source-run-artifact binding, valid offline Minisign verifier with wrong-key/tamper controls, no normal-CI private key, explicit stored fingerprint/key rotation plan, repeatable fail-closed signing procedure, and artifact/signature re-download tests. The maintainer performs the single-maintainer ceremony in R004; no second person is required at any step.
 
 Stop for a scoped design review if draft provenance cannot be independently established, byte equality cannot be reproduced, the first release tag/commit selection is ambiguous, key sharing is proposed, a fixture key can enter a production build, provenance tool depends only on untrusted JSON, or signing becomes coupled to write-authorized CI without explicit maintainer consent.
 

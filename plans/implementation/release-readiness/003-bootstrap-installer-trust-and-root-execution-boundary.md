@@ -1,6 +1,6 @@
 # Release Readiness R003 — Bootstrap Installer Trust and Root Execution Boundary
 
-Status: **conditionally closed for repository engineering; production acceptance blocked** on R002's real trust root and signed draft. The rootless regression covers the documented verification order and trust labels; the existing Rust signing-handoff fixture rejects a wrong key, truncated signature, tampering, wrong product, and wrong release ID.
+Status: **conditionally closed for repository engineering; strict closure needs exact-head hosted evidence only**. The rootless regression covers the documented verification order and trust labels; the existing Rust signing-handoff fixture rejects a wrong key, truncated signature, tampering, wrong product, and wrong release ID. The first production signed-install run is an R004 release operation, not an R003 closure blocker.
 Repository baseline: `dbowm91/wg-basic@0b814fe` (2026-10-10).
 Source roadmap: `plans/subsystems/release-readiness-security-roadmap.md`.
 Primary class: invariant / security corrective / operator ergonomics.
@@ -98,7 +98,7 @@ Repeat Eggpack generated installer/workflow drift checks and `distribution-found
 
 Update `docs/installation.md`, `README.md`, `release/eggpack/install.sh` help, `docs/release-signing.md` (R002), `plans/subsystems/release-readiness-security-roadmap.md` and `plans/registry.md` after implementation. Preserve historical M002–M005 closures.
 
-R003 technical closure requires the documented authenticated high-assurance command path, regression evidence that signature checks precede downloaded-code execution, truthful convenience-mode trust description, source/target/version/digest binding, staging/path safety, and complete old native systemd install/uninstall/rollback regression. Its **production** acceptance requires the real R002 public key and valid signed release artifacts; maintain a separate blocked operational status until available.
+R003 closure requires the documented authenticated high-assurance command path, regression evidence that signature checks precede downloaded-code execution, truthful convenience-mode trust description, source/target/version/digest binding, staging/path safety, and complete native systemd install/uninstall/rollback regression at the exact head. The first production signed-install run is recorded as R004 evidence; it does not keep R003 conditional.
 
 Stop if no independent out-of-band public-key distribution exists, verification can be bypassed by fallback, generated installer changes need an unqualified upstream Eggpack revision, a file mutation race invalidates verification before exec, or an unverified candidate executes under root in the purported high-assurance path.
 

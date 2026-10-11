@@ -1,6 +1,6 @@
 # Release Readiness R001 — Workflow Input, Tag Authority, and Build/Stage Provenance Hardening
 
-Status: **conditionally closed for repository implementation; live release readiness remains gated**. Eggpack M003k is merged at `eggstack/eggpack@1103a1affc62a210f1102a769457db80d9188bc8`; its four hosted lanes passed in run `38027470046`. This repository pins that merge, regenerates the workflow, and uses a frozen pre-checkout tag resolver plus one-reviewer `release-staging` Environment. Active GitHub protections are recorded in the 2026-10-11 follow-up to `plans/closure/release-readiness/001-status.md`. No version tag exists, so the workflow has not been dispatched against a real release candidate. A live staging preflight remains unqualified; production signing/publication remain separately blocked.
+Status: **conditionally closed for repository implementation; strict closure needs exact-head hosted CI only**. Eggpack M003k is merged at `eggstack/eggpack@1103a1affc62a210f1102a769457db80d9188bc8`; its four hosted lanes passed in run `38027470046`. This repository pins that merge, regenerates the workflow, and uses a frozen pre-checkout tag resolver plus single-maintainer `release-staging` approval. Active GitHub protections are recorded in the 2026-10-11 follow-up to `plans/closure/release-readiness/001-status.md`. No version tag exists; the first live tagged staging preflight is deferred to the R004 release operation and is not an R001 closure gate. Production signing/publication remain separately blocked.
 Baseline: `dbowm91/wg-basic@0b814fe` (2026-10-10).
 Primary class: invariant / security corrective.
 Source roadmap: `plans/subsystems/release-readiness-security-roadmap.md`.
@@ -33,7 +33,7 @@ These are review findings from source, not a claim that an unauthorized actor al
 - Before any release-related source checkout, resolve a *specific* immutable source commit from a syntactically valid canonical `vX.Y.Z` tag; verify Git tag -> exact source SHA and that Cargo package version, binary `--version`, Eggpack release ID, source-revision manifest, GitHub repository and target matrix all bind to that same SHA.
 - Reject unsupported tags, prerelease, leading-zero versions, branches disguised as tags, missing or moving refs, unsigned/unreviewed workflow changes, job artifacts from other run IDs/attempts, and any mismatch between dispatched tag and staged receipt.
 - Read-only candidate jobs retain `contents: read`. Only the stage job may receive `contents: write`, with no private signing key or unrelated credentials in normal CI.
-- The write-scoped stage job waits for approval by the single configured Environment reviewer. The reviewer checks exact artifacts, receipts, tests, and host-target evidence; project policy requires no second reviewer. Publication still requires a separate explicit maintainer go decision.
+- The write-scoped stage job waits for approval by the single configured Environment reviewer (the maintainer, with self-approval allowed). The reviewer checks exact artifacts, receipts, tests, and host-target evidence; project policy requires no second reviewer. Publication still requires a separate explicit maintainer go decision.
 - Generated YAML is not manually edited as a permanent divergent fork. Correct the Eggpack generator/input contract at its owner or use a reviewed supported extension point; update the pinned Eggpack revision and regenerated workflow/shape together after upstream qualification.
 - Protect release tags and stage permissions at the repository settings level; document settings that cannot be asserted by code. Do not infer branch protection or secret exposure from source inspection.
 
@@ -93,7 +93,7 @@ Update `release/eggpack/github-policy.json` and generated workflow as required; 
 
 ## 9. Acceptance
 
-R001 closes only with no raw untrusted expression in shell run bodies, a *discriminating* adversarial-input test, source/tag/run/asset binding checks through actual staging preflight, green generator-drift and native CI, per-job least-privilege review, provenance and settings evidence, and a release gate that remains disabled without separate key/signing authorization.
+R001 closes with no raw untrusted expression in shell run bodies, a *discriminating* adversarial-input test, source/tag/run/asset binding checks through fixture and dry-run preflight evidence, green generator-drift and native CI at the exact head, per-job least-privilege review, provenance and settings evidence, and a release gate that remains disabled without separate key/signing authorization. The first live tagged staging run is an R004 operation, not an R001 closure prerequisite.
 
 ## 10. Stop conditions
 
@@ -101,12 +101,12 @@ Stop if Eggpack CI M003k is no longer qualified for the production build; canoni
 
 ## 11. Closure evidence
 
-`plans/closure/release-readiness/001-status.md` records the initial conditional disposition and the dated implementation/settings follow-up. Keep live release readiness conditional until an authorized stable-version tag can exercise staging preflight and current-SHA hosted checks pass; this does not authorize production signing or publication.
+`plans/closure/release-readiness/001-status.md` records the initial conditional disposition and the dated implementation/settings follow-up. Strict R001 closure needs exact-head hosted checks; the first live tagged staging preflight is deferred to the R004 release operation and does not keep R001 conditional. Neither authorizes production signing or publication.
 
 ## 12. 2026-10-11 producer and settings follow-up
 
 Eggpack M003k merged as `1103a1affc62a210f1102a769457db80d9188bc8`, with hosted Linux stable, Linux MSRV, macOS, and Windows lanes passing in run `38027470046`. The consumer policy and generated workflow use that exact immutable merge commit. Preflight resolves a tag before the first source checkout, verifies the resolved object is a commit, and freezes later checkouts to that OID. Only `stage` names `release-staging`.
 
-GitHub settings now include ruleset `24830321` for `main` (one approving PR review, required CI/release checks, resolved threads, and up-to-date branch), rulesets `24830322`/`24830324` restricting creation and preventing movement/deletion of `v*` tags, a selected Actions allowlist with read-only default workflow tokens, and Environment `release-staging` requiring approval from the maintainer account. The maintainer is the only direct collaborator. Project policy requires one reviewer, not a second; GitHub still prevents a PR author from approving their own PR.
+GitHub settings now include ruleset `24830321` for `main` (required CI/release checks, resolved threads, and up-to-date branch, with zero required pull-request approvals for this solo-maintainer project), rulesets `24830322`/`24830324` restricting creation and preventing movement/deletion of `v*` tags, a selected Actions allowlist with read-only default workflow tokens, and Environment `release-staging` requiring approval from the maintainer account with self-approval allowed. The maintainer is the only direct collaborator. Project policy requires no second reviewer; the maintainer merges their own PR after green checks and approves their own staging deployment.
 
 The exact merged producer binary generated and drift-checked the consumer workflow at 40,658 bytes. Release workflow security, provenance, signing-bundle, verified-install, installer, signing-request, and smoke fixtures passed. Rust formatting, check, clippy, and MSRV check passed. `cargo test --locked` had one timing-sensitive `operational_events` failure; that exact test passed in isolation. No stable version tag exists and no staging, signing, or publication was performed.

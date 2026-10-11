@@ -1,6 +1,6 @@
 # Release Readiness, Supply-chain Security, and First Public Distribution Roadmap
 
-Status: R001 repository implementation and repository policy are conditionally closed; live tagged staging remains unexercised. R002/R003 production signing gates and R004 remain blocked. No public release authorization.
+Status: R001–R003 repository implementation closable on exact-head hosted evidence; first live staging, production signing, and publication are R004 release operations by the single maintainer. No public release authorization.
 Repository review baseline: `dbowm91/wg-basic@0b814fe` (2026-10-10); settings and producer follow-up verified 2026-10-11.
 Primary owner: `wg-basic` release and operator trust surface; Eggpack continues to own generator/producer mechanics, Eggup the consumer-side binary/service transaction.
 Governance: `plans/003-planning-process.md`; ADR-006; `plans/subsystems/distribution-install-update-roadmap.md`; `plans/002-long-term-roadmap.md`.
@@ -74,7 +74,7 @@ Phase 10 + Phase 11 technical closures [done]
                         operational: explicit maintainer publish authorization
 ```
 
-Eggpack generator input interpolation was confirmed at `eggstack/eggpack@d61ca71`. Upstream CI M003k merged as `eggstack/eggpack@1103a1affc62a210f1102a769457db80d9188bc8` (hosted run `38027470046`, all four required lanes green). The consumer pin and generated workflow use that producer; its resolver validates and freezes the tag before checkout. GitHub settings now enforce one required PR approval, protected `main`, immutable `v*` tags, an Actions allowlist, and one `release-staging` Environment reviewer. R001's repository implementation/settings are conditionally closed; a live tagged preflight and current-SHA hosted consumer checks remain. R002's non-secret preflight and R003's install procedure are implemented, while actual production key custody/signatures remain external blockers.
+Eggpack generator input interpolation was confirmed at `eggstack/eggpack@d61ca71`. Upstream CI M003k merged as `eggstack/eggpack@1103a1affc62a210f1102a769457db80d9188bc8` (hosted run `38027470046`, all four required lanes green). The consumer pin and generated workflow use that producer; its resolver validates and freezes the tag before checkout. GitHub settings require green CI/release checks on `main` with zero required pull-request approvals (solo-maintainer merge after green checks), protected `main`, immutable `v*` tags, an Actions allowlist, and a single-maintainer `release-staging` approval with self-approval allowed. R001–R003 close on repository implementation plus exact-head hosted evidence; the first live tagged preflight, production key/draft, and signed install are R004 operations. No second reviewer is required anywhere.
 
 ## 7. Ordered milestones
 
@@ -82,29 +82,29 @@ Eggpack generator input interpolation was confirmed at `eggstack/eggpack@d61ca71
 
 Plan: `plans/implementation/release-readiness/001-release-workflow-input-and-provenance-hardening.md`.
 Status: **conditionally closed for repository implementation and policy**; live release readiness remains unexercised.
-Main gate: adversarial dispatch rejection, tag/source/run/artifact checks, qualified generator pin, producer validation before checkout, exact producer hosted CI, protected `main`/immutable `v*` tags, Actions policy, and the one-reviewer stage Environment are documented. Exercise the live preflight only with an authorized stable-version tag; current-SHA hosted consumer CI must also pass. Project policy requires one reviewer, with no second-review requirement.
+Main gate: adversarial dispatch rejection, tag/source/run/artifact checks, qualified generator pin, producer validation before checkout, exact producer hosted CI, protected `main`/immutable `v*` tags, Actions policy, and the single-maintainer stage approval are documented. R001 closes on exact-head hosted consumer CI; the first live tagged preflight is deferred to the R004 release operation. Project policy requires no second reviewer.
 
 ### R002 — Offline signing and production trust root
 
 Plan: `plans/implementation/release-readiness/002-production-trust-root-and-offline-signing-ceremony.md`.
-Status: **conditionally closed for non-secret implementation; operational signing blocked** on R001 release readiness, maintainer-supplied key custody/fingerprint, and approved draft.
-Main gate: source/run/tag/live-asset preflight, fixture signature negative controls, and offline ceremony docs exist. Production key provisioning, embedded fingerprint, actual signing, and key custody remain maintainer work.
+Status: **closable on non-secret implementation plus exact-head hosted evidence**; production key custody, fingerprint, and first signed draft are executed as R004 operations.
+Main gate: source/run/tag/live-asset preflight, fixture signature negative controls, and single-maintainer offline ceremony docs exist. No second person is required.
 
 ### R003 — High-assurance first-install bootstrap
 
 Plan: `plans/implementation/release-readiness/003-bootstrap-installer-trust-and-root-execution-boundary.md`.
-Status: **conditionally closed for repository engineering; production acceptance blocked** on R002 and signed-artifact qualification.
-Main gate: signed command procedure checks manifest/installer before parsing or root execution, with tag/source/target/size/hash and root-owned rechecks. The regression asserts command order; actual production qualification awaits authenticated signatures.
+Status: **closable on repository engineering plus exact-head hosted evidence**; the first signed-install run is recorded as R004 evidence.
+Main gate: signed command procedure checks manifest/installer before parsing or root execution, with tag/source/target/size/hash and root-owned rechecks. The regression asserts command order; the R004 operation runs it against authenticated signatures.
 
 ### R004 — Signed production draft and release decision
 
 Plan: `plans/implementation/release-readiness/004-first-production-release-security-qualification-and-authorization.md`.
-Status: **blocked**.
-Main gate: independently verified actual signed draft, exact source/tag, native x86_64+aarch64 systemd lifecycle, updated dual-stack and failed-candidate rollback/restore CI, security finding review, explicit maintainer go/no-go, final post-publication verification.
+Status: **blocked until the maintainer authorizes a release tag**.
+Main gate: maintainer-generated key and signed draft at the exact source/tag, hosted CI green at that SHA, target artifacts verified, install/update check, sole-maintainer checklist with explicit go/no-go, and post-publication re-verification. No second reviewer, no independent-machine round-trip, and no full dual-stack traffic re-pilot are required beyond the recorded Phase 10/11 evidence unless the release changes that surface.
 
 ## 8. Failure, retry and incident concerns
 
-Any unverified input or mismatched run blocks staging/signing; any invalid signature, missing public-key custody evidence, mutable tag, failed native host qualification or high/medium finding blocks publication. A partial draft/signature upload is not a release, and retry must reauthenticate all bytes. Existing installation state and backups are never touched by a planning or signing task. Security incident policy must preserve an independent route to revoked/rotated key distribution: a current installed binary cannot silently accept untrusted new release keys.
+Any unverified input or mismatched run blocks staging/signing; any invalid signature, missing public-key custody evidence, mutable tag, failed qualification, or confirmed high/exploitable finding blocks publication. Medium/low findings are recorded with disposition and do not auto-block once the maintainer accepts them in writing. A partial draft/signature upload is not a release, and retry must reauthenticate all bytes. Existing installation state and backups are never touched by a planning or signing task. Security incident policy must preserve an independent route to revoked/rotated key distribution: a current installed binary cannot silently accept untrusted new release keys.
 
 ## 9. Required verification evidence
 
@@ -117,11 +117,11 @@ Any unverified input or mismatched run blocks staging/signing; any invalid signa
 
 ## 10. Risks and decisions
 
-The highest risk is treating a self-consistent release receipt or a GitHub HTTPS download as independent authenticity. The recommended release path must have a separate trust anchor and actor approval. Generator-owned Bash interpolation and pre-checkout tag resolution were corrected and qualified in Eggpack CI M003k; keep the exact consumer pin and drift check. Repository branch/tag protections and the one-reviewer staging Environment are configured. No tag or release currently exists to exercise actual staging. The first public release may be staged as an unsigned draft for review but may never be marked publicly signed/authentic until all operational gates close. Future updater trust-key rotation requires a separately scoped ADR/plan if needed.
+The highest risk is treating a self-consistent release receipt or a GitHub HTTPS download as independent authenticity. The recommended release path must have a separate trust anchor and maintainer approval. Generator-owned Bash interpolation and pre-checkout tag resolution were corrected and qualified in Eggpack CI M003k; keep the exact consumer pin and drift check. Repository branch/tag protections and the single-maintainer staging approval are configured. No tag or release currently exists; the first staging run happens as an R004 operation. The first public release may be staged as an unsigned draft for review but may never be marked publicly signed/authentic until the R004 checklist closes. Future updater trust-key rotation requires a separately scoped ADR/plan if needed.
 
 ## 11. Completion definition
 
-R001–R003 repository engineering may be conditionally closed with exact-head hosted evidence, while their external controls remain separately blocked. R002/R003 operational acceptance requires key custody and actual production signatures. R004 requires current-SHA public-release source and asset checks, independent approved verification, both native host lifecycles, no high/medium issues, explicit maintainer publish approval, and verified published URL/bytes. If the maintainer has not supplied a signing key or has not authorized publication, status remains **blocked externally** even when engineering preparation is complete.
+R001–R003 repository engineering closes with exact-head hosted evidence. R004 executes the production sequence — maintainer key custody, authorized tag, signed draft, verified install, sole-review checklist, explicit publish approval, and published-asset re-verification — and closes the first public release. If the maintainer has not supplied a signing key or has not authorized publication, R004 remains **blocked externally** even when R001–R003 are closed.
 
 ## 12. Milestone status
 

@@ -113,8 +113,10 @@ changes.
 
 Before any public release, a repository maintainer must configure and verify:
 
-- a `main` branch ruleset requiring reviewed pull requests and the required
-  CI/release-contract status checks;
+- a `main` branch ruleset requiring the required CI/release-contract status
+  checks, with no required pull-request approvals. This is a
+  solo-maintainer project: the maintainer merges their own PR after green
+  checks. No second reviewer is required by project policy;
 - an immutable `v*` tag ruleset with tag creation restricted to authorized
   release maintainers;
 - a release-staging Environment with one required reviewer. The repository
@@ -135,8 +137,8 @@ gh api repos/dbowm91/wg-basic/actions/permissions/workflow
 
 The generated `stage` job now uses the `release-staging` Environment supported
 by Eggpack M003k. GitHub configures the sole required reviewer as `dbowm91`
-with self-review allowed. The `main` ruleset separately requires one approving
-pull-request review. A pull request author cannot approve their own PR, so a
-wg-basic PR authored by `dbowm91` still needs one other account to approve it.
-Production signing and publication remain blocked until an authorized key,
-signed draft, exact release qualification, and maintainer go decision exist.
+with self-review allowed. The `main` ruleset requires no approving
+pull-request review, so the maintainer merges their own PR once required
+checks are green; no other account is needed. Production signing and
+publication remain blocked until an authorized key, signed draft, exact
+release qualification, and maintainer go decision exist.

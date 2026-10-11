@@ -52,8 +52,8 @@ placeholder key.
 - RF-02 source/run/asset authenticity: tooling implemented, live production
   chain not exercised (High release gate).
 - RF-03 production trust root: intentionally absent (absolute release blocker).
-- Key rotation/revocation and two-person signer approval are documented
-  policy, not operationally attested.
+- Key rotation/revocation and single-maintainer signer approval are documented
+  policy, not operationally attested. No second person is required.
 
 R003 can use the documented detached-signature procedure once the maintainer
 publishes an independently authenticated key and signed draft. R004 remains
