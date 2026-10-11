@@ -62,16 +62,16 @@ conditional closure does not authorize staging, signing, or publication.
 ## 2026-10-11 producer, repository-policy, and consumer follow-up
 
 The producer ordering and repository configuration blockers recorded above
-have since been addressed. The status remains conditional because no stable
-release tag exists to run the actual staging preflight, and this consumer
-change still needs its exact-head hosted CI result.
+have since been addressed. The status remains conditional only on exact-head
+hosted CI for this consumer change; the first live tagged staging preflight
+is deferred to the R004 release operation and does not keep R001 conditional.
 
 | Requirement | New evidence | Result |
 |---|---|---|
 | Resolve and freeze source before checkout | Eggpack M003k merged as `1103a1affc62a210f1102a769457db80d9188bc8`; hosted run `38027470046` passed all four Linux stable/MSRV, macOS, and Windows lanes | Pass |
 | Pin producer and regenerate consumer workflow | `release/eggpack/github-policy.json`, `distribution-foundation.yml`, `docs/development.md`, and generated `release-eggpack.yml` pin M003k; `eggpack ci check` reports an exact 40,658-byte match | Pass |
 | Exercise tag object validation | `scripts/test-release-workflow-security.py` covers annotated/lightweight tags, changed/non-commit objects, malformed input, and shell injection rejection | Pass |
-| Require repository review and protect source/tags | Ruleset `24830321` requires one PR approval and CI/release checks on `main`; rulesets `24830322`/`24830324` restrict `v*` creation and prevent tag movement/deletion | Pass |
+| Require repository review and protect source/tags | Ruleset `24830321` requires CI/release checks on `main` with zero required approvals (solo-maintainer merge after green checks); rulesets `24830322`/`24830324` restrict `v*` creation and prevent tag movement/deletion | Pass |
 | Restrict actions and stage approval | Actions selected allowlist, read-only default token permissions; `release-staging` Environment requires the sole configured reviewer `dbowm91`, with self-review permitted | Pass |
 | Run actual tagged stage preflight | No `v*` tags or releases exist in wg-basic | Not exercised; stable-version/tag decision required |
 
@@ -91,5 +91,6 @@ Local verification for this follow-up:
 
 The previously recorded absent rulesets and producer ordering described the
 2026-10-10 inspection and are historical. Current repository settings are
-recorded in `docs/release-signing.md`. Project policy requires one reviewer
-only; a PR author cannot approve their own PR under GitHub's rules.
+recorded in `docs/release-signing.md`. Project policy requires no second
+reviewer: `main` needs zero approvals (maintainer merges after green checks)
+and `release-staging` needs only the maintainer with self-approval allowed.

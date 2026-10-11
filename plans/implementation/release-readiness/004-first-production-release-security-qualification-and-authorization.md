@@ -1,6 +1,6 @@
 # Release Readiness R004 — First Production Release Security Qualification and Authorization
 
-Status: blocked on R001 strict closure, R002 operational signing/trust-root completion, R003 production verified-install evidence, and explicit maintainer approval.
+Status: blocked on R001–R003 closure at the exact tagged candidate SHA and explicit maintainer approval. Production key custody, first signed draft, and first signed-install evidence are executed as R004 operations by the single maintainer, not as pre-existing external blockers.
 Repository baseline: `dbowm91/wg-basic@ff40f851508ccda52171c27cefdcdaf4ec1da2d5` (2026-10-09); rebaseline on the exact tagged candidate source and requalify at that SHA.
 Source roadmap: `plans/subsystems/release-readiness-security-roadmap.md`.
 Primary class: invariant / end-to-end qualification / release operation.
@@ -33,9 +33,9 @@ This plan does not publish automatically or create a production signing key. A p
 
 ## 4. Ordered work packages
 
-### WP1 — Candidate freeze and one-reviewer qualification packet
+### WP1 — Candidate freeze and single-maintainer qualification packet
 
-Select stable version and authoritatively freeze tag/source SHA with reviewed source tree, clean lockfile and release workflow. Assemble a release-readiness packet including threat model and explicit findings, source/asset/attestation manifest, dependency graph and cargo audit, license/source attribution, branch/tag protection settings as verified by maintainer, runtime/minimum host requirements, release notes/version, known issues and remediation contacts. Review source diff from the most recent qualified closure head including new release security changes; do not treat historical Codex Security zero-finding scan as coverage for the new diff.
+Select stable version and authoritatively freeze tag/source SHA with reviewed source tree, clean lockfile and release workflow. Assemble a release-readiness packet including threat model and explicit findings, source/asset/attestation manifest, dependency graph and cargo audit, license/source attribution, branch/tag protection settings as verified by maintainer, runtime/minimum host requirements, release notes/version, known issues and remediation contacts. The maintainer is the sole reviewer and approver; no second person is required. Review source diff from the most recent qualified closure head including new release security changes; do not treat historical Codex Security zero-finding scan as coverage for the new diff.
 
 ### WP2 — Static/dynamic security review on exact candidate
 
@@ -47,7 +47,7 @@ Perform bounded review of:
 - IPv4/IPv6 policy scope and foreign kernel state preservation;
 - dependency advisory and license checks, build toolchain pin, source-to-binary evidence and hidden fixture/bypass build switches.
 
-Produce a severity-ranked finding table with proof/source, exploit preconditions, mitigations and an owner. Any confirmed high/medium security finding opens a separate corrective plan and blocks this gate, rather than being silently waved away because Phase 10/11 is closed. State clearly what was inspected/read-only versus executed.
+Produce a severity-ranked finding table with proof/source, exploit preconditions, mitigations and an owner. Any confirmed high or actively exploitable finding opens a separate corrective plan and blocks this gate. Medium/low findings are recorded with disposition and owner; the maintainer may accept them with written rationale rather than keeping the release blocked. State clearly what was inspected/read-only versus executed.
 
 ### WP3 — Reproduce exact release CI and artifact set
 
@@ -55,28 +55,28 @@ At the chosen immutable tagged SHA, run full required workspace tests with Rust 
 
 Record native checks and actual artifact digest/size and runtime target; no checkbox green without exact current SHA/run URL. Prefer a current signed-updater installation/rollback rehearsal at the shipped schema (including schema v7 where now applicable), not only Phase 9 v4/v5 fixtures. If production signing cannot yet be completed, run a fixture-only dry-run but leave R004 operationally blocked.
 
-### WP4 — Signed draft verification from independent machine
+### WP4 — Signed draft verification
 
-Use R002 human-approved offline ceremony. Download final GitHub draft again from a fresh trusted machine, authenticate source SHA/identity/receipt/run and both detached Minisign signatures with out-of-band key, verify target artifacts and installer digest/hash-size matches signed metadata. Reject any unsigned/missing extra asset or source/draft mismatch. Validate there are no mutable asset rewrites after signing. Run R003 high-assurance first install from **exact these signed release assets** on disposable clean hosts, without running downloaded code prior to signature verification.
+Use the R002 single-maintainer offline ceremony. Download the final GitHub draft afresh on a trusted workstation, authenticate source SHA/identity/receipt/run and both detached Minisign signatures with the out-of-band key, verify target artifacts and installer digest/hash-size matches signed metadata. A separate air-gapped machine is not required; a fresh download plus out-of-band key comparison is sufficient. Reject any unsigned/missing extra asset or source/draft mismatch. Validate there are no mutable asset rewrites after signing. Run the R003 high-assurance first install from **exact these signed release assets** on a disposable clean host (or the hosted systemd lifecycle where a disposable host is unavailable), without running downloaded code prior to signature verification.
 
-### WP5 — Pilot / failure / rollback / reproducibility
+### WP5 — Install / failure / rollback check
 
-Test a controlled first-install to configured client traffic on both x86_64 and aarch64 systemd hosts; verify product admin bootstrap, session and HTTP loopback defaults, client config export, WireGuard IPv4/IPv6 handshake, full/split tunnel and disabled/re-enabled path. Exercise state-preserving uninstall/reinstall, wrong owner/unit refusal, fail-closed purge, old-version/new-version update check/run, failed-candidate restore and update recover under representative interruptions. The existing extensive fixture-signed updater matrix can be referenced only for its recorded architecture/SHA; if the first production-signed candidate cannot be used in an actual eligible updater transition, document the limitation and require an additional authorized release-to-release/installed-canary plan before claiming production updates field-proven.
+Exercise a controlled first-install on the supported targets using the hosted systemd lifecycle plus a disposable-host install check where feasible; verify product admin bootstrap, session and HTTP loopback defaults, client config export, and WireGuard handshake. Exercise state-preserving uninstall/reinstall and at least one update/recover path (failed-candidate restore or update recover). The existing fixture-signed updater matrix and Phase 10/11 traffic evidence may be referenced for their recorded architecture/SHA instead of re-running the full dual-stack traffic pilot; record any gap and requalify it only if the release changes that surface.
 
 Capture dependency footprint, memory, cold startup and storage/backup amplification as observations, not SLAs. Establish operational support/runbook, recovery commands, security disclosure path and how to revoke a compromised key or yank/quarantine a release without weakening installed clients' verification policy.
 
 ### WP6 — Explicit publish/no-publish decision
 
-Require a signed-off release checklist reviewed by one designated reviewer, who may be the maintainer, covering every release asset, source tag, signature/fingerprint, target matrix, security finding disposition, GitHub permission/protection, user-facing authenticity instructions, and release notes. The project does not require a second reviewer. The maintainer must still make an explicit go/no-go decision before changing a verified draft to public. After publication, fetch the exact assets and verify signatures again; recheck updater canonical tag discovery on a safely controlled newer-version fixture; record where public download was verified.
+Require a signed-off release checklist reviewed and approved by the maintainer as sole reviewer and approver, covering every release asset, source tag, signature/fingerprint, target matrix, security finding disposition, GitHub permission/protection, user-facing authenticity instructions, and release notes. The project does not require a second reviewer. The maintainer records an explicit go/no-go decision before changing a verified draft to public. After publication, fetch the exact assets and verify signatures again; record where public download was verified.
 
 Document an emergency-stop plan for wrong key, tag movement, compromised hosting/signature key, urgent binary vulnerability, and accidental unsafe system install. Avoid reissuing a tag or silently changing a signed release at the same version.
 
 ## 5. Dependency graph and execution state
 
-R001 workflow/provenance correction -> strict close.
-R002 independent signing/tooling may develop concurrently, but real production signing requires R001 provenance and maintainer key/approval -> operational close.
-R003 verified installer can develop concurrently, but real signed install evidence requires R002 operational close -> operational close.
-R004 begins final release qualification **only when all three are strictly accepted**; its public publication always requires explicit maintainer authorization. Phase 12 feature work remains a separate product decision and is not a blocker unless it introduces a security change in the candidate.
+R001 workflow/provenance tooling -> closed at the tagged SHA.
+R002 signing tooling/procedure -> closed at the tagged SHA; the maintainer generates custody, embeds the public key, and signs the draft as R004 operations.
+R003 verified-installer procedure -> closed at the tagged SHA; the first signed-install run is R004 evidence.
+R004 executes the production key/tag/sign/install/publish sequence above and records the maintainer go/no-go. Phase 12 feature work remains a separate product decision and is not a blocker unless it introduces a security change in the candidate.
 
 ## 6. Tests, review and operational commands
 
@@ -104,13 +104,13 @@ Update `README.md`, `docs/installation.md`, `docs/release-signing.md`, `docs/ope
 
 ## 8. Acceptance criteria
 
-R004 may close as public-release-ready only when:
-- R001–R003 strict operational prerequisites closed with exact-source evidence;
-- actual production key embedded/authenticated, real independent signer-controlled signatures for manifest and installer;
-- read-only verifier and exact target artifacts all match source/tag/commit/Cargo/version and current green CI on both architectures;
-- native verified first install, service ownership, management and IPv4/IPv6 functionality, update/recovery/rollback and uninstall/purge tested at relevant current schema;
-- no unresolved high/medium vulnerability, unreviewed unsigned bootstrap presented as authentic, unqualified supported target or mutable release asset;
-- one designated review is recorded and the maintainer gives explicit go approval, followed by controlled publication and verified public-download postcheck. The reviewer may be the maintainer; no second review is required.
+R004 may close as public-release-ready when:
+- R001–R003 are closed at the exact tagged source with current green CI;
+- the production key is embedded/authenticated with real maintainer-controlled signatures for manifest and installer;
+- the read-only verifier and exact target artifacts all match source/tag/commit/Cargo/version and current green CI on both architectures;
+- a verified first install, service ownership, and update/recovery check are recorded (hosted lifecycle plus disposable-host install where feasible; existing Phase 10/11 traffic evidence applies unless the release changes that surface);
+- no unresolved high or actively exploitable finding remains, with medium/low findings recorded and dispositioned;
+- the maintainer records sole review plus explicit go approval, followed by controlled publication and verified public-download postcheck. No second review is required.
 
 If publication is not explicitly authorized or key unavailable, finish the technical checklist as far as evidence allows and record **blocked**, not closed.
 
