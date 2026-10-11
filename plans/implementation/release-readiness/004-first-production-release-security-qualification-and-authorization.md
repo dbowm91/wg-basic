@@ -1,6 +1,6 @@
 # Release Readiness R004 — First Production Release Security Qualification and Authorization
 
-Status: R004a initial unsigned pre-release track is executable now (tag + staged draft + verified public pre-release, no signing key required). R004b full production signed release stays blocked until the maintainer provisions a release trust root. No second reviewer is required anywhere.
+Status: R004a **closed** 2026-10-11 (`v0.1.0` public pre-release, unsigned; closure `plans/closure/release-readiness/004a-status.md`). R004b full production signed release stays blocked until the maintainer provisions a release trust root. No second reviewer is required anywhere.
 Repository baseline: `dbowm91/wg-basic@ff40f851508ccda52171c27cefdcdaf4ec1da2d5` (2026-10-09); rebaseline on the exact tagged candidate source and requalify at that SHA.
 Source roadmap: `plans/subsystems/release-readiness-security-roadmap.md`.
 Primary class: invariant / end-to-end qualification / release operation.
