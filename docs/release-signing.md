@@ -86,12 +86,14 @@ minisign -V -p /etc/wg-basic/release.pub \
   -x ./draft-assets/install.sh.minisig
 ```
 
-Have an independent reviewer verify the detached signatures and public-key
-fingerprint. Upload only the two signature files to the same draft through the
+Have the designated reviewer verify the detached signatures and public-key
+fingerprint. The maintainer may serve as the sole reviewer. Upload only the
+two signature files to the same draft through the
 maintainer-controlled GitHub interface. Re-download the complete draft and run
 the preflight again; the verifier checks the live bytes and both signatures.
 Record the run URLs, source/tag identity, public fingerprint, asset hashes,
-reviewer, and approval in the non-secret release packet. Never record private
+reviewer, and approval in the non-secret release packet. No second reviewer is
+required. Never record private
 key material or use the private key in Actions.
 
 Signing does not authorize publication. Only the explicit R004 maintainer
@@ -115,9 +117,9 @@ Before any public release, a repository maintainer must configure and verify:
   CI/release-contract status checks;
 - an immutable `v*` tag ruleset with tag creation restricted to authorized
   release maintainers;
-- a narrow release-actor allowlist for manual dispatch and a second reviewer
-  for any write-authorized staging environment, if that environment gate is
-  supported by the generated workflow;
+- a release-staging Environment with one required reviewer. The repository
+  maintainer is the sole reviewer; GitHub permits that reviewer to approve a
+  deployment they initiated. No second reviewer is required by project policy;
 - the minimum GitHub Actions allowlist and read-only default token permission.
 
 Use these read-only API calls to repeat the settings review and retain their
@@ -131,8 +133,10 @@ gh api repos/dbowm91/wg-basic/actions/permissions
 gh api repos/dbowm91/wg-basic/actions/permissions/workflow
 ```
 
-`release-eggpack.yml` currently has no generated `environment:` gate for the
-staging job. An environment reviewer cannot be claimed until the producer
-supports that contract and the workflow is regenerated and qualified. Keep
-release signing and publication blocked until maintainers close these settings
-and producer-contract gaps.
+The generated `stage` job now uses the `release-staging` Environment supported
+by Eggpack M003k. GitHub configures the sole required reviewer as `dbowm91`
+with self-review allowed. The `main` ruleset separately requires one approving
+pull-request review. A pull request author cannot approve their own PR, so a
+wg-basic PR authored by `dbowm91` still needs one other account to approve it.
+Production signing and publication remain blocked until an authorized key,
+signed draft, exact release qualification, and maintainer go decision exist.

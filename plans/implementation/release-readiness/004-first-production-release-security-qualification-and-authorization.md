@@ -33,7 +33,7 @@ This plan does not publish automatically or create a production signing key. A p
 
 ## 4. Ordered work packages
 
-### WP1 — Candidate freeze and independent review packet
+### WP1 — Candidate freeze and one-reviewer qualification packet
 
 Select stable version and authoritatively freeze tag/source SHA with reviewed source tree, clean lockfile and release workflow. Assemble a release-readiness packet including threat model and explicit findings, source/asset/attestation manifest, dependency graph and cargo audit, license/source attribution, branch/tag protection settings as verified by maintainer, runtime/minimum host requirements, release notes/version, known issues and remediation contacts. Review source diff from the most recent qualified closure head including new release security changes; do not treat historical Codex Security zero-finding scan as coverage for the new diff.
 
@@ -67,7 +67,7 @@ Capture dependency footprint, memory, cold startup and storage/backup amplificat
 
 ### WP6 — Explicit publish/no-publish decision
 
-Require a signed-off release checklist with independent reviewer/maintainer approval of every release asset, source tag, signature/fingerprint, target matrix, security finding dispositions, GitHub permissions/protection, user-facing authenticity instructions, and release notes. Only maintainer may change a verified draft to public. Post-publication fetch exact assets and signature-verify again; recheck updater canonical tag discovery on a safely controlled newer-version fixture; record where public download was verified.
+Require a signed-off release checklist reviewed by one designated reviewer, who may be the maintainer, covering every release asset, source tag, signature/fingerprint, target matrix, security finding disposition, GitHub permission/protection, user-facing authenticity instructions, and release notes. The project does not require a second reviewer. The maintainer must still make an explicit go/no-go decision before changing a verified draft to public. After publication, fetch the exact assets and verify signatures again; recheck updater canonical tag discovery on a safely controlled newer-version fixture; record where public download was verified.
 
 Document an emergency-stop plan for wrong key, tag movement, compromised hosting/signature key, urgent binary vulnerability, and accidental unsafe system install. Avoid reissuing a tag or silently changing a signed release at the same version.
 
@@ -110,7 +110,7 @@ R004 may close as public-release-ready only when:
 - read-only verifier and exact target artifacts all match source/tag/commit/Cargo/version and current green CI on both architectures;
 - native verified first install, service ownership, management and IPv4/IPv6 functionality, update/recovery/rollback and uninstall/purge tested at relevant current schema;
 - no unresolved high/medium vulnerability, unreviewed unsigned bootstrap presented as authentic, unqualified supported target or mutable release asset;
-- explicit maintainer go approval, followed by controlled publication and verified public-download postcheck.
+- one designated review is recorded and the maintainer gives explicit go approval, followed by controlled publication and verified public-download postcheck. The reviewer may be the maintainer; no second review is required.
 
 If publication is not explicitly authorized or key unavailable, finish the technical checklist as far as evidence allows and record **blocked**, not closed.
 
