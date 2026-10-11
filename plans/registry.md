@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-11 (R001–R003 strictly closed at `1e034d0` with exact-head CI `38108270370` + Distribution Foundation `38108270368`; solo-maintainer policy with zero required PR approvals; R004a initial unsigned pre-release track executable, R004b production signing blocked on maintainer key; RF-07 producer tag-fetch fix `eggstack/eggpack@a0fec98` re-pinned after first live dispatch failed closed in `resolve`)
+Last planning reconciliation: 2026-10-11 (R001–R003 strictly closed at `1e034d0`; R004a closed with `v0.1.0` public pre-release — release run `38115877717`, provenance `38152418203`, RF-07 fixed via `eggstack/eggpack@a0fec98`; solo-maintainer policy with zero required PR approvals; R004b production signing blocked on maintainer key)
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -74,7 +74,7 @@ Runtime dependency adoption remains evidence-driven.
 | Operational hardening | closed | `plans/subsystems/operational-hardening-roadmap.md` | M001–M005 closed; Phase 9 closed |
 | Distribution/install/update | closed (technical) | `plans/subsystems/distribution-install-update-roadmap.md` | M001–M005 closed; production release remains blocked on signing |
 | IPv6/route-policy qualification | closed | `plans/subsystems/ipv6-route-policy-roadmap.md` | M001–M004 closed; `plans/closure/ipv6-route-policy/004-status.md` |
-| Release readiness and supply-chain security | active (R004a initial pre-release; R004b production signing later) | `plans/subsystems/release-readiness-security-roadmap.md` | R001–R003 strictly closed at `1e034d0`; R004a needs tag + staging/publish approvals, R004b needs maintainer key |
+| Release readiness and supply-chain security | active (R004b production signing only; R004a closed) | `plans/subsystems/release-readiness-security-roadmap.md` | R001–R004a closed; R004b needs maintainer key + signed draft/install/publish |
 
 Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
 
@@ -90,7 +90,7 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 | Subsystem | Milestone | Status | Implementation plan | Hard blocker |
 |---|---|---|---|---|
-| Release readiness/security | R004a initial unsigned pre-release | executable once maintainer authorizes tag `v0.1.0` | `plans/implementation/release-readiness/004-first-production-release-security-qualification-and-authorization.md` §4A | Tag + staging approval + draft-to-pre-release flip; sole review; no key, no second reviewer |
+| Release readiness/security | R004a initial unsigned pre-release | **closed 2026-10-11** (`v0.1.0` public pre-release) | `plans/implementation/release-readiness/004-first-production-release-security-qualification-and-authorization.md` §4A | Release run `38115877717` + provenance `38152418203` green; digest-verified draft and public assets; closure `plans/closure/release-readiness/004a-status.md` |
 | Release readiness/security | R004b first signed production release | blocked until maintainer provisions release trust root | `plans/implementation/release-readiness/004-first-production-release-security-qualification-and-authorization.md` §§4–10 | Maintainer key custody, signed draft/install, sole review plus explicit go; no second reviewer |
 | Distribution/install/update | Production signing and public release | R004 operation | `plans/subsystems/release-readiness-security-roadmap.md` and R002/R004 checklists | Maintainer key custody, tag, signed draft, current CI, install check, and explicit publication authorization |
 
@@ -103,6 +103,15 @@ M004 corrective ordering: upstream `eggstack/eggup` Service M010 owned-failed-sy
 M004 and its corrective slices are closed: `plans/closure/distribution/004-status.md`, `004-c001-status.md`, `004-c001a-status.md`, and `004-c002-status.md`. M005 is closed at `plans/closure/distribution/005-status.md`. Production public-release readiness additionally requires maintainer provisioning of the real release signing trust root and a production-signed draft. Fixture signing is sufficient to qualify mechanics but MUST NOT be described as production signing.
 
 ## 7. Recently closed work
+
+- Release-readiness R004a closure 2026-10-11: `v0.1.0` public pre-release
+  (unsigned, evaluation only) at source `7527241`. Release run
+  `38115877717` (11 jobs) + provenance run `38152418203` green; RF-07
+  producer tag-fetch fix (`eggstack/eggpack@a0fec98`) verified live;
+  draft and public assets digest-verified byte-identical; maintainer
+  staging approval + draft-to-pre-release flip. Closure
+  `plans/closure/release-readiness/004a-status.md`. R004b production
+  signing stays blocked on maintainer key provisioning.
 
 - Release-readiness R001 strict closure at `1e034d0`: Eggpack M003k pin,
   regenerated workflow, zero-approval solo-maintainer policy, exact-head
