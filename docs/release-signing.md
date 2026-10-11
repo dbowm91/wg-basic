@@ -1,14 +1,17 @@
 # Release signing and trust-root operation
 
-This document describes the release signing boundary. It is not evidence that
-production signing has occurred. The production Minisign key and signed draft
-are not provisioned; release signing and publication remain blocked. Fixture
-keys under `tests/fixtures/release-auth/` are test-only.
+This document describes the release signing boundary and the retained
+signing ceremony reference. It is not evidence that production signing has
+occurred. By maintainer decision (2026-10-11, waiver
+`plans/closure/release-readiness/004b-waiver-status.md`) releases are
+checksums-only: no production Minisign key is provisioned and none is
+planned. Fixture keys under `tests/fixtures/release-auth/` are test-only.
 
-## Trust and custody
+## Trust and custody (reference — no key exists)
 
-The private key belongs to an explicitly authorized maintainer and stays on a
-segregated signing host. It must not enter this repository, ordinary CI, an
+If a production key is ever provisioned under a new plan, the private key
+belongs to an explicitly authorized maintainer and stays on a segregated
+signing host. It must not enter this repository, ordinary CI, an
 artifact store, a container, or a command log. Keep an encrypted offline backup
 under separate custody. Record the public key ID/fingerprint and its independent
 distribution channel here only after a maintainer has authenticated them.
@@ -21,7 +24,7 @@ rotation requires a reviewed trust transition anchored by the old key or an
 explicit out-of-band reinstall. If the private key is lost or suspected
 compromised, stop signing and publication; do not replace the key silently.
 
-## Verify a draft before signing
+## Verify a draft before publication
 
 The release workflow emits an `eggpack-staging-receipt` artifact. When that
 workflow succeeds, `.github/workflows/release-provenance.yml` downloads only
@@ -49,7 +52,8 @@ both artifacts and all draft assets afresh. Confirm in GitHub that:
 Then run the preflight. It queries GitHub through the authenticated `gh` CLI,
 resolves the tag independently, downloads the live draft again, compares every
 byte with the local copy, validates manifest/sidecar/receipt consistency, and
-verifies any signatures already present:
+verifies any signatures present (none exist under the checksums-only policy;
+the tool skips signature verification when no `.minisig` assets are staged):
 
 ```sh
 python3 scripts/verify-release-signing-bundle.py \
@@ -59,12 +63,17 @@ python3 scripts/verify-release-signing-bundle.py \
   --public-key /etc/wg-basic/release.pub
 ```
 
-The tool requires `gh`, `git`, and `minisign`. Its checks supplement the
+The tool requires `gh`, `git`, and `minisign` (only needed if signatures
+are present). Its checks supplement the
 independent human review above; it does not authenticate repository protection
-settings or CI actors. Do not sign if either run, tag, source revision, asset
+settings or CI actors. Do not publish if either run, tag, source revision, asset
 inventory, or current draft differs from the reviewed packet.
 
-## Offline signing ceremony
+## Offline signing ceremony (reference — not current practice)
+
+No signing key exists and none is planned, so this ceremony is retained
+reference for a future trust root under a new plan. Do not provision a key
+by following this section alone; it requires plan authorization first.
 
 Transfer the exact preflighted `release-manifest.json` and `install.sh` bytes to
 the signing host over an authenticated channel. Review the version, source
@@ -96,9 +105,9 @@ reviewer, and approval in the non-secret release packet. No second reviewer is
 required. Never record private
 key material or use the private key in Actions.
 
-Signing does not authorize publication. Only the explicit R004 maintainer
+Staging approval does not authorize publication. Only the explicit maintainer
 decision can authorize changing a verified draft to public. After an authorized
-publication, download every public asset again and repeat signature, identity,
+publication, download every public asset again and repeat identity,
 target, and hash verification.
 
 ## Repository settings release gate
@@ -139,6 +148,7 @@ The generated `stage` job now uses the `release-staging` Environment supported
 by Eggpack M003k. GitHub configures the sole required reviewer as `dbowm91`
 with self-review allowed. The `main` ruleset requires no approving
 pull-request review, so the maintainer merges their own PR once required
-checks are green; no other account is needed. Production signing and
-publication remain blocked until an authorized key, signed draft, exact
-release qualification, and maintainer go decision exist.
+checks are green; no other account is needed. Releases ship checksums-only
+by maintainer decision; no authorized key or signed draft exists or is
+planned — exact release qualification and the maintainer go decision remain
+required for every publication.
