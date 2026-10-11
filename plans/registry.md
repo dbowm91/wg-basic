@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-11 (Eggpack M003k merged and consumer workflow regenerated; solo-maintainer policy with zero required PR approvals; R001–R003 closable on exact-head evidence; first staging/signing/publication are R004 operations)
+Last planning reconciliation: 2026-10-11 (R001–R003 strictly closed at `1e034d0` with exact-head CI `38108270370` + Distribution Foundation `38108270368`; solo-maintainer policy with zero required PR approvals; first staging/signing/publication are R004 maintainer operations)
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -74,7 +74,7 @@ Runtime dependency adoption remains evidence-driven.
 | Operational hardening | closed | `plans/subsystems/operational-hardening-roadmap.md` | M001–M005 closed; Phase 9 closed |
 | Distribution/install/update | closed (technical) | `plans/subsystems/distribution-install-update-roadmap.md` | M001–M005 closed; production release remains blocked on signing |
 | IPv6/route-policy qualification | closed | `plans/subsystems/ipv6-route-policy-roadmap.md` | M001–M004 closed; `plans/closure/ipv6-route-policy/004-status.md` |
-| Release readiness and supply-chain security | active planning (closable) | `plans/subsystems/release-readiness-security-roadmap.md` | Producer ordering, branch/tag protections, and single-maintainer staging approval are implemented; R001–R003 close on exact-head hosted evidence; first staging/signing/publication are R004 operations |
+| Release readiness and supply-chain security | active (R004 release operation only) | `plans/subsystems/release-readiness-security-roadmap.md` | R001–R003 strictly closed at `1e034d0`; first staging/signing/publication are R004 maintainer operations |
 
 Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
 
@@ -82,9 +82,9 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
-| Release readiness/security | R001 workflow input/provenance hardening | **closable; exact-head hosted CI pending** | `plans/implementation/release-readiness/001-release-workflow-input-and-provenance-hardening.md` | First live tagged preflight deferred to R004; no live tag needed to close R001 |
-| Release readiness/security | R002 offline signing and trust root | closable on tooling/fixtures; production key/draft are R004 operations | `plans/implementation/release-readiness/002-production-trust-root-and-offline-signing-ceremony.md` | Single-maintainer ceremony; no second person required |
-| Release readiness/security | R003 verified first-install trust | closable on procedure/fixtures; first signed install is R004 evidence | `plans/implementation/release-readiness/003-bootstrap-installer-trust-and-root-execution-boundary.md` | Fixture + hosted lifecycle qualify the procedure; no production key needed to close |
+| Release readiness/security | R001 workflow input/provenance hardening | **closed at `1e034d0`** | `plans/implementation/release-readiness/001-release-workflow-input-and-provenance-hardening.md` | Exact-head CI `38108270370` + Distribution `38108270368` green; live preflight deferred to R004 |
+| Release readiness/security | R002 offline signing and trust root | closed (non-secret engineering) at `1e034d0` | `plans/implementation/release-readiness/002-production-trust-root-and-offline-signing-ceremony.md` | Single-maintainer ceremony; production key/draft are R004 operations |
+| Release readiness/security | R003 verified first-install trust | closed (repository engineering) at `1e034d0` | `plans/implementation/release-readiness/003-bootstrap-installer-trust-and-root-execution-boundary.md` | First signed install is R004 evidence |
 
 ## 6. External readiness blockers
 
@@ -103,15 +103,17 @@ M004 and its corrective slices are closed: `plans/closure/distribution/004-statu
 
 ## 7. Recently closed work
 
-- Release-readiness R001 follow-up updates the Eggpack pin and generated
-  workflow to M003k (`1103a1a`); GitHub protection/settings are verified and
-  recorded. R001 closes on exact-head hosted consumer CI; the first live
-  staging run is deferred to the R004 release operation.
-- Release-readiness R002 non-secret signing tooling conditionally closed at
-  `bd7c085`; the single-maintainer ceremony needs no second person, and the
-  production key/draft are R004 operations.
-- Release-readiness R003 installer trust procedure conditionally closed at
-  `bd7c085`; the first signed-install run is R004 evidence.
+- Release-readiness R001 strict closure at `1e034d0`: Eggpack M003k pin,
+  regenerated workflow, zero-approval solo-maintainer policy, exact-head
+  hosted CI `38108270370` (21 passed) and Distribution Foundation
+  `38108270368` green. First live staging run is an R004 operation.
+- Release-readiness R002 strict closure (non-secret engineering) at
+  `1e034d0`: single-maintainer ceremony, fixture negative matrix,
+  fail-closed default; production key/draft are R004 operations.
+- Release-readiness R003 strict closure (repository engineering) at
+  `1e034d0`: authenticated install procedure, ordering regression,
+  truthful convenience-mode labels; first signed-install run is R004
+  evidence.
 - Distribution M005 strict closure and **Phase 10 technical closure**:
   `plans/closure/distribution/005-status.md` (implementation head `c7de919`;
   full CI `37936112512`; native release/lifecycle CI `37936276064`). Public

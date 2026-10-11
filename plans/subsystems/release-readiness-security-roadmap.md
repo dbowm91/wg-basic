@@ -1,6 +1,6 @@
 # Release Readiness, Supply-chain Security, and First Public Distribution Roadmap
 
-Status: R001–R003 repository implementation closable on exact-head hosted evidence; first live staging, production signing, and publication are R004 release operations by the single maintainer. No public release authorization.
+Status: R001–R003 strictly closed at `1e034d0` (exact-head CI `38108270370` + Distribution Foundation `38108270368`); first live staging, production signing, and publication are R004 release operations by the single maintainer. No public release authorization.
 Repository review baseline: `dbowm91/wg-basic@0b814fe` (2026-10-10); settings and producer follow-up verified 2026-10-11.
 Primary owner: `wg-basic` release and operator trust surface; Eggpack continues to own generator/producer mechanics, Eggup the consumer-side binary/service transaction.
 Governance: `plans/003-planning-process.md`; ADR-006; `plans/subsystems/distribution-install-update-roadmap.md`; `plans/002-long-term-roadmap.md`.
@@ -61,12 +61,12 @@ No new VPN protocol, IPv6 dataplane features, netd privilege escape, generic CLI
 ```text
 Phase 10 + Phase 11 technical closures [done]
               |
-              +--> R001 — safe generated workflow + source/run provenance [implementation/settings conditionally closed; live tag preflight pending]
-              |
-              +--> R002 — non-secret offline signing tooling [implemented; real key/draft blocked]
-              |         \-- actual signing [R001 closure + maintainer key/approval]
-              |
-              +--> R003 — verified first-install UX and security checks [implemented; production proof blocked]
+               +--> R001 — safe generated workflow + source/run provenance [closed at `1e034d0`; live tag preflight deferred to R004]
+               |
+               +--> R002 — non-secret offline signing tooling [closed at `1e034d0`; real key/draft are R004 operations]
+               |         \-- actual signing [R001 closed + maintainer key/approval as R004 operations]
+               |
+               +--> R003 — verified first-install UX and security checks [closed at `1e034d0`; first signed install is R004 evidence]
               |         \-- production signed-install [R002 operational closure]
               |
               \--> R004 — exact public candidate security/CI/go-no-go [BLOCKED]
@@ -81,19 +81,19 @@ Eggpack generator input interpolation was confirmed at `eggstack/eggpack@d61ca71
 ### R001 — Workflow input and provenance hardening
 
 Plan: `plans/implementation/release-readiness/001-release-workflow-input-and-provenance-hardening.md`.
-Status: **conditionally closed for repository implementation and policy**; live release readiness remains unexercised.
+Status: **closed at `1e034d0`**; exact-head CI `38108270370` (21 passed) and Distribution Foundation `38108270368` green.
 Main gate: adversarial dispatch rejection, tag/source/run/artifact checks, qualified generator pin, producer validation before checkout, exact producer hosted CI, protected `main`/immutable `v*` tags, Actions policy, and the single-maintainer stage approval are documented. R001 closes on exact-head hosted consumer CI; the first live tagged preflight is deferred to the R004 release operation. Project policy requires no second reviewer.
 
 ### R002 — Offline signing and production trust root
 
 Plan: `plans/implementation/release-readiness/002-production-trust-root-and-offline-signing-ceremony.md`.
-Status: **closable on non-secret implementation plus exact-head hosted evidence**; production key custody, fingerprint, and first signed draft are executed as R004 operations.
+Status: **closed for non-secret implementation at `1e034d0`**; production key custody, fingerprint, and first signed draft are executed as R004 operations.
 Main gate: source/run/tag/live-asset preflight, fixture signature negative controls, and single-maintainer offline ceremony docs exist. No second person is required.
 
 ### R003 — High-assurance first-install bootstrap
 
 Plan: `plans/implementation/release-readiness/003-bootstrap-installer-trust-and-root-execution-boundary.md`.
-Status: **closable on repository engineering plus exact-head hosted evidence**; the first signed-install run is recorded as R004 evidence.
+Status: **closed for repository engineering at `1e034d0`**; the first signed-install run is recorded as R004 evidence.
 Main gate: signed command procedure checks manifest/installer before parsing or root execution, with tag/source/target/size/hash and root-owned rechecks. The regression asserts command order; the R004 operation runs it against authenticated signatures.
 
 ### R004 — Signed production draft and release decision
@@ -121,15 +121,15 @@ The highest risk is treating a self-consistent release receipt or a GitHub HTTPS
 
 ## 11. Completion definition
 
-R001–R003 repository engineering closes with exact-head hosted evidence. R004 executes the production sequence — maintainer key custody, authorized tag, signed draft, verified install, sole-review checklist, explicit publish approval, and published-asset re-verification — and closes the first public release. If the maintainer has not supplied a signing key or has not authorized publication, R004 remains **blocked externally** even when R001–R003 are closed.
+R001–R003 repository engineering closed at `1e034d0` with exact-head hosted evidence (CI `38108270370`, Distribution Foundation `38108270368`). R004 executes the production sequence — maintainer key custody, authorized tag, signed draft, verified install, sole-review checklist, explicit publish approval, and published-asset re-verification — and closes the first public release. If the maintainer has not supplied a signing key or has not authorized publication, R004 remains **blocked externally** even though R001–R003 are closed.
 
 ## 12. Milestone status
 
 | Milestone | Status | Implementation plan | Hard/operational blocker |
 |---|---|---|---|
-| R001 | conditionally closed; live release readiness unexercised | `plans/implementation/release-readiness/001-release-workflow-input-and-provenance-hardening.md` | No authorized stable-version tag exists to exercise live staging preflight; confirm current-SHA hosted consumer CI |
-| R002 | conditionally closed for tooling; signing blocked | `plans/implementation/release-readiness/002-production-trust-root-and-offline-signing-ceremony.md` | R001 release readiness, real key custody/fingerprint, and approved signed draft |
-| R003 | conditionally closed technically; production acceptance blocked | `plans/implementation/release-readiness/003-bootstrap-installer-trust-and-root-execution-boundary.md` | Real R002 key/signatures and native signed-install evidence |
+| R001 | closed at `1e034d0` (CI `38108270370`, Distribution `38108270368`) | `plans/implementation/release-readiness/001-release-workflow-input-and-provenance-hardening.md` | First live tagged staging preflight deferred to R004 release operation |
+| R002 | closed for non-secret engineering at `1e034d0` | `plans/implementation/release-readiness/002-production-trust-root-and-offline-signing-ceremony.md` | Production key/draft are R004 operations |
+| R003 | closed for repository engineering at `1e034d0` | `plans/implementation/release-readiness/003-bootstrap-installer-trust-and-root-execution-boundary.md` | First signed install is R004 evidence |
 | R004 | blocked | `plans/implementation/release-readiness/004-first-production-release-security-qualification-and-authorization.md` | R001 closed + R002 operational + R003 production acceptance + maintainer publish decision |
 
 Conditional closure records for repository-owned R001–R003 implementation are `plans/closure/release-readiness/001-status.md` through `003-status.md`. Keep external settings, trust-root, signed-draft, and publication gates open; they cannot be marked complete by fixture results.

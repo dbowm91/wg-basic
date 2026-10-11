@@ -1,9 +1,9 @@
-# Release Readiness R003 — Conditional Technical Closure
+# Release Readiness R003 — Strict Technical Closure
 
-Disposition: **conditionally closed for repository engineering; production verified-install blocked**.
+Disposition: **closed for repository engineering**; the first production signed-install run is recorded as R004 evidence, explicitly not an R003 blocker.
 Implementation commit: `bd7c085d191ccf147e0f4dab72fde7cc8818f3fd`.
 Repository baseline: `0b814fe` (`2026-10-10`).
-Repository implementation head: `bd7c085d191ccf147e0f4dab72fde7cc8818f3fd`.
+Repository implementation head: `1e034d089ca62d9f4c22a562a3067227ad8beb9d`.
 Source plan: `plans/implementation/release-readiness/003-bootstrap-installer-trust-and-root-execution-boundary.md`.
 Roadmap: `plans/subsystems/release-readiness-security-roadmap.md`.
 
@@ -55,3 +55,14 @@ first-install evidence remain operational blockers.
 
 R004 remains blocked until a real R002 key and signed draft are independently
 verified and this path is run on disposable supported native hosts.
+
+## 2026-10-11 strict closure at `1e034d0`
+
+Exact-head hosted evidence: CI run `38108270370` completed success (21
+passed, 0 failed) and Distribution Foundation run `38108270368` completed
+success at `1e034d0`. Local gates from the R001 strict-closure record apply
+unchanged (`test-verified-install.py` signature-before-root ordering,
+`test-release-installer.py` wrapper hardening, `sh -n install.sh`,
+580 tests, fmt/check/clippy/MSRV clean). No production key or signed draft
+was used; no first-install was run against a live host outside the R004
+operation.
