@@ -1,6 +1,6 @@
 # Release Readiness, Supply-chain Security, and First Public Distribution Roadmap
 
-Status: R001–R003 strictly closed at `1e034d0` (exact-head CI `38108270370` + Distribution Foundation `38108270368`); first live staging, production signing, and publication are R004 release operations by the single maintainer. No public release authorization.
+Status: R001–R003 strictly closed at `1e034d0` (exact-head CI `38108270370` + Distribution Foundation `38108270368`); R004a initial unsigned pre-release track is executable now, R004b production signing stays blocked on maintainer key provisioning. No public release authorization.
 Repository review baseline: `dbowm91/wg-basic@0b814fe` (2026-10-10); settings and producer follow-up verified 2026-10-11.
 Primary owner: `wg-basic` release and operator trust surface; Eggpack continues to own generator/producer mechanics, Eggup the consumer-side binary/service transaction.
 Governance: `plans/003-planning-process.md`; ADR-006; `plans/subsystems/distribution-install-update-roadmap.md`; `plans/002-long-term-roadmap.md`.
@@ -99,8 +99,9 @@ Main gate: signed command procedure checks manifest/installer before parsing or 
 ### R004 — Signed production draft and release decision
 
 Plan: `plans/implementation/release-readiness/004-first-production-release-security-qualification-and-authorization.md`.
-Status: **blocked until the maintainer authorizes a release tag**.
-Main gate: maintainer-generated key and signed draft at the exact source/tag, hosted CI green at that SHA, target artifacts verified, install/update check, sole-maintainer checklist with explicit go/no-go, and post-publication re-verification. No second reviewer, no independent-machine round-trip, and no full dual-stack traffic re-pilot are required beyond the recorded Phase 10/11 evidence unless the release changes that surface.
+Status: **split into R004a (executable now) + R004b (blocked on maintainer key)**.
+Main gate R004a: tag `v0.1.0` at a green-`main` SHA, release-workflow green at that tag on both targets, maintainer-approved staging, digest-verified unsigned draft, truthful evaluation-only notes, maintainer flip draft → public pre-release, public re-verification, `004a-status.md`. No signing key, no ceremony, no disposable-host run; updater stays fail-closed (`PRODUCTION_PUBLIC_KEY=None`), so no update path is claimed.
+Main gate R004b: maintainer-generated key and signed draft at the exact source/tag, hosted CI green at that SHA, target artifacts verified, install/update check, sole-maintainer checklist with explicit go/no-go, and post-publication re-verification. No second reviewer, no independent-machine round-trip, and no full dual-stack traffic re-pilot are required beyond the recorded Phase 10/11 evidence unless the release changes that surface.
 
 ## 8. Failure, retry and incident concerns
 
@@ -121,7 +122,7 @@ The highest risk is treating a self-consistent release receipt or a GitHub HTTPS
 
 ## 11. Completion definition
 
-R001–R003 repository engineering closed at `1e034d0` with exact-head hosted evidence (CI `38108270370`, Distribution Foundation `38108270368`). R004 executes the production sequence — maintainer key custody, authorized tag, signed draft, verified install, sole-review checklist, explicit publish approval, and published-asset re-verification — and closes the first public release. If the maintainer has not supplied a signing key or has not authorized publication, R004 remains **blocked externally** even though R001–R003 are closed.
+R001–R003 repository engineering closed at `1e034d0` with exact-head hosted evidence (CI `38108270370`, Distribution Foundation `38108270368`). R004a executes the slackened initial pre-release — authorized tag, maintainer-approved staging, verified unsigned draft, public pre-release, published-asset re-verification — and closes the first downloadable build without claiming authenticity it does not have. R004b executes the production sequence — maintainer key custody, signed draft, verified install, sole-review checklist, explicit publish approval, and published-asset re-verification — and closes the first signed public release. If the maintainer has not authorized the tag or has not approved staging/publication, R004a remains **blocked externally** even though R001–R003 are closed.
 
 ## 12. Milestone status
 
@@ -130,6 +131,7 @@ R001–R003 repository engineering closed at `1e034d0` with exact-head hosted ev
 | R001 | closed at `1e034d0` (CI `38108270370`, Distribution `38108270368`) | `plans/implementation/release-readiness/001-release-workflow-input-and-provenance-hardening.md` | First live tagged staging preflight deferred to R004 release operation |
 | R002 | closed for non-secret engineering at `1e034d0` | `plans/implementation/release-readiness/002-production-trust-root-and-offline-signing-ceremony.md` | Production key/draft are R004 operations |
 | R003 | closed for repository engineering at `1e034d0` | `plans/implementation/release-readiness/003-bootstrap-installer-trust-and-root-execution-boundary.md` | First signed install is R004 evidence |
-| R004 | blocked | `plans/implementation/release-readiness/004-first-production-release-security-qualification-and-authorization.md` | R001 closed + R002 operational + R003 production acceptance + maintainer publish decision |
+| R004a | executable (initial unsigned pre-release) | `plans/implementation/release-readiness/004-first-production-release-security-qualification-and-authorization.md` §4A | Tag authorization + staging approval + publish flip by maintainer |
+| R004b | blocked | `plans/implementation/release-readiness/004-first-production-release-security-qualification-and-authorization.md` §§4–10 | Maintainer key provisioning + R004b checklist + publish decision |
 
 Conditional closure records for repository-owned R001–R003 implementation are `plans/closure/release-readiness/001-status.md` through `003-status.md`. Keep external settings, trust-root, signed-draft, and publication gates open; they cannot be marked complete by fixture results.

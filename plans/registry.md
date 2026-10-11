@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-11 (R001–R003 strictly closed at `1e034d0` with exact-head CI `38108270370` + Distribution Foundation `38108270368`; solo-maintainer policy with zero required PR approvals; first staging/signing/publication are R004 maintainer operations)
+Last planning reconciliation: 2026-10-11 (R001–R003 strictly closed at `1e034d0` with exact-head CI `38108270370` + Distribution Foundation `38108270368`; solo-maintainer policy with zero required PR approvals; R004a initial unsigned pre-release track executable, R004b production signing blocked on maintainer key)
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -74,7 +74,7 @@ Runtime dependency adoption remains evidence-driven.
 | Operational hardening | closed | `plans/subsystems/operational-hardening-roadmap.md` | M001–M005 closed; Phase 9 closed |
 | Distribution/install/update | closed (technical) | `plans/subsystems/distribution-install-update-roadmap.md` | M001–M005 closed; production release remains blocked on signing |
 | IPv6/route-policy qualification | closed | `plans/subsystems/ipv6-route-policy-roadmap.md` | M001–M004 closed; `plans/closure/ipv6-route-policy/004-status.md` |
-| Release readiness and supply-chain security | active (R004 release operation only) | `plans/subsystems/release-readiness-security-roadmap.md` | R001–R003 strictly closed at `1e034d0`; first staging/signing/publication are R004 maintainer operations |
+| Release readiness and supply-chain security | active (R004a initial pre-release; R004b production signing later) | `plans/subsystems/release-readiness-security-roadmap.md` | R001–R003 strictly closed at `1e034d0`; R004a needs tag + staging/publish approvals, R004b needs maintainer key |
 
 Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
 
@@ -90,7 +90,8 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 
 | Subsystem | Milestone | Status | Implementation plan | Hard blocker |
 |---|---|---|---|---|
-| Release readiness/security | R004 first public release qualification and authorization | blocked until maintainer authorizes a release tag | `plans/implementation/release-readiness/004-first-production-release-security-qualification-and-authorization.md` | Maintainer key/tag/sign/install/publish sequence; sole review plus explicit go; no second reviewer, independent machine, or traffic re-pilot required |
+| Release readiness/security | R004a initial unsigned pre-release | executable once maintainer authorizes tag `v0.1.0` | `plans/implementation/release-readiness/004-first-production-release-security-qualification-and-authorization.md` §4A | Tag + staging approval + draft-to-pre-release flip; sole review; no key, no second reviewer |
+| Release readiness/security | R004b first signed production release | blocked until maintainer provisions release trust root | `plans/implementation/release-readiness/004-first-production-release-security-qualification-and-authorization.md` §§4–10 | Maintainer key custody, signed draft/install, sole review plus explicit go; no second reviewer |
 | Distribution/install/update | Production signing and public release | R004 operation | `plans/subsystems/release-readiness-security-roadmap.md` and R002/R004 checklists | Maintainer key custody, tag, signed draft, current CI, install check, and explicit publication authorization |
 
 The initial 2026-10-09 release-readiness review at `main@ff40f85` found shell interpolation in the generated workflow and no independent source/run proof. Eggpack M003k closed the producer finding at `1103a1affc62a210f1102a769457db80d9188bc8` (hosted run `38027470046`); it validates and resolves the release tag before checkout and freezes the selected commit. Consumer regeneration, security regressions, and settings evidence are recorded in the dated follow-up below. No production key was generated, installed or stored, and no release was staged or published.
