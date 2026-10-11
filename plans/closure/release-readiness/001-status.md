@@ -121,3 +121,9 @@ green generator-drift and native CI at the exact head, per-job least-privilege
 review, and provenance/settings evidence. The release gate stays disabled
 without separate key/signing authorization. Neither this closure nor its
 evidence authorizes production signing or publication.
+
+Evidence chain to `main`: the strict-closure commit `342fec5` passed CI run
+`38108935557` (21 passed, 0 failed) and Distribution Foundation run
+`38108935548` at its exact head; PR #2 merged as `7b2146d`, where main CI
+run `38109447380` and Distribution Foundation run `38109447352` both
+completed success.
