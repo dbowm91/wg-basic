@@ -1,6 +1,6 @@
 # Release Readiness R004 — First Production Release Security Qualification and Authorization
 
-Status: R004a **closed** 2026-10-11 (`v0.1.0` public pre-release, unsigned; closure `plans/closure/release-readiness/004a-status.md`). R004b full production signed release stays blocked until the maintainer provisions a release trust root. No second reviewer is required anywhere.
+Status: R004a **closed** 2026-10-11 (`v0.1.0` public pre-release, unsigned; closure `plans/closure/release-readiness/004a-status.md`). R004b **waived by maintainer decision** 2026-10-11 (checksums-only releases, no trust root; waiver `plans/closure/release-readiness/004b-waiver-status.md`; `v0.1.0` promoted to stable). No second reviewer is required anywhere.
 Repository baseline: `dbowm91/wg-basic@ff40f851508ccda52171c27cefdcdaf4ec1da2d5` (2026-10-09); rebaseline on the exact tagged candidate source and requalify at that SHA.
 Source roadmap: `plans/subsystems/release-readiness-security-roadmap.md`.
 Primary class: invariant / end-to-end qualification / release operation.
@@ -111,7 +111,7 @@ public assets re-downloaded and re-verified; no unresolved high finding.
 Then R004b (production signing, §§4–10 as written) remains blocked only on
 maintainer key provisioning — a smaller, explicit gate.
 
-## 5. Dependency graph and execution state (R004b production track)
+## 5. Dependency graph and execution state (R004b production track — waived, retained as future specification)
 
 R001 workflow/provenance tooling -> closed at the tagged SHA.
 R002 signing tooling/procedure -> closed at the tagged SHA; the maintainer generates custody, embeds the public key, and signs the draft as R004 operations.
@@ -144,7 +144,9 @@ Update `README.md`, `docs/installation.md`, `docs/release-signing.md`, `docs/ope
 
 ## 8. Acceptance criteria
 
-R004b may close as public-release-ready when:
+R004b may close as public-release-ready when: (waived 2026-10-11 — the
+maintainer ships checksums-only; the list below is retained solely as the
+specification for reinstating signed releases under a new plan)
 - R001–R003 are closed at the exact tagged source with current green CI;
 - the production key is embedded/authenticated with real maintainer-controlled signatures for manifest and installer;
 - the read-only verifier and exact target artifacts all match source/tag/commit/Cargo/version and current green CI on both architectures;
