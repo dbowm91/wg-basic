@@ -20,7 +20,7 @@ jobs:
       - name: Build pinned Eggpack validator
         run: |
           git clone --filter=blob:none https://github.com/eggstack/eggpack "$RUNNER_TEMP/eggpack"
-          git -C "$RUNNER_TEMP/eggpack" checkout --detach 559d940af0fe6a2951eb17de1fcbecbf9e0bb6ce
+          git -C "$RUNNER_TEMP/eggpack" checkout --detach 1103a1affc62a210f1102a769457db80d9188bc8
           cargo build --locked --manifest-path "$RUNNER_TEMP/eggpack/Cargo.toml" -p eggpack-cli --bin eggpack
       - name: Check generated Eggpack workflow drift
         run: |
