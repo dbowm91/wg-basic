@@ -1,6 +1,6 @@
 # Release Readiness, Supply-chain Security, and First Public Distribution Roadmap
 
-Status: R001–R003 strictly closed at `1e034d0` (exact-head CI `38108270370` + Distribution Foundation `38108270368`); R004a closed 2026-10-11 (`v0.1.0` public pre-release, unsigned); R004b production signing stays blocked on maintainer key provisioning. No stable release authorization.
+Status: R001–R003 strictly closed at `1e034d0` (exact-head CI `38108270370` + Distribution Foundation `38108270368`); R004a closed 2026-10-11 (`v0.1.0` public pre-release, unsigned); R004b waived by maintainer decision 2026-10-11 (checksums-only releases, no trust root); `v0.1.0` stable.
 Repository review baseline: `dbowm91/wg-basic@0b814fe` (2026-10-10); settings and producer follow-up verified 2026-10-11.
 Primary owner: `wg-basic` release and operator trust surface; Eggpack continues to own generator/producer mechanics, Eggup the consumer-side binary/service transaction.
 Governance: `plans/003-planning-process.md`; ADR-006; `plans/subsystems/distribution-install-update-roadmap.md`; `plans/002-long-term-roadmap.md`.
@@ -19,9 +19,9 @@ Current engineering qualifications are real, but historically bounded: M004 full
 |---|---|---|---|
 | RF-01 — shell interpolation of dispatch input in generated release workflow | High release-process risk (privileged workflow integrity); exploitability limited by manual-dispatch authorization | Historical vulnerable renderer at `eggstack/eggpack@d61ca71`; regenerated from Eggpack M003k `1103a1affc62a210f1102a769457db80d9188bc8`; tag is resolved and commit-pinned before checkout; adversarial regression covers malformed input | Producer ordering and repository policy corrected; no live tagged staging run yet |
 | RF-02 — source/run/tag/draft binding not independently authenticated by signing verifier alone | High release-authenticity risk if unsigned receipt is promoted to trust authority | New read-only provenance workflow plus `scripts/verify-release-signing-bundle.py`; signer checks both GitHub run records, live tag, exact draft inventory, and fresh bytes | Tooling implemented; actual production run/draft proof awaits signed-candidate availability |
-| RF-03 — production trust root absent, public draft not signed | Absolute public-release blocker, intentional fail-closed state (not exploitable bypass) | `src/release.rs::PRODUCTION_PUBLIC_KEY = None`; `docs/installation.md`; no production signing/key provisioning in records | R002 operational gate |
+| RF-03 — production trust root absent, public draft not signed | Waived as a blocker by maintainer decision 2026-10-11 (checksums-only releases); the fail-closed updater state is now permanent policy, not a pending gate | `src/release.rs::PRODUCTION_PUBLIC_KEY = None`; waiver `004b-waiver-status.md` | No key custody exists or is planned; ceremony docs retained as future reference |
 | RF-04 — convenience installer executes network-fetched `install-exact.sh` as root before signature verification | High consequence under compromised bootstrap delivery; acknowledged lower-assurance mode under ADR-006, not a hidden invariant bypass | Wrapper labels the mode lower assurance, fixes system `PATH`, and stages privately; `docs/installation.md` verifies signed metadata/installer before root execution | Accepted convenience limitation; use signed path once production key/draft exists |
-| RF-05 — first public signed-draft/installer/native lifecycle evidence absent | Release qualification blocker, not an established production bug | Phase 10/11 tests use signed fixtures; signing/release keys withheld by design | R004 final current-SHA go/no-go |
+| RF-05 — first public signed-draft/installer/native lifecycle evidence absent | Closed via R004a as unsigned evidence (byte-verified draft/public assets, hosted lifecycle), not as signed proof | Release run `38115877717`, provenance `38152418203`, closure `004a-status.md` | No bare-metal install run; recorded as a permanent limitation of checksums-only releases |
 | RF-06 — release-workflow toolchain and actor settings require independent operational attestation | Medium process-review debt until verified, not evidence of misconfiguration | `release/eggpack/github-policy.json`, pinned workflow/tool revision, and read-only GitHub API evidence for rulesets, Actions policy, and `release-staging` Environment | R001 settings documented; reverify settings in R004 release packet |
 | RF-07 — generated release workflow checked out frozen SHAs without tags while the pinned tool requires the tag locally; first live `v0.1.0` dispatch failed closed in `resolve` | Release-process blocker (no release possible), fail-closed, not exploitable | Release run `38112750263`; producer `run_git_tag_bounded` vs `checkout_snippet` | Producer fix `eggstack/eggpack@a0fec98` (fetch exact tag + peel-assert to frozen SHA); consumer re-pin + sanctioned regenerate; re-dispatch `v0.1.0` from fixed `main` (tag source unchanged) |
 
@@ -30,12 +30,12 @@ Severity reflects pre-publication threat/consequence and evidence available, **n
 ## 3. Invariants
 
 - No private release key in source, ordinary CI, logs or artifacts.
-- All signed manifest/installer and selected binary bytes match an immutable authorized source/tag/version/run and the independently authenticated project public key.
+- All release-manifest/installer and selected binary bytes match an immutable authorized source/tag/version/run. Releases are checksums-only by maintainer decision (2026-10-11): SHA-256 digests bind bytes to the manifest, and GitHub TLS delivery is the only publisher authentication. No detached-signature claim is made; the Minisign ceremony docs are retained reference for a future trust root.
 - Signature verification must precede treating manifest as trustworthy and must precede executing any remotely obtained script/binary in the recommended high-assurance install path.
 - No release workflow evaluates untrusted dispatch input as executable shell content; only a gated minimal stage job writes draft artifacts.
 - Supported Linux GNU x86_64 and aarch64 targets alone receive a release claim; kernel WireGuard/nftables/systemd prerequisites are explicit.
 - Exact-owned systemd/user/binary/state and foreign host resources remain safe; default uninstall preserves VPN secrets.
-- Production self-update remains disabled while `PRODUCTION_PUBLIC_KEY=None`; no fixture bypass or automatic unsigned fallback.
+- Production self-update remains disabled while `PRODUCTION_PUBLIC_KEY=None`; no fixture bypass or automatic unsigned fallback. By maintainer decision there is no trust-root provisioning planned, so every release requires a fresh install.
 - Existing typed privileged IPC and loopback-first management exposure remain unchanged. TLS proxy is explicitly operator-supplied.
 - Release publication is an irreversible human-approved action; a green synthetic fixture is never approval.
 
@@ -100,9 +100,9 @@ Main gate: signed command procedure checks manifest/installer before parsing or 
 ### R004 — Signed production draft and release decision
 
 Plan: `plans/implementation/release-readiness/004-first-production-release-security-qualification-and-authorization.md`.
-Status: **split into R004a (closed 2026-10-11) + R004b (blocked on maintainer key)**.
+Status: **split into R004a (closed 2026-10-11) + R004b (waived by maintainer decision 2026-10-11; checksums-only releases)**.
 Main gate R004a: tag `v0.1.0` at a green-`main` SHA, release-workflow green at that tag on both targets, maintainer-approved staging, digest-verified unsigned draft, truthful evaluation-only notes, maintainer flip draft → public pre-release, public re-verification, `004a-status.md`. No signing key, no ceremony, no disposable-host run; updater stays fail-closed (`PRODUCTION_PUBLIC_KEY=None`), so no update path is claimed.
-Main gate R004b: maintainer-generated key and signed draft at the exact source/tag, hosted CI green at that SHA, target artifacts verified, install/update check, sole-maintainer checklist with explicit go/no-go, and post-publication re-verification. No second reviewer, no independent-machine round-trip, and no full dual-stack traffic re-pilot are required beyond the recorded Phase 10/11 evidence unless the release changes that surface.
+R004b waiver: the signed-draft/ceremony/signed-install requirements are waived as a body; `v0.1.0` was promoted to stable checksums-only (waiver `004b-waiver-status.md`). §§4–10 of the R004 plan are retained solely as the specification for reinstating signed releases under a new plan. No second reviewer, no independent-machine round-trip are required.
 
 ## 8. Failure, retry and incident concerns
 
@@ -119,11 +119,11 @@ Any unverified input or mismatched run blocks staging/signing; any invalid signa
 
 ## 10. Risks and decisions
 
-The highest risk is treating a self-consistent release receipt or a GitHub HTTPS download as independent authenticity. The recommended release path must have a separate trust anchor and maintainer approval. Generator-owned Bash interpolation and pre-checkout tag resolution were corrected and qualified in Eggpack CI M003k; keep the exact consumer pin and drift check. Repository branch/tag protections and the single-maintainer staging approval are configured. No tag or release currently exists; the first staging run happens as an R004 operation. The first public release may be staged as an unsigned draft for review but may never be marked publicly signed/authentic until the R004 checklist closes. Future updater trust-key rotation requires a separately scoped ADR/plan if needed.
+The highest risk is treating a self-consistent release receipt or a GitHub HTTPS download as independent authenticity. The recommended release path must have a separate trust anchor and maintainer approval. Generator-owned Bash interpolation and pre-checkout tag resolution were corrected and qualified in Eggpack CI M003k; keep the exact consumer pin and drift check. Repository branch/tag protections and the single-maintainer staging approval are configured. No tag or release existed before R004a; the first staging run happened as an R004a operation. Releases are checksums-only by maintainer decision and are never marked signed/authentic. Future updater trust-key rotation requires a separately scoped ADR/plan if needed.
 
 ## 11. Completion definition
 
-R001–R003 repository engineering closed at `1e034d0` with exact-head hosted evidence (CI `38108270370`, Distribution Foundation `38108270368`). R004a executes the slackened initial pre-release — authorized tag, maintainer-approved staging, verified unsigned draft, public pre-release, published-asset re-verification — and closes the first downloadable build without claiming authenticity it does not have. R004b executes the production sequence — maintainer key custody, signed draft, verified install, sole-review checklist, explicit publish approval, and published-asset re-verification — and closes the first signed public release. If the maintainer has not authorized the tag or has not approved staging/publication, R004a remains **blocked externally** even though R001–R003 are closed.
+R001–R003 repository engineering closed at `1e034d0` with exact-head hosted evidence (CI `38108270370`, Distribution Foundation `38108270368`). R004a executes the slackened initial pre-release — authorized tag, maintainer-approved staging, verified unsigned draft, public pre-release, published-asset re-verification — and closes the first downloadable build without claiming authenticity it does not have. R004b is waived: `v0.1.0` was promoted to a stable checksums-only release by maintainer decision, with the unsigned state and its consequences recorded in `004b-waiver-status.md`. If signed releases are ever reinstated, that is new-plan work under R004 §§4–10, not a reopening of this waiver.
 
 ## 12. Milestone status
 
@@ -133,6 +133,6 @@ R001–R003 repository engineering closed at `1e034d0` with exact-head hosted ev
 | R002 | closed for non-secret engineering at `1e034d0` | `plans/implementation/release-readiness/002-production-trust-root-and-offline-signing-ceremony.md` | Production key/draft are R004 operations |
 | R003 | closed for repository engineering at `1e034d0` | `plans/implementation/release-readiness/003-bootstrap-installer-trust-and-root-execution-boundary.md` | First signed install is R004 evidence |
 | R004a | closed 2026-10-11 (`v0.1.0` public pre-release; release run `38115877717`, provenance `38152418203`) | `plans/implementation/release-readiness/004-first-production-release-security-qualification-and-authorization.md` §4A | Closure `plans/closure/release-readiness/004a-status.md`; R004b still needs key |
-| R004b | blocked | `plans/implementation/release-readiness/004-first-production-release-security-qualification-and-authorization.md` §§4–10 | Maintainer key provisioning + R004b checklist + publish decision |
+| R004b | waived 2026-10-11 (checksums-only releases by maintainer decision) | `plans/implementation/release-readiness/004-first-production-release-security-qualification-and-authorization.md` §§4–10 (retained as future spec) | Waiver `plans/closure/release-readiness/004b-waiver-status.md`; `v0.1.0` stable |
 
 Conditional closure records for repository-owned R001–R003 implementation are `plans/closure/release-readiness/001-status.md` through `003-status.md`. Keep external settings, trust-root, signed-draft, and publication gates open; they cannot be marked complete by fixture results.

@@ -7,7 +7,7 @@ umask 077
 usage() {
     printf '%s\n' \
         "Usage: $0 --version X.Y.Z [--candidate PATH --sha256 HEX --size BYTES]" \
-        'Candidate mode checks integrity only; authenticate the manifest and installer signature before running it.' \
+        'Candidate mode checks integrity only; compare the manifest bindings against the published release digests before running it.' \
         'Version-only mode trusts the HTTPS/GitHub-delivered bootstrap and is lower assurance.'
 }
 version=
@@ -40,7 +40,7 @@ case "$(uname -m)" in x86_64|aarch64) ;; *) printf 'unsupported architecture\n' 
 [ "$(id -u)" -eq 0 ] || { printf 'run this installer as root; it does not invoke sudo\n' >&2; exit 2; }
 if [ -n "$candidate" ] || [ -n "$expected_sha256" ] || [ -n "$expected_size" ]; then
     [ -n "$candidate" ] && [ -n "$expected_sha256" ] && [ -n "$expected_size" ] || {
-        printf 'candidate, signed-manifest SHA-256, and signed-manifest size are required together\n' >&2
+        printf 'candidate, manifest SHA-256, and manifest size are required together\n' >&2
         exit 2
     }
     [ "${#expected_sha256}" -eq 64 ] || { printf 'invalid candidate SHA-256\n' >&2; exit 2; }

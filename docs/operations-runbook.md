@@ -74,10 +74,10 @@ sudo wg-basic update recover
 
 `update run` and `update recover` require effective root; wg-basic does not
 invoke sudo. `update check` is read-only and does not stop services or acquire
-the mutating transaction lock. With the current unprovisioned production key,
-`update check` and `update run` fail closed before network access. Do not run an
-update until the maintainer-provisioned key and production-signed release are
-available. M004 technical qualification does not authorize a public release.
+the mutating transaction lock. By maintainer decision there is no production
+key and none is planned, so `update check` and `update run` fail closed
+before network access permanently; every release requires a fresh install.
+M004 technical qualification does not authorize a public release.
 When a transaction owns the root lock, competing mutating commands return a
 contention error and leave the journal for the current owner.
 

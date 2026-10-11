@@ -9,10 +9,11 @@ aarch64 with glibc 2.17 or newer. The host needs systemd, kernel WireGuard,
 The release installer itself is a small Rust binary; Rust, Cargo, Python,
 Node, and Docker are not runtime requirements.
 
-Production release signing and publication are still pending maintainer
-provisioning. Do not treat a fixture-signed artifact or a local candidate as a
-production release. `update check` and `update run` fail closed until the
-production trust key is installed in a reviewed release.
+Releases are checksums-only by maintainer decision: GitHub TLS delivery
+plus published SHA-256 digests, with no detached signatures and no
+production trust key. `update check` and `update run` fail closed
+permanently; every release requires a fresh install. Do not treat a
+fixture-signed artifact or a local candidate as a release.
 
 ## Install a local candidate
 
@@ -77,25 +78,19 @@ path**. It downloads and runs the exact-version installer from GitHub over
 HTTPS. It does not independently authenticate that bootstrap or its manifest.
 The wrapper prints this trust limitation before downloading. Its
 `--candidate --sha256 --size` mode checks file integrity against the supplied
-values; those values are trustworthy only after they have been read from an
-authenticated manifest. The wrapper does not verify Minisign signatures.
+values; those values are trustworthy only after they have been compared
+against the release notes, and both travel over the same TLS channel, so this
+is integrity against corruption — not authenticity against a compromised
+publisher. The wrapper verifies no signatures because releases carry none.
 
-No public production key or signed release is available yet. Once a maintainer
-publishes the production trust key and a signed draft is qualified, use the
-following high-assurance procedure from a trusted Linux x86_64 or aarch64
-machine. Obtain `production.pub` and its fingerprint through the independently
-documented project trust channel; a key downloaded from the same release page
-is not an independent trust anchor. Install the key root-owned and verify its
-fingerprint out of band before proceeding:
-
-```sh
-sudo install -d -m 755 /etc/wg-basic
-sudo install -o root -g root -m 644 production.pub /etc/wg-basic/release.pub
-```
-
-Download the signed metadata and installer for one exact stable version. Keep
-these files in a private temporary directory, and verify both signatures
-before parsing the manifest or running the installer:
+No production key or signed release exists, by maintainer decision (see
+[release signing](release-signing.md)). There is therefore no
+independently distributed trust key and no signed high-assurance path;
+the strongest available procedure is the checksums-and-consistency
+verification below. Its anchor is the GitHub TLS delivery channel plus the
+published digests: it detects corruption and mix-ups, but a compromised
+publisher account would defeat it. Use it from a trusted Linux x86_64 or
+aarch64 machine:
 
 ```sh
 set -eu
@@ -118,18 +113,9 @@ curl --fail --silent --show-error --location --proto '=https' --proto-redir '=ht
   --connect-timeout 10 --max-time 60 "$BASE/release-manifest.json" \
   -o "$WORK/release-manifest.json"
 curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
-  --connect-timeout 10 --max-time 60 "$BASE/release-manifest.json.minisig" \
-  -o "$WORK/release-manifest.json.minisig"
-curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
   --connect-timeout 10 --max-time 60 "$BASE/install.sh" -o "$WORK/install.sh"
-curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
-  --connect-timeout 10 --max-time 60 "$BASE/install.sh.minisig" \
-  -o "$WORK/install.sh.minisig"
-minisign -Vm "$WORK/release-manifest.json" -x "$WORK/release-manifest.json.minisig" \
-  -p /etc/wg-basic/release.pub
-minisign -Vm "$WORK/install.sh" -x "$WORK/install.sh.minisig" \
-  -p /etc/wg-basic/release.pub
-# Only after both signature checks pass, inspect the signed manifest.
+# No signatures exist to check. Compare the manifest digest bindings against
+# the digests published in the release notes before trusting the manifest.
 case "$(uname -m)" in x86_64) TARGET=x86_64-unknown-linux-gnu;; aarch64) TARGET=aarch64-unknown-linux-gnu;; *) exit 2;; esac
 jq -e --arg version "$VERSION" \
   '.schema_version == 1 and .product_id == "wg-basic" and .release_id == $version and (.source_revision | test("^[0-9a-f]{40}$"))' \
@@ -168,18 +154,16 @@ test "$("$WORK/wg-basic" --version)" = "wg-basic $VERSION"
 STAGE="$(sudo mktemp -d /root/wg-basic-verified.XXXXXX)"
 sudo install -o root -g root -m 500 "$WORK/install.sh" "$STAGE/install.sh"
 sudo install -o root -g root -m 500 "$WORK/wg-basic" "$STAGE/wg-basic"
-sudo install -o root -g root -m 600 "$WORK/install.sh.minisig" "$STAGE/install.sh.minisig"
-sudo minisign -Vm "$STAGE/install.sh" -x "$STAGE/install.sh.minisig" -p /etc/wg-basic/release.pub
 sudo sh -c 'test "$(wc -c < "$1" | tr -d "[:space:]")" = "$2"' sh "$STAGE/wg-basic" "$SIZE"
 printf '%s  %s\n' "$SHA256" "$STAGE/wg-basic" | sudo sha256sum --check --status
 sudo sh "$STAGE/install.sh" --version "$VERSION" --candidate "$STAGE/wg-basic" \
   --sha256 "$SHA256" --size "$SIZE"
 ```
 
-The installer runs only after its detached signature and the manifest signature
-have passed. The candidate is verified against the signed manifest and is
-rechecked by the installer before `system install`. This path remains
-unavailable until real production signatures and the independently distributed
-key are available; fixture signatures do not qualify it for production.
+The installer runs only after the manifest consistency checks and the
+root-owned digest rechecks above have passed. The candidate is verified
+against the manifest and is rechecked by the installer before
+`system install`. There is no publisher authentication in this path by
+design; fixture signatures do not qualify it further.
 
 For current project status, see the [planning registry](../plans/registry.md).

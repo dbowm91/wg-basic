@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-11 (R001–R003 strictly closed at `1e034d0`; R004a closed with `v0.1.0` public pre-release — release run `38115877717`, provenance `38152418203`, RF-07 fixed via `eggstack/eggpack@a0fec98`; solo-maintainer policy with zero required PR approvals; R004b production signing blocked on maintainer key)
+Last planning reconciliation: 2026-10-11 (R001–R004a closed; R004b waived by maintainer decision — checksums-only releases, `v0.1.0` stable; solo-maintainer policy with zero required PR approvals)
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -43,7 +43,7 @@ The architecture separates:
 
 The privileged service does not expose arbitrary shell, command, file-write, sysctl-path, nft-script, or raw-netlink execution.
 
-Current production code state: **Network control and Phases 6–11 are technically closed. The authenticated product API and embedded UI provide server setup, client lifecycle, config/QR export, one-time enrollment, live telemetry, bounded audit history, operational diagnostics, safe maintenance/recovery, and a proven old/new database rollback contract.** Phase 10 is release-mechanically complete: native x86_64/aarch64 systemd install, signed-fixture update/recovery, state-preserving uninstall/reinstall, and guarded purge are qualified. Phase 11 dual-stack tunnel addressing, IPv6 forwarding/firewall ownership, client route policy/product surface, and dual-stack end-to-end qualification are strictly closed. Production signing/publication remain blocked on maintainer provisioning of the release trust root and production-signed draft; this external gate does not block Phase 11 engineering.
+Current production code state: **Network control and Phases 6–11 are technically closed. The authenticated product API and embedded UI provide server setup, client lifecycle, config/QR export, one-time enrollment, live telemetry, bounded audit history, operational diagnostics, safe maintenance/recovery, and a proven old/new database rollback contract.** Phase 10 is release-mechanically complete: native x86_64/aarch64 systemd install, signed-fixture update/recovery, state-preserving uninstall/reinstall, and guarded purge are qualified. Phase 11 dual-stack tunnel addressing, IPv6 forwarding/firewall ownership, client route policy/product surface, and dual-stack end-to-end qualification are strictly closed. Releases are checksums-only by maintainer decision (`v0.1.0` stable, unsigned); self-update is permanently fail-closed and every release needs a fresh install.
 
 ## 3. Eggstack reuse disposition
 
@@ -74,7 +74,7 @@ Runtime dependency adoption remains evidence-driven.
 | Operational hardening | closed | `plans/subsystems/operational-hardening-roadmap.md` | M001–M005 closed; Phase 9 closed |
 | Distribution/install/update | closed (technical) | `plans/subsystems/distribution-install-update-roadmap.md` | M001–M005 closed; production release remains blocked on signing |
 | IPv6/route-policy qualification | closed | `plans/subsystems/ipv6-route-policy-roadmap.md` | M001–M004 closed; `plans/closure/ipv6-route-policy/004-status.md` |
-| Release readiness and supply-chain security | active (R004b production signing only; R004a closed) | `plans/subsystems/release-readiness-security-roadmap.md` | R001–R004a closed; R004b needs maintainer key + signed draft/install/publish |
+| Release readiness and supply-chain security | closed (R004b waived; checksums-only releases) | `plans/subsystems/release-readiness-security-roadmap.md` | R001–R004a closed; waiver `004b-waiver-status.md` |
 
 Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
 
@@ -91,7 +91,7 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 | Subsystem | Milestone | Status | Implementation plan | Hard blocker |
 |---|---|---|---|---|
 | Release readiness/security | R004a initial unsigned pre-release | **closed 2026-10-11** (`v0.1.0` public pre-release) | `plans/implementation/release-readiness/004-first-production-release-security-qualification-and-authorization.md` §4A | Release run `38115877717` + provenance `38152418203` green; digest-verified draft and public assets; closure `plans/closure/release-readiness/004a-status.md` |
-| Release readiness/security | R004b first signed production release | blocked until maintainer provisions release trust root | `plans/implementation/release-readiness/004-first-production-release-security-qualification-and-authorization.md` §§4–10 | Maintainer key custody, signed draft/install, sole review plus explicit go; no second reviewer |
+| Release readiness/security | R004b signed-production gate | **waived by maintainer decision 2026-10-11** | `plans/implementation/release-readiness/004-first-production-release-security-qualification-and-authorization.md` §§4–10 (retained as future spec) | Checksums-only releases; `v0.1.0` stable; waiver `plans/closure/release-readiness/004b-waiver-status.md` |
 | Distribution/install/update | Production signing and public release | R004 operation | `plans/subsystems/release-readiness-security-roadmap.md` and R002/R004 checklists | Maintainer key custody, tag, signed draft, current CI, install check, and explicit publication authorization |
 
 The initial 2026-10-09 release-readiness review at `main@ff40f85` found shell interpolation in the generated workflow and no independent source/run proof. Eggpack M003k closed the producer finding at `1103a1affc62a210f1102a769457db80d9188bc8` (hosted run `38027470046`); it validates and resolves the release tag before checkout and freezes the selected commit. Consumer regeneration, security regressions, and settings evidence are recorded in the dated follow-up below. No production key was generated, installed or stored, and no release was staged or published.
@@ -110,8 +110,12 @@ M004 and its corrective slices are closed: `plans/closure/distribution/004-statu
   producer tag-fetch fix (`eggstack/eggpack@a0fec98`) verified live;
   draft and public assets digest-verified byte-identical; maintainer
   staging approval + draft-to-pre-release flip. Closure
-  `plans/closure/release-readiness/004a-status.md`. R004b production
-  signing stays blocked on maintainer key provisioning.
+  `plans/closure/release-readiness/004a-status.md`.
+- Release-readiness R004b waiver 2026-10-11: the signed-production gate is
+  waived by maintainer decision; releases are checksums-only and `v0.1.0`
+  was promoted to stable unsigned. Waiver
+  `plans/closure/release-readiness/004b-waiver-status.md`. The release
+  subsystem is now closed.
 
 - Release-readiness R001 strict closure at `1e034d0`: Eggpack M003k pin,
   regenerated workflow, zero-approval solo-maintainer policy, exact-head

@@ -49,27 +49,27 @@ as root plus server setup; see
 
 Network control, durable state/restart reconciliation, management/auth,
 product/enrollment/UI, and operational hardening are implemented and
-qualified in Linux namespaces. Native systemd installation and M004's signed
+qualified in Linux namespaces. Native systemd installation and M004's
 update, rollback, and recovery transaction are technically qualified on
 current x86_64 and aarch64 GNU release artifacts. Phase 10 lifecycle
 qualification is closed, including fresh install, state-preserving
-uninstall/reinstall, and guarded purge. Production `update check` and
-`update run` remain fail-closed because the maintainer-provisioned Minisign
-public key is still pending; no public release is ready. See
+uninstall/reinstall, and guarded purge. `v0.1.0` is released as a stable
+checksums-only build (unsigned, no trust root by maintainer decision):
+production `update check` and `update run` stay fail-closed, so every
+release needs a fresh install. See
 [plans/registry.md](plans/registry.md).
 
 The `--version` release installer is a lower-assurance HTTPS/GitHub bootstrap.
-The documented signed-manifest installation path is available only after
-maintainer-provisioned production signatures and an independently distributed
-trust key exist; see [docs/installation.md](docs/installation.md) and
-[docs/release-signing.md](docs/release-signing.md).
+There is no signed-manifest installation path; verify downloads against the
+published SHA-256 digests — see [docs/installation.md](docs/installation.md)
+and [docs/release-signing.md](docs/release-signing.md).
 
 ## Docs
 
 | Document | Covers |
 |---|---|
 | [docs/installation.md](docs/installation.md) | Native installation, authenticity status, state-preserving uninstall/reinstall |
-| [docs/release-signing.md](docs/release-signing.md) | Offline signing, source/run preflight, trust-key custody |
+| [docs/release-signing.md](docs/release-signing.md) | Checksums-only release policy, source/run preflight, retained signing reference |
 | [docs/development.md](docs/development.md) | Gates, local `netd`/`serve`, credentials, test fixtures |
 | [docs/operations-runbook.md](docs/operations-runbook.md) | Backup, recovery, disable/purge |
 | [docs/state-backup-restore.md](docs/state-backup-restore.md) | Backup/restore/verify mechanics |
