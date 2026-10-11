@@ -1,9 +1,9 @@
-# Release Readiness R002 — Non-secret Conditional Closure
+# Release Readiness R002 — Strict Closure (non-secret engineering)
 
-Disposition: **conditionally closed for non-secret tooling; production signing blocked**.
+Disposition: **closed for non-secret tooling, ceremony docs, and fail-closed default**; production key custody, embedded trust root, first signed draft, and publication are R004 release operations, explicitly not R002 blockers.
 Implementation commit: `bd7c085d191ccf147e0f4dab72fde7cc8818f3fd`.
 Repository baseline: `0b814fe` (`2026-10-10`).
-Repository implementation head: `bd7c085d191ccf147e0f4dab72fde7cc8818f3fd`.
+Repository implementation head: `1e034d089ca62d9f4c22a562a3067227ad8beb9d`.
 Source plan: `plans/implementation/release-readiness/002-production-trust-root-and-offline-signing-ceremony.md`.
 Roadmap: `plans/subsystems/release-readiness-security-roadmap.md`.
 
@@ -59,3 +59,13 @@ R003 can use the documented detached-signature procedure once the maintainer
 publishes an independently authenticated key and signed draft. R004 remains
 blocked until actual key custody, signatures, exact current-SHA evidence, and
 maintainer approval are supplied.
+
+## 2026-10-11 strict closure at `1e034d0`
+
+Exact-head hosted evidence: CI run `38108270370` completed success (21
+passed, 0 failed) and Distribution Foundation run `38108270368` completed
+success at `1e034d0`. Local gates from the R001 strict-closure record apply
+unchanged (580 tests passed; seven release fixtures passed; fmt/check/clippy/
+MSRV/diff clean). No production key was generated, embedded, or provisioned;
+`src/release.rs::PRODUCTION_PUBLIC_KEY` remains `None`. No agent action
+substitutes fixture evidence for the R004 production sequence.

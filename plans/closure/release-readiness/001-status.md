@@ -1,9 +1,9 @@
-# Release Readiness R001 — Conditional Closure
+# Release Readiness R001 — Strict Closure
 
-Disposition: **conditionally closed**; release authorization remains blocked.
+Disposition: **closed**; first live tagged staging preflight deferred to the R004 release operation. Production signing/publication remain separately blocked under R004.
 Implementation commit: `bd7c085d191ccf147e0f4dab72fde7cc8818f3fd`.
 Repository baseline: `0b814fe` (`2026-10-10`).
-Repository implementation head: `bd7c085d191ccf147e0f4dab72fde7cc8818f3fd`.
+Repository implementation head: `1e034d089ca62d9f4c22a562a3067227ad8beb9d`.
 Source plan: `plans/implementation/release-readiness/001-release-workflow-input-and-provenance-hardening.md`.
 Roadmap: `plans/subsystems/release-readiness-security-roadmap.md`.
 
@@ -94,3 +94,30 @@ The previously recorded absent rulesets and producer ordering described the
 recorded in `docs/release-signing.md`. Project policy requires no second
 reviewer: `main` needs zero approvals (maintainer merges after green checks)
 and `release-staging` needs only the maintainer with self-approval allowed.
+
+## 2026-10-11 strict closure at `1e034d0`
+
+`e0c2aba..1e034d0` is docs/plans only (solo-maintainer policy, R001–R004
+streamlining); no production code changed. Exact-head hosted evidence:
+
+- Hosted CI run `38108270370` at `1e034d0`: completed success, 21 checks
+  passed, 0 failed (rust, dependency-audit, GitGuardian, kernel/namespace,
+  durable-state, maintenance, doctor, native install, upgrade rehearsal
+  including rootful lanes).
+- Hosted Distribution Foundation run `38108270368` at `1e034d0`: completed
+  success (release-contract, both GNU native candidates, both systemd
+  install-lifecycle lanes).
+- Local: `cargo fmt -- --check`, `cargo check --all-targets --locked`,
+  `cargo clippy --all-targets --locked -- -D warnings` clean;
+  `cargo test --locked` 580 passed, 3 ignored;
+  `cargo +1.89.0 check --all-targets --locked` clean; all seven release
+  fixtures passed (`workflow-security`, `provenance`, `signing-bundle`,
+  `verified-install`, `installer`, `signing-request`, `smoke`);
+  `git diff --check` clean.
+
+R001 acceptance is met: no raw untrusted expression in shell run bodies,
+discriminating adversarial-input test, source/tag/run/asset binding checks,
+green generator-drift and native CI at the exact head, per-job least-privilege
+review, and provenance/settings evidence. The release gate stays disabled
+without separate key/signing authorization. Neither this closure nor its
+evidence authorizes production signing or publication.
