@@ -1,0 +1,45 @@
+name: Release provenance receipt
+'on':
+  workflow_run:
+    workflows: [Eggpack candidate builds]
+    types: [completed]
+permissions: {}
+jobs:
+  bind-successful-run:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out repository policy
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Download receipt from the completed release run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: eggpack-staging-receipt
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: ./eggpack-staging-receipt
+      - name: Bind receipt to GitHub run metadata
+        env:
+          WGB_RUN_ID: ${{ github.event.workflow_run.id }}
+          WGB_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          WGB_WORKFLOW_REF: dbowm91/wg-basic/.github/workflows/release-eggpack.yml@${{ github.event.workflow_run.head_branch }}
+          WGB_WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha }}
+          WGB_PROVENANCE_RUN_ID: ${{ github.run_id }}
+          WGB_PROVENANCE_RUN_ATTEMPT: ${{ github.run_attempt }}
+          WGB_PROVENANCE_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: >-
+          python3 scripts/create-release-provenance.py
+          ./eggpack-staging-receipt/eggpack-staging-receipt.json
+          ./release-provenance.json
+      - name: Upload run-bound provenance receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-provenance-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+          path: ./release-provenance.json
+          if-no-files-found: error
+          retention-days: 90

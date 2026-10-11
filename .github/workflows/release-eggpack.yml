@@ -16,17 +16,34 @@ jobs:
     runs-on: "ubuntu-24.04"
     permissions:
       contents: read
+    outputs:
+      source_sha: ${{ steps.resolve_tag.outputs.source_sha }}
     timeout-minutes: 60
     steps:
+      - name: Resolve and validate immutable release source
+        id: resolve_tag
+        shell: bash
+        env:
+          EGGPACK_RELEASE_TAG: "${{ inputs.release_tag }}"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: "set -euo pipefail\ntag=\"$EGGPACK_RELEASE_TAG\"\nif [ \"${#tag}\" -gt 255 ] || [ -z \"$tag\" ]; then\n  echo 'release tag is empty or oversized' >&2\n  exit 1\nfi\nif [ \"${#tag}\" -gt 64 ] || [[ ! \"$tag\" =~ ^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$ ]]; then\n  echo 'release_tag must be a canonical vX.Y.Z stable tag' >&2\n  exit 1\nfi\nexport LC_ALL=C\nversion=\"${tag#v}\"\nIFS='.' read -r major minor patch <<< \"$version\"\nfor component in \"$major\" \"$minor\" \"$patch\"; do\n  if [ \"${#component}\" -gt 20 ] || { [ \"${#component}\" -eq 20 ] && [[ \"$component\" > 18446744073709551615 ]]; }; then\n    echo 'release_tag numeric component is out of range' >&2\n    exit 1\n  fi\ndone\nref=\"refs/tags/$tag\"\ngit check-ref-format \"$ref\"\naskpass=\"$RUNNER_TEMP/eggpack-tag-askpass\"\nverify_repo=\"$RUNNER_TEMP/eggpack-tag-verify.git\"\ntrap 'rm -f -- \"$askpass\"' EXIT\ncat >\"$askpass\" <<'ASKPASS'\n#!/bin/sh\ncase \"$1\" in\n  *Username*) printf '%s\\n' x-access-token ;;\n  *Password*) printf '%s\\n' \"$EGGPACK_GIT_TOKEN\" ;;\n  *) exit 1 ;;\nesac\nASKPASS\nchmod 700 \"$askpass\"\nremote=\"$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git\"\nrefs=\"$(GIT_ASKPASS=\"$askpass\" GIT_TERMINAL_PROMPT=0 EGGPACK_GIT_TOKEN=\"$GITHUB_TOKEN\" git ls-remote --exit-code \"$remote\" \"$ref\" \"$ref^{}\")\"\ndirect=\npeeled=\nwhile IFS=\"$(printf '\\t')\" read -r oid name; do\n  case \"$name\" in\n    \"$ref\") [ -z \"$direct\" ] || { echo 'duplicate tag ref result' >&2; exit 1; }; direct=\"$oid\" ;;\n    \"$ref^{}\") [ -z \"$peeled\" ] || { echo 'duplicate peeled ref result' >&2; exit 1; }; peeled=\"$oid\" ;;\n    *) echo 'unexpected tag resolution result' >&2; exit 1 ;;\n  esac\ndone <<< \"$refs\"\nsource_sha=\"${peeled:-$direct}\"\nif [[ ! \"$source_sha\" =~ ^[0-9a-f]{40}$ ]]; then\n  echo 'tag did not resolve to one full object OID' >&2\n  exit 1\nfi\ngit init --bare \"$verify_repo\" >/dev/null\nGIT_ASKPASS=\"$askpass\" GIT_TERMINAL_PROMPT=0 EGGPACK_GIT_TOKEN=\"$GITHUB_TOKEN\" git --git-dir=\"$verify_repo\" fetch --no-tags --depth=1 \"$remote\" \"$ref\" >/dev/null\nfetched_commit=\"$(git --git-dir=\"$verify_repo\" rev-parse --verify 'FETCH_HEAD^{commit}')\"\nif [ \"$fetched_commit\" != \"$source_sha\" ]; then\n  echo 'tag did not resolve to the advertised commit object' >&2\n  exit 1\nfi\nprintf 'source_sha=%s\\n' \"$source_sha\" >> \"$GITHUB_OUTPUT\"\n"
       - name: Check out source
         uses: "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
         with:
-          ref: "${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}"
+          ref: "${{ steps.resolve_tag.outputs.source_sha }}"
+      - name: Verify frozen source checkout
+        shell: bash
+        env:
+          EGGPACK_EXPECTED_SOURCE_SHA: "${{ steps.resolve_tag.outputs.source_sha }}"
+        run: test "$(git rev-parse --verify HEAD^{commit})" = "$EGGPACK_EXPECTED_SOURCE_SHA"
+
       - name: Check Cargo availability
         shell: bash
         run: cargo --version
   resolve:
     needs: preflight
+    outputs:
+      source_sha: ${{ needs.preflight.outputs.source_sha }}
     runs-on: "ubuntu-24.04"
     permissions:
       contents: read
@@ -35,15 +52,18 @@ jobs:
       - name: Check out source
         uses: "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
         with:
-          ref: "${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}"
-      - name: Validate exact-tag source
+          ref: "${{ needs.preflight.outputs.source_sha }}"
+      - name: Verify frozen source checkout
         shell: bash
-        run: "test -n \"${{ inputs.release_tag }}\""
+        env:
+          EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.preflight.outputs.source_sha }}"
+        run: test "$(git rev-parse --verify HEAD^{commit})" = "$EGGPACK_EXPECTED_SOURCE_SHA"
+
       - name: Install pinned Eggpack tool
         shell: bash
         timeout-minutes: 20
         run: |
-          cargo install --git https://github.com/eggstack/eggpack --rev d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628 --locked eggpack-cli
+          cargo install --git https://github.com/eggstack/eggpack --rev 1103a1affc62a210f1102a769457db80d9188bc8 --locked eggpack-cli
           eggpack --version
       - name: Create runtime identity directory
         shell: bash
@@ -73,7 +93,13 @@ jobs:
       - name: Check out source
         uses: "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
         with:
-          ref: "${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}"
+          ref: "${{ needs.resolve.outputs.source_sha }}"
+      - name: Verify frozen source checkout
+        shell: bash
+        env:
+          EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
+        run: test "$(git rev-parse --verify HEAD^{commit})" = "$EGGPACK_EXPECTED_SOURCE_SHA"
+
       - name: Download runtime release identity
         uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
         with:
@@ -135,7 +161,7 @@ jobs:
         shell: bash
         timeout-minutes: 20
         run: |
-          cargo install --git https://github.com/eggstack/eggpack --rev d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628 --locked eggpack-cli
+          cargo install --git https://github.com/eggstack/eggpack --rev 1103a1affc62a210f1102a769457db80d9188bc8 --locked eggpack-cli
           eggpack --version
       - name: Verify checked-out release source
         shell: bash
@@ -170,7 +196,13 @@ jobs:
       - name: Check out source
         uses: "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
         with:
-          ref: "${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}"
+          ref: "${{ needs.resolve.outputs.source_sha }}"
+      - name: Verify frozen source checkout
+        shell: bash
+        env:
+          EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
+        run: test "$(git rev-parse --verify HEAD^{commit})" = "$EGGPACK_EXPECTED_SOURCE_SHA"
+
       - name: Download runtime release identity
         uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
         with:
@@ -232,7 +264,7 @@ jobs:
         shell: bash
         timeout-minutes: 20
         run: |
-          cargo install --git https://github.com/eggstack/eggpack --rev d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628 --locked eggpack-cli
+          cargo install --git https://github.com/eggstack/eggpack --rev 1103a1affc62a210f1102a769457db80d9188bc8 --locked eggpack-cli
           eggpack --version
       - name: Verify checked-out release source
         shell: bash
@@ -257,7 +289,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
   qualify_build_aarch64_unknown_linux_gnu:
-    needs: build_aarch64_unknown_linux_gnu
+    needs: [ build_aarch64_unknown_linux_gnu, resolve ]
     runs-on: "ubuntu-24.04-arm"
     permissions:
       contents: read
@@ -267,7 +299,13 @@ jobs:
       - name: Check out source
         uses: "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
         with:
-          ref: "${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}"
+          ref: "${{ needs.resolve.outputs.source_sha }}"
+      - name: Verify frozen source checkout
+        shell: bash
+        env:
+          EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
+        run: test "$(git rev-parse --verify HEAD^{commit})" = "$EGGPACK_EXPECTED_SOURCE_SHA"
+
       - name: Download runtime release identity
         uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
         with:
@@ -278,7 +316,7 @@ jobs:
         shell: bash
         timeout-minutes: 20
         run: |
-          cargo install --git https://github.com/eggstack/eggpack --rev d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628 --locked eggpack-cli
+          cargo install --git https://github.com/eggstack/eggpack --rev 1103a1affc62a210f1102a769457db80d9188bc8 --locked eggpack-cli
           eggpack --version
       - name: Verify checked-out release source
         shell: bash
@@ -301,7 +339,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
   qualify_build_x86_64_unknown_linux_gnu:
-    needs: build_x86_64_unknown_linux_gnu
+    needs: [ build_x86_64_unknown_linux_gnu, resolve ]
     runs-on: "ubuntu-24.04"
     permissions:
       contents: read
@@ -311,7 +349,13 @@ jobs:
       - name: Check out source
         uses: "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
         with:
-          ref: "${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}"
+          ref: "${{ needs.resolve.outputs.source_sha }}"
+      - name: Verify frozen source checkout
+        shell: bash
+        env:
+          EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
+        run: test "$(git rev-parse --verify HEAD^{commit})" = "$EGGPACK_EXPECTED_SOURCE_SHA"
+
       - name: Download runtime release identity
         uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
         with:
@@ -322,7 +366,7 @@ jobs:
         shell: bash
         timeout-minutes: 20
         run: |
-          cargo install --git https://github.com/eggstack/eggpack --rev d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628 --locked eggpack-cli
+          cargo install --git https://github.com/eggstack/eggpack --rev 1103a1affc62a210f1102a769457db80d9188bc8 --locked eggpack-cli
           eggpack --version
       - name: Verify checked-out release source
         shell: bash
@@ -345,7 +389,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
   validate_build_aarch64_unknown_linux_gnu:
-    needs: qualify_build_aarch64_unknown_linux_gnu
+    needs: [ qualify_build_aarch64_unknown_linux_gnu, resolve ]
     runs-on: "ubuntu-24.04-arm"
     permissions:
       contents: read
@@ -355,7 +399,13 @@ jobs:
       - name: Check out source
         uses: "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
         with:
-          ref: "${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}"
+          ref: "${{ needs.resolve.outputs.source_sha }}"
+      - name: Verify frozen source checkout
+        shell: bash
+        env:
+          EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
+        run: test "$(git rev-parse --verify HEAD^{commit})" = "$EGGPACK_EXPECTED_SOURCE_SHA"
+
       - name: Download runtime release identity
         uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
         with:
@@ -366,7 +416,7 @@ jobs:
         shell: bash
         timeout-minutes: 20
         run: |
-          cargo install --git https://github.com/eggstack/eggpack --rev d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628 --locked eggpack-cli
+          cargo install --git https://github.com/eggstack/eggpack --rev 1103a1affc62a210f1102a769457db80d9188bc8 --locked eggpack-cli
           eggpack --version
       - name: Verify checked-out release source
         shell: bash
@@ -392,7 +442,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
   validate_build_x86_64_unknown_linux_gnu:
-    needs: qualify_build_x86_64_unknown_linux_gnu
+    needs: [ qualify_build_x86_64_unknown_linux_gnu, resolve ]
     runs-on: "ubuntu-24.04"
     permissions:
       contents: read
@@ -402,7 +452,13 @@ jobs:
       - name: Check out source
         uses: "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
         with:
-          ref: "${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}"
+          ref: "${{ needs.resolve.outputs.source_sha }}"
+      - name: Verify frozen source checkout
+        shell: bash
+        env:
+          EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
+        run: test "$(git rev-parse --verify HEAD^{commit})" = "$EGGPACK_EXPECTED_SOURCE_SHA"
+
       - name: Download runtime release identity
         uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
         with:
@@ -413,7 +469,7 @@ jobs:
         shell: bash
         timeout-minutes: 20
         run: |
-          cargo install --git https://github.com/eggstack/eggpack --rev d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628 --locked eggpack-cli
+          cargo install --git https://github.com/eggstack/eggpack --rev 1103a1affc62a210f1102a769457db80d9188bc8 --locked eggpack-cli
           eggpack --version
       - name: Verify checked-out release source
         shell: bash
@@ -439,7 +495,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
   required_gate:
-    needs: [validate_build_aarch64_unknown_linux_gnu, validate_build_x86_64_unknown_linux_gnu]
+    needs: [ validate_build_aarch64_unknown_linux_gnu, validate_build_x86_64_unknown_linux_gnu, resolve ]
     runs-on: "ubuntu-24.04"
     permissions:
       contents: read
@@ -448,7 +504,13 @@ jobs:
       - name: Check out source
         uses: "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
         with:
-          ref: "${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}"
+          ref: "${{ needs.resolve.outputs.source_sha }}"
+      - name: Verify frozen source checkout
+        shell: bash
+        env:
+          EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
+        run: test "$(git rev-parse --verify HEAD^{commit})" = "$EGGPACK_EXPECTED_SOURCE_SHA"
+
       - name: Download runtime release identity
         uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
         with:
@@ -459,7 +521,7 @@ jobs:
         shell: bash
         timeout-minutes: 20
         run: |
-          cargo install --git https://github.com/eggstack/eggpack --rev d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628 --locked eggpack-cli
+          cargo install --git https://github.com/eggstack/eggpack --rev 1103a1affc62a210f1102a769457db80d9188bc8 --locked eggpack-cli
           eggpack --version
       - name: Verify checked-out release source
         shell: bash
@@ -493,7 +555,7 @@ jobs:
         shell: bash
         run: "'eggpack' 'ci' '_evaluate-gate' '--ci-plan' 'eggpack-runtime/release-ci-plan.json' '--inputs-dir' './eggpack-inputs' '--output' './eggpack-gate/gate-outcome.json'"
   aggregate:
-    needs: required_gate
+    needs: [ required_gate, resolve ]
     runs-on: "ubuntu-24.04"
     permissions:
       contents: read
@@ -502,7 +564,13 @@ jobs:
       - name: Check out source
         uses: "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
         with:
-          ref: "${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}"
+          ref: "${{ needs.resolve.outputs.source_sha }}"
+      - name: Verify frozen source checkout
+        shell: bash
+        env:
+          EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
+        run: test "$(git rev-parse --verify HEAD^{commit})" = "$EGGPACK_EXPECTED_SOURCE_SHA"
+
       - name: Download runtime release identity
         uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
         with:
@@ -513,7 +581,7 @@ jobs:
         shell: bash
         timeout-minutes: 20
         run: |
-          cargo install --git https://github.com/eggstack/eggpack --rev d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628 --locked eggpack-cli
+          cargo install --git https://github.com/eggstack/eggpack --rev 1103a1affc62a210f1102a769457db80d9188bc8 --locked eggpack-cli
           eggpack --version
       - name: Verify checked-out release source
         shell: bash
@@ -554,31 +622,44 @@ jobs:
           if-no-files-found: error
           retention-days: 7
   stage:
-    needs: aggregate
+    needs: [ aggregate, resolve ]
     if: github.event_name == 'workflow_dispatch'
     runs-on: "ubuntu-24.04"
+    environment:
+      name: "release-staging"
     permissions:
       contents: write
     timeout-minutes: 60
     steps:
+      - name: Resolve and validate immutable release source
+        id: confirm_tag_source
+        shell: bash
+        env:
+          EGGPACK_RELEASE_TAG: "${{ inputs.release_tag }}"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
+        run: "set -euo pipefail\ntag=\"$EGGPACK_RELEASE_TAG\"\nif [ \"${#tag}\" -gt 255 ] || [ -z \"$tag\" ]; then\n  echo 'release tag is empty or oversized' >&2\n  exit 1\nfi\nif [ \"${#tag}\" -gt 64 ] || [[ ! \"$tag\" =~ ^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$ ]]; then\n  echo 'release_tag must be a canonical vX.Y.Z stable tag' >&2\n  exit 1\nfi\nexport LC_ALL=C\nversion=\"${tag#v}\"\nIFS='.' read -r major minor patch <<< \"$version\"\nfor component in \"$major\" \"$minor\" \"$patch\"; do\n  if [ \"${#component}\" -gt 20 ] || { [ \"${#component}\" -eq 20 ] && [[ \"$component\" > 18446744073709551615 ]]; }; then\n    echo 'release_tag numeric component is out of range' >&2\n    exit 1\n  fi\ndone\nref=\"refs/tags/$tag\"\ngit check-ref-format \"$ref\"\naskpass=\"$RUNNER_TEMP/eggpack-tag-askpass\"\nverify_repo=\"$RUNNER_TEMP/eggpack-tag-verify.git\"\ntrap 'rm -f -- \"$askpass\"' EXIT\ncat >\"$askpass\" <<'ASKPASS'\n#!/bin/sh\ncase \"$1\" in\n  *Username*) printf '%s\\n' x-access-token ;;\n  *Password*) printf '%s\\n' \"$EGGPACK_GIT_TOKEN\" ;;\n  *) exit 1 ;;\nesac\nASKPASS\nchmod 700 \"$askpass\"\nremote=\"$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git\"\nrefs=\"$(GIT_ASKPASS=\"$askpass\" GIT_TERMINAL_PROMPT=0 EGGPACK_GIT_TOKEN=\"$GITHUB_TOKEN\" git ls-remote --exit-code \"$remote\" \"$ref\" \"$ref^{}\")\"\ndirect=\npeeled=\nwhile IFS=\"$(printf '\\t')\" read -r oid name; do\n  case \"$name\" in\n    \"$ref\") [ -z \"$direct\" ] || { echo 'duplicate tag ref result' >&2; exit 1; }; direct=\"$oid\" ;;\n    \"$ref^{}\") [ -z \"$peeled\" ] || { echo 'duplicate peeled ref result' >&2; exit 1; }; peeled=\"$oid\" ;;\n    *) echo 'unexpected tag resolution result' >&2; exit 1 ;;\n  esac\ndone <<< \"$refs\"\nsource_sha=\"${peeled:-$direct}\"\nif [[ ! \"$source_sha\" =~ ^[0-9a-f]{40}$ ]]; then\n  echo 'tag did not resolve to one full object OID' >&2\n  exit 1\nfi\ngit init --bare \"$verify_repo\" >/dev/null\nGIT_ASKPASS=\"$askpass\" GIT_TERMINAL_PROMPT=0 EGGPACK_GIT_TOKEN=\"$GITHUB_TOKEN\" git --git-dir=\"$verify_repo\" fetch --no-tags --depth=1 \"$remote\" \"$ref\" >/dev/null\nfetched_commit=\"$(git --git-dir=\"$verify_repo\" rev-parse --verify 'FETCH_HEAD^{commit}')\"\nif [ \"$fetched_commit\" != \"$source_sha\" ]; then\n  echo 'tag did not resolve to the advertised commit object' >&2\n  exit 1\nfi\nif [ \"$source_sha\" != \"$EGGPACK_EXPECTED_SOURCE_SHA\" ]; then\n  echo 'release tag moved after preflight resolution' >&2\n  exit 1\nfi\n"
       - name: Check out source
         uses: "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
         with:
-          ref: "${{ inputs.release_tag }}"
+          ref: "${{ needs.resolve.outputs.source_sha }}"
+      - name: Verify frozen source checkout
+        shell: bash
+        env:
+          EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
+        run: test "$(git rev-parse --verify HEAD^{commit})" = "$EGGPACK_EXPECTED_SOURCE_SHA"
+
       - name: Download runtime release identity
         uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
         with:
           name: "eggpack-runtime-identity"
           path: "./eggpack-runtime"
           if-no-files-found: error
-      - name: Validate exact-tag source
-        shell: bash
-        run: "test -n \"${{ inputs.release_tag }}\""
       - name: Install pinned Eggpack tool
         shell: bash
         timeout-minutes: 20
         run: |
-          cargo install --git https://github.com/eggstack/eggpack --rev d61ca71fc0112be63e7e8ba31ba8fa2b1ce5a628 --locked eggpack-cli
+          cargo install --git https://github.com/eggstack/eggpack --rev 1103a1affc62a210f1102a769457db80d9188bc8 --locked eggpack-cli
           eggpack --version
       - name: Verify checked-out release source
         shell: bash
