@@ -1,6 +1,6 @@
 # macOS Native Server Support Roadmap
 
-Status: planned; M001 closed 2026-10-13, M002 ready, M003–M007 blocked on predecessor closure / stated interface gates
+Status: planned; M001–M002 closed 2026-10-13, M003 ready, M004–M007 blocked on predecessor closure / stated interface gates
 
 Owner: headless Darwin WireGuard server deployment, not a macOS WireGuard client application.
 
@@ -50,7 +50,8 @@ M002 and M003 may prototype against M001's stable written interfaces but may not
 | Milestone | Primary class | Scope / acceptance boundary | Hard dependency | Status |
 |---|---|---|---|---|
 | M001 portability foundation | infrastructure / invariant | shared modules build on macOS; Linux unaffected; explicit logical vs OS interface identity | Linux main baseline | closed 2026-10-13 (`plans/closure/macos-native-server/001-status.md`) |
-| M002 Darwin privilege + IPC | invariant | native getpeereid authorization, secure socket lifecycle, bounded typed protocol and doctor | M001 | ready |
+| M002 Darwin privilege + IPC | invariant | native getpeereid authorization, secure socket lifecycle, bounded typed protocol and doctor | M001 | closed 2026-10-13 (`plans/closure/macos-native-server/002-status.md`) |
+| M003 userspace WireGuard | capability / invariant | bundled/pinned foreground helper, utun ownership, UAPI peer CRUD, real handshake/telemetry | M002 | ready |
 | M003 userspace WireGuard | capability / invariant | bundled/pinned foreground helper, utun ownership, UAPI peer CRUD, real handshake/telemetry | M002 | blocked |
 | M004 Darwin resources | capability / invariant | address/route apply/observe/verify, no foreign deletion, crash/utun churn tests | M003 | blocked |
 | M005 forwarding/PF/NAT | invariant / capability | approved strategy, opt-in PF if lawful/suitable, observed filter+NAT and real traffic | M004 + explicit PF ADR gate | blocked |
