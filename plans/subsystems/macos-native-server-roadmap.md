@@ -1,6 +1,6 @@
 # macOS Native Server Support Roadmap
 
-Status: planned; M001–M002 closed 2026-10-13, M003–M006 blocked on privileged-host qualification (safe/policy/installation scopes implemented; TN3165 advanced-admin-only decision recorded), M007 verdict ready to compile
+Status: line verdict recorded 2026-10-13 — M001–M002 closed, M003–M006 blocked on privileged-host qualification (safe/policy/installation scopes implemented; TN3165 advanced-admin-only decided), M007 blocked verdict with MUST-NOT-release decision + unblock checklist
 
 Owner: headless Darwin WireGuard server deployment, not a macOS WireGuard client application.
 
@@ -55,11 +55,7 @@ M002 and M003 may prototype against M001's stable written interfaces but may not
 | M004 Darwin resources | capability / invariant | address/route apply/observe/verify, no foreign deletion, crash/utun churn tests | M003 | **blocked** 2026-10-13 — modeling scope implemented (`plans/closure/macos-native-server/004-status.md`); native convergence needs disposable privileged host |
 | M005 forwarding/PF/NAT | invariant / capability | approved strategy, opt-in PF if lawful/suitable, observed filter+NAT and real traffic | M004 + explicit PF ADR gate | **blocked** 2026-10-13 — TN3165 advanced-admin-only decision + anchor model (`plans/closure/macos-native-server/005-status.md`); live traffic needs disposable privileged host |
 | M006 launchd + distribution | infrastructure / capability | native services, install/reinstall/uninstall, ABI/build/release artifacts, rollback-safe behavior | M005 | **blocked** 2026-10-13 — installation scope implemented (`plans/closure/macos-native-server/006-status.md`, no PF auto-configuration); native install/boot/reboot/recovery needs disposable privileged host |
-| M003 userspace WireGuard | capability / invariant | bundled/pinned foreground helper, utun ownership, UAPI peer CRUD, real handshake/telemetry | M002 | blocked |
-| M004 Darwin resources | capability / invariant | address/route apply/observe/verify, no foreign deletion, crash/utun churn tests | M003 | blocked |
-| M005 forwarding/PF/NAT | invariant / capability | approved strategy, opt-in PF if lawful/suitable, observed filter+NAT and real traffic | M004 + explicit PF ADR gate | blocked |
-| M006 launchd + distribution | infrastructure / capability | native services, install/reinstall/uninstall, ABI/build/release artifacts, rollback-safe behavior | M005 | blocked |
-| M007 security + platform E2E | qualification | Apple Silicon and Intel native hardware/VM real traffic, external-state preservation, release policy | M006 | blocked |
+| M007 security + platform E2E | qualification | Apple Silicon and Intel native hardware/VM real traffic, external-state preservation, release policy | M006 | **blocked** 2026-10-13 — verdict recorded (`plans/closure/macos-native-server/007-status.md`): support matrix, threat review, MUST-NOT-release decision + unblock checklist; live dual-arch traffic + release readiness need disposable privileged hosts |
 
 Plans: plans/implementation/macos-native-server/001 through 007.
 

@@ -16,8 +16,8 @@ cargo +1.89.0 check --all-targets --locked
 
 The portable control-plane, product, authentication, state, and HTTP layers
 compile and test natively on Apple Silicon and Intel. Linux remains canonical;
-a Darwin compile is not a working VPN server (no `netd`, `utun`, PF, or
-launchd support until M002–M006).
+a Darwin compile is not a working VPN server (no `utun`, PF, or
+launchd support until M003–M006; Darwin `netd` IPC landed in M002 — see below).
 
 ```sh
 # Native Apple Silicon build/test plus Intel compile (M001 floor: macOS 13+).
