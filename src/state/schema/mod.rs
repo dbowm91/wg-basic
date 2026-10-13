@@ -57,7 +57,13 @@ pub fn open_connection(
     intent: OpenIntent,
     expected_uid: u32,
 ) -> Result<Connection, StateError> {
-    validation::verify_path(path, intent, expected_uid)?;
+    // Portable (M001): on macOS the system temp and `/var` paths contain
+    // symlink components (`/var` -> `private/var`, `/tmp` -> `private/tmp`).
+    // `SQLITE_OPEN_NOFOLLOW` refuses to open through them, so resolve the
+    // parent before verifying/opening. The final file itself must still not be
+    // a symlink; that check stays in `verify_path`.
+    let canonical = canonical_db_path(path)?;
+    validation::verify_path(&canonical, intent, expected_uid)?;
 
     let mut flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
     flags |= OpenFlags::SQLITE_OPEN_NOFOLLOW;
@@ -65,16 +71,44 @@ pub fn open_connection(
         flags |= OpenFlags::SQLITE_OPEN_CREATE;
     }
 
-    let mut connection =
-        Connection::open_with_flags(path, flags).map_err(|_| StateError::DatabaseOpenFailed)?;
+    let mut connection = Connection::open_with_flags(&canonical, flags)
+        .map_err(|_| StateError::DatabaseOpenFailed)?;
 
     validation::configure(&connection)?;
     let starting_version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(StateError::database)?;
-    migrations::recovery_snapshot(&connection, path, starting_version, supported_version())?;
+    migrations::recovery_snapshot(
+        &connection,
+        &canonical,
+        starting_version,
+        supported_version(),
+    )?;
     migrations::run_migrations(&mut connection)?;
     Ok(connection)
+}
+
+/// Resolves symlink components in the database parent directory.
+///
+/// Returns the canonical database path (canonical parent + original file
+/// name). The file itself is never resolved: for `Initialize` it does not
+/// exist yet, and for `Reopen` resolving it would follow a symlink the
+/// caller must instead refuse.
+fn canonical_db_path(path: &Path) -> Result<std::path::PathBuf, StateError> {
+    let parent = path.parent().ok_or(StateError::MissingPath)?;
+    let canonical_parent =
+        std::fs::canonicalize(parent).map_err(|_| StateError::MissingParent {
+            path: parent.display().to_string(),
+        })?;
+    let file_name = path.file_name().ok_or(StateError::MissingPath)?;
+    Ok(canonical_parent.join(file_name))
+}
+
+/// Canonicalizes an existing database path, resolving macOS symlink
+/// components (`/var`, `/tmp`) before `NOFOLLOW` opens.
+#[cfg(test)]
+fn fs_canonicalize_existing(path: &Path) -> Result<std::path::PathBuf, StateError> {
+    std::fs::canonicalize(path).map_err(|_| StateError::DatabaseOpenFailed)
 }
 
 /// Applies the hardened connection contract without running any migration.
@@ -89,9 +123,11 @@ pub(crate) fn open_connection_without_migrating(
 ) -> Result<Connection, StateError> {
     // Every check `open_connection` performs is still performed here; only the
     // snapshot-and-migrate tail is skipped.
-    validation::verify_path(path, OpenIntent::Reopen, expected_uid)?;
+    // Portable (M001): canonicalize macOS symlink components before NOFOLLOW.
+    let canonical = fs_canonicalize_existing(path)?;
+    validation::verify_path(&canonical, OpenIntent::Reopen, expected_uid)?;
     let connection = Connection::open_with_flags(
-        path,
+        &canonical,
         OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX
             | OpenFlags::SQLITE_OPEN_NOFOLLOW,
@@ -268,9 +304,8 @@ mod tests {
     }
 
     fn current_test_uid() -> u32 {
-        std::os::unix::fs::MetadataExt::uid(
-            &fs::metadata("/proc/self").expect("effective uid is readable from /proc/self"),
-        )
+        // Portable (M001): `geteuid` on Linux and Darwin; no `/proc` read.
+        nix::unistd::geteuid().as_raw()
     }
 
     #[test]

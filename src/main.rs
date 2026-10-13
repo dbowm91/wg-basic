@@ -278,15 +278,263 @@ fn main() {
     });
     #[cfg(target_os = "linux")]
     let result = run_linux(cli.command);
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    let result = run_darwin(cli.command);
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     let result: Result<(), String> = {
         let _ = cli.command;
-        Err("network service roles require Linux".into())
+        Err("network service roles require Linux or macOS".into())
     };
     if let Err(message) = result {
         wg_basic::operational::command_failure(&message);
         std::process::exit(2);
     }
+}
+
+/// M001 Darwin entry point: portable roles run against an intentionally
+/// unsupported host backend; privileged/network-mutating roles fail closed.
+///
+/// `serve`, `admin`, `state`, `health`, `network status`, `doctor`, and
+/// `reconcile` execute with honest backend-unavailable degradation. `netd`,
+/// `system install/uninstall/status`, `update`, and mutating `network`
+/// paths that require a backend refuse with an actionable unsupported error
+/// rather than pretending convergence. No false-success receipt is possible:
+///
+/// - `serve` starts the loopback HTTP surface and records
+///   `BackendUnavailable` when netd is absent;
+/// - `reconcile`/`doctor` report unavailable instead of converging;
+/// - `state purge` refuses without a successful plan-only probe.
+#[cfg(target_os = "macos")]
+fn run_darwin(command: Option<Command>) -> Result<(), String> {
+    match command {
+        None => {
+            println!(
+                "wg-basic {}: use --help for runtime roles",
+                env!("CARGO_PKG_VERSION")
+            );
+            Ok(())
+        }
+        Some(Command::Serve {
+            state,
+            socket,
+            http_bind,
+            canonical_origin,
+            allow_non_loopback,
+        }) => serve(
+            state,
+            socket,
+            http_bind,
+            canonical_origin,
+            allow_non_loopback,
+        ),
+        Some(Command::Reconcile { state, socket }) => {
+            let runtime = wg_basic::management::ManagementRuntime::open(&state, &socket)
+                .map_err(|error| error.to_string())?;
+            match runtime
+                .reconcile_current()
+                .map_err(|error| error.to_string())?
+            {
+                None => println!("no managed interface; nothing to reconcile"),
+                Some(outcome) => println!(
+                    "generation {} -> {} ({:?})",
+                    outcome.applied_generation,
+                    if outcome.converged {
+                        "converged"
+                    } else {
+                        "not converged"
+                    },
+                    outcome.disposition
+                ),
+            }
+            Ok(())
+        }
+        Some(Command::System { action }) => {
+            let _ = action;
+            Err("system install/uninstall is not supported on macOS in M001: Linux systemd layout only; launchd installation lands in M006".into())
+        }
+        Some(Command::Update { action }) => {
+            let _ = action;
+            Err("update check/run/recover is not supported on macOS in M001: no Darwin release target or trust root; see M006".into())
+        }
+        Some(Command::Health { state, socket }) => {
+            let runtime = wg_basic::management::ManagementRuntime::open(&state, &socket)
+                .map_err(|error| error.to_string())?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&runtime.health())
+                    .map_err(|_| "could not format management health".to_owned())?
+            );
+            Ok(())
+        }
+        Some(Command::Doctor {
+            state,
+            socket,
+            json,
+            allow_warnings,
+            http_bind,
+            canonical_origin,
+            allow_non_loopback,
+        }) => run_darwin_doctor(
+            state,
+            socket,
+            json,
+            allow_warnings,
+            http_bind,
+            canonical_origin,
+            allow_non_loopback,
+        ),
+        Some(Command::Netd { .. }) => Err(
+            "netd is not supported on macOS in M001: Darwin privileged IPC lands in M002".into(),
+        ),
+        Some(Command::Admin { action }) => run_admin_action(action),
+        Some(Command::State { action }) => run_state_action(action),
+        Some(Command::Network { action }) => run_network_action(action),
+    }
+}
+
+/// M001 Darwin doctor: the same read-only state checks as Linux, a netd probe
+/// that reports unavailable without Linux error text, and Darwin
+/// forwarding checks that never read `/proc`.
+#[cfg(target_os = "macos")]
+#[allow(clippy::too_many_arguments)]
+fn run_darwin_doctor(
+    state: std::path::PathBuf,
+    socket: std::path::PathBuf,
+    json: bool,
+    allow_warnings: bool,
+    http_bind: Option<String>,
+    canonical_origin: Option<String>,
+    allow_non_loopback: bool,
+) -> Result<(), String> {
+    use wg_basic::protocol::{RequestOperation, ResponseBody};
+
+    let (mut checks, state_snapshot) = doctor_state_checks(&state);
+    // M001 has no Darwin netd: report unavailable honestly instead of
+    // reusing the Linux CAP_NET_ADMIN/runtime-directory wording.
+    match wg_basic::protocol::request(&socket, RequestOperation::InspectCapabilities, 2) {
+        Ok(ResponseBody::Capabilities(snapshot)) => {
+            checks.push(wg_basic::doctor::DoctorCheck::new(
+                wg_basic::doctor::DoctorCheckId::Netd,
+                wg_basic::doctor::DoctorDisposition::Unknown,
+                "netd capability state is unavailable on Darwin in M001",
+                format!(
+                    "darwin backend unsupported; observed os {} arch {}",
+                    snapshot.os, snapshot.architecture
+                ),
+                "Darwin privileged IPC lands in M002; Linux remains canonical",
+            ));
+        }
+        _ => checks.push(wg_basic::doctor::DoctorCheck::new(
+            wg_basic::doctor::DoctorCheckId::Netd,
+            wg_basic::doctor::DoctorDisposition::Unknown,
+            "netd is not running (expected on Darwin in M001)",
+            "no safe capability response was received",
+            "Darwin privileged IPC lands in M002; serve reports backend unavailable",
+        )),
+    }
+    if let Some(snapshot) = state_snapshot.as_ref() {
+        append_network_plan_checks(&mut checks, &socket, snapshot);
+        append_forwarding_check(&mut checks, snapshot);
+        append_ipv6_forwarding_check(&mut checks, snapshot);
+    } else {
+        checks.push(wg_basic::doctor::DoctorCheck::new(
+            wg_basic::doctor::DoctorCheckId::NetworkOwnership,
+            wg_basic::doctor::DoctorDisposition::Unknown,
+            "managed network ownership has not been inspected",
+            "a validated state snapshot is unavailable",
+            "resolve the state diagnostic first, then rerun doctor",
+        ));
+        checks.push(wg_basic::doctor::DoctorCheck::new(
+            wg_basic::doctor::DoctorCheckId::Forwarding,
+            wg_basic::doctor::DoctorDisposition::Unknown,
+            "forwarding requirement is unknown",
+            "the state snapshot is unavailable",
+            "resolve the state diagnostic first, then rerun doctor",
+        ));
+        checks.push(wg_basic::doctor::DoctorCheck::new(
+            wg_basic::doctor::DoctorCheckId::Ipv6Forwarding,
+            wg_basic::doctor::DoctorDisposition::Unknown,
+            "IPv6 forwarding requirement is unknown",
+            "the state snapshot is unavailable",
+            "resolve the state diagnostic first, then rerun doctor",
+        ));
+    }
+    let lease = wg_basic::state::ServiceLease::is_held(&state);
+    checks.push(wg_basic::doctor::DoctorCheck::new(
+        wg_basic::doctor::DoctorCheckId::ServiceLease,
+        match lease {
+            Ok(true) => wg_basic::doctor::DoctorDisposition::Warn,
+            Ok(false) => wg_basic::doctor::DoctorDisposition::Pass,
+            Err(_) => wg_basic::doctor::DoctorDisposition::Unknown,
+        },
+        match lease {
+            Ok(true) => "a serve process currently holds the state lease",
+            Ok(false) => "the state service lease is free",
+            Err(_) => "the state service lease could not be inspected safely",
+        },
+        "advisory lock state was checked without trusting PID metadata",
+        "stop the active serve process before offline maintenance",
+    ));
+    if let Some(bind) = http_bind {
+        use wg_basic::http::ServeConfig;
+        let valid = match (canonical_origin.as_deref(), allow_non_loopback) {
+            (Some(origin), false) if origin.starts_with("https://") => {
+                ServeConfig::behind_https_proxy(state.clone(), socket.clone(), &bind, origin)
+                    .is_ok()
+            }
+            (Some(origin), true) => {
+                ServeConfig::acknowledged_off_host(state.clone(), socket.clone(), &bind, origin)
+                    .is_ok()
+            }
+            (None, false) => ServeConfig::new(state.clone(), socket.clone(), &bind).is_ok(),
+            _ => false,
+        };
+        checks.push(match valid {
+            true => wg_basic::doctor::DoctorCheck::new(
+                wg_basic::doctor::DoctorCheckId::HttpPolicy,
+                wg_basic::doctor::DoctorDisposition::Pass,
+                "HTTP bind and origin policy are valid",
+                "same ServeConfig policy as serve",
+                "none",
+            ),
+            false => wg_basic::doctor::DoctorCheck::new(
+                wg_basic::doctor::DoctorCheckId::HttpPolicy,
+                wg_basic::doctor::DoctorDisposition::Fail,
+                "HTTP bind and origin policy are invalid",
+                "ServeConfig rejected the supplied policy",
+                "correct the bind/origin and exposure acknowledgement",
+            ),
+        });
+    }
+    let report = wg_basic::doctor::DoctorReport::new(checks);
+    wg_basic::operational::emit(
+        "doctor.completed",
+        wg_basic::operational::Severity::Info,
+        "doctor",
+        "diagnose",
+        "report_ready",
+        None,
+        state_snapshot
+            .as_ref()
+            .map(|s| s.metadata.desired_generation.to_storage() as u64),
+        Some("checks"),
+    );
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .map_err(|_| "could not format diagnostic report")?
+        );
+    } else {
+        print!("{}", report.render_human());
+    }
+    let exit_code = if allow_warnings && report.overall == wg_basic::doctor::DoctorDisposition::Warn
+    {
+        0
+    } else {
+        report.exit_code()
+    };
+    std::process::exit(exit_code);
 }
 
 #[cfg(target_os = "linux")]
@@ -606,7 +854,9 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
 /// that opens the store directly, before any service is running. It still obeys
 /// the two rules that matter -- the password arrives only on stdin, and nothing
 /// here ever prints a verifier or a token.
-#[cfg(target_os = "linux")]
+///
+/// Portable (M001): the same credential surface runs on Darwin; it never
+/// touches the kernel.
 fn run_admin_action(action: AdminAction) -> Result<(), String> {
     use wg_basic::management;
 
@@ -654,7 +904,8 @@ fn run_admin_action(action: AdminAction) -> Result<(), String> {
 
 /// Performs only read-only checks. In particular this deliberately avoids
 /// `StateStore::open`, whose normal contract is to apply pending migrations.
-#[cfg(target_os = "linux")]
+///
+/// Portable (M001): immutable SQLite inspection runs on Darwin unchanged.
 fn doctor_state_checks(
     path: &std::path::Path,
 ) -> (
@@ -800,7 +1051,8 @@ fn doctor_state_checks(
     (checks, inspection.ok())
 }
 
-#[cfg(target_os = "linux")]
+/// Portable (M001): the same plan-only request runs on Darwin; without netd
+/// it reports Unknown rather than converging.
 fn append_network_plan_checks(
     checks: &mut Vec<wg_basic::doctor::DoctorCheck>,
     socket: &std::path::Path,
@@ -954,7 +1206,7 @@ fn append_network_plan_checks(
     }
 }
 
-#[cfg(target_os = "linux")]
+/// Portable (M001): plan-outcome rendering is backend-agnostic.
 fn append_plan_outcome(
     checks: &mut Vec<wg_basic::doctor::DoctorCheck>,
     plan: &wg_basic::protocol::InstallationNetworkPlanBody,
@@ -983,7 +1235,7 @@ fn append_plan_outcome(
     ));
 }
 
-#[cfg(target_os = "linux")]
+/// Portable (M001): listen-port comparison is backend-agnostic.
 fn append_listen_port_check(
     checks: &mut Vec<wg_basic::doctor::DoctorCheck>,
     intended: Option<u16>,
@@ -1073,6 +1325,44 @@ fn append_forwarding_check(
     ));
 }
 
+/// M001 Darwin IPv4 forwarding check: no `/proc` read, no sysctl mutation.
+/// Reports Unknown when forwarding is required (M005 owns the Darwin
+/// forwarding/PF decision) and Pass only when nothing is required.
+#[cfg(not(target_os = "linux"))]
+fn append_forwarding_check(
+    checks: &mut Vec<wg_basic::doctor::DoctorCheck>,
+    snapshot: &wg_basic::state::StateDiagnostic,
+) {
+    use wg_basic::doctor::{DoctorCheck, DoctorCheckId as Id, DoctorDisposition as D};
+    let required = snapshot
+        .desired
+        .state
+        .network_policy
+        .as_ref()
+        .is_some_and(|policy| policy.ipv4_forwarding_required);
+    let (disposition, summary, evidence, remediation) = match required {
+        false => (
+            D::Pass,
+            "IPv4 forwarding is not required by desired state",
+            "no forwarding observation required".to_owned(),
+            "none",
+        ),
+        true => (
+            D::Unknown,
+            "IPv4 forwarding requirement cannot be verified on Darwin in M001",
+            "darwin forwarding backends are not implemented; see M005".to_owned(),
+            "no Darwin gateway support is claimed in M001; Linux remains canonical",
+        ),
+    };
+    checks.push(DoctorCheck::new(
+        Id::Forwarding,
+        disposition,
+        summary,
+        evidence,
+        remediation,
+    ));
+}
+
 #[cfg(target_os = "linux")]
 fn append_ipv6_forwarding_check(
     checks: &mut Vec<wg_basic::doctor::DoctorCheck>,
@@ -1121,6 +1411,43 @@ fn append_ipv6_forwarding_check(
     ));
 }
 
+/// M001 Darwin IPv6 forwarding check: same fail-closed posture as IPv4.
+/// No `/proc` read; required forwarding reports Unknown until M005.
+#[cfg(not(target_os = "linux"))]
+fn append_ipv6_forwarding_check(
+    checks: &mut Vec<wg_basic::doctor::DoctorCheck>,
+    snapshot: &wg_basic::state::StateDiagnostic,
+) {
+    use wg_basic::doctor::{DoctorCheck, DoctorCheckId as Id, DoctorDisposition as D};
+    let required = snapshot
+        .desired
+        .state
+        .network_policy
+        .as_ref()
+        .is_some_and(|policy| policy.ipv6_forwarding_required);
+    let (disposition, summary, evidence, remediation) = match required {
+        false => (
+            D::Pass,
+            "IPv6 forwarding is not required by desired state",
+            "no forwarding observation required".to_owned(),
+            "none",
+        ),
+        true => (
+            D::Unknown,
+            "IPv6 forwarding requirement cannot be verified on Darwin in M001",
+            "darwin forwarding backends are not implemented; see M005".to_owned(),
+            "no Darwin gateway support is claimed in M001; Linux remains canonical",
+        ),
+    };
+    checks.push(DoctorCheck::new(
+        Id::Ipv6Forwarding,
+        disposition,
+        summary,
+        evidence,
+        remediation,
+    ));
+}
+
 /// Reads a password from standard input, trimming exactly one trailing newline.
 ///
 /// Only the trailing newline a terminal or `echo` adds is removed; every other
@@ -1128,7 +1455,8 @@ fn append_ipv6_forwarding_check(
 /// operator did not choose and would have to debug by guessing. A password that
 /// genuinely ends in a newline can still be supplied through a pipe that does not
 /// append one.
-#[cfg(target_os = "linux")]
+///
+/// Portable (M001): stdin-only secrets hold on every OS; never argv/env.
 fn read_password_from_stdin() -> Result<String, String> {
     use std::io::Read as _;
 
@@ -1151,7 +1479,10 @@ fn read_password_from_stdin() -> Result<String, String> {
 /// The signal is delivered by a one-shot rather than an `AtomicBool` so the
 /// ordering — stop accepting, drain, stop the worker, release the store — lives
 /// in one place instead of being re-implemented here.
-#[cfg(target_os = "linux")]
+///
+/// Portable (M001): the same loopback management surface runs on Darwin;
+/// startup reconciliation reports backend-unavailable degradation instead of
+/// claiming convergence.
 fn serve(
     state: PathBuf,
     socket: PathBuf,
@@ -1161,7 +1492,7 @@ fn serve(
 ) -> Result<(), String> {
     use wg_basic::http::ServeConfig;
 
-    #[cfg(feature = "update-test-fixtures")]
+    #[cfg(all(target_os = "linux", feature = "update-test-fixtures"))]
     fail_fixture_candidate_start()?;
 
     // Three shapes, and only three. Each is chosen by what the operator stated,
@@ -1456,7 +1787,8 @@ fn run_state_action(action: StateCommand) -> Result<(), String> {
     }
 }
 
-#[cfg(target_os = "linux")]
+/// Portable (M001): purge preconditions run on Darwin; without netd the
+/// plan-only probe fails closed and purge is refused rather than converging.
 fn purge_state(
     state: PathBuf,
     socket: PathBuf,
@@ -1566,7 +1898,7 @@ fn purge_state(
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+/// Portable (M001): purge reporting is backend-agnostic.
 fn print_purge_report(
     state: &std::path::Path,
     installation_id: wg_basic::domain::InstallationId,
@@ -1599,7 +1931,7 @@ fn print_purge_report(
     println!("  other files in the state directory, including operator backups/configuration");
 }
 
-#[cfg(target_os = "linux")]
+/// Portable (M001): purge path enumeration uses Unix metadata on both OSes.
 fn purge_paths(state: &std::path::Path, schema_version: i64) -> Result<Vec<PathBuf>, String> {
     use std::os::unix::fs::MetadataExt;
     let mut paths = vec![state.to_path_buf()];
@@ -1654,7 +1986,9 @@ fn purge_paths(state: &std::path::Path, schema_version: i64) -> Result<Vec<PathB
     Ok(paths)
 }
 
-#[cfg(target_os = "linux")]
+/// Portable (M001): `network status` is read-only SQLite on both OSes;
+/// disable/enable commit product state and report backend-unavailable
+/// degradation on Darwin instead of claiming convergence.
 fn run_network_action(action: NetworkCommand) -> Result<(), String> {
     use wg_basic::state::ServiceLease;
     match action {
@@ -1699,7 +2033,8 @@ fn run_network_action(action: NetworkCommand) -> Result<(), String> {
     }
 }
 
-#[cfg(target_os = "linux")]
+/// Portable (M001): product commit runs on Darwin; enforcement degrades
+/// honestly without netd.
 fn set_network_enabled(state: PathBuf, socket: PathBuf, enabled: bool) -> Result<(), String> {
     use wg_basic::{
         management::ManagementRuntime,

@@ -242,6 +242,29 @@ const PRODUCTION_SOURCES: &[(&str, &str)] = &[
         "src/domain/state.rs",
         include_str!("../src/domain/state.rs"),
     ),
+    // M001 macOS portability boundary: platform traits, OS-neutral identity,
+    // and Darwin stubs that must fail closed. Registered so the M001 guards
+    // below inspect code, not prose.
+    (
+        "src/platform/mod.rs",
+        include_str!("../src/platform/mod.rs"),
+    ),
+    (
+        "src/platform/linux.rs",
+        include_str!("../src/platform/linux.rs"),
+    ),
+    (
+        "src/platform/darwin.rs",
+        include_str!("../src/platform/darwin.rs"),
+    ),
+    (
+        "src/reconcile/service_darwin.rs",
+        include_str!("../src/reconcile/service_darwin.rs"),
+    ),
+    (
+        "src/firewall/service_darwin.rs",
+        include_str!("../src/firewall/service_darwin.rs"),
+    ),
 ];
 
 #[test]
@@ -1797,5 +1820,150 @@ fn bundled_sqlite_runtime_is_past_the_wal_reset_advisory_range() {
     assert!(
         rusqlite::version().contains("3.53.2"),
         "recorded bundled SQLite version changed; review the runtime security qualification"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// M001: portable boundaries and Darwin build
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cargo_target_tables_keep_linux_backends_linux_only() {
+    // Truly common dependencies are unconditional; only the kernel backends
+    // stay under the Linux target table. A portable crate drifting back under
+    // `cfg(target_os = "linux")` would break the Darwin build M001 proves.
+    let manifest = code_only(include_str!("../Cargo.toml"));
+    let linux_section = manifest
+        .split("[target.'cfg(target_os = \"linux\")'.dependencies]")
+        .nth(1)
+        .expect("Linux target table exists");
+    for linux_only in ["nl-wireguard", "rtnetlink"] {
+        assert!(
+            linux_section.contains(linux_only),
+            "{linux_only} must stay Linux-only"
+        );
+    }
+    for portable in [
+        "tokio",
+        "serde_json",
+        "nix",
+        "x25519-dalek",
+        "ctrlc",
+        "eggserve-server",
+        "eggserve-primitives",
+        "futures-util",
+    ] {
+        assert!(
+            !linux_section.contains(portable),
+            "{portable} must not be Linux-gated: it is shared by the Darwin management surface"
+        );
+    }
+}
+
+#[test]
+fn the_platform_boundary_stays_pure_types_without_privilege_or_process() {
+    // The platform module owns identity and capability vocabulary only. I/O,
+    // processes, shells, netlink, nftables, and the state store would turn a
+    // shared type module into a second privileged path.
+    assert_shippable_avoids(
+        "src/platform/",
+        &[
+            "crate::state",
+            "crate::protocol",
+            "crate::aggregate",
+            "crate::reconcile",
+            "crate::firewall",
+            "crate::wireguard",
+            "std::process::Command",
+            "Command::new",
+            "rtnetlink",
+            "nl_wireguard",
+            "nft",
+            "pfctl",
+            "getpeereid",
+        ],
+        "platform is shared vocabulary, never a backend",
+    );
+    // The Darwin floor and both target triples are declared in one place.
+    let darwin = shippable(source_of("src/platform/darwin.rs"));
+    for required in [
+        "MIN_MACOS_VERSION",
+        "SUPPORTED_TARGETS",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+    ] {
+        assert!(
+            darwin.contains(required),
+            "src/platform/darwin.rs must declare {required}"
+        );
+    }
+}
+
+#[test]
+fn darwin_stubs_fail_closed_without_process_or_shell() {
+    // M001 Darwin backends compile so portable code can target both OSes, but
+    // they must never pretend success: every stub reports an unsupported or
+    // backend-failure category, never a converged receipt.
+    for name in [
+        "src/reconcile/service_darwin.rs",
+        "src/firewall/service_darwin.rs",
+    ] {
+        let code = shippable(source_of(name));
+        assert!(
+            code.contains("Unsupported") || code.contains("BackendFailure"),
+            "{name} must fail closed as unsupported"
+        );
+        for forbidden in [
+            "std::process::Command",
+            "Command::new",
+            "\"sh\"",
+            "\"bash\"",
+            "rtnetlink",
+            "nl_wireguard",
+            "\"nft\"",
+            "\"pfctl\"",
+        ] {
+            assert!(
+                !code.contains(forbidden),
+                "{name} must not contain {forbidden}"
+            );
+        }
+    }
+    // Process execution stays isolated to the Linux nft backend even after
+    // the portability refactor added Darwin stubs.
+    let mut sites = Vec::new();
+    for (path, source) in PRODUCTION_SOURCES {
+        if source.contains("std::process::Command")
+            || source.contains("Command::new")
+            || source.contains("process::Stdio")
+        {
+            sites.push(*path);
+        }
+    }
+    assert_eq!(
+        sites,
+        vec![ONLY_PROCESS_MODULE],
+        "process execution must stay isolated to the bounded nft backend"
+    );
+}
+
+#[test]
+fn linux_observation_metadata_is_not_universal_ownership_proof() {
+    // `ifindex` and `interface_alias` are Linux backend metadata. The portable
+    // ownership proof is `OwnerTag`; Darwin must never fabricate an alias to
+    // satisfy a Linux-shaped check.
+    let model = shippable(source_of("src/reconcile/model.rs"));
+    assert!(
+        model.contains("interface_alias"),
+        "the Linux alias field stays where Linux reconciliation can use it"
+    );
+    let platform = shippable(source_of("src/platform/mod.rs"));
+    assert!(
+        platform.contains("OsLocator"),
+        "the OS-neutral locator vocabulary must exist alongside the Linux fields"
+    );
+    assert!(
+        platform.contains("LogicalTunnel"),
+        "logical tunnel identity must be distinct from any OS locator"
     );
 }

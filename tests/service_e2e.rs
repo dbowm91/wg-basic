@@ -1,5 +1,11 @@
 //! Phase 7 M004 §6: end-to-end service qualification against real processes.
 //!
+//! M001 note: the four netd-dependent tests are Linux-only until M002
+//! implements Darwin IPC. Helpers used only by those tests are dead code on
+//! Darwin by construction.
+//!
+#![cfg_attr(not(target_os = "linux"), allow(dead_code))]
+//!
 //! # Why this file spawns binaries
 //!
 //! Every other Phase 7 test drives an in-process harness. That is the right unit
@@ -136,10 +142,15 @@ impl Child_ {
 
     /// Whether the child process is still running.
     ///
-    /// Read from `/proc` rather than `Child::try_wait`, which needs `&mut self`
-    /// and would force every wait helper that inspects a child to be mutable.
+    /// Portable (M001): `ps -p` works on Linux and Darwin; the prior
+    /// `/proc/<pid>` read was Linux-only.
     fn is_alive(&self) -> bool {
-        Path::new(&format!("/proc/{}", self.child.id())).exists()
+        std::process::Command::new("ps")
+            .args(["-p", &self.child.id().to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
     }
 
     /// Waits for a stderr line containing `needle`, under a deadline.
@@ -217,6 +228,7 @@ impl Child_ {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn netd_sigkill_reclaims_only_its_stale_socket_across_bounded_restart_cycles() {
     let _serial = PROCESS_TEST_LOCK.lock().unwrap();
@@ -585,6 +597,8 @@ fn await_listener(addr: SocketAddr, child: &Child_, name: &str) {
 /// §6: the whole required flow, across a real `serve` restart.
 ///
 /// Steps 1 through 9 of the plan, in order, against real processes.
+/// Linux-only in M001: requires netd; Darwin netd lands in M002.
+#[cfg(target_os = "linux")]
 #[test]
 fn the_required_service_flow_survives_a_real_serve_restart() {
     let _serial = PROCESS_TEST_LOCK.lock().unwrap();
@@ -771,6 +785,10 @@ fn the_required_service_flow_survives_a_real_serve_restart() {
 /// `serve` starts, the only process holding the netd socket is the one this test
 /// started. If `serve` spawned or elevated a backend, a second holder would
 /// appear.
+/// Linux-only in M001: the second half starts netd; Darwin netd lands in M002.
+// The first half (serve degraded without netd, no children) is qualified by
+/// the M001 Darwin smoke test instead.
+#[cfg(target_os = "linux")]
 #[test]
 fn serve_does_not_spawn_or_elevate_netd() {
     let _serial = PROCESS_TEST_LOCK.lock().unwrap();
@@ -849,6 +867,9 @@ fn serve_does_not_spawn_or_elevate_netd() {
 ///
 /// Every check here is against a real child process and a real socket. If the
 /// Host/Origin/CSRF checks only held in an in-process harness, these would fail.
+///
+/// Linux-only in M001: starts netd; Darwin netd lands in M002.
+#[cfg(target_os = "linux")]
 #[test]
 fn the_security_perimeter_holds_over_the_real_wire() {
     let _serial = PROCESS_TEST_LOCK.lock().unwrap();

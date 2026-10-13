@@ -1,3 +1,6 @@
+// M001 note: the read-only doctor fixture is Linux-only until M002 (netd +
+// `/proc`). Helpers are dead code on Darwin by construction.
+#![cfg_attr(not(target_os = "linux"), allow(dead_code, unused_imports))]
 use std::{
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
@@ -42,6 +45,7 @@ impl Drop for ChildGuard {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn doctor_json_does_not_change_database_or_host_network_state() {
     let temporary = TempDirectory::new();
