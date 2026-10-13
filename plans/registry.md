@@ -76,7 +76,7 @@ Runtime dependency adoption remains evidence-driven.
 | Distribution/install/update | closed (technical) | `plans/subsystems/distribution-install-update-roadmap.md` | M001–M005 closed; production release remains blocked on signing |
 | IPv6/route-policy qualification | closed | `plans/subsystems/ipv6-route-policy-roadmap.md` | M001–M004 closed; `plans/closure/ipv6-route-policy/004-status.md` |
 | Release readiness and supply-chain security | closed (R004b waived; checksums-only releases) | `plans/subsystems/release-readiness-security-roadmap.md` | R001–R004a closed; waiver `004b-waiver-status.md` |
-| Headless macOS native server/gateway | planned | `plans/subsystems/macos-native-server-roadmap.md` | M001 ready; M002–M007 gated by predecessor closure and M005 PF/Apple-policy decision |
+| Headless macOS native server/gateway | active (M001 closed; M002 ready) | `plans/subsystems/macos-native-server-roadmap.md` | M001 closed 2026-10-13; M002 ready; M003–M007 gated by predecessor closure and M005 PF/Apple-policy decision |
 
 Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
 
@@ -89,8 +89,8 @@ All plans are planning-only; no implementation or closure evidence exists for ma
 
 | Milestone | Status | Handoff |
 |---|---|---|
-| M001 portability/Cargo/build/typed platform seams | **ready** | `plans/implementation/macos-native-server/001-portable-boundaries-and-darwin-build.md` |
-| M002 Darwin IPC, peer identity and doctor | blocked on M001 | `plans/implementation/macos-native-server/002-darwin-privileged-ipc-and-capabilities.md` |
+| M001 portability/Cargo/build/typed platform seams | **closed 2026-10-13** | `plans/implementation/macos-native-server/001-portable-boundaries-and-darwin-build.md`; closure `plans/closure/macos-native-server/001-status.md` |
+| M002 Darwin IPC, peer identity and doctor | **ready** (M001 closed) | `plans/implementation/macos-native-server/002-darwin-privileged-ipc-and-capabilities.md` |
 | M003 wireguard-go/utun lifecycle/UAPI | blocked on M002 | `plans/implementation/macos-native-server/003-wireguard-go-utun-backend.md` |
 | M004 address/route ownership and Darwin reconciliation | blocked on M003 | `plans/implementation/macos-native-server/004-darwin-interface-address-route-reconciliation.md` |
 | M005 forwarding, PF/NAT and Apple policy review | blocked on M004 and PF-support decision | `plans/implementation/macos-native-server/005-forwarding-pf-nat-and-platform-policy.md` |
@@ -125,6 +125,11 @@ M004 and its corrective slices are closed: `plans/closure/distribution/004-statu
 
 ## 7. Recently closed work
 
+- macOS M001 strict closure 2026-10-13: portable Cargo/build/typed platform
+  seams at `9c99fc6` (native arm64 `cargo test` 561 passed; Intel target
+  compiles; loopback admin/serve/auth/doctor smoke reports backend-unavailable
+  degradation, never convergence). Closure
+  `plans/closure/macos-native-server/001-status.md`. M002 is now ready.
 - Release-readiness R004a closure 2026-10-11: `v0.1.0` public pre-release
   (unsigned, evaluation only) at source `7527241`. Release run
   `38115877717` (11 jobs) + provenance run `38152418203` green; RF-07
