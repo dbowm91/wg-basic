@@ -17,6 +17,10 @@
 //! the [`OwnerTag`] derived from the logical [`InterfaceId`], never by a name
 //! or index alone.
 
+/// Darwin address/route observation + pure planning (M004 modeling scope;
+/// the privileged route-socket backend lands with the live helper).
+#[cfg(target_os = "macos")]
+pub mod darwin;
 #[cfg(target_os = "linux")]
 mod linux;
 mod model;

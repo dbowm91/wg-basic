@@ -265,10 +265,14 @@ const PRODUCTION_SOURCES: &[(&str, &str)] = &[
         "src/firewall/service_darwin.rs",
         include_str!("../src/firewall/service_darwin.rs"),
     ),
-    // M003 Darwin helper supervisor: fixed argv, no shell, hash-pinned.
     (
         "src/wireguard/darwin.rs",
         include_str!("../src/wireguard/darwin.rs"),
+    ),
+    // M004 Darwin address/route modeling: pure planner, no I/O or mutation.
+    (
+        "src/reconcile/darwin.rs",
+        include_str!("../src/reconcile/darwin.rs"),
     ),
 ];
 
@@ -1993,8 +1997,10 @@ fn darwin_stubs_fail_closed_without_process_or_shell() {
             );
         }
     }
-    // Process execution stays isolated to the Linux nft backend even after
-    // the portability refactor added Darwin stubs.
+    // Process execution stays isolated to audited backends: the Linux nft
+    // backend plus, since M003, the bounded Darwin helper supervisor (pinned
+    // separately by `process_execution_is_isolated_to_audited_backends`).
+    // The reconcile/firewall Darwin *stubs* below still spawn nothing.
     let mut sites = Vec::new();
     for (path, source) in PRODUCTION_SOURCES {
         if source.contains("std::process::Command")
@@ -2006,8 +2012,8 @@ fn darwin_stubs_fail_closed_without_process_or_shell() {
     }
     assert_eq!(
         sites,
-        vec![ONLY_PROCESS_MODULE],
-        "process execution must stay isolated to the bounded nft backend"
+        PROCESS_MODULES,
+        "process execution must stay isolated to audited backends"
     );
 }
 
@@ -2030,4 +2036,38 @@ fn linux_observation_metadata_is_not_universal_ownership_proof() {
         platform.contains("LogicalTunnel"),
         "logical tunnel identity must be distinct from any OS locator"
     );
+}
+
+#[test]
+fn the_darwin_reconciler_plans_without_touching_the_host() {
+    // M004 modeling scope: pure observe→plan, no route socket, no ifconfig,
+    // no shell, no deletion by numeric guess. The privileged backend that
+    // fills these observations lands with the live helper.
+    let darwin = shippable(source_of("src/reconcile/darwin.rs"));
+    for forbidden in [
+        "std::process::Command",
+        "Command::new",
+        "rtnetlink",
+        "nl_wireguard",
+        "\"ifconfig\"",
+        "\"route\"",
+        "pfctl",
+        "nft",
+    ] {
+        assert!(
+            !darwin.contains(forbidden),
+            "src/reconcile/darwin.rs must not contain {forbidden}"
+        );
+    }
+    for required in [
+        "GlobalTakeoverRefused",
+        "Conflict",
+        "InterfaceAbsent",
+        "ifscope",
+    ] {
+        assert!(
+            darwin.contains(required),
+            "src/reconcile/darwin.rs must model {required}"
+        );
+    }
 }
