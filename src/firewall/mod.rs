@@ -19,12 +19,20 @@
 
 #[cfg(target_os = "linux")]
 mod nft;
+/// Darwin PF/NAT anchor model and advanced-admin policy (M005 policy scope;
+/// pure rendering/verification, no `pfctl` execution yet).
+mod pf;
 mod planner;
 mod policy;
 #[cfg(target_os = "linux")]
 mod service;
 #[cfg(not(target_os = "linux"))]
 mod service_darwin;
+
+pub use pf::{
+    anchor_name, attachment_verified, render_policy, rules_digest, teardown_order, PfError,
+    PfRuleSet, ANCHOR_PREFIX, IPV4_FORWARDING_SYSCTL, IPV6_FORWARDING_SYSCTL,
+};
 
 pub use policy::{
     DesiredNetworkPolicy, FirewallActionKind, FirewallApplyReceipt, FirewallError, FirewallFailure,
