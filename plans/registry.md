@@ -76,7 +76,7 @@ Runtime dependency adoption remains evidence-driven.
 | Distribution/install/update | closed (technical) | `plans/subsystems/distribution-install-update-roadmap.md` | M001–M005 closed; production release remains blocked on signing |
 | IPv6/route-policy qualification | closed | `plans/subsystems/ipv6-route-policy-roadmap.md` | M001–M004 closed; `plans/closure/ipv6-route-policy/004-status.md` |
 | Release readiness and supply-chain security | closed (R004b waived; checksums-only releases) | `plans/subsystems/release-readiness-security-roadmap.md` | R001–R004a closed; waiver `004b-waiver-status.md` |
-| Headless macOS native server/gateway | active (M001–M002 closed; M003 blocked on privileged host) | `plans/subsystems/macos-native-server-roadmap.md` | M001–M002 closed 2026-10-13; M003 safe scope at `b1c831c`, blocked on disposable privileged Mac host/sudo/opt-in; M004 modeling ready; M005–M007 gated |
+| Headless macOS native server/gateway | active (M001–M002 closed; M003–M004 blocked on privileged host) | `plans/subsystems/macos-native-server-roadmap.md` | M001–M002 closed 2026-10-13; M003 safe scope at `b1c831c` + M004 modeling at `42fa94c`, both blocked on disposable privileged Mac host/sudo/opt-in; M005 policy ready; M006–M007 gated |
 
 Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
 
@@ -92,7 +92,8 @@ macOS M001–M002 are implemented and closed with native evidence below; M003–
 | M001 portability/Cargo/build/typed platform seams | **closed 2026-10-13** | `plans/implementation/macos-native-server/001-portable-boundaries-and-darwin-build.md`; closure `plans/closure/macos-native-server/001-status.md` |
 | M002 Darwin IPC, peer identity and doctor | **closed 2026-10-13** (M001 closed) | `plans/implementation/macos-native-server/002-darwin-privileged-ipc-and-capabilities.md`; closure `plans/closure/macos-native-server/002-status.md` |
 | M003 wireguard-go/utun lifecycle/UAPI | **blocked** 2026-10-13 (M002 closed; safe scope implemented) | `plans/implementation/macos-native-server/003-wireguard-go-utun-backend.md`; closure `plans/closure/macos-native-server/003-status.md` — live handshake needs disposable privileged Mac host/sudo/opt-in |
-| M004 address/route ownership and Darwin reconciliation | blocked on M003 | `plans/implementation/macos-native-server/004-darwin-interface-address-route-reconciliation.md` |
+| M004 address/route ownership and Darwin reconciliation | **blocked** 2026-10-13 (modeling scope implemented) | `plans/implementation/macos-native-server/004-darwin-interface-address-route-reconciliation.md`; closure `plans/closure/macos-native-server/004-status.md` — native convergence needs disposable privileged host |
+| M005 forwarding, PF/NAT and Apple policy review | policy scope ready (native traffic carries the same privileged-host blocker) | `plans/implementation/macos-native-server/005-forwarding-pf-nat-and-platform-policy.md` |
 | M005 forwarding, PF/NAT and Apple policy review | blocked on M004 and PF-support decision | `plans/implementation/macos-native-server/005-forwarding-pf-nat-and-platform-policy.md` |
 | M006 launchd, installer, helper provenance and recovery | blocked on M005 | `plans/implementation/macos-native-server/006-launchd-installation-distribution-and-recovery.md` |
 | M007 native dual-arch E2E, security and release qualification | blocked on M006 | `plans/implementation/macos-native-server/007-native-e2e-security-release-qualification.md` |
@@ -125,6 +126,11 @@ M004 and its corrective slices are closed: `plans/closure/distribution/004-statu
 
 ## 7. Recently closed work
 
+- macOS M004 blocked 2026-10-13: modeling scope at `42fa94c` (typed Darwin
+  observation, pure planner with idempotence/foreign-preservation/conflict/
+  global-takeover/renumber cases; 6 unit tests; purity guard). Native
+  convergence unqualified — shared privileged-host blocker; no convergence
+  claimed. Closure `plans/closure/macos-native-server/004-status.md`.
 - macOS M003 blocked 2026-10-13: safe unprivileged scope at `b1c831c`
   (pinned wireguard-go 0.0.20250522 MIT, fixed-argv supervision, bounded UAPI
   codec, fail-closed ownership logic, audited process boundary; 9 new unit
