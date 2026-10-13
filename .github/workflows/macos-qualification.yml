@@ -63,7 +63,7 @@ jobs:
           git clone --branch 0.0.20250522 --depth 1 https://github.com/WireGuard/wireguard-go "$RUNNER_TEMP/wireguard-go-src"
           git -C "$RUNNER_TEMP/wireguard-go-src" rev-parse 'HEAD^{commit}'
           test "$(git -C "$RUNNER_TEMP/wireguard-go-src" rev-parse 'HEAD^{commit}')" = "f333402bd9cbe0f3eeb02507bd14e23d7d639280"
-          grep -q 'MIT License' "$RUNNER_TEMP/wireguard-go-src/LICENSE"
+          grep -q 'Permission is hereby granted, free of charge' "$RUNNER_TEMP/wireguard-go-src/LICENSE"
           go build -o "$RUNNER_TEMP/wireguard-go" "$RUNNER_TEMP/wireguard-go-src"
           shasum -a 256 "$RUNNER_TEMP/wireguard-go" | tee "$RUNNER_TEMP/wireguard-go.sha256"
       - name: Build the wg-basic binary and the live test target
@@ -132,7 +132,9 @@ jobs:
         run: |
           go version
           git clone --branch 0.0.20250522 --depth 1 https://github.com/WireGuard/wireguard-go "$RUNNER_TEMP/wireguard-go-src"
+          git -C "$RUNNER_TEMP/wireguard-go-src" rev-parse 'HEAD^{commit}'
           test "$(git -C "$RUNNER_TEMP/wireguard-go-src" rev-parse 'HEAD^{commit}')" = "f333402bd9cbe0f3eeb02507bd14e23d7d639280"
+          grep -q 'Permission is hereby granted, free of charge' "$RUNNER_TEMP/wireguard-go-src/LICENSE"
           go build -o "$RUNNER_TEMP/wireguard-go" "$RUNNER_TEMP/wireguard-go-src"
           shasum -a 256 "$RUNNER_TEMP/wireguard-go" | tee "$RUNNER_TEMP/wireguard-go.sha256"
       - name: Build the live test target
