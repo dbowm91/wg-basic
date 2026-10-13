@@ -64,7 +64,7 @@ jobs:
           git -C "$RUNNER_TEMP/wireguard-go-src" rev-parse 'HEAD^{commit}'
           test "$(git -C "$RUNNER_TEMP/wireguard-go-src" rev-parse 'HEAD^{commit}')" = "f333402bd9cbe0f3eeb02507bd14e23d7d639280"
           grep -q 'Permission is hereby granted, free of charge' "$RUNNER_TEMP/wireguard-go-src/LICENSE"
-          go build -o "$RUNNER_TEMP/wireguard-go" "$RUNNER_TEMP/wireguard-go-src"
+          (cd "$RUNNER_TEMP/wireguard-go-src" && go build -o "$RUNNER_TEMP/wireguard-go" .)
           shasum -a 256 "$RUNNER_TEMP/wireguard-go" | tee "$RUNNER_TEMP/wireguard-go.sha256"
       - name: Build the wg-basic binary and the live test target
         run: |
@@ -135,7 +135,7 @@ jobs:
           git -C "$RUNNER_TEMP/wireguard-go-src" rev-parse 'HEAD^{commit}'
           test "$(git -C "$RUNNER_TEMP/wireguard-go-src" rev-parse 'HEAD^{commit}')" = "f333402bd9cbe0f3eeb02507bd14e23d7d639280"
           grep -q 'Permission is hereby granted, free of charge' "$RUNNER_TEMP/wireguard-go-src/LICENSE"
-          go build -o "$RUNNER_TEMP/wireguard-go" "$RUNNER_TEMP/wireguard-go-src"
+          (cd "$RUNNER_TEMP/wireguard-go-src" && go build -o "$RUNNER_TEMP/wireguard-go" .)
           shasum -a 256 "$RUNNER_TEMP/wireguard-go" | tee "$RUNNER_TEMP/wireguard-go.sha256"
       - name: Build the live test target
         run: cargo test --locked --no-run --test wireguard_darwin_live
