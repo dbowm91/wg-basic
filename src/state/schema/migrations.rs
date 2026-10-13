@@ -248,8 +248,17 @@ fn foreign_key_check(transaction: &rusqlite::Transaction<'_>) -> Result<(), rusq
 /// builds a real v1 store -- the boundary a real user would be upgrading from.
 #[cfg(test)]
 pub(super) fn initialize_at_version(path: &Path, through_version: i64) -> Result<(), StateError> {
+    // Portable (M001): canonicalize macOS symlink components before NOFOLLOW.
+    let canonical = (|| -> Result<std::path::PathBuf, StateError> {
+        let parent = path.parent().ok_or(StateError::MissingPath)?;
+        let canonical_parent =
+            std::fs::canonicalize(parent).map_err(|_| StateError::DatabaseOpenFailed)?;
+        let file_name = path.file_name().ok_or(StateError::MissingPath)?;
+        Ok(canonical_parent.join(file_name))
+    })();
+    let canonical = canonical?;
     let connection = Connection::open_with_flags(
-        path,
+        &canonical,
         OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX

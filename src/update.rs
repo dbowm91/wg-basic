@@ -2705,13 +2705,10 @@ mod tests {
             transaction_id: "test-transaction_1".into(),
             version_from: "0.1.0".into(),
             version_to: "0.1.1".into(),
-            target: crate::release::LinuxTarget::from_host(
-                std::env::consts::OS,
-                std::env::consts::ARCH,
-            )
-            .unwrap()
-            .triple()
-            .into(),
+            // Portable (M001): journal logic is OS-agnostic; use a fixed
+            // Linux target triple rather than the host, so the test runs on
+            // Darwin without claiming Darwin update support.
+            target: "x86_64-unknown-linux-gnu".into(),
             phase: UpdatePhase::Prepared,
             transaction_dir: root.join("test-transaction_1"),
             old_binary_sha256: "a".repeat(64),
@@ -3146,6 +3143,9 @@ mod tests {
         ));
     }
 
+    // Linux-only: release discovery selects a Linux target triple.
+    // Darwin targets land in M006; M001 update on Darwin fails closed.
+    #[cfg(target_os = "linux")]
     #[test]
     fn authenticated_check_uses_untrusted_discovery_only_for_exact_signed_urls() {
         let fixture = FixtureTransport::new();

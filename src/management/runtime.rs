@@ -12,24 +12,18 @@ use super::{
 };
 use crate::{
     aggregate::{AggregateStatus, InstallationNetworkIntent},
-    domain::{DesiredGeneration, DesiredState, InstallationId, OwnerTag},
+    domain::{DesiredGeneration, DesiredState, InstallationId, OwnerTag, PrincipalId},
+    product::{DegradedCategory, ProductMutationReceipt},
     protocol::{InstallationNetworkApplyBody, RequestOperation, ResponseBody},
-    state::{AttemptDisposition, StateError, StateStore},
+    state::{
+        project, AttemptDisposition, ClientVisibility, CommittedProductState, ProductAudit,
+        ProductState, ResolvedNetworkIntent, StateError, StateStore,
+    },
 };
 use std::{
     path::{Path, PathBuf},
     thread,
     time::Duration,
-};
-
-#[cfg(target_os = "linux")]
-use crate::{
-    domain::PrincipalId,
-    product::{DegradedCategory, ProductMutationReceipt},
-    state::{
-        project, ClientVisibility, CommittedProductState, ProductAudit, ProductState,
-        ResolvedNetworkIntent,
-    },
 };
 
 /// The outcome of one reconcile cycle.
@@ -407,7 +401,9 @@ impl ManagementRuntime {
 
     /// Makes one fresh, read-only WireGuard device observation for the worker.
     /// HTTP never sees the protocol response or talks to netd directly.
-    #[cfg(target_os = "linux")]
+    ///
+    /// Portable (M001): on Darwin without a netd backend the request fails
+    /// with `BackendUnavailable` via `classify_io` rather than converging.
     pub fn observe_wireguard_device(
         &self,
         interface: crate::domain::InterfaceName,
@@ -505,7 +501,9 @@ fn disposition_for(body: &InstallationNetworkApplyBody) -> AttemptDisposition {
 ///
 /// Returns `None` for an installation that manages no interface, which is a
 /// normal empty state rather than an error.
-#[cfg(target_os = "linux")]
+///
+/// Portable (M001): the same projection runs on Linux and Darwin; Darwin
+/// applies nothing until M004–M005.
 fn build_intent(
     installation_id: InstallationId,
     generation: DesiredGeneration,
@@ -543,7 +541,9 @@ fn build_intent(
 /// Projects a coherent read-only state snapshot into the exact typed intent
 /// sent to netd. Doctor uses this to request a plan without opening the
 /// migrating management store or applying anything.
-#[cfg(target_os = "linux")]
+///
+/// Portable (M001): Darwin callers project the same typed intent but must not
+/// claim convergence; the backend reports unsupported until M004–M005.
 pub fn project_diagnostic_intent(
     installation_id: InstallationId,
     generation: DesiredGeneration,
@@ -570,16 +570,6 @@ pub fn project_diagnostic_intent(
         }
     }
     build_intent(installation_id, generation, &effective, &visibility)
-}
-
-#[cfg(not(target_os = "linux"))]
-fn build_intent(
-    _installation_id: InstallationId,
-    _generation: DesiredGeneration,
-    _state: &DesiredState,
-    _visibility: &ClientVisibility,
-) -> Result<Option<InstallationNetworkIntent>, ManagementError> {
-    Err(ManagementError::BackendUnavailable)
 }
 
 /// Opens the store, initializing it when it does not exist yet.

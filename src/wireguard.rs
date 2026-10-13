@@ -1,7 +1,34 @@
 use crate::domain::{InterfaceName, NetworkPrefix, PresharedKey, PrivateKey, PublicKey};
+#[cfg(target_os = "linux")]
 mod backend;
 
+#[cfg(target_os = "linux")]
 pub use backend::WireGuardBackend;
+
+/// M001 Darwin stub: the userspace (wireguard-go/utun) backend lands in M003.
+/// It compiles on Darwin so portable intent, protocol, and management code can
+/// target both OSes, but every method fails closed as unsupported.
+#[cfg(not(target_os = "linux"))]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WireGuardBackend;
+
+#[cfg(not(target_os = "linux"))]
+impl WireGuardBackend {
+    pub fn observe_device(
+        &self,
+        _interface: &InterfaceName,
+    ) -> Result<ObservedWireGuardDevice, WireGuardValidationError> {
+        Err(WireGuardValidationError::UnsupportedBackend)
+    }
+
+    pub fn apply_patch(
+        &self,
+        _interface: &InterfaceName,
+        _patch: WireGuardDevicePatch,
+    ) -> Result<WireGuardApplyReceipt, WireGuardValidationError> {
+        Err(WireGuardValidationError::UnsupportedBackend)
+    }
+}
 // Key generation itself is platform-independent and lives in `domain`, so the
 // unprivileged product service can generate identities on any host. This
 // re-export keeps the single obvious import path for kernel-facing callers.

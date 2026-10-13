@@ -19,13 +19,10 @@ use wg_basic::{
         PrivateKey, PublicKey, ResourcePresence,
     },
     state::{
-        AttemptDisposition, DesiredGeneration, ProjectionError, StateError, StateStore,
+        project, AttemptDisposition, DesiredGeneration, ProjectionError, StateError, StateStore,
         INITIAL_DESIRED_GENERATION,
     },
 };
-
-#[cfg(target_os = "linux")]
-use wg_basic::state::project;
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -642,8 +639,9 @@ fn backup_and_restore_stay_a_local_file_operation() {
 // ---------------------------------------------------------------------------
 // Projection
 // ---------------------------------------------------------------------------
+// M001: projection is portable and runs on Darwin; it proves the same kernel
+// intent types without touching a backend.
 
-#[cfg(target_os = "linux")]
 #[test]
 fn projection_is_deterministic_across_reopen_and_store_cycles() {
     let temp = TempDir::new();
@@ -681,7 +679,6 @@ fn projection_is_deterministic_across_reopen_and_store_cycles() {
     );
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn projection_produces_the_existing_kernel_intent_types() {
     let temp = TempDir::new();
@@ -722,7 +719,6 @@ fn projection_produces_the_existing_kernel_intent_types() {
     ));
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn projection_refuses_ipv6_policy_prefixes_without_explicit_forwarding_opt_in() {
     let mut state = sample_state();
@@ -740,7 +736,6 @@ fn projection_refuses_ipv6_policy_prefixes_without_explicit_forwarding_opt_in() 
     ));
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn an_absent_interface_projects_without_a_wireguard_configuration() {
     let temp = TempDir::new();
