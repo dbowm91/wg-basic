@@ -1,6 +1,6 @@
 # macOS Native Server M007 — Native macOS End-to-End, Security, and Release Qualification
 
-Status: planned; blocked on M006 strict closure and M005 support policy accepted
+Status: **blocked** — verdict recorded in `plans/closure/macos-native-server/007-status.md` (support matrix, threat review, MUST-NOT-release decision, unblock checklist); native dual-arch traffic + release readiness unqualified (shared privileged-host blocker). 2026-10-13.
 Primary class: qualification / invariant
 Roadmap: plans/subsystems/macos-native-server-roadmap.md M007
 Baseline: main 47c72b0e81d569d48396c615120453bf0cf1d46e; reconcile with actual implementation head.

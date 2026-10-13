@@ -76,7 +76,7 @@ Runtime dependency adoption remains evidence-driven.
 | Distribution/install/update | closed (technical) | `plans/subsystems/distribution-install-update-roadmap.md` | M001–M005 closed; production release remains blocked on signing |
 | IPv6/route-policy qualification | closed | `plans/subsystems/ipv6-route-policy-roadmap.md` | M001–M004 closed; `plans/closure/ipv6-route-policy/004-status.md` |
 | Release readiness and supply-chain security | closed (R004b waived; checksums-only releases) | `plans/subsystems/release-readiness-security-roadmap.md` | R001–R004a closed; waiver `004b-waiver-status.md` |
-| Headless macOS native server/gateway | active (M001–M002 closed; M003–M006 blocked on privileged host; TN3165 advanced-admin-only decided) | `plans/subsystems/macos-native-server-roadmap.md` | M001–M002 closed 2026-10-13; M003 safe scope `b1c831c` + M004 modeling `42fa94c` + M005 policy/anchor `be077d1` (advanced-admin-only) + M006 installation scope `8a063de` (no PF auto-configuration), all blocked on disposable privileged Mac host/sudo/opt-in; M007 verdict pending |
+| Headless macOS native server/gateway | active (line verdict recorded; M001–M002 closed, M003–M007 blocked) | `plans/subsystems/macos-native-server-roadmap.md` | M001–M002 closed 2026-10-13; M003 `b1c831c` + M004 `42fa94c` + M005 `be077d1` (advanced-admin-only decided) + M006 `8a063de` + M007 verdict — all blocked records filed, live tails need disposable privileged Mac host(s)/sudo/opt-in + Intel hardware; macOS MUST NOT release |
 
 Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
 
@@ -85,7 +85,7 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 Architecture: `plans/adr/008-macos-headless-platform-backends.md`.
 Canonical new roadmap: `plans/subsystems/macos-native-server-roadmap.md`.
 Baseline: `47c72b0e81d569d48396c615120453bf0cf1d46e` (Linux stable `v0.1.0` remains unchanged).
-macOS M001–M002 are implemented and closed with native evidence below; M003–M007 remain planning-only until their predecessor closures land.
+macOS M001–M002 are implemented and closed with native evidence below; M003–M007 carry implemented safe/policy/installation scopes plus binding decisions with blocked live tails (exact missing evidence in each closure). No macOS release or gateway claim exists.
 
 | Milestone | Status | Handoff |
 |---|---|---|
@@ -96,7 +96,7 @@ macOS M001–M002 are implemented and closed with native evidence below; M003–
 | M005 forwarding, PF/NAT and Apple policy review | **blocked** 2026-10-13 (TN3165 advanced-admin-only decision recorded + anchor model implemented) | `plans/implementation/macos-native-server/005-forwarding-pf-nat-and-platform-policy.md`; closure `plans/closure/macos-native-server/005-status.md` — live gateway traffic needs disposable privileged host; installer MUST NOT auto-configure PF |
 | M005 forwarding, PF/NAT and Apple policy review | blocked on M004 and PF-support decision | `plans/implementation/macos-native-server/005-forwarding-pf-nat-and-platform-policy.md` |
 | M006 launchd, installer, helper provenance and recovery | **blocked** 2026-10-13 (installation scope implemented) | `plans/implementation/macos-native-server/006-launchd-installation-distribution-and-recovery.md`; closure `plans/closure/macos-native-server/006-status.md` — native install/boot/reboot/recovery needs disposable privileged host; installer MUST NOT auto-configure PF |
-| M007 native dual-arch E2E, security and release qualification | blocked on M006 | `plans/implementation/macos-native-server/007-native-e2e-security-release-qualification.md` |
+| M007 native dual-arch E2E, security and release qualification | **blocked** 2026-10-13 (verdict recorded: MUST-NOT-release) | `plans/implementation/macos-native-server/007-native-e2e-security-release-qualification.md`; closure `plans/closure/macos-native-server/007-status.md` — support matrix, threat review, footprint, docs audit filed; live dual-arch traffic + release readiness need disposable privileged hosts + Intel hardware + authorization |
 
 Explicit macOS stop gate: Apple TN3165 warns PF is not an API for broad product use. PF anchor/NAT capability for advanced-admin deployments must be documented, qualified and approved separately before advertising full macOS gateway support. Do not modify foreign PF configuration automatically or accept compilation as networking evidence. Linux remains canonical and strictly qualified.
 
@@ -126,6 +126,12 @@ M004 and its corrective slices are closed: `plans/closure/distribution/004-statu
 
 ## 7. Recently closed work
 
+- macOS M007 blocked verdict 2026-10-13: support matrix (only loopback
+  management + IPC qualified on arm64), threat review, serve footprint
+  (0.097s ready, 11.3 MiB RSS, 0.0% idle), docs audit, binding MUST-NOT-release
+  decision + 5-step unblock checklist. Closure
+  `plans/closure/macos-native-server/007-status.md`. The line is closed as far
+  as unprivileged qualification can take it.
 - macOS M006 blocked 2026-10-13: installation scope at `8a063de`
   (two-label plists, provenance receipts with helper hash + Darwin targets,
   explicit-root install/verify/state-preserving-uninstall fixtures; 4 unit
