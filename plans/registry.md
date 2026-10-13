@@ -76,7 +76,7 @@ Runtime dependency adoption remains evidence-driven.
 | Distribution/install/update | closed (technical) | `plans/subsystems/distribution-install-update-roadmap.md` | M001–M005 closed; production release remains blocked on signing |
 | IPv6/route-policy qualification | closed | `plans/subsystems/ipv6-route-policy-roadmap.md` | M001–M004 closed; `plans/closure/ipv6-route-policy/004-status.md` |
 | Release readiness and supply-chain security | closed (R004b waived; checksums-only releases) | `plans/subsystems/release-readiness-security-roadmap.md` | R001–R004a closed; waiver `004b-waiver-status.md` |
-| Headless macOS native server/gateway | active (M001–M002 closed; M003–M005 blocked on privileged host; TN3165 advanced-admin-only decided) | `plans/subsystems/macos-native-server-roadmap.md` | M001–M002 closed 2026-10-13; M003 safe scope `b1c831c` + M004 modeling `42fa94c` + M005 policy/anchor model `be077d1` with advanced-admin-only decision, all blocked on disposable privileged Mac host/sudo/opt-in; M006 installation scope ready (no PF auto-configuration); M007 gated |
+| Headless macOS native server/gateway | active (M001–M002 closed; M003–M006 blocked on privileged host; TN3165 advanced-admin-only decided) | `plans/subsystems/macos-native-server-roadmap.md` | M001–M002 closed 2026-10-13; M003 safe scope `b1c831c` + M004 modeling `42fa94c` + M005 policy/anchor `be077d1` (advanced-admin-only) + M006 installation scope `8a063de` (no PF auto-configuration), all blocked on disposable privileged Mac host/sudo/opt-in; M007 verdict pending |
 
 Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
 
@@ -95,7 +95,7 @@ macOS M001–M002 are implemented and closed with native evidence below; M003–
 | M004 address/route ownership and Darwin reconciliation | **blocked** 2026-10-13 (modeling scope implemented) | `plans/implementation/macos-native-server/004-darwin-interface-address-route-reconciliation.md`; closure `plans/closure/macos-native-server/004-status.md` — native convergence needs disposable privileged host |
 | M005 forwarding, PF/NAT and Apple policy review | **blocked** 2026-10-13 (TN3165 advanced-admin-only decision recorded + anchor model implemented) | `plans/implementation/macos-native-server/005-forwarding-pf-nat-and-platform-policy.md`; closure `plans/closure/macos-native-server/005-status.md` — live gateway traffic needs disposable privileged host; installer MUST NOT auto-configure PF |
 | M005 forwarding, PF/NAT and Apple policy review | blocked on M004 and PF-support decision | `plans/implementation/macos-native-server/005-forwarding-pf-nat-and-platform-policy.md` |
-| M006 launchd, installer, helper provenance and recovery | blocked on M005 | `plans/implementation/macos-native-server/006-launchd-installation-distribution-and-recovery.md` |
+| M006 launchd, installer, helper provenance and recovery | **blocked** 2026-10-13 (installation scope implemented) | `plans/implementation/macos-native-server/006-launchd-installation-distribution-and-recovery.md`; closure `plans/closure/macos-native-server/006-status.md` — native install/boot/reboot/recovery needs disposable privileged host; installer MUST NOT auto-configure PF |
 | M007 native dual-arch E2E, security and release qualification | blocked on M006 | `plans/implementation/macos-native-server/007-native-e2e-security-release-qualification.md` |
 
 Explicit macOS stop gate: Apple TN3165 warns PF is not an API for broad product use. PF anchor/NAT capability for advanced-admin deployments must be documented, qualified and approved separately before advertising full macOS gateway support. Do not modify foreign PF configuration automatically or accept compilation as networking evidence. Linux remains canonical and strictly qualified.
@@ -126,6 +126,12 @@ M004 and its corrective slices are closed: `plans/closure/distribution/004-statu
 
 ## 7. Recently closed work
 
+- macOS M006 blocked 2026-10-13: installation scope at `8a063de`
+  (two-label plists, provenance receipts with helper hash + Darwin targets,
+  explicit-root install/verify/state-preserving-uninstall fixtures; 4 unit
+  tests; no signing claims). Native install/boot/reboot/recovery
+  unqualified — shared privileged-host blocker. Closure
+  `plans/closure/macos-native-server/006-status.md`.
 - macOS M005 blocked 2026-10-13: TN3165 advanced-admin-only decision +
   anchor model at `be077d1` (installation-scoped anchors, masquerade without
   NAT66, attachment verification, drift digest, conservative teardown; 6 unit

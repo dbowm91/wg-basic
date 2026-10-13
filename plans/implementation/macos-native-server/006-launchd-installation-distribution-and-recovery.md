@@ -1,6 +1,6 @@
 # macOS Native Server M006 — launchd Installation, Artifact Provenance, and Recovery
 
-Status: planned; blocked on M005 verified gateway strategy and host-network closure
+Status: **blocked** — installation scope implemented at `8a063de` (two-label plists, provenance receipts, explicit-root install/verify/state-preserving uninstall fixtures, no signing claims); native install/boot/reboot/recovery unqualified (shared privileged-host blocker). Closure `plans/closure/macos-native-server/006-status.md`, 2026-10-13.
 Primary class: infrastructure / capability
 Roadmap: plans/subsystems/macos-native-server-roadmap.md M006
 Baseline: main 47c72b0e81d569d48396c615120453bf0cf1d46e; reconcile with actual implementation head.
