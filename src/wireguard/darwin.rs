@@ -19,10 +19,13 @@
 
 use std::{
     io::{self, Read, Write},
+    net::SocketAddr,
     os::unix::net::UnixStream,
     path::{Path, PathBuf},
     time::Duration,
 };
+
+use ipnet::IpNet;
 
 /// Pinned upstream helper provenance (M003).
 pub const HELPER_UPSTREAM: &str = "https://github.com/WireGuard/wireguard-go";
@@ -47,6 +50,21 @@ pub const MAX_UAPI_REQUEST: usize = 16 * 1024;
 pub const MAX_UAPI_RESPONSE: usize = 256 * 1024;
 /// UAPI round-trip bound.
 pub const UAPI_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Maximum allowed-IP entries rendered for one peer (same order as the
+/// plan's 256-entry peer bound; each line is a typed `IpNet`, never text).
+pub const MAX_UAPI_ALLOWED_IPS: usize = 256;
+
+/// Typed peer section of a UAPI `set` command. `SocketAddr::Display`
+/// renders `ip:port` (bracketed for IPv6), matching the UAPI endpoint form.
+#[derive(Clone, Copy, Debug)]
+pub struct UapiPeerConfig<'a> {
+    pub public_key_base64: &'a str,
+    pub remove: bool,
+    pub endpoint: Option<SocketAddr>,
+    pub allowed_ips: &'a [IpNet],
+    pub persistent_keepalive: Option<u16>,
+}
 
 /// The exact argv netd mayexec for the helper. No PATH lookup, no caller
 /// flags, no shell: the path is absolute and hash-pinned, the only argument
@@ -186,12 +204,12 @@ impl Drop for SupervisedHelper {
 }
 
 /// Renders a `set` UAPI command from typed fields. Keys are base64 (as the
-/// UAPI specifies); nothing raw reaches the socket.
+/// UAPI specifies); endpoint, allowed IPs, and keepalive are typed too —
+/// nothing raw reaches the socket.
 pub fn render_uapi_set(
     private_key_base64: Option<&str>,
     listen_port: Option<u16>,
-    peer_public_key_base64: Option<&str>,
-    remove_peer: bool,
+    peer: Option<&UapiPeerConfig<'_>>,
 ) -> Result<String, HelperError> {
     let mut out = String::from("set=1\n");
     if let Some(key) = private_key_base64 {
@@ -206,16 +224,30 @@ pub fn render_uapi_set(
         }
         out.push_str(&format!("listen_port={port}\n"));
     }
-    if let Some(peer) = peer_public_key_base64 {
-        if peer.len() != 44 {
+    if let Some(peer) = peer {
+        if peer.public_key_base64.len() != 44 {
             return Err(HelperError::UapiMalformed);
         }
-        out.push_str(&format!("public_key={peer}\n"));
-        if remove_peer {
+        out.push_str(&format!("public_key={}\n", peer.public_key_base64));
+        if peer.remove {
             out.push_str("remove=true\n");
+        } else {
+            if let Some(endpoint) = peer.endpoint {
+                if endpoint.port() == 0 {
+                    return Err(HelperError::UapiMalformed);
+                }
+                out.push_str(&format!("endpoint={endpoint}\n"));
+            }
+            if peer.allowed_ips.len() > MAX_UAPI_ALLOWED_IPS {
+                return Err(HelperError::UapiMalformed);
+            }
+            for allowed in peer.allowed_ips {
+                out.push_str(&format!("allowed_ip={allowed}\n"));
+            }
+            if let Some(keepalive) = peer.persistent_keepalive {
+                out.push_str(&format!("persistent_keepalive_interval={keepalive}\n"));
+            }
         }
-    } else if remove_peer {
-        return Err(HelperError::UapiMalformed);
     }
     out.push('\n');
     if out.len() > MAX_UAPI_REQUEST {
@@ -426,14 +458,54 @@ mod tests {
     #[test]
     fn uapi_set_renders_typed_fields_with_bounds() {
         let key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-        let rendered = render_uapi_set(Some(key), Some(51820), Some(key), false).unwrap();
+        let peer = UapiPeerConfig {
+            public_key_base64: key,
+            remove: false,
+            endpoint: None,
+            allowed_ips: &[],
+            persistent_keepalive: None,
+        };
+        let rendered = render_uapi_set(Some(key), Some(51820), Some(&peer)).unwrap();
         assert!(rendered.starts_with("set=1\n"));
         assert!(rendered.contains("private_key="));
         assert!(rendered.contains("listen_port=51820\n"));
         assert!(rendered.ends_with("\n\n"));
-        assert!(render_uapi_set(Some(key), Some(0), None, false).is_err());
-        assert!(render_uapi_set(Some("short"), None, None, false).is_err());
+        assert!(render_uapi_set(Some(key), Some(0), None).is_err());
+        assert!(render_uapi_set(Some("short"), None, None).is_err());
         assert!(!format!("{rendered:?}").contains("nft"));
+
+        let removal = UapiPeerConfig {
+            remove: true,
+            ..peer
+        };
+        let rendered_removal = render_uapi_set(None, None, Some(&removal)).unwrap();
+        assert!(rendered_removal.contains("remove=true\n"));
+        assert!(!rendered_removal.contains("endpoint="));
+
+        let endpoint: SocketAddr = "127.0.0.1:51821".parse().unwrap();
+        let allowed: IpNet = "10.200.0.2/32".parse().unwrap();
+        let full = UapiPeerConfig {
+            endpoint: Some(endpoint),
+            allowed_ips: std::slice::from_ref(&allowed),
+            persistent_keepalive: Some(25),
+            ..peer
+        };
+        let rendered_full = render_uapi_set(None, None, Some(&full)).unwrap();
+        assert!(rendered_full.contains("endpoint=127.0.0.1:51821\n"));
+        assert!(rendered_full.contains("allowed_ip=10.200.0.2/32\n"));
+        assert!(rendered_full.contains("persistent_keepalive_interval=25\n"));
+
+        let bad_port = UapiPeerConfig {
+            endpoint: Some("127.0.0.1:0".parse().unwrap()),
+            ..peer
+        };
+        assert!(render_uapi_set(None, None, Some(&bad_port)).is_err());
+        let too_many = vec![allowed; MAX_UAPI_ALLOWED_IPS + 1];
+        let overflowing = UapiPeerConfig {
+            allowed_ips: &too_many,
+            ..peer
+        };
+        assert!(render_uapi_set(None, None, Some(&overflowing)).is_err());
     }
 
     #[test]
@@ -452,7 +524,7 @@ mod tests {
         use std::os::unix::net::UnixStream;
 
         let key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-        let command = render_uapi_set(Some(key), Some(51820), None, false).unwrap();
+        let command = render_uapi_set(Some(key), Some(51820), None).unwrap();
         let (mut client, mut server) = UnixStream::pair().unwrap();
         let responder = std::thread::spawn(move || {
             // Read the command through its `\n\n` terminator, then answer.
