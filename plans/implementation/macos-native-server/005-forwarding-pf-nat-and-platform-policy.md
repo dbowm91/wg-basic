@@ -1,6 +1,6 @@
 # macOS Native Server M005 — Forwarding, PF/NAT Policy, and Gateway Feasibility Decision
 
-Status: planned; blocked on M004 resource ownership closure AND explicit PF/product-distribution gate review
+Status: **blocked** — TN3165 decision recorded (advanced-admin opt-in ONLY, no general gateway claim) + anchor model implemented at `be077d1`; live gateway traffic unqualified (shared privileged-host blocker). Closure `plans/closure/macos-native-server/005-status.md`, 2026-10-13.
 Primary class: invariant / capability / architectural decision
 Roadmap: plans/subsystems/macos-native-server-roadmap.md M005
 Baseline: main 47c72b0e81d569d48396c615120453bf0cf1d46e; reconcile with actual implementation head.

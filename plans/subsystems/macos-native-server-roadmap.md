@@ -1,6 +1,6 @@
 # macOS Native Server Support Roadmap
 
-Status: planned; M001–M002 closed 2026-10-13, M003–M004 blocked on privileged-host qualification (safe scopes implemented), M005 policy scope ready, M006–M007 gated
+Status: planned; M001–M002 closed 2026-10-13, M003–M005 blocked on privileged-host qualification (safe/policy scopes implemented; TN3165 advanced-admin-only decision recorded), M006 installation scope ready under no-PF-mutation constraint, M007 gated
 
 Owner: headless Darwin WireGuard server deployment, not a macOS WireGuard client application.
 
@@ -53,7 +53,8 @@ M002 and M003 may prototype against M001's stable written interfaces but may not
 | M002 Darwin privilege + IPC | invariant | native getpeereid authorization, secure socket lifecycle, bounded typed protocol and doctor | M001 | closed 2026-10-13 (`plans/closure/macos-native-server/002-status.md`) |
 | M003 userspace WireGuard | capability / invariant | bundled/pinned foreground helper, utun ownership, UAPI peer CRUD, real handshake/telemetry | M002 | **blocked** 2026-10-13 — safe scope implemented (`plans/closure/macos-native-server/003-status.md`); live handshake needs disposable privileged host |
 | M004 Darwin resources | capability / invariant | address/route apply/observe/verify, no foreign deletion, crash/utun churn tests | M003 | **blocked** 2026-10-13 — modeling scope implemented (`plans/closure/macos-native-server/004-status.md`); native convergence needs disposable privileged host |
-| M005 forwarding/PF/NAT | invariant / capability | approved strategy, opt-in PF if lawful/suitable, observed filter+NAT and real traffic | M004 + explicit PF ADR gate | policy scope ready (native traffic carries the same privileged-host blocker) |
+| M005 forwarding/PF/NAT | invariant / capability | approved strategy, opt-in PF if lawful/suitable, observed filter+NAT and real traffic | M004 + explicit PF ADR gate | **blocked** 2026-10-13 — TN3165 advanced-admin-only decision + anchor model (`plans/closure/macos-native-server/005-status.md`); live traffic needs disposable privileged host |
+| M006 launchd + distribution | infrastructure / capability | native services, install/reinstall/uninstall, ABI/build/release artifacts, rollback-safe behavior | M005 | installation scope ready (MUST NOT auto-configure PF); native install evidence carries the same privileged-host blocker |
 | M003 userspace WireGuard | capability / invariant | bundled/pinned foreground helper, utun ownership, UAPI peer CRUD, real handshake/telemetry | M002 | blocked |
 | M004 Darwin resources | capability / invariant | address/route apply/observe/verify, no foreign deletion, crash/utun churn tests | M003 | blocked |
 | M005 forwarding/PF/NAT | invariant / capability | approved strategy, opt-in PF if lawful/suitable, observed filter+NAT and real traffic | M004 + explicit PF ADR gate | blocked |
