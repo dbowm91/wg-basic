@@ -1,6 +1,6 @@
 # macOS Native Server M004 — Darwin Interface, Address, Route, and Reconciliation Ownership
 
-Status: planned; blocked on M003 real WireGuard/utun closure
+Status: **blocked** — modeling scope implemented at `42fa94c` (typed observation, pure planner, conflict/global-takeover refusals, renumber handling); privileged native convergence unqualified (shared privileged-host blocker). Closure `plans/closure/macos-native-server/004-status.md`, 2026-10-13.
 Primary class: invariant / capability
 Roadmap: plans/subsystems/macos-native-server-roadmap.md M004
 Baseline: main 47c72b0e81d569d48396c615120453bf0cf1d46e; reconcile with actual implementation head.
