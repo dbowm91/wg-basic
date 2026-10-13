@@ -23,6 +23,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.89.0
         with:
           components: clippy, rustfmt
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
       - run: cargo check --all-targets --locked
@@ -41,7 +42,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.89.0
         with:
           components: clippy, rustfmt
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache: false
       - name: Build the pinned wireguard-go helper and verify provenance
         run: |
           go version
@@ -82,6 +88,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.89.0
         with:
           components: clippy, rustfmt
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
       - run: cargo check --all-targets --locked
@@ -97,7 +104,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.89.0
         with:
           components: clippy, rustfmt
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache: false
       - name: Build the pinned wireguard-go helper and verify provenance
         run: |
           go version
