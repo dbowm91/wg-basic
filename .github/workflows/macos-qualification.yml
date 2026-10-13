@@ -63,7 +63,7 @@ jobs:
           cargo test --locked --no-run --test wireguard_darwin_live
       - name: Qualify M003/M004/M005/M006 live fixtures as root (disposable host)
         run: |
-          test_binary=$(ls -t "$PWD"/target/debug/deps/wireguard_darwin_live-* | grep -v '\.' | head -1)
+          test_binary=$(for candidate in "$PWD"/target/debug/deps/wireguard_darwin_live-*; do case "$candidate" in *.d|*.*) continue;; *) echo "$candidate";; esac; done | head -1)
           echo "live test binary: $test_binary"
           sudo \
             "WGB_DARWIN_LIVE=1" \
@@ -121,7 +121,7 @@ jobs:
         run: cargo test --locked --no-run --test wireguard_darwin_live
       - name: Qualify M003/M004 live fixtures as root (disposable host)
         run: |
-          test_binary=$(ls -t "$PWD"/target/debug/deps/wireguard_darwin_live-* | grep -v '\.' | head -1)
+          test_binary=$(for candidate in "$PWD"/target/debug/deps/wireguard_darwin_live-*; do case "$candidate" in *.d|*.*) continue;; *) echo "$candidate";; esac; done | head -1)
           echo "live test binary: $test_binary"
           sudo \
             "WGB_DARWIN_LIVE=1" \
