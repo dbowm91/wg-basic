@@ -276,6 +276,8 @@ const PRODUCTION_SOURCES: &[(&str, &str)] = &[
     ),
     // M005 Darwin PF anchor model: pure rendering/verification, no pfctl yet.
     ("src/firewall/pf.rs", include_str!("../src/firewall/pf.rs")),
+    // M006 Darwin launchd installer: pure layout/receipt logic, no install.
+    ("src/launchd.rs", include_str!("../src/launchd.rs")),
 ];
 
 #[test]
@@ -2106,6 +2108,42 @@ fn the_darwin_pf_model_renders_without_executing() {
         assert!(
             pf.contains(required),
             "src/firewall/pf.rs must model {required}"
+        );
+    }
+}
+
+#[test]
+fn the_darwin_installer_claims_no_signing_and_touches_no_system_path() {
+    // M006 installation scope: pure layout/receipt logic. No signing trust,
+    // no self-update enablement, no process execution, no PF auto-config, no
+    // hardcoded live-system writes outside the explicit-root installer.
+    let installer = shippable(source_of("src/launchd.rs"));
+    for forbidden in [
+        "std::process::Command",
+        "Command::new",
+        "minisign",
+        "signature",
+        "public_key",
+        "pfctl",
+        "/etc/pf.conf",
+        "/Library/LaunchDaemons/com.wg-basic",
+    ] {
+        assert!(
+            !installer.contains(forbidden),
+            "src/launchd.rs must not contain {forbidden}"
+        );
+    }
+    for required in [
+        "NETD_LABEL",
+        "SERVE_LABEL",
+        "DarwinInstallReceipt",
+        "verify_installed_root",
+        "uninstall_preserving_state",
+        "DARWIN_TARGETS",
+    ] {
+        assert!(
+            installer.contains(required),
+            "src/launchd.rs must model {required}"
         );
     }
 }

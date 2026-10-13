@@ -22,6 +22,9 @@ pub mod domain;
 pub mod error;
 pub mod firewall;
 pub mod http;
+/// Darwin launchd installation, artifact provenance, and recovery (M006
+/// installation scope; pure layout/receipt logic, no live system mutation).
+pub mod launchd;
 pub mod management;
 pub mod operational;
 pub mod platform;
