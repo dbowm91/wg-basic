@@ -265,6 +265,11 @@ const PRODUCTION_SOURCES: &[(&str, &str)] = &[
         "src/firewall/service_darwin.rs",
         include_str!("../src/firewall/service_darwin.rs"),
     ),
+    // M003 Darwin helper supervisor: fixed argv, no shell, hash-pinned.
+    (
+        "src/wireguard/darwin.rs",
+        include_str!("../src/wireguard/darwin.rs"),
+    ),
 ];
 
 #[test]
@@ -433,8 +438,13 @@ fn minisign_fixture_private_key_is_not_embedded_in_shipped_sources() {
     }
 }
 
+/// Production modules permitted to spawn a process. M003 adds the bounded
+/// Darwin helper supervisor next to the Linux nft backend; both are audited
+/// fixed-argv boundaries, never shells or generic exec.
+const PROCESS_MODULES: &[&str] = &["src/firewall/nft.rs", "src/wireguard/darwin.rs"];
+
 #[test]
-fn process_execution_is_isolated_to_the_nft_backend() {
+fn process_execution_is_isolated_to_audited_backends() {
     let mut sites = Vec::new();
     for (path, source) in PRODUCTION_SOURCES {
         if source.contains("std::process::Command")
@@ -446,9 +456,56 @@ fn process_execution_is_isolated_to_the_nft_backend() {
     }
     assert_eq!(
         sites,
-        vec![ONLY_PROCESS_MODULE],
-        "process execution must stay isolated to the bounded nft backend"
+        PROCESS_MODULES,
+        "process execution must stay isolated to the bounded nft backend and the bounded Darwin helper supervisor"
     );
+}
+
+#[test]
+fn the_darwin_helper_supervisor_spawns_only_the_pinned_foreground_helper() {
+    // M003: the single Darwin exception to the nft-only process rule. Fixed
+    // argv (`utun`), controlled foreground env, no shell, no PATH lookup, no
+    // caller flags or paths, hash-pinned identity checked before spawn.
+    let helper = shippable(source_of("src/wireguard/darwin.rs"));
+    assert!(
+        helper.contains("Command::new(&argv.helper)"),
+        "the helper must be spawned from the validated absolute path, never a name"
+    );
+    assert!(
+        helper.contains(".env_clear()"),
+        "the helper must not inherit the caller environment"
+    );
+    assert!(
+        helper.contains("HELPER_INTERFACE_ARG"),
+        "the helper argv must be the pinned fixed argv"
+    );
+    for forbidden in [
+        "Command::new(\"sh\")",
+        "Command::new(\"bash\")",
+        "Command::new(\"/bin/sh\")",
+        "wg-quick",
+        "WG_TUN_FD",
+        "PATH",
+    ] {
+        // `PATH` here means a lookup or a pass-through, not prose: the module
+        // documents that PATH is absent, which names the word. Check the
+        // precise dangerous forms instead.
+        if forbidden == "PATH" {
+            assert!(
+                !helper.contains("env::var(\"PATH\""),
+                "the helper must never read PATH"
+            );
+            assert!(
+                !helper.contains("Command::new(\"wireguard-go\")"),
+                "the helper must never be resolved by name"
+            );
+            continue;
+        }
+        assert!(
+            !helper.contains(forbidden),
+            "the Darwin supervisor must not contain {forbidden}"
+        );
+    }
 }
 
 #[test]

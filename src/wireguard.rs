@@ -1,6 +1,8 @@
 use crate::domain::{InterfaceName, NetworkPrefix, PresharedKey, PrivateKey, PublicKey};
 #[cfg(target_os = "linux")]
 mod backend;
+#[cfg(target_os = "macos")]
+pub mod darwin;
 
 #[cfg(target_os = "linux")]
 pub use backend::WireGuardBackend;

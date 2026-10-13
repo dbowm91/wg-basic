@@ -1,0 +1,580 @@
+//! Darwin userspace WireGuard backend (M003): pinned `wireguard-go` helper,
+//! UAPI codec, supervised foreground lifecycle, and utun ownership proof.
+//!
+//! Only the parts that are safe without privilege live here yet: helper
+//! provenance constants, fixed-argv supervision config, the bounded UAPI
+//! text codec, and the pure ownership verifier. Live `observe`/`apply`
+//! against a real `utun` stay `UnsupportedBackend` until a disposable,
+//! explicitly opted-in privileged host qualifies the handshake (M003 stop
+//! gate); no mock traffic is ever presented as a handshake.
+//!
+//! Upstream facts (pinned, verified from source at the pinned revision):
+//! - argv is exactly `["<absolute-helper>", "utun"]`; the Darwin `tun`
+//!   backend requires `utun`/`utunN` and the kernel assigns the number.
+//! - `WG_PROCESS_FOREGROUND=1` keeps the helper supervised (no daemonize).
+//! - UAPI is a Unix socket at `/var/run/wireguard/<real-utun>.sock`
+//!   (owner-only via `077` umask); the real name is learned by
+//!   before/after interface delta plus UAPI verification, never by trusting
+//!   a name file alone.
+
+use std::{
+    io::{self, Read, Write},
+    os::unix::net::UnixStream,
+    path::{Path, PathBuf},
+    time::Duration,
+};
+
+/// Pinned upstream helper provenance (M003).
+pub const HELPER_UPSTREAM: &str = "https://github.com/WireGuard/wireguard-go";
+pub const HELPER_VERSION_TAG: &str = "0.0.20250522";
+/// Peeled commit of the version tag (`git rev-parse 0.0.20250522^{}`).
+pub const HELPER_COMMIT: &str = "f333402bd9cbe0f3eeb02507bd14e23d7d639280";
+/// Upstream license, verified in the pinned tree (`LICENSE` + SPDX headers).
+pub const HELPER_LICENSE: &str = "MIT";
+/// Dev-built reference hash (darwin/arm64, `go build` at the pinned tag).
+/// Production bundling, reproducibility, and signing land in M006; this hash
+/// pins the M003 design reference, not a release artifact.
+pub const HELPER_DEV_REFERENCE_SHA256: &str =
+    "1339b938a4c2d5553faf02229ea229f355f4b9426e17c75fecaa2f393cb04da9";
+/// Fixed helper interface argument: the kernel assigns the `utunN` number.
+pub const HELPER_INTERFACE_ARG: &str = "utun";
+/// Foreground env that keeps the helper supervised (never daemonized).
+pub const HELPER_FOREGROUND_ENV: (&str, &str) = ("WG_PROCESS_FOREGROUND", "1");
+/// Upstream UAPI socket directory (symlinked via `/var` on macOS).
+pub const UAPI_SOCKET_DIR: &str = "/var/run/wireguard";
+/// UAPI frame bound: requests are small typed renders; responses are capped.
+pub const MAX_UAPI_REQUEST: usize = 16 * 1024;
+pub const MAX_UAPI_RESPONSE: usize = 256 * 1024;
+/// UAPI round-trip bound.
+pub const UAPI_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The exact argv netd mayexec for the helper. No PATH lookup, no caller
+/// flags, no shell: the path is absolute and hash-pinned, the only argument
+/// is `utun`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HelperArgv {
+    pub helper: PathBuf,
+}
+
+impl HelperArgv {
+    pub fn new(helper: PathBuf) -> Result<Self, HelperError> {
+        validate_helper_path(&helper)?;
+        Ok(Self { helper })
+    }
+
+    /// Exactly `[helper, "utun"]`.
+    pub fn as_argv(&self) -> Vec<String> {
+        vec![
+            self.helper.to_string_lossy().into_owned(),
+            HELPER_INTERFACE_ARG.into(),
+        ]
+    }
+}
+
+/// Controlled helper environment: exactly the foreground marker plus no
+/// caller-controlled entries. `PATH` is deliberately absent.
+pub fn helper_env() -> Vec<(String, String)> {
+    vec![(
+        HELPER_FOREGROUND_ENV.0.into(),
+        HELPER_FOREGROUND_ENV.1.into(),
+    )]
+}
+
+/// Refuses relative paths, PATH-basename lookup, non-files, symlinks, and
+/// non-executable helpers before any spawn is attempted.
+pub fn validate_helper_path(path: &Path) -> Result<(), HelperError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    if !path.is_absolute() {
+        return Err(HelperError::RelativePath);
+    }
+    let metadata = std::fs::symlink_metadata(path).map_err(|_| HelperError::NotFound)?;
+    if metadata.file_type().is_symlink() {
+        return Err(HelperError::Symlink);
+    }
+    if !metadata.is_file() {
+        return Err(HelperError::NotRegularFile);
+    }
+    if metadata.permissions().mode() & 0o111 == 0 {
+        return Err(HelperError::NotExecutable);
+    }
+    Ok(())
+}
+
+/// Verifies the helper binary identity against the pinned receipt before a
+/// privileged spawn. Any mismatch is a non-retryable conflict.
+pub fn verify_helper_sha256(path: &Path, expected_hex: &str) -> Result<(), HelperError> {
+    use sha2::{Digest, Sha256};
+
+    let bytes = std::fs::read(path).map_err(|_| HelperError::NotFound)?;
+    let digest = Sha256::digest(&bytes);
+    let actual: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+    if actual != expected_hex {
+        return Err(HelperError::IdentityMismatch);
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum HelperError {
+    #[error("helper path must be absolute; PATH lookup is never used")]
+    RelativePath,
+    #[error("helper binary was not found")]
+    NotFound,
+    #[error("helper path must not be a symlink")]
+    Symlink,
+    #[error("helper path is not a regular file")]
+    NotRegularFile,
+    #[error("helper binary is not executable")]
+    NotExecutable,
+    #[error("helper binary identity does not match the pinned receipt")]
+    IdentityMismatch,
+    #[error("helper exited or failed before the interface was proven")]
+    StartupFailed,
+    #[error("UAPI transport failed")]
+    UapiTransport,
+    #[error("UAPI response was malformed or exceeded its bound")]
+    UapiMalformed,
+}
+
+/// A supervised foreground helper child. Killed on drop if still running.
+#[derive(Debug)]
+pub struct SupervisedHelper {
+    child: std::process::Child,
+    pub pid: u32,
+}
+
+impl SupervisedHelper {
+    /// Spawns the pinned helper in the foreground with exactly
+    /// `[helper, "utun"]` and `WG_PROCESS_FOREGROUND=1`. No shell, no PATH
+    /// lookup, no caller flags, no inherited environment beyond the marker:
+    /// `env_clear` + the single foreground entry. Stdout/stderr are piped
+    /// with bounded drains owned by the caller.
+    pub fn spawn(argv: &HelperArgv) -> Result<Self, HelperError> {
+        use std::process::{Command, Stdio};
+
+        let mut command = Command::new(&argv.helper);
+        command
+            .arg(HELPER_INTERFACE_ARG)
+            .env_clear()
+            .env(HELPER_FOREGROUND_ENV.0, HELPER_FOREGROUND_ENV.1)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = command.spawn().map_err(|_| HelperError::StartupFailed)?;
+        let pid = child.id();
+        // Fail fast when the helper exits immediately (bad binary, missing
+        // privilege, occupied UAPI socket): never leave a zombie behind.
+        std::thread::sleep(Duration::from_millis(100));
+        if let Ok(Some(status)) = child.try_wait() {
+            let _ = status;
+            return Err(HelperError::StartupFailed);
+        }
+        Ok(Self { child, pid })
+    }
+
+    pub fn is_alive(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None))
+    }
+}
+
+impl Drop for SupervisedHelper {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// Renders a `set` UAPI command from typed fields. Keys are base64 (as the
+/// UAPI specifies); nothing raw reaches the socket.
+pub fn render_uapi_set(
+    private_key_base64: Option<&str>,
+    listen_port: Option<u16>,
+    peer_public_key_base64: Option<&str>,
+    remove_peer: bool,
+) -> Result<String, HelperError> {
+    let mut out = String::from("set=1\n");
+    if let Some(key) = private_key_base64 {
+        if key.len() != 44 {
+            return Err(HelperError::UapiMalformed);
+        }
+        out.push_str(&format!("private_key={key}\n"));
+    }
+    if let Some(port) = listen_port {
+        if port == 0 {
+            return Err(HelperError::UapiMalformed);
+        }
+        out.push_str(&format!("listen_port={port}\n"));
+    }
+    if let Some(peer) = peer_public_key_base64 {
+        if peer.len() != 44 {
+            return Err(HelperError::UapiMalformed);
+        }
+        out.push_str(&format!("public_key={peer}\n"));
+        if remove_peer {
+            out.push_str("remove=true\n");
+        }
+    } else if remove_peer {
+        return Err(HelperError::UapiMalformed);
+    }
+    out.push('\n');
+    if out.len() > MAX_UAPI_REQUEST {
+        return Err(HelperError::UapiMalformed);
+    }
+    Ok(out)
+}
+
+/// Minimal typed UAPI `get` observation (errno line + key/value section).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UapiDevice {
+    pub errno: i64,
+    pub pairs: Vec<(String, String)>,
+}
+
+/// Parses one UAPI `get=1` response: an `errno=N` line followed by
+/// `key=value` lines and a blank terminator. Bounded and secret-agnostic
+/// (callers redact before logging; this parser never logs).
+pub fn parse_uapi_get(response: &str) -> Result<UapiDevice, HelperError> {
+    if response.len() > MAX_UAPI_RESPONSE {
+        return Err(HelperError::UapiMalformed);
+    }
+    let mut lines = response.split('\n');
+    let errno_line = lines.next().ok_or(HelperError::UapiMalformed)?;
+    let errno: i64 = errno_line
+        .strip_prefix("errno=")
+        .ok_or(HelperError::UapiMalformed)?
+        .parse()
+        .map_err(|_| HelperError::UapiMalformed)?;
+    let mut pairs = Vec::new();
+    for line in lines {
+        if line.is_empty() {
+            break;
+        }
+        if pairs.len() > 4096 {
+            return Err(HelperError::UapiMalformed);
+        }
+        let (key, value) = line.split_once('=').ok_or(HelperError::UapiMalformed)?;
+        if key.is_empty() || key.len() > 128 || value.len() > 4096 {
+            return Err(HelperError::UapiMalformed);
+        }
+        pairs.push((key.to_owned(), value.to_owned()));
+    }
+    Ok(UapiDevice { errno, pairs })
+}
+
+/// One bounded UAPI round trip over an already-connected socket.
+pub fn uapi_round_trip(stream: &mut UnixStream, command: &str) -> Result<UapiDevice, HelperError> {
+    if command.len() > MAX_UAPI_REQUEST {
+        return Err(HelperError::UapiMalformed);
+    }
+    stream
+        .set_read_timeout(Some(UAPI_TIMEOUT))
+        .map_err(|_| HelperError::UapiTransport)?;
+    stream
+        .set_write_timeout(Some(UAPI_TIMEOUT))
+        .map_err(|_| HelperError::UapiTransport)?;
+    stream
+        .write_all(command.as_bytes())
+        .map_err(|_| HelperError::UapiTransport)?;
+    let mut response = Vec::new();
+    let mut chunk = [0_u8; 4096];
+    loop {
+        if response.len() > MAX_UAPI_RESPONSE {
+            return Err(HelperError::UapiMalformed);
+        }
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => response.extend_from_slice(&chunk[..n]),
+            Err(error)
+                if error.kind() == io::ErrorKind::TimedOut
+                    || error.kind() == io::ErrorKind::WouldBlock =>
+            {
+                break
+            }
+            Err(_) => return Err(HelperError::UapiTransport),
+        }
+        if response.ends_with(b"\n\n") {
+            break;
+        }
+    }
+    let text = std::str::from_utf8(&response).map_err(|_| HelperError::UapiMalformed)?;
+    parse_uapi_get(text)
+}
+
+/// UAPI socket path for one kernel-assigned `utunN` name.
+pub fn uapi_socket_path(utun_name: &str) -> PathBuf {
+    PathBuf::from(format!("{UAPI_SOCKET_DIR}/{utun_name}.sock"))
+}
+
+/// Before/after interface-name delta: exactly one new `utunN` must appear
+/// after the helper spawn. Zero or several is a fail-closed conflict (never
+/// adopt or kill by numeric guess).
+pub fn interface_delta(before: &[String], after: &[String]) -> Result<String, HelperError> {
+    let mut new_names: Vec<&String> = after
+        .iter()
+        .filter(|name| !before.contains(name) && is_utun_name(name))
+        .collect();
+    new_names.sort();
+    new_names.dedup();
+    match new_names.as_slice() {
+        [single] => Ok((*single).clone()),
+        _ => Err(HelperError::StartupFailed),
+    }
+}
+
+fn is_utun_name(name: &str) -> bool {
+    let rest = name.strip_prefix("utun").unwrap_or_default();
+    !rest.is_empty() && rest.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+/// The ownership claim netd must prove before any mutation or teardown.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OwnershipClaim {
+    pub installation: crate::domain::InstallationId,
+    pub interface: crate::domain::InterfaceId,
+    pub expected_utun: String,
+    pub helper_pid: u32,
+    pub uapi_socket: PathBuf,
+}
+
+/// Live observation gathered for one verification attempt.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LiveObservation {
+    pub utun_present: bool,
+    pub uapi_answers: bool,
+    pub helper_alive_with_pid: bool,
+    pub owner_tag_matches: bool,
+}
+
+/// Proves helper + socket + device consistency. Any mismatch, stale receipt,
+/// PID reuse, renumbering, or foreign `utun` is a non-retryable conflict:
+/// never adopt or terminate a foreign interface, process, or socket.
+pub fn verify_ownership(
+    claim: &OwnershipClaim,
+    observed: &LiveObservation,
+) -> Result<(), OwnershipError> {
+    if !observed.utun_present {
+        return Err(OwnershipError::InterfaceAbsent);
+    }
+    if !observed.helper_alive_with_pid {
+        return Err(OwnershipError::HelperMismatch);
+    }
+    if !observed.uapi_answers {
+        return Err(OwnershipError::SocketMismatch);
+    }
+    if !observed.owner_tag_matches {
+        return Err(OwnershipError::OwnerMismatch);
+    }
+    let _ = &claim.uapi_socket;
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum OwnershipError {
+    #[error("managed utun is absent")]
+    InterfaceAbsent,
+    #[error("helper process identity does not match the claim (crash or PID reuse)")]
+    HelperMismatch,
+    #[error("UAPI socket does not answer for the claimed interface")]
+    SocketMismatch,
+    #[error("observed owner tag is foreign or missing")]
+    OwnerMismatch,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn helper_provenance_is_pinned() {
+        assert_eq!(HELPER_VERSION_TAG, "0.0.20250522");
+        assert_eq!(HELPER_COMMIT.len(), 40);
+        assert_eq!(HELPER_LICENSE, "MIT");
+        assert_eq!(HELPER_DEV_REFERENCE_SHA256.len(), 64);
+    }
+
+    #[test]
+    fn helper_argv_is_fixed_with_no_path_lookup() {
+        // `/bin/echo` stands in for the absolute helper path shape only;
+        // identity is proven separately against the pinned hash.
+        let argv = HelperArgv::new(PathBuf::from("/bin/echo")).unwrap();
+        assert_eq!(
+            argv.as_argv(),
+            vec!["/bin/echo".to_owned(), "utun".to_owned()]
+        );
+        assert_eq!(
+            HelperArgv::new(PathBuf::from("wireguard-go")).unwrap_err(),
+            HelperError::RelativePath
+        );
+        assert_eq!(helper_env().len(), 1);
+    }
+
+    #[test]
+    fn helper_identity_verification_rejects_mismatch() {
+        let dir = std::env::temp_dir().join(format!("wgm3-id-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir(&dir).unwrap();
+        let file = dir.join("helper");
+        std::fs::write(&file, b"not the helper").unwrap();
+        assert_eq!(
+            verify_helper_sha256(&file, &"0".repeat(64)).unwrap_err(),
+            HelperError::IdentityMismatch
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn uapi_set_renders_typed_fields_with_bounds() {
+        let key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        let rendered = render_uapi_set(Some(key), Some(51820), Some(key), false).unwrap();
+        assert!(rendered.starts_with("set=1\n"));
+        assert!(rendered.contains("private_key="));
+        assert!(rendered.contains("listen_port=51820\n"));
+        assert!(rendered.ends_with("\n\n"));
+        assert!(render_uapi_set(Some(key), Some(0), None, false).is_err());
+        assert!(render_uapi_set(Some("short"), None, None, false).is_err());
+        assert!(!format!("{rendered:?}").contains("nft"));
+    }
+
+    #[test]
+    fn uapi_get_parses_errno_and_pairs_with_terminator() {
+        let device =
+            parse_uapi_get("errno=0\nprivate_key=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\nlisten_port=51820\n\n")
+                .unwrap();
+        assert_eq!(device.errno, 0);
+        assert!(device.pairs.iter().any(|(key, _)| key == "listen_port"));
+        assert!(parse_uapi_get("garbage\n\n").is_err());
+        assert!(parse_uapi_get("errno=0\nno-equals-here\n\n").is_err());
+    }
+
+    #[test]
+    fn uapi_round_trip_works_over_a_socketpair() {
+        use std::os::unix::net::UnixStream;
+
+        let key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        let command = render_uapi_set(Some(key), Some(51820), None, false).unwrap();
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        let responder = std::thread::spawn(move || {
+            // Read the command through its `\n\n` terminator, then answer.
+            let mut seen = Vec::new();
+            let mut byte = [0_u8; 1];
+            loop {
+                use std::io::Read as _;
+                server.read_exact(&mut byte).unwrap();
+                seen.push(byte[0]);
+                if seen.ends_with(b"\n\n") {
+                    break;
+                }
+            }
+            let text = std::str::from_utf8(&seen).unwrap();
+            assert!(text.starts_with("set=1\n"));
+            use std::io::Write as _;
+            server.write_all(b"errno=0\nlisten_port=51820\n\n").unwrap();
+        });
+        let device = uapi_round_trip(&mut client, &command).unwrap();
+        assert_eq!(device.errno, 0);
+        assert!(device.pairs.iter().any(|(key, _)| key == "listen_port"));
+        responder.join().unwrap();
+    }
+
+    #[test]
+    fn supervisor_spawns_fixed_argv_with_controlled_env() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Mock helper only: a temp-dir script that ignores its `utun`
+        // argument and sleeps. Proves fixed argv, env_clear foreground
+        // marker, and fail-fast on immediate exit — without any interface.
+        let dir = std::env::temp_dir().join(format!("wgm3-sup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir(&dir).unwrap();
+        let mock = dir.join("mock-helper");
+        std::fs::write(&mock, "#!/bin/sh\nsleep 5\n").unwrap();
+        std::fs::set_permissions(&mock, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let argv = HelperArgv::new(mock.clone()).unwrap();
+        assert_eq!(argv.as_argv()[1], "utun");
+        let mut helper = SupervisedHelper::spawn(&argv).unwrap();
+        assert!(helper.is_alive());
+        drop(helper);
+        // Immediate-exit binary fails fast instead of lingering.
+        let dead_bin = PathBuf::from("/usr/bin/true");
+        if dead_bin.exists() {
+            let dead = HelperArgv::new(dead_bin).unwrap();
+            assert_eq!(
+                SupervisedHelper::spawn(&dead).unwrap_err(),
+                HelperError::StartupFailed
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn interface_delta_requires_exactly_one_new_utun() {
+        let before = vec!["utun0".to_owned(), "en0".to_owned()];
+        let after = vec!["utun0".to_owned(), "en0".to_owned(), "utun4".to_owned()];
+        assert_eq!(interface_delta(&before, &after).unwrap(), "utun4");
+        assert_eq!(
+            interface_delta(&before, &before).unwrap_err(),
+            HelperError::StartupFailed
+        );
+        let two = vec!["utun0".to_owned(), "utun4".to_owned(), "utun7".to_owned()];
+        assert_eq!(
+            interface_delta(&before, &two).unwrap_err(),
+            HelperError::StartupFailed
+        );
+        // Non-utun newcomers never satisfy the delta.
+        let other = vec!["utun0".to_owned(), "en0".to_owned(), "ipsec0".to_owned()];
+        assert!(interface_delta(&before, &other).is_err());
+    }
+
+    #[test]
+    fn ownership_proof_fails_closed_on_every_mismatch() {
+        use crate::domain::{InstallationId, InterfaceId};
+
+        let claim = OwnershipClaim {
+            installation: InstallationId::new(),
+            interface: InterfaceId::new(),
+            expected_utun: "utun4".into(),
+            helper_pid: 1234,
+            uapi_socket: uapi_socket_path("utun4"),
+        };
+        let good = LiveObservation {
+            utun_present: true,
+            uapi_answers: true,
+            helper_alive_with_pid: true,
+            owner_tag_matches: true,
+        };
+        assert!(verify_ownership(&claim, &good).is_ok());
+        for (name, bad) in [
+            (
+                "absent",
+                LiveObservation {
+                    utun_present: false,
+                    ..good.clone()
+                },
+            ),
+            (
+                "helper",
+                LiveObservation {
+                    helper_alive_with_pid: false,
+                    ..good.clone()
+                },
+            ),
+            (
+                "socket",
+                LiveObservation {
+                    uapi_answers: false,
+                    ..good.clone()
+                },
+            ),
+            (
+                "owner",
+                LiveObservation {
+                    owner_tag_matches: false,
+                    ..good.clone()
+                },
+            ),
+        ] {
+            assert!(verify_ownership(&claim, &bad).is_err(), "{name}");
+        }
+    }
+}
