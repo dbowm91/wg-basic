@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-11 (R001–R004a closed; R004b waived by maintainer decision — checksums-only releases, `v0.1.0` stable; solo-maintainer policy with zero required PR approvals)
+Last planning reconciliation: 2026-10-13 (macOS server planning added; prior release policy retained; 2026-10-11 (R001–R004a closed; R004b waived by maintainer decision — checksums-only releases, `v0.1.0` stable; solo-maintainer policy with zero required PR approvals))
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -21,6 +21,7 @@ This file is the compact control surface for active wg-basic planning. Detailed 
 | `plans/adr/005-operational-hardening-maintenance-and-recovery.md` | accepted Phase 9 diagnostics/maintenance/recovery/security architecture |
 | `plans/adr/006-distribution-install-authenticity-and-update.md` | accepted Phase 10 release/install/authenticity/update architecture |
 | `plans/adr/007-ipv6-forwarding-ownership.md` | accepted Phase 11 global IPv6 forwarding ownership contract |
+| `plans/adr/008-macos-headless-platform-backends.md` | accepted staged headless macOS support direction; PF/NAT remains gated by Apple TN3165 |
 
 Authority order for implementation handoff:
 
@@ -75,8 +76,28 @@ Runtime dependency adoption remains evidence-driven.
 | Distribution/install/update | closed (technical) | `plans/subsystems/distribution-install-update-roadmap.md` | M001–M005 closed; production release remains blocked on signing |
 | IPv6/route-policy qualification | closed | `plans/subsystems/ipv6-route-policy-roadmap.md` | M001–M004 closed; `plans/closure/ipv6-route-policy/004-status.md` |
 | Release readiness and supply-chain security | closed (R004b waived; checksums-only releases) | `plans/subsystems/release-readiness-security-roadmap.md` | R001–R004a closed; waiver `004b-waiver-status.md` |
+| Headless macOS native server/gateway | planned | `plans/subsystems/macos-native-server-roadmap.md` | M001 ready; M002–M007 gated by predecessor closure and M005 PF/Apple-policy decision |
 
 Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
+
+## 4A. Active macOS server planning handoff (not implemented)
+
+Architecture: `plans/adr/008-macos-headless-platform-backends.md`.
+Canonical new roadmap: `plans/subsystems/macos-native-server-roadmap.md`.
+Baseline: `47c72b0e81d569d48396c615120453bf0cf1d46e` (Linux stable `v0.1.0` remains unchanged).
+All plans are planning-only; no implementation or closure evidence exists for macOS.
+
+| Milestone | Status | Handoff |
+|---|---|---|
+| M001 portability/Cargo/build/typed platform seams | **ready** | `plans/implementation/macos-native-server/001-portable-boundaries-and-darwin-build.md` |
+| M002 Darwin IPC, peer identity and doctor | blocked on M001 | `plans/implementation/macos-native-server/002-darwin-privileged-ipc-and-capabilities.md` |
+| M003 wireguard-go/utun lifecycle/UAPI | blocked on M002 | `plans/implementation/macos-native-server/003-wireguard-go-utun-backend.md` |
+| M004 address/route ownership and Darwin reconciliation | blocked on M003 | `plans/implementation/macos-native-server/004-darwin-interface-address-route-reconciliation.md` |
+| M005 forwarding, PF/NAT and Apple policy review | blocked on M004 and PF-support decision | `plans/implementation/macos-native-server/005-forwarding-pf-nat-and-platform-policy.md` |
+| M006 launchd, installer, helper provenance and recovery | blocked on M005 | `plans/implementation/macos-native-server/006-launchd-installation-distribution-and-recovery.md` |
+| M007 native dual-arch E2E, security and release qualification | blocked on M006 | `plans/implementation/macos-native-server/007-native-e2e-security-release-qualification.md` |
+
+Explicit macOS stop gate: Apple TN3165 warns PF is not an API for broad product use. PF anchor/NAT capability for advanced-admin deployments must be documented, qualified and approved separately before advertising full macOS gateway support. Do not modify foreign PF configuration automatically or accept compilation as networking evidence. Linux remains canonical and strictly qualified.
 
 ## 5. Implementation plan status (including external gates)
 
