@@ -24,8 +24,12 @@ impl WireGuardBackend {
     pub fn apply_patch(
         &self,
         _interface: &InterfaceName,
-        _patch: WireGuardDevicePatch,
+        patch: WireGuardDevicePatch,
     ) -> Result<WireGuardApplyReceipt, WireGuardValidationError> {
+        // Validate before reporting unsupported: malformed input is
+        // `InvalidInput`, not a backend state, on both OSes (M003 owns the
+        // Darwin userspace backend; M002 only needs the honest distinction).
+        validate_device_patch(&patch)?;
         Err(WireGuardValidationError::UnsupportedBackend)
     }
 }

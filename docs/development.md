@@ -45,6 +45,25 @@ cargo run --locked -- serve \
   --socket /tmp/wg-basic-runtime/netd.sock
 ```
 
+## macOS privileged IPC (M002)
+
+Darwin `netd` serves the same narrow authorized UDS protocol as Linux, with
+`getpeereid(3)` peer credentials checked on every connection. Default policy
+is the current user only with no root bypass; pass `--allow-uid` explicitly
+for the management-service UID. Run both processes manually with documented
+identities (launchd service identities land in M006):
+
+```sh
+install -d -m 700 /tmp/wg-basic-runtime
+cargo run --locked -- netd --socket /tmp/wg-basic-runtime/netd.sock
+```
+
+In another terminal, `serve` reaches it only over the authorized socket, and
+`doctor --json` reports the Darwin capability snapshot (no Linux `CapEff`,
+Linux backends `unavailable`, helper/PF untested until M003/M005). Network
+operations beyond `ping`/`inspect_capabilities` return `UnsupportedBackend`
+until their milestone backends land.
+
 The default unit/protocol suite does not require root or network namespace setup. The Linux WireGuard backend mutates only through typed requests to an existing device; real-kernel integration suites create temporary namespaces and fixture links and require root, `CAP_NET_ADMIN`, `iproute2`, `iputils-ping`, and kernel WireGuard support. Dual-stack tunnel addressing and explicit family-correct client route config are qualified by product and export tests. Hosted `product-management-rootful` exercises the authenticated full-tunnel export, real client handshake and dual-family tunnel traffic, disable/re-enable, and restart/reapply. The `network-control-e2e` fixture carries IPv4 and IPv6 full-tunnel traffic, then changes to split prefixes and proves selected destinations pass while destinations outside those prefixes do not. It also qualifies routed IPv6 forwarding, upstream return routing, foreign-state preservation, sticky forwarding, and absence of NAT66.
 
 The installed serve unit runs `doctor` as the management account before each
