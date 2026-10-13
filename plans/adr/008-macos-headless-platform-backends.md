@@ -1,0 +1,65 @@
+# ADR-008 — Headless macOS server support behind platform-specific network backends
+
+Status: accepted for architecture and staged research; PF/NAT production strategy is an explicit unresolved gate
+
+Date: 2026-10-13
+
+Supersedes: no Linux ADR. Extends ADR-001's portability provision without altering the qualified Linux kernel backend.
+
+## 1. Context and decision scope
+
+wg-basic currently ships as a Linux-native WireGuard server administration appliance. Its desired-state SQLite database, authentication, management worker, HTTP/API/UI, enrollment, and typed reconciliation contracts are reusable, but the CLI is Linux-gated and the network implementation assumes Generic Netlink, RTNETLINK, IFLA_IFALIAS, nftables, Linux peer credentials, systemd, and two Linux GNU release targets. macOS support means a *headless server/gateway installed on a Mac*, not packaging client configuration for an existing official WireGuard macOS app or writing a consumer VPN client.
+
+The maintainer has authorized development planning for full native macOS support. Preserve Linux as the canonical, already-qualified deployment and treat Darwin behavior as an additional implementation/qualification target. A successful Darwin build alone is not product support.
+
+## 2. Options and evidence
+
+- Retain Linux-only: lowest risk, rejects desired new platform.
+- Use wireguard-go for a Darwin utun dataplane, with a narrow WireGuard UAPI adapter: mature upstream implementation, at the cost of a separately packaged Go executable. Upstream explicitly documents macOS utun, the dynamic name selected by passing "utun", WG_TUN_NAME_FILE, lack of sticky sockets and lack of fwmark; see https://github.com/WireGuard/wireguard-go and its canonical repository https://git.zx2c4.com/wireguard-go .
+- Embed a Rust userspace dataplane such as BoringTun: potentially one executable but substantially greater initial lifecycle/compatibility work; re-evaluate only after measuring.
+- Apple Network Extension / WireGuardKit: native OS app-extension lifecycle and entitlements, but unlike a headless traditional forwarding/NAT gateway; not the initial architecture. Revisit if Apple's platform restrictions prevent the desired server model.
+- Reimplement WireGuard cryptography/protocol: rejected.
+
+Important constraint: Apple TN3165 (https://developer.apple.com/documentation/technotes/tn3165-packet-filter-is-not-api) specifically warns that PF is NOT a product API for software distributed to a wide audience; it is intended for system implementations and advanced user/admin use. Therefore, the existence of pfctl or PF anchors DOES NOT establish that general-distribution macOS gateway/NAT support can be promised. An admin-opt-in PF integration may be studied and qualified for expert-operated headless installations only, with a separate product-support/distribution decision before release. If unacceptable, investigate an Apple-supported architecture and re-scope rather than disguise the risk.
+
+## 3. Decision
+
+1. Preserve the unprivileged serve / privileged netd split, typed authenticated UDS protocol, single authoritative desired-state store, generation/CAS semantics, replay-safe receipts, and narrow mutation vocabulary.
+2. Introduce explicit platform-specific implementations under shared typed network intent, with Linux remaining unchanged in behavior. Do not use a generic subprocess, ioctl, PF source, file-write, or sysctl-path passthrough in IPC.
+3. Select the upstream wireguard-go foreground helper for the *first Darwin dataplane prototype*; no broad dependency installation, root PATH discovery, or unverified executable is allowed in production. Bundled-helper packaging is an acknowledged exception to the *one shipped executable* goal on macOS, to be measured and justified.
+4. Separate logical managed tunnel identity from OS-assigned utunN name. A utun name, a UAPI socket path, or a PID alone is insufficient resource ownership proof. Require identity-linked protected runtime evidence plus matching process, socket, and device observations before destructive mutation; uncertain ownership is a non-retryable conflict.
+5. Use Darwin-native explicit link/address/route control where practical, with platform-selected typed observation and apply. Do not introduce wg-quick/shell hooks.
+6. Allow a macOS PF/NAT backend *only if* M005 demonstrates installable, scoped, reversible ownership, correct effective filter/NAT attachment, conservative interaction with foreign PF rules and host state, and an acceptable admin/distribution model under TN3165. No global flush/reload, opportunistic /etc/pf.conf replacement, disabling foreign PF state, or silent modifications.
+7. Prefer system LaunchDaemons for headless management/netd service identities and explicit install receipts. Keep signing/notarization and unsigned-release trust statements accurate; do not introduce a faux signed-update pathway.
+
+## 4. Normative invariants
+
+- SQLite alone is the desired-state authority. A runtime lease/receipt is **evidence**, not a second desired-state database.
+- Any mutating service must re-observe and revalidate ownership after crashes, utun renumbering, and helper restarts. A stale receipt can never authorize deletion of a foreign link.
+- The Darwin endpoint must not be able to request arbitrary process execution, filesystem paths, PF code, sysctls, socket names, or service labels through the remote management path.
+- On unsupported capabilities, incomplete anchor attachment, ambiguous resource identity, changed helper binary, or inconsistent forwarding/NAT state: fail closed with an actionable error; preserve unrelated network objects.
+- Linux's current kernel-dataplane, nftables, netlink, systemd and release gates remain normative *on Linux*. On macOS equivalent assurance is established by native tests, not by pretending Linux namespace tests ran.
+- Do not claim an OS-compatible install until the complete peer handshake, forwarding/NAT where advertised, disable, restart, network-change recovery, and uninstall/preservation gates pass.
+- IPv4 NAT is an explicit macOS capability gate; IPv6 routed-no-NAT66 policy remains the intended long-term behavior. Global forwarding toggles have shared-host consequences and are not owned for reset by wg-basic.
+- macOS clients of a Linux wg-basic server require no new macOS server backend, and are not the scope of this ADR.
+
+## 5. Contract/migration/distribution consequences
+
+Share only truly portable types and projections. The current Linux interface alias and nft object names are backend-specific observation metadata; do not serialize them as universal ownership proof. Introducing platform locator or receipt fields requires a compatible, explicitly versioned schema/protocol migration and old-database qualification; prefer avoiding schema changes until justified. Old Linux installation states must remain readable, exported WireGuard client configurations identical by default, and Linux release artifacts/installer behavior unchanged.
+
+Darwin targets: aarch64-apple-darwin and x86_64-apple-darwin (support floor established in M001). Apple Silicon qualification and Intel native evidence are distinct; no Rosetta-only evidence counts as native Intel support. The macOS helper's upstream license, pinned source revision, reproducibility/provenance, signing decisions, and binary identity must be recorded before release.
+
+## 6. Integration and closure consequences
+
+Follow plans/subsystems/macos-native-server-roadmap.md M001–M007. M001 establishes the portability boundary; M002 native IPC; M003 real userspace handshake/telemetry; M004 host resources; M005 PF/NAT feasibility and gateway evidence; M006 launchd/distribution/rollback; M007 native platform security and release qualification. Do not mark dependent stages ready until predecessor hard dependencies close.
+
+Gate M005 explicitly: if PF conflicts with Apple platform guidance, cannot coexist with host services, or safe anchor attachment cannot be proven, STOP and return to ADR review. Do not silently claim full macOS support with unqualified NAT.
+
+## 7. Source references
+
+- Upstream wireguard-go macOS usage: https://github.com/WireGuard/wireguard-go
+- Apple getpeereid manual: https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/getpeereid.3.html
+- Darwin pf.conf and pfctl: https://keith.github.io/xcode-man-pages/pf.conf.5.html and https://keith.github.io/xcode-man-pages/pfctl.8.html
+- Apple's PF product compatibility warning: https://developer.apple.com/documentation/technotes/tn3165-packet-filter-is-not-api
+- launchd service contract: https://github.com/apple-oss-distributions/launchd/blob/main/man/launchd.plist.5
+- Existing wg-basic: plans/adr/001-linux-native-control-plane.md; architecture/overview.md; architecture/privilege-boundary.md; architecture/firewall.md; architecture/reconciliation.md.
