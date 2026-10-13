@@ -1,6 +1,6 @@
 # macOS Native Server M001 — Portable Boundaries and Native Darwin Build
 
-Status: ready for implementation
+Status: **closed** (`9c99fc6`; closure `plans/closure/macos-native-server/001-status.md`, 2026-10-13)
 Primary class: infrastructure / invariant
 Source: plans/subsystems/macos-native-server-roadmap.md M001
 Baseline: main 47c72b0e81d569d48396c615120453bf0cf1d46e (2026-10-11); rebase/revalidate against actual implementation head before applying.
