@@ -1,0 +1,127 @@
+name: macOS qualification
+
+# Native macOS server-line qualification on disposable GitHub-hosted runners.
+# Scope (binding): ephemeral runners only, TEST-NET-1 addresses, loopback
+# peering, per-run anchor/job names. No default-route surgery, no global
+# forwarding change, no `pfctl -e`, no /etc/pf.conf write, no NAT traffic.
+# Forwarded/NAT traffic, reboot/reinstall, and any release stay unqualified.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [plans/macos-native-support]
+
+permissions:
+  contents: read
+
+jobs:
+  gates-arm64:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo check --all-targets --locked
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+      - run: cargo check --target aarch64-apple-darwin --locked --all-targets
+      - run: cargo check --target x86_64-apple-darwin --locked --all-targets
+      - run: cargo +1.89.0 check --all-targets --locked
+
+  live-arm64:
+    needs: [gates-arm64]
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the pinned wireguard-go helper and verify provenance
+        run: |
+          go version
+          git clone --branch 0.0.20250522 --depth 1 https://github.com/WireGuard/wireguard-go "$RUNNER_TEMP/wireguard-go-src"
+          git -C "$RUNNER_TEMP/wireguard-go-src" rev-parse 'HEAD^{commit}'
+          test "$(git -C "$RUNNER_TEMP/wireguard-go-src" rev-parse 'HEAD^{commit}')" = "f333402bd9cbe0f3eeb02507bd14e23d7d639280"
+          grep -q 'MIT License' "$RUNNER_TEMP/wireguard-go-src/LICENSE"
+          go build -o "$RUNNER_TEMP/wireguard-go" "$RUNNER_TEMP/wireguard-go-src"
+          shasum -a 256 "$RUNNER_TEMP/wireguard-go" | tee "$RUNNER_TEMP/wireguard-go.sha256"
+      - name: Build the wg-basic binary and the live test target
+        run: |
+          cargo build --locked --bin wg-basic
+          cargo test --locked --no-run --test wireguard_darwin_live
+      - name: Qualify M003/M004/M005/M006 live fixtures as root (disposable host)
+        run: |
+          test_binary=$(ls -t "$PWD"/target/debug/deps/wireguard_darwin_live-* | grep -v '\.' | head -1)
+          echo "live test binary: $test_binary"
+          sudo \
+            "WGB_DARWIN_LIVE=1" \
+            "WGB_WIREGUARD_GO=$RUNNER_TEMP/wireguard-go" \
+            "WGB_HELPER_SHA256=$(cut -d' ' -f1 "$RUNNER_TEMP/wireguard-go.sha256")" \
+            "WGB_BINARY=$PWD/target/debug/wg-basic" \
+            "WGB_EVIDENCE_DIR=$RUNNER_TEMP/wgb-evidence" \
+            "$test_binary" --ignored --test-threads=1 --nocapture
+      - name: Upload live evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-live-evidence-arm64
+          path: ${{ runner.temp }}/wgb-evidence
+          if-no-files-found: warn
+
+  gates-intel:
+    runs-on: macos-15-intel
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo check --all-targets --locked
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+
+  live-intel-tunnel:
+    needs: [gates-intel]
+    runs-on: macos-15-intel
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the pinned wireguard-go helper and verify provenance
+        run: |
+          go version
+          git clone --branch 0.0.20250522 --depth 1 https://github.com/WireGuard/wireguard-go "$RUNNER_TEMP/wireguard-go-src"
+          test "$(git -C "$RUNNER_TEMP/wireguard-go-src" rev-parse 'HEAD^{commit}')" = "f333402bd9cbe0f3eeb02507bd14e23d7d639280"
+          go build -o "$RUNNER_TEMP/wireguard-go" "$RUNNER_TEMP/wireguard-go-src"
+          shasum -a 256 "$RUNNER_TEMP/wireguard-go" | tee "$RUNNER_TEMP/wireguard-go.sha256"
+      - name: Build the live test target
+        run: cargo test --locked --no-run --test wireguard_darwin_live
+      - name: Qualify M003/M004 live fixtures as root (disposable host)
+        run: |
+          test_binary=$(ls -t "$PWD"/target/debug/deps/wireguard_darwin_live-* | grep -v '\.' | head -1)
+          echo "live test binary: $test_binary"
+          sudo \
+            "WGB_DARWIN_LIVE=1" \
+            "WGB_WIREGUARD_GO=$RUNNER_TEMP/wireguard-go" \
+            "WGB_HELPER_SHA256=$(cut -d' ' -f1 "$RUNNER_TEMP/wireguard-go.sha256")" \
+            "WGB_EVIDENCE_DIR=$RUNNER_TEMP/wgb-evidence" \
+            "$test_binary" --ignored --test-threads=1 --nocapture \
+              live_loopback_handshake_and_traffic live_route_inventory_preserved
+      - name: Upload live evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-live-evidence-intel
+          path: ${{ runner.temp }}/wgb-evidence
+          if-no-files-found: warn
