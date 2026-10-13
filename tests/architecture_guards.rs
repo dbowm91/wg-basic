@@ -1049,7 +1049,9 @@ fn the_admin_cli_offers_no_argv_or_environment_secret_path() {
     // acceptable input is this process's own standard input, behind a flag that
     // is mandatory.
     let main = code_only(source_of("src/main.rs"));
-    for forbidden in ["env::var", "std::env", "env!(\"WG_BASIC"] {
+    // `std::env::consts` (compile-time OS/arch) is not an environment read;
+    // only actual runtime environment/argv access is forbidden here.
+    for forbidden in ["env::var", "std::env::var", "env!(\"WG_BASIC"] {
         assert!(
             !main.contains(forbidden),
             "the CLI must not read a secret from the environment ({forbidden})"
@@ -1760,21 +1762,26 @@ fn the_long_running_roles_catch_a_supervisors_termination_signal() {
     );
 
     let main = shippable(source_of("src/main.rs"));
-    // Exactly the two roles that run forever install the handler: `netd` and
-    // `serve`. A third would mean some one-shot command had started waiting for
-    // a signal it will never receive.
+    // The roles that run forever install the handler: Linux `netd` + `serve`
+    // and Darwin `netd` (M002; Darwin `serve` reuses the same portable `serve`
+    // function as Linux, so it shares that handler). A fourth would mean some
+    // one-shot command had started waiting for a signal it will never receive.
     assert_eq!(
         main.matches("ctrlc::set_handler").count(),
-        2,
-        "exactly the netd and serve roles install a shutdown handler; a one-shot \
-         command must not"
+        3,
+        "the Linux netd, Linux/Darwin serve, and Darwin netd roles install a \
+         shutdown handler; a one-shot command must not"
     );
     for arm in ["Some(Command::Netd {", "Some(Command::Serve"] {
         assert!(
             main.contains(arm),
-            "the `{arm}` role should exist and be one of the two that run forever"
+            "the `{arm}` role should exist and be one of the roles that run forever"
         );
     }
+    assert!(
+        main.contains("fn run_darwin_netd"),
+        "the Darwin netd role owns the third handler"
+    );
 }
 
 #[test]

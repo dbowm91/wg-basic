@@ -21,10 +21,8 @@
 mod auth;
 mod capability;
 mod client;
-#[cfg(target_os = "linux")]
 mod dispatch;
 mod framing;
-#[cfg(target_os = "linux")]
 mod socket;
 mod wire;
 
@@ -32,7 +30,6 @@ pub use auth::AuthorizationPolicy;
 pub use capability::{CapabilityState, NetworkCapabilitySnapshot};
 pub use client::request;
 pub use framing::{read_frame, write_frame, MAX_FRAME_SIZE};
-#[cfg(target_os = "linux")]
 pub use socket::SocketServer;
 pub use wire::{
     InstallationNetworkApplyBody, InstallationNetworkPlanBody, ProtocolError, RequestEnvelope,

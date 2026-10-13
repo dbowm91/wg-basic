@@ -383,18 +383,81 @@ fn run_darwin(command: Option<Command>) -> Result<(), String> {
             canonical_origin,
             allow_non_loopback,
         ),
-        Some(Command::Netd { .. }) => Err(
-            "netd is not supported on macOS in M001: Darwin privileged IPC lands in M002".into(),
-        ),
+        Some(Command::Netd {
+            socket,
+            allowed_uids,
+            allowed_users,
+        }) => run_darwin_netd(socket, allowed_uids, allowed_users),
         Some(Command::Admin { action }) => run_admin_action(action),
         Some(Command::State { action }) => run_state_action(action),
         Some(Command::Network { action }) => run_network_action(action),
     }
 }
 
-/// M001 Darwin doctor: the same read-only state checks as Linux, a netd probe
-/// that reports unavailable without Linux error text, and Darwin
-/// forwarding checks that never read `/proc`.
+/// M002 Darwin privileged network service.
+///
+/// Binds the same narrow, authorized Unix-domain request/response service as
+/// Linux, with the Apple-documented `getpeereid(3)` credential source, the
+/// same bounded framing, and the same socket ownership/stale-inode lifecycle.
+/// Default policy is the current user only with no root bypass; `--allow-uid`
+/// and `--allow-user` add explicit management-service identities. Network
+/// operations beyond `Ping`/`InspectCapabilities` report `UnsupportedBackend`
+/// through the typed errors until M003–M005 land their backends.
+#[cfg(target_os = "macos")]
+fn run_darwin_netd(
+    socket: std::path::PathBuf,
+    allowed_uids: Vec<u32>,
+    allowed_users: Vec<String>,
+) -> Result<(), String> {
+    use std::sync::{atomic::AtomicBool, Arc};
+    use wg_basic::protocol::{AuthorizationPolicy, SocketServer};
+
+    let mut policy = AuthorizationPolicy::current_user();
+    policy.extend(allowed_uids);
+    let resolved = wg_basic::distribution::resolve_allowed_user_uids(&allowed_users)
+        .map_err(|_| "could not resolve a configured local netd user".to_owned())?;
+    policy.extend(resolved);
+    let server = SocketServer::bind(&socket, policy)
+        .map_err(|_| "could not safely bind the configured netd socket path".to_owned())?;
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let signal_shutdown = shutdown.clone();
+    ctrlc::set_handler(move || signal_shutdown.store(true, std::sync::atomic::Ordering::Release))
+        .map_err(|_| "could not install graceful shutdown handler".to_owned())?;
+    wg_basic::operational::emit(
+        "netd.started",
+        wg_basic::operational::Severity::Info,
+        "netd",
+        "startup",
+        "ready",
+        None,
+        None,
+        Some("uds_listener"),
+    );
+    let result = server
+        .run_until_shutdown(&shutdown)
+        .map_err(|_| "netd listener stopped after a runtime error".to_owned());
+    wg_basic::operational::emit(
+        "netd.stopping",
+        wg_basic::operational::Severity::Info,
+        "netd",
+        "shutdown",
+        if result.is_ok() {
+            "graceful"
+        } else {
+            "runtime_error"
+        },
+        None,
+        None,
+        Some("uds_listener"),
+    );
+    result
+}
+
+/// M002 Darwin doctor: the same read-only state checks as Linux, a real
+/// `getpeereid`-authenticated netd probe, and Darwin forwarding checks that
+/// never read `/proc`. With M002 netd running, `InspectCapabilities` reports
+/// the honest Darwin snapshot (no Linux `CapEff`, `network_namespaces` and
+/// Linux backends unavailable, helper/PF untested until M003/M005).
 #[cfg(target_os = "macos")]
 #[allow(clippy::too_many_arguments)]
 fn run_darwin_doctor(
@@ -409,27 +472,53 @@ fn run_darwin_doctor(
     use wg_basic::protocol::{RequestOperation, ResponseBody};
 
     let (mut checks, state_snapshot) = doctor_state_checks(&state);
-    // M001 has no Darwin netd: report unavailable honestly instead of
-    // reusing the Linux CAP_NET_ADMIN/runtime-directory wording.
     match wg_basic::protocol::request(&socket, RequestOperation::InspectCapabilities, 2) {
         Ok(ResponseBody::Capabilities(snapshot)) => {
+            let ipc_ok = snapshot.runtime_directory_safe && snapshot.os == std::env::consts::OS;
             checks.push(wg_basic::doctor::DoctorCheck::new(
                 wg_basic::doctor::DoctorCheckId::Netd,
-                wg_basic::doctor::DoctorDisposition::Unknown,
-                "netd capability state is unavailable on Darwin in M001",
+                if ipc_ok {
+                    wg_basic::doctor::DoctorDisposition::Pass
+                } else {
+                    wg_basic::doctor::DoctorDisposition::Fail
+                },
+                if ipc_ok {
+                    "netd answered over getpeereid-authorized IPC and reported its Darwin capabilities"
+                } else {
+                    "netd answered but its runtime-directory check failed"
+                },
                 format!(
-                    "darwin backend unsupported; observed os {} arch {}",
-                    snapshot.os, snapshot.architecture
+                    "uid {}; gid {}; CAP_NET_ADMIN {}; runtime directory {}; kernel {} ({})",
+                    snapshot.effective_uid,
+                    snapshot.effective_gid,
+                    snapshot
+                        .cap_net_admin
+                        .map_or("none (Darwin has no capabilities)", |value| if value {
+                            "present"
+                        } else {
+                            "absent"
+                        }),
+                    if snapshot.runtime_directory_safe {
+                        "safe"
+                    } else {
+                        "unsafe"
+                    },
+                    snapshot.kernel_release.as_deref().unwrap_or("unknown"),
+                    snapshot.architecture,
                 ),
-                "Darwin privileged IPC lands in M002; Linux remains canonical",
+                if ipc_ok {
+                    "none; WireGuard helper (M003), routes (M004), and PF/NAT (M005) remain unqualified"
+                } else {
+                    "review netd runtime-directory ownership/mode"
+                },
             ));
         }
         _ => checks.push(wg_basic::doctor::DoctorCheck::new(
             wg_basic::doctor::DoctorCheckId::Netd,
             wg_basic::doctor::DoctorDisposition::Unknown,
-            "netd is not running (expected on Darwin in M001)",
+            "netd capability state is unavailable",
             "no safe capability response was received",
-            "Darwin privileged IPC lands in M002; serve reports backend unavailable",
+            "start netd and verify its socket path and peer permissions",
         )),
     }
     if let Some(snapshot) = state_snapshot.as_ref() {
