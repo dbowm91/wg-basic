@@ -274,6 +274,8 @@ const PRODUCTION_SOURCES: &[(&str, &str)] = &[
         "src/reconcile/darwin.rs",
         include_str!("../src/reconcile/darwin.rs"),
     ),
+    // M005 Darwin PF anchor model: pure rendering/verification, no pfctl yet.
+    ("src/firewall/pf.rs", include_str!("../src/firewall/pf.rs")),
 ];
 
 #[test]
@@ -2011,8 +2013,7 @@ fn darwin_stubs_fail_closed_without_process_or_shell() {
         }
     }
     assert_eq!(
-        sites,
-        PROCESS_MODULES,
+        sites, PROCESS_MODULES,
         "process execution must stay isolated to audited backends"
     );
 }
@@ -2068,6 +2069,43 @@ fn the_darwin_reconciler_plans_without_touching_the_host() {
         assert!(
             darwin.contains(required),
             "src/reconcile/darwin.rs must model {required}"
+        );
+    }
+}
+
+#[test]
+fn the_darwin_pf_model_renders_without_executing() {
+    // M005 policy scope: pure anchor rendering/verification. No `pfctl`
+    // execution, shell, nftables reuse, or caller-supplied PF text. The
+    // bounded invocation lands with live qualification.
+    let pf = shippable(source_of("src/firewall/pf.rs"));
+    for forbidden in [
+        "std::process::Command",
+        "Command::new",
+        "process::Stdio",
+        "\"sh\"",
+        "\"bash\"",
+        "rtnetlink",
+        "nl_wireguard",
+        "\"nft\"",
+        "pfctl -f",
+        "/etc/pf.conf",
+    ] {
+        assert!(
+            !pf.contains(forbidden),
+            "src/firewall/pf.rs must not contain {forbidden}"
+        );
+    }
+    for required in [
+        "ANCHOR_PREFIX",
+        "attachment_verified",
+        "rules_digest",
+        "teardown_order",
+        "is_ipv4",
+    ] {
+        assert!(
+            pf.contains(required),
+            "src/firewall/pf.rs must model {required}"
         );
     }
 }
