@@ -1,6 +1,6 @@
 # macOS Native Server M002 — Darwin Privileged IPC, Identities, and Capability Discovery
 
-Status: planned; blocked pending hard predecessor
+Status: **closed** (`96075b5`; closure `plans/closure/macos-native-server/002-status.md`, 2026-10-13)
 Primary class: invariant / infrastructure
 Source: plans/subsystems/macos-native-server-roadmap.md M002
 Baseline: main 47c72b0e81d569d48396c615120453bf0cf1d46e (2026-10-11); rebase/revalidate against actual implementation head before applying.
