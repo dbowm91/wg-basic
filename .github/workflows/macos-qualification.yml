@@ -44,6 +44,19 @@ jobs:
           components: clippy, rustfmt
           targets: aarch64-apple-darwin, x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
+      - name: Install pinned Go 1.27.1 without third-party actions
+        run: |
+          if command -v go >/dev/null 2>&1 && go version 2>/dev/null | grep -q '^go version go1\.27\.1 '; then
+            go version
+          else
+            arch=arm64
+            [ "$(uname -m)" = "x86_64" ] && arch=amd64
+            curl -fsSL -o "$RUNNER_TEMP/go1.27.1.darwin-$arch.tar.gz" "https://go.dev/dl/go1.27.1.darwin-$arch.tar.gz"
+            mkdir -p "$RUNNER_TEMP/gotools"
+            tar -xzf "$RUNNER_TEMP/go1.27.1.darwin-$arch.tar.gz" -C "$RUNNER_TEMP/gotools"
+            echo "$RUNNER_TEMP/gotools/go/bin" >> "$GITHUB_PATH"
+            "$RUNNER_TEMP/gotools/go/bin/go" version
+          fi
       - name: Build the pinned wireguard-go helper and verify provenance
         run: |
           go version
@@ -102,6 +115,19 @@ jobs:
           components: clippy, rustfmt
           targets: aarch64-apple-darwin, x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
+      - name: Install pinned Go 1.27.1 without third-party actions
+        run: |
+          if command -v go >/dev/null 2>&1 && go version 2>/dev/null | grep -q '^go version go1\.27\.1 '; then
+            go version
+          else
+            arch=arm64
+            [ "$(uname -m)" = "x86_64" ] && arch=amd64
+            curl -fsSL -o "$RUNNER_TEMP/go1.27.1.darwin-$arch.tar.gz" "https://go.dev/dl/go1.27.1.darwin-$arch.tar.gz"
+            mkdir -p "$RUNNER_TEMP/gotools"
+            tar -xzf "$RUNNER_TEMP/go1.27.1.darwin-$arch.tar.gz" -C "$RUNNER_TEMP/gotools"
+            echo "$RUNNER_TEMP/gotools/go/bin" >> "$GITHUB_PATH"
+            "$RUNNER_TEMP/gotools/go/bin/go" version
+          fi
       - name: Build the pinned wireguard-go helper and verify provenance
         run: |
           go version
