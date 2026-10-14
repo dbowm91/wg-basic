@@ -209,7 +209,7 @@ fn pair_u64(device: &wg_darwin::UapiDevice, key: &str) -> Option<u64> {
 }
 
 fn latest_handshake(device: &wg_darwin::UapiDevice) -> Option<u64> {
-    pair_u64(device, "latest_handshake")
+    wg_darwin::last_handshake_secs(device)
 }
 
 /// One live tunnel endpoint: supervised helper + kernel `utun` + UAPI path.
@@ -467,8 +467,9 @@ fn live_loopback_handshake_and_traffic() {
     );
     evidence.log("negative ownership case failed closed; foreign stack untouched");
 
-    // Tunnel addresses (connected /24 onto each utun) + route proof: the
-    // peer address must resolve to our utun via the connected route.
+    // Tunnel addresses (point-to-point onto the peer; this ifconfig only
+    // accepts the destination as a second bare address) + route proof: the
+    // peer address must resolve to our utun via the tunnel route.
     sh(
         &mut evidence,
         "ifconfig",
@@ -476,6 +477,7 @@ fn live_loopback_handshake_and_traffic() {
             &endpoint_a.utun,
             "inet",
             addr_a,
+            addr_b,
             "netmask",
             "255.255.255.0",
             "up",
@@ -488,6 +490,7 @@ fn live_loopback_handshake_and_traffic() {
             &endpoint_b.utun,
             "inet",
             addr_b,
+            addr_a,
             "netmask",
             "255.255.255.0",
             "up",
@@ -565,6 +568,7 @@ fn live_loopback_handshake_and_traffic() {
             &endpoint_a.utun,
             "inet",
             addr_a,
+            addr_b,
             "netmask",
             "255.255.255.0",
             "up",
@@ -625,15 +629,29 @@ fn live_route_inventory_preserved() {
             &endpoint.utun,
             "inet",
             "192.0.2.5",
+            "192.0.2.6",
             "netmask",
             "255.255.255.0",
             "up",
         ],
     );
+    let assigned = sh(&mut evidence, "ifconfig", &[&endpoint.utun]);
+    assert!(
+        assigned.contains("192.0.2.5"),
+        "tunnel address must be observable on the utun"
+    );
     sh(
         &mut evidence,
         "ifconfig",
-        &[&endpoint.utun, "inet", "192.0.2.9/32", "alias"],
+        &[
+            &endpoint.utun,
+            "inet",
+            "192.0.2.9",
+            "192.0.2.6",
+            "netmask",
+            "255.255.255.255",
+            "alias",
+        ],
     );
     let ifconfig = sh(&mut evidence, "ifconfig", &[&endpoint.utun]);
     assert!(ifconfig.contains("192.0.2.9"), "alias must be observable");
