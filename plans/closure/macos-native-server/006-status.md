@@ -1,8 +1,10 @@
 # macOS Native Server M006 — launchd Installation, Artifact Provenance, and Recovery
 
-Disposition: **blocked** (installation scope implemented; native install/recovery unqualified).
+Disposition: **blocked** (narrowed 2026-10-14: reboot + post-reboot
+traffic/preserved reinstall unqualified — hosted runners cannot reboot;
+everything else qualified live on arm64).
 
-Date: 2026-10-13
+Date: 2026-10-13 (installation scope + blocked record); 2026-10-14 (hosted evidence).
 
 ## Implementation revision
 
@@ -47,4 +49,27 @@ Privileged evidence NOT collected (blocker shared with M003–M005): native arm6
 - Hard blocker (shared): disposable privileged Mac host + non-interactive root + explicit host-mutation opt-in for live install/boot/reboot/recovery evidence.
 - Findings: no high/medium/low open items in the installation scope.
 
-M006 is **blocked** on live installation/recovery qualification. M007 compiles the release/security verdict from all available evidence under the same blocker.
+M006 is **blocked** on reboot qualification. M007 compiles the release/security verdict from all available evidence under the same blocker.
+
+## Hosted live evidence 2026-10-14 (run `38524007872`, head `a10b4c2`)
+
+Fixture `live_launchd_bootstrap_cycle` (`macos-15` arm64, macOS 15.7.9;
+5/5 live tests pass in `live-arm64`):
+
+- Both rendered plists pass `plutil -lint`; system-domain bootstrap of the
+  real `netd` binary succeeds; `launchctl print` shows it running
+  (arm64 pid 4378/12540 across runs); the daemon owns its socket shortly
+  after launchd reports running.
+- State dir stays empty throughout: the netd database-free invariant holds
+  live, including across SIGTERM, re-supervision, bootout, and reinstall.
+- SIGTERM via `launchctl kill`: KeepAlive re-supervises under a new PID
+  (verified different).
+- Bootout removes the job (print fails), socket gone, state still empty;
+  reinstall from the same receipt serves again (restart recovery without
+  reboot), then final bootout + plist removal + scratch cleanup.
+- Evidence artifact: `m006-launchd-cycle.txt` on run `38524007872`.
+
+Remaining live tail: reboot with post-reboot traffic and preserved
+reinstall across the reboot (impossible on hosted runners), plus Intel
+launchd-native evidence (arm64 only so far) and release-tooling integration
+(M007).

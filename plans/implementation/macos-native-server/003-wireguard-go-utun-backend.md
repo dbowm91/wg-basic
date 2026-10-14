@@ -1,6 +1,6 @@
 # macOS Native Server M003 — wireguard-go utun Dataplane, Ownership, and UAPI
 
-Status: **blocked** — safe unprivileged scope implemented at `b1c831c` (helper provenance, fixed-argv supervision, bounded UAPI codec, ownership proof logic, audited process boundary); privileged native handshake/traffic unqualified (no sudo/disposable Mac VM/opt-in). Closure `plans/closure/macos-native-server/003-status.md`, 2026-10-13.
+Status: **closed** 2026-10-14 — hosted live qualification on arm64 + Intel (run `38524007872`): loopback handshake/traffic/counters/RSS, ownership proof, kill/restart; codec speaks the helper hex/errno-trailer wire format. Off-host Linux interop + sleep/roaming residual to M007. Closure `plans/closure/macos-native-server/003-status.md`.
 Primary class: capability / invariant
 Source: plans/subsystems/macos-native-server-roadmap.md M003
 Baseline: main 47c72b0e81d569d48396c615120453bf0cf1d46e (2026-10-11); rebase/revalidate against actual implementation head before applying.

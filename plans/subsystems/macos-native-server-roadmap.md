@@ -1,6 +1,6 @@
 # macOS Native Server Support Roadmap
 
-Status: line verdict recorded 2026-10-13 — M001–M002 closed, M003–M006 blocked on privileged-host qualification (safe/policy/installation scopes implemented; TN3165 advanced-admin-only decided), M007 blocked verdict with MUST-NOT-release decision + unblock checklist
+Status: hosted qualification 2026-10-14 (run `38524007872`) — M001–M004 closed (M003–M004 live on arm64 + Intel hosted runners), M005–M006 narrowed blocked (effective NAT + v6 egress need admin-integrated host; reboot needs rebootable host), M007 blocked verdict with MUST-NOT-release decision + enumerated residuals
 
 Owner: headless Darwin WireGuard server deployment, not a macOS WireGuard client application.
 
@@ -51,11 +51,11 @@ M002 and M003 may prototype against M001's stable written interfaces but may not
 |---|---|---|---|---|
 | M001 portability foundation | infrastructure / invariant | shared modules build on macOS; Linux unaffected; explicit logical vs OS interface identity | Linux main baseline | closed 2026-10-13 (`plans/closure/macos-native-server/001-status.md`) |
 | M002 Darwin privilege + IPC | invariant | native getpeereid authorization, secure socket lifecycle, bounded typed protocol and doctor | M001 | closed 2026-10-13 (`plans/closure/macos-native-server/002-status.md`) |
-| M003 userspace WireGuard | capability / invariant | bundled/pinned foreground helper, utun ownership, UAPI peer CRUD, real handshake/telemetry | M002 | **blocked** 2026-10-13 — safe scope implemented (`plans/closure/macos-native-server/003-status.md`); live handshake needs disposable privileged host |
-| M004 Darwin resources | capability / invariant | address/route apply/observe/verify, no foreign deletion, crash/utun churn tests | M003 | **blocked** 2026-10-13 — modeling scope implemented (`plans/closure/macos-native-server/004-status.md`); native convergence needs disposable privileged host |
-| M005 forwarding/PF/NAT | invariant / capability | approved strategy, opt-in PF if lawful/suitable, observed filter+NAT and real traffic | M004 + explicit PF ADR gate | **blocked** 2026-10-13 — TN3165 advanced-admin-only decision + anchor model (`plans/closure/macos-native-server/005-status.md`); live traffic needs disposable privileged host |
-| M006 launchd + distribution | infrastructure / capability | native services, install/reinstall/uninstall, ABI/build/release artifacts, rollback-safe behavior | M005 | **blocked** 2026-10-13 — installation scope implemented (`plans/closure/macos-native-server/006-status.md`, no PF auto-configuration); native install/boot/reboot/recovery needs disposable privileged host |
-| M007 security + platform E2E | qualification | Apple Silicon and Intel native hardware/VM real traffic, external-state preservation, release policy | M006 | **blocked** 2026-10-13 — verdict recorded (`plans/closure/macos-native-server/007-status.md`): support matrix, threat review, MUST-NOT-release decision + unblock checklist; live dual-arch traffic + release readiness need disposable privileged hosts |
+| M003 userspace WireGuard | capability / invariant | bundled/pinned foreground helper, utun ownership, UAPI peer CRUD, real handshake/telemetry | M002 | **closed** 2026-10-14 — hosted live qualification arm64+Intel (`plans/closure/macos-native-server/003-status.md`, run `38524007872`); off-host interop residual |
+| M004 Darwin resources | capability / invariant | address/route apply/observe/verify, no foreign deletion, crash/utun churn tests | M003 | **closed** 2026-10-14 — hosted live qualification arm64+Intel (`plans/closure/macos-native-server/004-status.md`, run `38524007872`); sleep/roaming residual |
+| M005 forwarding/PF/NAT | invariant / capability | approved strategy, opt-in PF if lawful/suitable, observed filter+NAT and real traffic | M004 + explicit PF ADR gate | **blocked** (narrowed 2026-10-14) — TN3165 decision evidence-backed + anchor/forwarding/PF-cycle qualified live (`plans/closure/macos-native-server/005-status.md`, run `38524007872`); effective NAT + v6 egress need admin-integrated host |
+| M006 launchd + distribution | infrastructure / capability | native services, install/reinstall/uninstall, ABI/build/release artifacts, rollback-safe behavior | M005 | **blocked** (narrowed 2026-10-14) — bootstrap/print/bootout/KeepAlive/reinstall qualified live on arm64 (`plans/closure/macos-native-server/006-status.md`, run `38524007872`); reboot needs a rebootable host |
+| M007 security + platform E2E | qualification | Apple Silicon and Intel native hardware/VM real traffic, external-state preservation, release policy | M006 | **blocked** (updated 2026-10-14) — verdict + hosted-evidence update (`plans/closure/macos-native-server/007-status.md`, run `38524007872`): M003–M004 closed, M005–M006 narrowed, MUST-NOT-release stands with enumerated residuals |
 
 Plans: plans/implementation/macos-native-server/001 through 007.
 

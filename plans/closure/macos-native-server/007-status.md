@@ -1,13 +1,21 @@
 # macOS Native Server M007 — Native macOS End-to-End, Security, and Release Qualification
 
-Disposition: **blocked** (verdict recorded; native dual-arch traffic unqualified — macOS server MUST NOT release).
+Disposition: **blocked** (verdict updated 2026-10-14: M003–M004 closed on
+hosted evidence, M005–M006 narrowed to platform residuals — macOS server
+MUST NOT release).
 
-Date: 2026-10-13
+Date: 2026-10-13 (blocking verdict); 2026-10-14 (hosted-evidence update).
 
 ## Implementation revision
 
 - Repository baseline: `48cf163` (M006 blocked closure).
 - Verdict head: this record (no new runtime code; measurements + audit on `48cf163`).
+- Hosted-evidence update head: `a10b4c2` (all-green run `38524007872`,
+  2026-10-14; implementation deltas since the verdict: `5256a55` hex-key
+  wire format, `f470820` errno-trailer GET shape, `2ee52b7` IPv6 + RSS +
+  NAT/reinstall fixtures, `407ba36` inventory comparison fix, `a9725a0`
+  worker-overload timing bounds, `dcf1e97`/`6ab4497`/`e43faf3`/`a10b4c2`
+  platform-probe iterations).
 - Source plan: `plans/implementation/macos-native-server/007-native-e2e-security-release-qualification.md` (blocked on M006 → verdict recorded here).
 
 ## Requirement-to-evidence matrix
@@ -33,9 +41,11 @@ Date: 2026-10-13
 | Loopback management (`admin/state/health/doctor/serve`, auth, CSRF, export shapes) on macOS arm64 | Qualified | M001 smoke + full portable suite + `darwin_ipc` serve-probe |
 | Privileged IPC (`netd` Ping/Capabilities, getpeereid auth, no root bypass, framing, socket lifecycle, SIGTERM/restart) on macOS arm64 | Qualified | 6/6 `darwin_ipc` + 10 socket unit tests + M002 smoke |
 | Helper/UAPI/ownership/route/PF/installer logic layers | Unit-qualified only (mock/fixture/temp-root) | 9 + 6 + 6 + 4 new unit tests; must never be cited as live behavior |
-| Tunnel handshake, tunnel traffic, NAT, routed IPv6, gateway mode | Unqualified | Blocked (M003–M005 live) |
-| Launchd boot/install/reboot/recovery, uninstall/reinstall on device | Unqualified | Blocked (M006 live) |
-| Intel (`x86_64-apple-darwin`) native behavior | Unqualified (compiles only) | No native Intel hardware in this session; Rosetta never counts |
+| Tunnel handshake, tunnel traffic (IPv4+IPv6), ownership, kill/restart, route lifecycle | Qualified loopback-scoped on arm64 + Intel (run `38524007872`) | M003–M004 closed 2026-10-14; off-host interop + sleep/roaming residual |
+| PF anchor lifecycle, forwarding/PF cycle, unattached-inert proof | Qualified on arm64 + Intel | M005 narrowed; effective NAT + v6 egress residual |
+| Launchd boot/print/bootout, KeepAlive, reinstall, DB-free state | Qualified on arm64 | M006 narrowed; reboot + Intel-launchd residual |
+| NAT egress traffic, routed IPv6 gateway, reboot recovery | Unqualified | Blocked (M005–M006 residuals above) |
+| Intel (`x86_64-apple-darwin`) native behavior | Tunnel + routes qualified (compiles + live 3/3); launchd/installer unqualified | Native x86_64 evidence run `38524007872`; Rosetta never counted |
 | macOS release readiness (artifacts, signing, distribution) | Not ready | Checksums-only retained; no Darwin release target shipped |
 
 Host facts recorded: macOS 26.6.2, SDK 26.5, rustc 1.89.0 host `aarch64-apple-darwin`
@@ -51,6 +61,36 @@ M005 (effective NAT + routed IPv6 as advanced-admin-only), M006 (launchd install
 reboot/recovery), native Intel evidence, release-binary footprint + advisory audit,
 and maintainer re-authorization. If the macOS gateway ever ships, it ships labeled
 advanced-administrator-only with the M005 decision cited — never general consumer support.
+
+### 2026-10-14 update: what hosted qualification discharged and what remains
+
+Discharged on disposable hosted runners (run `38524007872`; `macos-15`
+arm64 + `macos-15-intel` x86_64 native, macOS 15.7.9; gates green both
+arches; live 5/5 arm64, 3/3 Intel):
+
+- M003 → **closed**: dual-stack loopback handshake/traffic/counters/RSS,
+  ownership proof + negative case, kill/restart with renumber tolerance
+  (loopback-scoped standard peer; see closure).
+- M004 → **closed**: v4+v6 address/alias lifecycle, planner verified
+  against live observation, default + inventory preservation (sleep/wake
+  and link-roaming residual).
+- M005 → narrowed: inventory, anchor lifecycle, forwarding/PF cycle with
+  restore, unattached-inert proof, no-false-convergence, platform guard
+  pinned. Effective NAT traffic still unqualified (main-ruleset attachment
+  refused by the OS guard; no v6 uplink).
+- M006 → narrowed: plist lint, bootstrap/print/bootout, KeepAlive
+  re-supervision, DB-free state, reinstall cycle (arm64). Reboot and
+  post-reboot traffic/preserved reinstall still unqualified (hosted
+  runners cannot reboot); Intel launchd-native evidence still open.
+- Incidental hardening: two kernel-vs-helper UAPI wire deviations fixed
+  in the codec (hex keys, errno trailer); one worker-overload timing bound
+  made backlog-proportional (no production change).
+
+Still required before ANY release (unchanged in kind, smaller in scope):
+off-host Linux-kernel peer interop, effective NAT + routed IPv6 on an
+admin-integrated host, reboot + post-reboot traffic/preserved reinstall,
+Intel launchd-native evidence, release-binary footprint + advisory audit,
+and maintainer re-authorization. The MUST-NOT-release decision stands.
 
 ## Verification (this session, unprivileged only)
 

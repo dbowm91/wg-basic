@@ -1,8 +1,10 @@
 # macOS Native Server M005 — Forwarding, PF/NAT Policy, and Gateway Feasibility Decision
 
-Disposition: **blocked** (policy decided + model implemented; native gateway traffic unqualified).
+Disposition: **blocked** (narrowed 2026-10-14: effective NAT traffic still
+unqualified — platform attachment refused + no v6 uplink; everything else
+qualified live on both arches).
 
-Date: 2026-10-13
+Date: 2026-10-13 (policy decision + blocked record); 2026-10-14 (hosted evidence).
 
 ## Implementation revision
 
@@ -72,3 +74,35 @@ Privileged evidence NOT collected (blocker shared with M003/M004): effective for
 - Findings: no high/medium/low open items in the policy/model scope.
 
 M005 is **blocked** on live gateway qualification with the decision above binding. M006 launchd/installation scope may proceed under the no-PF-mutation constraint; its native install evidence carries the same privileged-host blocker.
+
+## Hosted live evidence 2026-10-14 (run `38524007872`, head `a10b4c2`)
+
+Fixtures `live_pf_inventory_and_anchor_cycle` (5/5 arm64) and
+`live_forwarding_and_unattached_anchor_probe` (both arches), `macos-15`
+arm64 + `macos-15-intel` x86_64 native, macOS 15.7.9:
+
+- Privileged PF inventory with root: `Status: Disabled`; forwarding
+  sysctls observed `0`/`0`, then cycled `0→1→0` with restore verified.
+- Rendered filter + NAT files parse under `pfctl -n`; filter rules stage
+  into the dedicated anchor and list back; NAT-only file stages too (an
+  earlier mixed filter+nat file tripped the guard — files stay split).
+- The main-ruleset replacement that would attach the anchor is refused by
+  the platform guard even parse-only (`pfctl: Use of -f option, could
+  result in flushing of rules present in the main ruleset added by the
+  system at startup`), recorded verbatim in evidence. No `/etc/pf.conf`
+  write was attempted or needed.
+- With PF enabled and the anchor loaded, parent filter/NAT output still
+  shows no reference: attachment absent, policy inert by construction.
+  Diverted tunnel traffic (`8.8.8.8/32` via our `utun`, control-probed
+  direct first) provably fails without attachment — no false convergence.
+- Host restored in order: route deleted, anchor flushed, PF disabled
+  (verified), forwarding `0` (verified), helpers down, inventory baseline.
+- Evidence artifacts: `m005-pf-anchor-cycle.txt`,
+  `m005-platform-probe.txt` both arches on run `38524007872`.
+
+What this means for the TN3165 decision: attachment requires replacing the
+system PF ruleset — exactly the host-level surgery the advanced-admin-only
+decision reserves to an explicit administrator. The decision stands,
+now evidence-backed. The remaining live tail is effective forwarded/NAT
+traffic (needs that attachment on a host where an admin performs it) plus
+IPv6 egress routing (no v6 uplink on hosted runners).

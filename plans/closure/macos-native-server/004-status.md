@@ -1,14 +1,50 @@
 # macOS Native Server M004 — Darwin Interface, Address, Route, and Reconciliation Ownership
 
-Disposition: **blocked** (modeling scope implemented; privileged native convergence unqualified).
+Disposition: **closed** 2026-10-14 (hosted live qualification on both Darwin
+arches; residuals: sleep/wake, link roaming).
 
-Date: 2026-10-13
+Date: 2026-10-13 (blocked record); 2026-10-14 (hosted closure).
 
 ## Implementation revision
 
 - Repository baseline: `7f0b072` (M003 blocked closure).
-- Qualified implementation head: `42fa94ce390e5061b4fac85c1b23aedb0f509086`.
-- Source plan: `plans/implementation/macos-native-server/004-darwin-interface-address-route-reconciliation.md` (modeling-ready → blocked by this record).
+- Modeling head: `42fa94ce390e5061b4fac85c1b23aedb0f509086`.
+- Blocked record: `ee605aa`.
+- Hosted qualification head: `a10b4c2` (current; all-green run `38524007872`).
+- Source plan: `plans/implementation/macos-native-server/004-darwin-interface-address-route-reconciliation.md`.
+- Roadmap: `plans/subsystems/macos-native-server-roadmap.md` M004.
+- Fixture: `tests/wireguard_darwin_live.rs::live_route_inventory_preserved`.
+
+## Hosted live qualification (run `38524007872`, 2026-10-14)
+
+Same hosted setup as M003 (`macos-15` arm64 + `macos-15-intel` x86_64
+native, macOS 15.7.9; 3/3 Intel + 5/5 arm64 live tests pass):
+
+- Real `utun` address lifecycle both families: IPv4 `192.0.2.5` (+
+  `192.0.2.9/32` alias add/remove, observed then gone) and IPv6
+  `2001:db8::9` alias add/remove, all with the platform's two-bare-addresses
+  form (the `-->` token parses as an address on this `ifconfig`, and alias
+  on p2p needs a destination).
+- Live observation fed into the pure `plan_darwin`: converged state plans
+  nothing, dropping the alias plans exactly its removal, `0.0.0.0/0`
+  refuses as `GlobalTakeoverRefused`.
+- Default route byte-identical before/after; `netstat -rn` (`inet` +
+  `inet6`) destination sets gain only utun/TEST-NET entries while
+  pre-existing destinations keep their gateways (counter drift on ARP lines
+  is host noise, excluded by construction after one false-positive taught
+  the comparison).
+- Teardown returns the interface inventory to baseline.
+- Evidence artifacts: `m004-route-inventory.txt` both arches on run
+  `38524007872`.
+
+Residuals (carried, not claimed): sleep/wake handling and Wi-Fi↔Ethernet
+roaming (hosted runners can do neither); helper/netd kill + renumber
+convergence is covered live at the tunnel layer (M003 respawn) and the
+planner is renumber-proof by construction (UUID identity, never numeric).
+These gate any release claim (M007), not this closure: every acceptance
+criterion (v4+v6 convergence, idempotency, no unrelated changes, numeric
+identity never authoritative, truthful receipts, Linux unchanged) is met
+on both arches.
 
 ## Requirement-to-evidence matrix
 
@@ -45,4 +81,7 @@ Privileged evidence NOT collected (same blocker as M003): real `utun` address/ro
 - Hard blocker (shared with M003): disposable privileged Mac host + non-interactive root + explicit host-mutation opt-in. No `utun` address/route was created here and no convergence claimed.
 - Findings: no high/medium/low open items in the modeling scope.
 
-M004 is **blocked** on privileged-host qualification. M005 modeling/policy scope may proceed; its native gateway traffic carries the same blocker.
+M004 is **closed** 2026-10-14: the shared privileged-host blocker is
+discharged by hosted qualification (`gh` runners at maintainer direction),
+and the modeling scope above stands as the implementation. Sleep/wake and
+link-roaming residuals carry to M007.

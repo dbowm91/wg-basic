@@ -60,9 +60,37 @@ cargo run --locked -- netd --socket /tmp/wg-basic-runtime/netd.sock
 
 In another terminal, `serve` reaches it only over the authorized socket, and
 `doctor --json` reports the Darwin capability snapshot (no Linux `CapEff`,
-Linux backends `unavailable`, helper/PF untested until M003/M005). Network
-operations beyond `ping`/`inspect_capabilities` return `UnsupportedBackend`
-until their milestone backends land.
+Linux backends `unavailable`; helper/PF/launchd live behavior is qualified
+on disposable hosted runners, never on a development host — see below).
+Network operations beyond `ping`/`inspect_capabilities` return
+`UnsupportedBackend` until their milestone backends land.
+
+## macOS hosted live qualification (M003–M006)
+
+Privileged Darwin fixtures run only on ephemeral GitHub-hosted runners
+(`macos-15` arm64, `macos-15-intel`), never on a development machine: they
+create real `utun` interfaces, assign test-net addresses, load PF anchors,
+and bootstrap launchd jobs, all torn down afterwards. Workflow
+`.github/workflows/macos-qualification.yml` (gates + privileged fixtures
+with evidence artifacts); fixtures live in
+`tests/wireguard_darwin_live.rs` (`#[ignore]`d, require
+`WGB_DARWIN_LIVE=1` as root plus `WGB_WIREGUARD_GO` pointing at a
+pinned-commit helper build and `WGB_BINARY` for the launchd cycle):
+
+```sh
+cargo test --locked --no-run --test wireguard_darwin_live
+sudo WGB_DARWIN_LIVE=1 WGB_WIREGUARD_GO=/path/to/wireguard-go \
+  WGB_HELPER_SHA256=<expected> WGB_BINARY=$PWD/target/debug/wg-basic \
+  WGB_EVIDENCE_DIR=/tmp/wgb-evidence \
+  ./target/debug/deps/wireguard_darwin_live-* --ignored --test-threads=1 --nocapture
+```
+
+Scope is binding: TEST-NET addresses (`192.0.2.0/24`, `2001:db8::/32`),
+loopback peering, per-run anchor/job names; no default-route surgery, no
+global forwarding change left behind, no `pfctl -e` left enabled, no
+`/etc/pf.conf` write, no NAT traffic claim. What hosted runners cannot
+provide (no reboot, no v6 uplink, main-ruleset attachment OS-refused) stays
+recorded as blocked in the milestone closures, not worked around.
 
 The default unit/protocol suite does not require root or network namespace setup. The Linux WireGuard backend mutates only through typed requests to an existing device; real-kernel integration suites create temporary namespaces and fixture links and require root, `CAP_NET_ADMIN`, `iproute2`, `iputils-ping`, and kernel WireGuard support. Dual-stack tunnel addressing and explicit family-correct client route config are qualified by product and export tests. Hosted `product-management-rootful` exercises the authenticated full-tunnel export, real client handshake and dual-family tunnel traffic, disable/re-enable, and restart/reapply. The `network-control-e2e` fixture carries IPv4 and IPv6 full-tunnel traffic, then changes to split prefixes and proves selected destinations pass while destinations outside those prefixes do not. It also qualifies routed IPv6 forwarding, upstream return routing, foreign-state preservation, sticky forwarding, and absence of NAT66.
 
