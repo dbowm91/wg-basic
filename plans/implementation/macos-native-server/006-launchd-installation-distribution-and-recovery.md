@@ -1,6 +1,6 @@
 # macOS Native Server M006 — launchd Installation, Artifact Provenance, and Recovery
 
-Status: **blocked** — installation scope implemented at `8a063de` (two-label plists, provenance receipts, explicit-root install/verify/state-preserving uninstall fixtures, no signing claims); native install/boot/reboot/recovery unqualified (shared privileged-host blocker). Closure `plans/closure/macos-native-server/006-status.md`, 2026-10-13.
+Status: **blocked** (narrowed 2026-10-14) — plist lint, bootstrap/print/bootout, KeepAlive re-supervision, DB-free state, reinstall cycle qualified live on arm64 (run `38524007872`); reboot + post-reboot traffic/preserved reinstall unqualified (hosted runners cannot reboot). Closure `plans/closure/macos-native-server/006-status.md`.
 Primary class: infrastructure / capability
 Roadmap: plans/subsystems/macos-native-server-roadmap.md M006
 Baseline: main 47c72b0e81d569d48396c615120453bf0cf1d46e; reconcile with actual implementation head.
