@@ -1157,9 +1157,9 @@ fn live_forwarding_and_unattached_anchor_probe() {
     );
 
     // Rendered policy: filter + IPv4 masquerade for the test prefix only.
-    // The filter anchor loads (proving the lifecycle), but NAT rules cannot
-    // be staged anywhere and the main-ruleset replacement that would attach
-    // anything is refused by the platform guard (both recorded verbatim).
+    // Both stage into the dedicated anchor (lifecycle proven), but the
+    // main-ruleset replacement that would attach the anchor is refused by
+    // the platform guard (attempted parse-only, recorded verbatim).
     let anchor = format!("wg-basic-nat-{}", std::process::id());
     let tunnel_prefix: NetworkPrefix = "192.0.2.0/24".parse().expect("test prefix");
     let rules = render_policy(
@@ -1203,10 +1203,15 @@ fn live_forwarding_and_unattached_anchor_probe() {
     );
     let (nat_ok, nat_out) = sh_unchecked(&mut evidence, "pfctl", &["-a", &anchor, "-f", &nat_arg]);
     assert!(
-        !nat_ok,
-        "NAT staging must stay platform-refused, but it loaded"
+        nat_ok,
+        "NAT file must stage into the dedicated anchor: {nat_out}"
     );
-    evidence.log(&format!("platform guard pins NAT staging: {nat_out}"));
+    let listed_nat = sh(&mut evidence, "pfctl", &["-a", &anchor, "-s", "nat"]);
+    assert!(
+        listed_nat.contains("192.0.2.0/24"),
+        "anchor must list our NAT rule"
+    );
+    evidence.log("filter + NAT rules staged into the dedicated anchor");
 
     // Forwarding cycles on the disposable host and restores afterwards.
     sh(&mut evidence, "sysctl", &["-w", "net.inet.ip.forwarding=1"]);
