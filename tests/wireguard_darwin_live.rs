@@ -179,10 +179,25 @@ fn wait_until(what: &str, timeout: Duration, mut ready: impl FnMut() -> bool) {
 fn uapi(socket: &Path, command: &str) -> wg_darwin::UapiDevice {
     let mut stream = UnixStream::connect(socket)
         .unwrap_or_else(|error| panic!("UAPI connect {}: {error}", socket.display()));
-    let device = wg_darwin::uapi_round_trip(&mut stream, command)
-        .unwrap_or_else(|error| panic!("UAPI round trip failed: {error:?}"));
-    assert_eq!(device.errno, 0, "UAPI errno must be 0");
-    device
+    wg_darwin::uapi_round_trip(&mut stream, command)
+        .unwrap_or_else(|error| panic!("UAPI round trip failed: {error:?}"))
+}
+
+/// The same command with secret values redacted for evidence output.
+fn redact_uapi(command: &str) -> String {
+    command
+        .lines()
+        .map(|line| {
+            if line.starts_with("private_key=") || line.starts_with("preshared_key=") {
+                line.split_once('=')
+                    .map(|(key, _)| format!("{key}=[REDACTED]"))
+                    .unwrap_or_else(|| "[MALFORMED]".to_owned())
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn pair_u64(device: &wg_darwin::UapiDevice, key: &str) -> Option<u64> {
@@ -233,6 +248,7 @@ impl LiveEndpoint {
 
     fn get(&self, evidence: &mut Evidence) -> wg_darwin::UapiDevice {
         let device = uapi(&self.socket, "get=1\n\n");
+        assert_eq!(device.errno, 0, "UAPI get errno must be 0");
         evidence.log(&format!(
             "UAPI get on {}: {} pairs",
             self.utun,
@@ -241,6 +257,11 @@ impl LiveEndpoint {
         device
     }
 
+    /// Applies the full device+peer configuration, polling briefly: a freshly
+    /// spawned helper may answer the socket before its device is fully up.
+    /// On persistent refusal, bisects the command into granular single-shot
+    /// probes (device-only, peer variants) and fails with the errno matrix so
+    /// the exact rejected field class is recorded, not guessed.
     fn set_device(
         &self,
         evidence: &mut Evidence,
@@ -251,9 +272,83 @@ impl LiveEndpoint {
         let command =
             wg_darwin::render_uapi_set(Some(private_key_base64), Some(listen_port), Some(peer))
                 .expect("typed UAPI set must render");
-        let device = uapi(&self.socket, &command);
-        assert_eq!(device.errno, 0, "UAPI set must succeed");
-        evidence.log(&format!("UAPI set on {} accepted", self.utun));
+        let start = Instant::now();
+        loop {
+            let errno = uapi(&self.socket, &command).errno;
+            if errno == 0 {
+                evidence.log(&format!("UAPI set on {} accepted", self.utun));
+                return;
+            }
+            if start.elapsed() > Duration::from_secs(15) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        evidence.log(&format!(
+            "full UAPI set refused; redacted command was:\n{}",
+            redact_uapi(&command)
+        ));
+        let device_only =
+            wg_darwin::render_uapi_set(Some(private_key_base64), Some(listen_port), None)
+                .expect("device-only set must render");
+        let matrix = [
+            ("device-only", device_only),
+            (
+                "peer-only-full",
+                wg_darwin::render_uapi_set(None, None, Some(peer))
+                    .expect("peer-only set must render"),
+            ),
+            (
+                "peer-no-keepalive",
+                wg_darwin::render_uapi_set(
+                    None,
+                    None,
+                    Some(&wg_darwin::UapiPeerConfig {
+                        persistent_keepalive: None,
+                        ..*peer
+                    }),
+                )
+                .expect("peer set must render"),
+            ),
+            (
+                "peer-no-allowed",
+                wg_darwin::render_uapi_set(
+                    None,
+                    None,
+                    Some(&wg_darwin::UapiPeerConfig {
+                        allowed_ips: &[],
+                        ..*peer
+                    }),
+                )
+                .expect("peer set must render"),
+            ),
+            (
+                "peer-no-endpoint",
+                wg_darwin::render_uapi_set(
+                    None,
+                    None,
+                    Some(&wg_darwin::UapiPeerConfig {
+                        endpoint: None,
+                        ..*peer
+                    }),
+                )
+                .expect("peer set must render"),
+            ),
+        ];
+        let mut summary = Vec::new();
+        for (label, probe) in &matrix {
+            let errno = uapi(&self.socket, probe).errno;
+            evidence.log(&format!(
+                "probe {label}: errno={errno}\n{}",
+                redact_uapi(probe)
+            ));
+            summary.push(format!("{label}={errno}"));
+        }
+        panic!(
+            "UAPI set persistently refused on {}: {}",
+            self.utun,
+            summary.join(" ")
+        );
     }
 }
 
@@ -372,7 +467,8 @@ fn live_loopback_handshake_and_traffic() {
     );
     evidence.log("negative ownership case failed closed; foreign stack untouched");
 
-    // Tunnel addresses (point-to-point onto the peer) + route proof.
+    // Tunnel addresses (connected /24 onto each utun) + route proof: the
+    // peer address must resolve to our utun via the connected route.
     sh(
         &mut evidence,
         "ifconfig",
@@ -380,8 +476,6 @@ fn live_loopback_handshake_and_traffic() {
             &endpoint_a.utun,
             "inet",
             addr_a,
-            "-->",
-            addr_b,
             "netmask",
             "255.255.255.0",
             "up",
@@ -394,8 +488,6 @@ fn live_loopback_handshake_and_traffic() {
             &endpoint_b.utun,
             "inet",
             addr_b,
-            "-->",
-            addr_a,
             "netmask",
             "255.255.255.0",
             "up",
@@ -473,8 +565,6 @@ fn live_loopback_handshake_and_traffic() {
             &endpoint_a.utun,
             "inet",
             addr_a,
-            "-->",
-            addr_b,
             "netmask",
             "255.255.255.0",
             "up",
@@ -535,8 +625,6 @@ fn live_route_inventory_preserved() {
             &endpoint.utun,
             "inet",
             "192.0.2.5",
-            "-->",
-            "192.0.2.6",
             "netmask",
             "255.255.255.0",
             "up",
@@ -818,6 +906,8 @@ fn live_launchd_bootstrap_cycle() {
         })
         .expect("print must show a daemon pid");
     evidence.log(&format!("netd running under launchd as pid={first_pid}"));
+    // The daemon binds its socket just after launchd reports it running.
+    wait_until("netd socket", Duration::from_secs(30), || socket.exists());
     assert!(socket.exists(), "launchd-managed netd must own its socket");
     let state_entries: Vec<_> = std::fs::read_dir(&state_dir).expect("state dir").collect();
     assert!(
