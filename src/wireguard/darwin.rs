@@ -281,26 +281,37 @@ pub struct UapiDevice {
     pub pairs: Vec<(String, String)>,
 }
 
-/// Parses one UAPI `get=1` response: an `errno=N` line followed by
-/// `key=value` lines and a blank terminator. Bounded and secret-agnostic
-/// (callers redact before logging; this parser never logs).
+/// Parses one UAPI `get=1` response in the helper's wire shape: `key=value`
+/// dump lines followed by an `errno=N` status trailer and a blank
+/// terminator (`device/uapi.go` `IpcHandle`: the dump comes first, the
+/// status last — the reverse of the kernel UAPI). Bounded and
+/// secret-agnostic (callers redact before logging; this parser never logs).
+/// A missing trailer, a trailer anywhere but last, or a nonzero status all
+/// fail; callers distinguish transport/parse failure from helper refusal via
+/// the returned `errno`.
 pub fn parse_uapi_get(response: &str) -> Result<UapiDevice, HelperError> {
     if response.len() > MAX_UAPI_RESPONSE {
         return Err(HelperError::UapiMalformed);
     }
-    let mut lines = response.split('\n');
-    let errno_line = lines.next().ok_or(HelperError::UapiMalformed)?;
-    let errno: i64 = errno_line
-        .strip_prefix("errno=")
-        .ok_or(HelperError::UapiMalformed)?
-        .parse()
-        .map_err(|_| HelperError::UapiMalformed)?;
+    let mut lines = response.split('\n').peekable();
     let mut pairs = Vec::new();
-    for line in lines {
+    let mut errno: Option<i64> = None;
+    loop {
+        let line = lines.next().ok_or(HelperError::UapiMalformed)?;
         if line.is_empty() {
             break;
         }
         if pairs.len() > 4096 {
+            return Err(HelperError::UapiMalformed);
+        }
+        if let Some(status) = line.strip_prefix("errno=") {
+            if errno.is_some() || lines.peek().is_none_or(|next| !next.is_empty()) {
+                return Err(HelperError::UapiMalformed);
+            }
+            errno = Some(status.parse().map_err(|_| HelperError::UapiMalformed)?);
+            continue;
+        }
+        if errno.is_some() {
             return Err(HelperError::UapiMalformed);
         }
         let (key, value) = line.split_once('=').ok_or(HelperError::UapiMalformed)?;
@@ -309,6 +320,7 @@ pub fn parse_uapi_get(response: &str) -> Result<UapiDevice, HelperError> {
         }
         pairs.push((key.to_owned(), value.to_owned()));
     }
+    let errno = errno.ok_or(HelperError::UapiMalformed)?;
     Ok(UapiDevice { errno, pairs })
 }
 
@@ -561,24 +573,27 @@ mod tests {
     #[test]
     fn uapi_get_parses_errno_and_pairs_with_terminator() {
         let device =
-            parse_uapi_get("errno=0\nprivate_key=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\nlisten_port=51820\n\n")
+            parse_uapi_get("private_key=e8b4c7880338be0284822e6f9b7d1ffc40481161439b24a44dcf44582708a84b\nlisten_port=51820\nerrno=0\n\n")
                 .unwrap();
         assert_eq!(device.errno, 0);
         assert!(device.pairs.iter().any(|(key, _)| key == "listen_port"));
         assert!(parse_uapi_get("garbage\n\n").is_err());
         assert!(parse_uapi_get("errno=0\nno-equals-here\n\n").is_err());
+        assert!(parse_uapi_get("listen_port=1\n\n").is_err());
+        let refused = parse_uapi_get("listen_port=1\nerrno=-22\n\n").unwrap();
+        assert_eq!(refused.errno, -22);
     }
 
     #[test]
     fn uapi_handshake_reads_helper_epoch_not_kernel_name() {
         let device = parse_uapi_get(
-            "errno=0\npublic_key=e8b4c7880338be0284822e6f9b7d1ffc40481161439b24a44dcf44582708a84b\nlast_handshake_time_sec=1720000000\nlast_handshake_time_nsec=123\ntx_bytes=100\nrx_bytes=200\n\n",
+            "public_key=e8b4c7880338be0284822e6f9b7d1ffc40481161439b24a44dcf44582708a84b\nlast_handshake_time_sec=1720000000\nlast_handshake_time_nsec=123\ntx_bytes=100\nrx_bytes=200\nerrno=0\n\n",
         )
         .unwrap();
         assert_eq!(last_handshake_secs(&device), Some(1_720_000_000));
-        let fresh = parse_uapi_get("errno=0\nlast_handshake_time_sec=0\n\n").unwrap();
+        let fresh = parse_uapi_get("last_handshake_time_sec=0\nerrno=0\n\n").unwrap();
         assert_eq!(last_handshake_secs(&fresh), None);
-        let kernel_shaped = parse_uapi_get("errno=0\nlatest_handshake=1720000000\n\n").unwrap();
+        let kernel_shaped = parse_uapi_get("latest_handshake=1720000000\nerrno=0\n\n").unwrap();
         assert_eq!(
             last_handshake_secs(&kernel_shaped),
             None,
@@ -608,7 +623,7 @@ mod tests {
             let text = std::str::from_utf8(&seen).unwrap();
             assert!(text.starts_with("set=1\n"));
             use std::io::Write as _;
-            server.write_all(b"errno=0\nlisten_port=51820\n\n").unwrap();
+            server.write_all(b"listen_port=51820\nerrno=0\n\n").unwrap();
         });
         let device = uapi_round_trip(&mut client, &command).unwrap();
         assert_eq!(device.errno, 0);
