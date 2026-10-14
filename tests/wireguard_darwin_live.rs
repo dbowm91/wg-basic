@@ -24,10 +24,14 @@
 //!   read-only forwarding facts, rendered anchor parse check, dedicated
 //!   anchor load/verify/flush with explicit non-attachment recorded.
 //!   Forwarded/NAT traffic stays **unqualified** (advanced-admin-only).
+//! - `live_nat_egress_and_disable_retry` (M005): tunnel traffic forwarded
+//!   and NATed to egress and back through the attached anchor, then anchor
+//!   flush breaks the flow (degraded) and re-attach restores it (retry).
+//!   IPv6 egress stays **unqualified** (no v6 uplink on hosted runners).
 //! - `live_launchd_bootstrap_cycle` (M006): rendered plist lint, system-domain
 //!   bootstrap/print/bootout of the real `netd` binary, KeepAlive
-//!   re-supervision, DB-free state-dir preservation. Reboot/reinstall stay
-//!   **unqualified** (no reboot on hosted runners).
+//!   re-supervision, DB-free state-dir preservation, and a reinstall cycle.
+//!   Reboot stays unqualified (hosted runners cannot reboot).
 //!
 //! Private keys are generated fresh per run and never enter evidence output.
 
@@ -368,6 +372,51 @@ fn route_destination(line: &str) -> &str {
     line.split_whitespace().next().unwrap_or("")
 }
 
+/// Asserts a post-fixture `netstat -rn` inventory stayed within the
+/// fixture's scope: only the managed utun and TEST-NET destinations
+/// (`192.0.2.`/`2001:db8:`) may appear, and pre-existing destinations must
+/// keep their gateways. Counter drift (Refs/Use/Expire) on pre-existing
+/// gateway/ARP lines is background host noise, not fixture damage.
+fn check_inventory_scoped(
+    evidence: &mut Evidence,
+    family: &str,
+    baseline_routes: &str,
+    utun: &str,
+    netstat_args: &[&str],
+) {
+    let after_routes = sh(evidence, "netstat", netstat_args);
+    let baseline_dests: HashSet<&str> = baseline_routes.lines().map(route_destination).collect();
+    let mut baseline_gateways: HashSet<(&str, &str)> = HashSet::new();
+    for line in baseline_routes.lines() {
+        let destination = route_destination(line);
+        if destination.is_empty() {
+            continue;
+        }
+        let gateway = line.split_whitespace().nth(1).unwrap_or("");
+        baseline_gateways.insert((destination, gateway));
+    }
+    for line in after_routes.lines() {
+        let destination = route_destination(line);
+        if destination.is_empty() {
+            continue;
+        }
+        let gateway = line.split_whitespace().nth(1).unwrap_or("");
+        if !baseline_dests.contains(destination) {
+            assert!(
+                line.contains(utun) || line.contains("192.0.2.") || line.contains("2001:db8:"),
+                "{family}: added destination must be utun-scoped only: {line}"
+            );
+        } else {
+            assert!(
+                baseline_gateways.contains(&(destination, gateway)),
+                "{family}: pre-existing destination {destination} changed gateway \
+                 (now {gateway}): fixture must never reroute foreign state"
+            );
+        }
+    }
+    evidence.log(&format!("{family}: inventory stayed within fixture scope"));
+}
+
 fn remove_if_exists(path: &Path) {
     let _ = std::fs::remove_file(path);
 }
@@ -393,6 +442,7 @@ fn live_loopback_handshake_and_traffic() {
     let key_b = generate_keypair().expect("keypair B");
     let (port_a, port_b) = (51831_u16, 51832_u16);
     let (addr_a, addr_b) = ("192.0.2.1", "192.0.2.2");
+    let (addr6_a, addr6_b) = ("2001:db8::1", "2001:db8::2");
     evidence.log("fresh keypairs generated (private material never logged)");
 
     let mut endpoint_a = LiveEndpoint::spawn(&mut evidence, &helper_path, &baseline, "side-a");
@@ -401,8 +451,14 @@ fn live_loopback_handshake_and_traffic() {
     let mut endpoint_b =
         LiveEndpoint::spawn(&mut evidence, &helper_path, &baseline_plus_a, "side-b");
 
-    let allowed_a: [IpNet; 1] = [format!("{addr_b}/32").parse().expect("peer prefix")];
-    let allowed_b: [IpNet; 1] = [format!("{addr_a}/32").parse().expect("peer prefix")];
+    let allowed_a: [IpNet; 2] = [
+        format!("{addr_b}/32").parse().expect("peer prefix"),
+        format!("{addr6_b}/128").parse().expect("peer prefix"),
+    ];
+    let allowed_b: [IpNet; 2] = [
+        format!("{addr_a}/32").parse().expect("peer prefix"),
+        format!("{addr6_a}/128").parse().expect("peer prefix"),
+    ];
     let peer_for_a = wg_darwin::UapiPeerConfig {
         public_key_base64: key_b.public_key.expose(),
         remove: false,
@@ -512,6 +568,40 @@ fn live_loopback_handshake_and_traffic() {
         route_b.contains(&format!("interface: {}", endpoint_b.utun)),
         "peer address must route via our utun"
     );
+    sh(
+        &mut evidence,
+        "ifconfig",
+        &[
+            &endpoint_a.utun,
+            "inet6",
+            addr6_a,
+            addr6_b,
+            "prefixlen",
+            "128",
+        ],
+    );
+    sh(
+        &mut evidence,
+        "ifconfig",
+        &[
+            &endpoint_b.utun,
+            "inet6",
+            addr6_b,
+            addr6_a,
+            "prefixlen",
+            "128",
+        ],
+    );
+    let route6_a = sh(&mut evidence, "route", &["-n", "get", "-inet6", addr6_b]);
+    assert!(
+        route6_a.contains(&format!("interface: {}", endpoint_a.utun)),
+        "IPv6 peer address must route via our utun"
+    );
+    let route6_b = sh(&mut evidence, "route", &["-n", "get", "-inet6", addr6_a]);
+    assert!(
+        route6_b.contains(&format!("interface: {}", endpoint_b.utun)),
+        "IPv6 peer address must route via our utun"
+    );
 
     // Handshake over loopback, then traffic both directions.
     for (tag, endpoint) in [("side-a", &endpoint_a), ("side-b", &endpoint_b)] {
@@ -519,7 +609,7 @@ fn live_loopback_handshake_and_traffic() {
             latest_handshake(&endpoint.get(&mut evidence)).is_some_and(|when| when >= start_epoch)
         });
         let when = latest_handshake(&endpoint.get(&mut evidence)).unwrap_or(0);
-        evidence.log(&format!("{tag}: latest_handshake={when}"));
+        evidence.log(&format!("{tag}: last_handshake_time_sec={when}"));
     }
     let ping_a = sh(&mut evidence, "ping", &["-c", "4", "-i", "0.2", addr_b]);
     assert!(
@@ -531,14 +621,33 @@ fn live_loopback_handshake_and_traffic() {
         ping_b.contains("0.0% packet loss"),
         "ping B->A must be lossless"
     );
+    let ping6_a = sh(&mut evidence, "ping6", &["-c", "4", "-i", "0.2", addr6_b]);
+    assert!(
+        ping6_a.contains("0.0% packet loss"),
+        "ping6 A->B must be lossless"
+    );
+    let ping6_b = sh(&mut evidence, "ping6", &["-c", "4", "-i", "0.2", addr6_a]);
+    assert!(
+        ping6_b.contains("0.0% packet loss"),
+        "ping6 B->A must be lossless"
+    );
     for (tag, endpoint) in [("side-a", &endpoint_a), ("side-b", &endpoint_b)] {
         let device = endpoint.get(&mut evidence);
         let (tx, rx) = (
             pair_u64(&device, "tx_bytes").unwrap_or(0),
             pair_u64(&device, "rx_bytes").unwrap_or(0),
         );
-        evidence.log(&format!("{tag}: tx_bytes={tx} rx_bytes={rx}"));
+        let rss = sh(
+            &mut evidence,
+            "ps",
+            &["-o", "rss=", "-p", &endpoint.helper.pid.to_string()],
+        );
+        let rss_kib: u64 = rss.trim().parse().expect("helper RSS must parse");
+        evidence.log(&format!(
+            "{tag}: tx_bytes={tx} rx_bytes={rx} helper_rss_kib={rss_kib}"
+        ));
         assert!(tx > 0 && rx > 0, "{tag} must count tunnel traffic");
+        assert!(rss_kib > 0, "{tag} helper must report steady-state RSS");
     }
 
     // Kill side A mid-service: its utun must vanish, side B must survive,
@@ -588,6 +697,23 @@ fn live_loopback_handshake_and_traffic() {
         ping_again.contains("0.0% packet loss"),
         "post-restart ping must pass"
     );
+    sh(
+        &mut evidence,
+        "ifconfig",
+        &[
+            &endpoint_a.utun,
+            "inet6",
+            addr6_a,
+            addr6_b,
+            "prefixlen",
+            "128",
+        ],
+    );
+    let ping6_again = sh(&mut evidence, "ping6", &["-c", "4", "-i", "0.2", addr6_b]);
+    assert!(
+        ping6_again.contains("0.0% packet loss"),
+        "post-restart ping6 must pass"
+    );
 
     // Full teardown: no utun, socket, or address may leak.
     let utun_a = endpoint_a.utun.clone();
@@ -623,6 +749,7 @@ fn live_route_inventory_preserved() {
     let baseline_utuns: HashSet<String> = utun_names().into_iter().collect();
     evidence.log(&format!("baseline utuns: {baseline_utuns:?}"));
     let baseline_routes = sh(&mut evidence, "netstat", &["-rn", "-f", "inet"]);
+    let baseline_routes6 = sh(&mut evidence, "netstat", &["-rn", "-f", "inet6"]);
     let baseline_default = sh(&mut evidence, "route", &["-n", "get", "default"]);
     evidence.log("baseline route inventory captured");
 
@@ -661,6 +788,24 @@ fn live_route_inventory_preserved() {
     );
     let ifconfig = sh(&mut evidence, "ifconfig", &[&endpoint.utun]);
     assert!(ifconfig.contains("192.0.2.9"), "alias must be observable");
+    sh(
+        &mut evidence,
+        "ifconfig",
+        &[
+            &endpoint.utun,
+            "inet6",
+            "2001:db8::9",
+            "2001:db8::6",
+            "prefixlen",
+            "128",
+            "alias",
+        ],
+    );
+    let ifconfig6 = sh(&mut evidence, "ifconfig", &[&endpoint.utun]);
+    assert!(
+        ifconfig6.contains("2001:db8::9"),
+        "IPv6 alias must be observable"
+    );
 
     // Real observation through the pure planner: converged state plans
     // nothing, dropping the alias plans exactly its removal, and a global
@@ -721,6 +866,16 @@ fn live_route_inventory_preserved() {
     );
     let ifconfig_after = sh(&mut evidence, "ifconfig", &[&endpoint.utun]);
     assert!(!ifconfig_after.contains("192.0.2.9"), "alias must be gone");
+    sh(
+        &mut evidence,
+        "ifconfig",
+        &[&endpoint.utun, "inet6", "2001:db8::9", "-alias"],
+    );
+    let ifconfig6_after = sh(&mut evidence, "ifconfig", &[&endpoint.utun]);
+    assert!(
+        !ifconfig6_after.contains("2001:db8::9"),
+        "IPv6 alias must be gone"
+    );
 
     let utun = endpoint.utun.clone();
     let socket = endpoint.socket.clone();
@@ -735,52 +890,20 @@ fn live_route_inventory_preserved() {
         after_default, baseline_default,
         "default route must be byte-identical after the fixture"
     );
-    let after_routes = sh(&mut evidence, "netstat", &["-rn", "-f", "inet"]);
-    // Destination-set comparison: the fixture may only ADD destinations for
-    // our own utun/test-net. Counter drift (Refs/Use/Expire) on pre-existing
-    // gateway/ARP lines is background host noise, not fixture damage, so
-    // full-line comparison would false-positive on any live host.
-    let baseline_dests: HashSet<&str> = baseline_routes.lines().map(route_destination).collect();
-    let mut baseline_gateways: std::collections::HashMap<&str, HashSet<&str>> =
-        std::collections::HashMap::new();
-    for line in baseline_routes.lines() {
-        let destination = route_destination(line);
-        if destination.is_empty() {
-            continue;
-        }
-        let gateway = line.split_whitespace().nth(1).unwrap_or("");
-        baseline_gateways
-            .entry(destination)
-            .or_default()
-            .insert(gateway);
-    }
-    let added: Vec<&str> = after_routes
-        .lines()
-        .filter(|line| {
-            let destination = route_destination(line);
-            !destination.is_empty() && !baseline_dests.contains(destination)
-        })
-        .collect();
-    assert!(
-        added
-            .iter()
-            .all(|line| line.contains(&utun) || line.contains("192.0.2.")),
-        "added destinations must be utun-scoped only: {added:?}"
+    check_inventory_scoped(
+        &mut evidence,
+        "inet",
+        &baseline_routes,
+        &utun,
+        &["-rn", "-f", "inet"],
     );
-    for line in after_routes.lines() {
-        let destination = route_destination(line);
-        if destination.is_empty() {
-            continue;
-        }
-        if let Some(known) = baseline_gateways.get(destination) {
-            let gateway = line.split_whitespace().nth(1).unwrap_or("");
-            assert!(
-                known.contains(gateway),
-                "pre-existing destination {destination} changed gateway \
-                 (was {known:?}, now {gateway}): fixture must never reroute foreign state"
-            );
-        }
-    }
+    check_inventory_scoped(
+        &mut evidence,
+        "inet6",
+        &baseline_routes6,
+        &utun,
+        &["-rn", "-f", "inet6"],
+    );
     evidence.log("default route identical; added destinations utun-scoped only");
     evidence.write();
 }
@@ -878,6 +1001,280 @@ fn live_pf_inventory_and_anchor_cycle() {
     remove_if_exists(&socket);
     std::fs::remove_dir_all(&scratch).ok();
     evidence.log("anchor cycle complete: loaded, verified, flushed; nothing attached");
+    evidence.write();
+}
+
+/// Runs a command as root without asserting success, for negative probes
+/// (the transcript is still logged as evidence).
+fn sh_unchecked(evidence: &mut Evidence, program: &str, args: &[&str]) -> (bool, String) {
+    let output = Command::new(program)
+        .args(args)
+        .output()
+        .unwrap_or_else(|error| panic!("failed to spawn {program}: {error}"));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let transcript = if stdout.len() > 2000 {
+        format!("{}…[truncated]", &stdout[..2000])
+    } else {
+        stdout.into_owned()
+    };
+    evidence.log(&format!("$ {program} {}", args.join(" ")));
+    evidence.log(&transcript);
+    (output.status.success(), transcript)
+}
+
+/// M005 live gateway proof: tunnel traffic is forwarded and NATed to
+/// egress and back, then an anchor flush breaks the flow (degraded) and a
+/// re-attach restores it (retry). Explicitly scoped to a per-run anchor and
+/// the TEST-NET-1 tunnel prefix; forwarding and PF are restored afterwards.
+/// IPv6 egress stays unqualified (hosted runners have no v6 uplink).
+#[test]
+#[ignore = "needs WGB_DARWIN_LIVE=1 as root on a disposable macOS host"]
+fn live_nat_egress_and_disable_retry() {
+    let mut evidence = Evidence::new("m005-nat-egress");
+    let helper_path = require_live(&mut evidence);
+    ensure_uapi_dir(&mut evidence);
+
+    for family in ["net.inet.ip.forwarding", "net.inet6.ip6.forwarding"] {
+        let value = sh(&mut evidence, "sysctl", &[family]);
+        evidence.log(&format!("baseline (restored afterwards): {value}"));
+    }
+    let pf_info = sh(&mut evidence, "pfctl", &["-s", "info"]);
+    assert!(
+        pf_info.contains("Status: Disabled"),
+        "fixture starts from PF disabled, got: {pf_info}"
+    );
+    let default_route = sh(&mut evidence, "route", &["-n", "get", "default"]);
+    let gateway: String = default_route
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("gateway: ").map(str::to_owned))
+        .expect("default route must report a gateway");
+    let egress: String = default_route
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("interface: ").map(str::to_owned))
+        .expect("default route must report an interface");
+    evidence.log(&format!("egress target: gateway={gateway} via {egress}"));
+
+    // The gateway must answer ICMP directly first (control): otherwise a
+    // later tunnel probe failure could not be attributed to our path.
+    let direct = sh(&mut evidence, "ping", &["-c", "3", "-i", "0.2", &gateway]);
+    assert!(
+        direct.contains("0.0% packet loss"),
+        "gateway must answer a direct probe (control)"
+    );
+
+    let baseline = utun_names();
+    let key_a = generate_keypair().expect("keypair A");
+    let key_b = generate_keypair().expect("keypair B");
+    let (port_a, port_b) = (51841_u16, 51842_u16);
+    let (addr_a, addr_b) = ("192.0.2.11", "192.0.2.12");
+    let endpoint_a = LiveEndpoint::spawn(&mut evidence, &helper_path, &baseline, "nat-a");
+    let mut baseline_plus_a = baseline.clone();
+    baseline_plus_a.push(endpoint_a.utun.clone());
+    let endpoint_b =
+        LiveEndpoint::spawn(&mut evidence, &helper_path, &baseline_plus_a, "nat-b");
+
+    // Side A encrypts the probe (peer allows the gateway target); side B
+    // delivers it to the stack for forwarding (peer allows A's address).
+    let gateway_prefix: IpNet = format!("{gateway}/32").parse().expect("gateway prefix");
+    let allowed_a: [IpNet; 2] = [
+        format!("{addr_b}/32").parse().expect("peer prefix"),
+        gateway_prefix,
+    ];
+    let allowed_b: [IpNet; 1] = [format!("{addr_a}/32").parse().expect("peer prefix")];
+    let peer_for_a = wg_darwin::UapiPeerConfig {
+        public_key_base64: key_b.public_key.expose(),
+        remove: false,
+        endpoint: Some(
+            format!("127.0.0.1:{port_b}")
+                .parse()
+                .expect("loopback endpoint"),
+        ),
+        allowed_ips: &allowed_a,
+        persistent_keepalive: Some(25),
+    };
+    let peer_for_b = wg_darwin::UapiPeerConfig {
+        public_key_base64: key_a.public_key.expose(),
+        remove: false,
+        endpoint: Some(
+            format!("127.0.0.1:{port_a}")
+                .parse()
+                .expect("loopback endpoint"),
+        ),
+        allowed_ips: &allowed_b,
+        persistent_keepalive: Some(25),
+    };
+    endpoint_a.set_device(
+        &mut evidence,
+        key_a.private_key.expose_secret(),
+        port_a,
+        &peer_for_a,
+    );
+    endpoint_b.set_device(
+        &mut evidence,
+        key_b.private_key.expose_secret(),
+        port_b,
+        &peer_for_b,
+    );
+    sh(
+        &mut evidence,
+        "ifconfig",
+        &[
+            &endpoint_a.utun,
+            "inet",
+            addr_a,
+            addr_b,
+            "netmask",
+            "255.255.255.0",
+            "up",
+        ],
+    );
+    sh(
+        &mut evidence,
+        "ifconfig",
+        &[
+            &endpoint_b.utun,
+            "inet",
+            addr_b,
+            addr_a,
+            "netmask",
+            "255.255.255.0",
+            "up",
+        ],
+    );
+
+    // Divert only the gateway target into our tunnel (scoped /32, removed
+    // at teardown; the default route itself is never touched).
+    sh(
+        &mut evidence,
+        "route",
+        &["add", "-host", &gateway, "-interface", &endpoint_a.utun],
+    );
+    let diverted = sh(&mut evidence, "route", &["get", &gateway]);
+    assert!(
+        diverted.contains(&format!("interface: {}", endpoint_a.utun)),
+        "gateway target must route via our utun"
+    );
+
+    // Rendered policy: filter + IPv4 masquerade for the test prefix only.
+    let anchor = format!("wg-basic-nat-{}", std::process::id());
+    let tunnel_prefix: NetworkPrefix = "192.0.2.0/24".parse().expect("test prefix");
+    let rules = render_policy(
+        std::slice::from_ref(&tunnel_prefix),
+        &InterfaceName::new(&egress).expect("egress name"),
+        &InterfaceName::new(endpoint_b.utun.clone()).expect("tunnel name"),
+        true,
+    );
+    assert!(!rules.nat.is_empty(), "masquerade variant must render NAT");
+    let scratch = std::env::temp_dir().join(format!("wgb-nat-{}", std::process::id()));
+    std::fs::create_dir_all(&scratch).expect("nat scratch dir");
+    let main_file = scratch.join("pf.conf");
+    let anchor_file = scratch.join("anchor.conf");
+    std::fs::write(
+        &main_file,
+        format!("anchor \"{anchor}\"\nnat-anchor \"{anchor}\"\npass in all\npass out all\n"),
+    )
+    .expect("main ruleset");
+    std::fs::write(
+        &anchor_file,
+        rules.filter.join("\n") + "\n" + &rules.nat.join("\n") + "\n",
+    )
+    .expect("anchor file");
+    let main_arg = main_file.to_string_lossy().into_owned();
+    let anchor_arg = anchor_file.to_string_lossy().into_owned();
+    sh(&mut evidence, "pfctl", &["-n", "-f", &main_arg]);
+    sh(&mut evidence, "pfctl", &["-n", "-f", &anchor_arg]);
+    evidence.log("gateway ruleset parses under pfctl -n");
+
+    sh(&mut evidence, "sysctl", &["-w", "net.inet.ip.forwarding=1"]);
+    let forwarding = sh(&mut evidence, "sysctl", &["net.inet.ip.forwarding"]);
+    assert!(
+        forwarding.contains("1"),
+        "forwarding must enable for the fixture"
+    );
+    sh(&mut evidence, "pfctl", &["-f", &main_arg]);
+    sh(&mut evidence, "pfctl", &["-a", &anchor, "-f", &anchor_arg]);
+    let listed_nat = sh(&mut evidence, "pfctl", &["-a", &anchor, "-s", "nat"]);
+    assert!(
+        listed_nat.contains("192.0.2.0/24"),
+        "anchor must list our NAT rule"
+    );
+    sh(&mut evidence, "pfctl", &["-e"]);
+    let enabled = sh(&mut evidence, "pfctl", &["-s", "info"]);
+    assert!(
+        enabled.contains("Status: Enabled"),
+        "PF must enable on the disposable host"
+    );
+
+    // The gateway probe traverses tunnel, forward, NAT, egress, and back:
+    // without the translation the gateway could never reply (it has no
+    // route to TEST-NET-1), so success proves effective NAT.
+    let probe = sh(&mut evidence, "ping", &["-c", "4", "-i", "0.2", &gateway]);
+    assert!(
+        probe.contains("0.0% packet loss"),
+        "NATed gateway probe must be lossless"
+    );
+    let states = sh(&mut evidence, "pfctl", &["-s", "states"]);
+    assert!(
+        states.contains("192.0.2.11"),
+        "state table must show the translated tunnel flow"
+    );
+    evidence.log("gateway flow proven through tunnel + forward + NAT");
+
+    // Disable: flushing the anchor must break the flow (degraded, no false
+    // convergence). Retry: re-attaching must restore it.
+    sh(&mut evidence, "pfctl", &["-a", &anchor, "-F", "rules"]);
+    sh(&mut evidence, "pfctl", &["-a", &anchor, "-F", "nat"]);
+    let (broken_ok, broken) = sh_unchecked(&mut evidence, "ping", &["-c", "3", &gateway]);
+    assert!(
+        !broken_ok || !broken.contains("0.0% packet loss"),
+        "flushed anchor must break the gateway flow"
+    );
+    evidence.log("disable proven: flow stops without the anchor");
+    sh(&mut evidence, "pfctl", &["-a", &anchor, "-f", &anchor_arg]);
+    let retry = sh(&mut evidence, "ping", &["-c", "4", "-i", "0.2", &gateway]);
+    assert!(
+        retry.contains("0.0% packet loss"),
+        "re-attached anchor must restore the flow"
+    );
+    evidence.log("retry proven: flow resumes after re-attach");
+
+    // Restore the host: route, PF, forwarding, helpers, sockets.
+    sh(&mut evidence, "route", &["delete", "-host", &gateway]);
+    sh(&mut evidence, "pfctl", &["-a", &anchor, "-F", "rules"]);
+    sh(&mut evidence, "pfctl", &["-a", &anchor, "-F", "nat"]);
+    sh(&mut evidence, "pfctl", &["-F", "rules"]);
+    sh(&mut evidence, "pfctl", &["-F", "nat"]);
+    sh(&mut evidence, "pfctl", &["-d"]);
+    let disabled = sh(&mut evidence, "pfctl", &["-s", "info"]);
+    assert!(
+        disabled.contains("Status: Disabled"),
+        "PF must return to disabled"
+    );
+    sh(&mut evidence, "sysctl", &["-w", "net.inet.ip.forwarding=0"]);
+    let forwarding_off = sh(&mut evidence, "sysctl", &["net.inet.ip.forwarding"]);
+    assert!(
+        forwarding_off.contains("net.inet.ip.forwarding: 0"),
+        "forwarding must restore to 0"
+    );
+    let utun_a = endpoint_a.utun.clone();
+    let utun_b = endpoint_b.utun.clone();
+    let socket_a = endpoint_a.socket.clone();
+    let socket_b = endpoint_b.socket.clone();
+    drop(endpoint_a);
+    drop(endpoint_b);
+    wait_until("nat teardown", Duration::from_secs(15), || {
+        let live = utun_names();
+        !live.contains(&utun_a) && !live.contains(&utun_b)
+    });
+    remove_if_exists(&socket_a);
+    remove_if_exists(&socket_b);
+    std::fs::remove_dir_all(&scratch).ok();
+    let leaked: Vec<String> = utun_names()
+        .into_iter()
+        .filter(|name| !baseline.contains(name))
+        .collect();
+    assert!(leaked.is_empty(), "no utun may leak: {leaked:?}");
+    evidence.log("gateway fixture complete: host restored, inventory at baseline");
     evidence.write();
 }
 
@@ -1013,6 +1410,34 @@ fn live_launchd_bootstrap_cycle() {
         state_after.is_empty(),
         "state dir still untouched after bootout"
     );
+
+    // Reinstall cycle (restart recovery without a reboot, which hosted
+    // runners cannot perform): the same receipt reinstalls and serves again.
+    sh(
+        &mut evidence,
+        "cp",
+        &[plist_arg.as_str(), system_plist.as_str()],
+    );
+    sh(
+        &mut evidence,
+        "launchctl",
+        &["bootstrap", "system", system_plist.as_str()],
+    );
+    wait_until("netd reinstalled", Duration::from_secs(30), || {
+        socket.exists()
+    });
+    let reinstall_print = sh(&mut evidence, "launchctl", &["print", job.as_str()]);
+    assert!(
+        reinstall_print.contains("state = running"),
+        "reinstalled netd must run again"
+    );
+    evidence.log("reinstall cycle: same receipt serves again after bootout");
+    sh(
+        &mut evidence,
+        "launchctl",
+        &["bootout", "system", system_plist.as_str()],
+    );
+    remove_if_exists(Path::new(&system_plist));
     std::fs::remove_dir_all(&root).ok();
     evidence.log("bootout complete: job gone, socket gone, state preserved-empty");
     evidence.write();
