@@ -16,6 +16,12 @@
 //!   (owner-only via `077` umask); the real name is learned by
 //!   before/after interface delta plus UAPI verification, never by trusting
 //!   a name file alone.
+//! - Wire-format deviations from the kernel UAPI (read from
+//!   `device/uapi.go` at the pinned commit, proven live on hosted macOS):
+//!   `private_key`/`public_key` travel as lowercase hex (64 chars), never
+//!   base64; observation reports `last_handshake_time_sec`/`nsec`, never
+//!   `latest_handshake`. The codec converts and documents both; anything
+//!   else on the wire is field-for-field identical.
 
 use std::{
     io::{self, Read, Write},
@@ -203,9 +209,25 @@ impl Drop for SupervisedHelper {
     }
 }
 
-/// Renders a `set` UAPI command from typed fields. Keys are base64 (as the
-/// UAPI specifies); endpoint, allowed IPs, and keepalive are typed too —
-/// nothing raw reaches the socket.
+/// Converts a portable base64 WireGuard key (the domain key encoding) to
+/// the lowercase hex the pinned helper speaks on its UAPI socket. Rejects
+/// anything that does not decode to exactly 32 bytes.
+pub fn base64_key_to_hex(base64_key: &str) -> Result<String, HelperError> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+    let bytes = STANDARD
+        .decode(base64_key)
+        .map_err(|_| HelperError::UapiMalformed)?;
+    if bytes.len() != 32 {
+        return Err(HelperError::UapiMalformed);
+    }
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+/// Renders a `set` UAPI command from typed fields. Keys arrive as base64
+/// (domain encoding, as the kernel UAPI specifies) and are converted to the
+/// helper's hex wire form by [`base64_key_to_hex`]; endpoint, allowed IPs,
+/// and keepalive are typed too — nothing raw reaches the socket.
 pub fn render_uapi_set(
     private_key_base64: Option<&str>,
     listen_port: Option<u16>,
@@ -213,10 +235,8 @@ pub fn render_uapi_set(
 ) -> Result<String, HelperError> {
     let mut out = String::from("set=1\n");
     if let Some(key) = private_key_base64 {
-        if key.len() != 44 {
-            return Err(HelperError::UapiMalformed);
-        }
-        out.push_str(&format!("private_key={key}\n"));
+        let hex = base64_key_to_hex(key)?;
+        out.push_str(&format!("private_key={hex}\n"));
     }
     if let Some(port) = listen_port {
         if port == 0 {
@@ -225,10 +245,8 @@ pub fn render_uapi_set(
         out.push_str(&format!("listen_port={port}\n"));
     }
     if let Some(peer) = peer {
-        if peer.public_key_base64.len() != 44 {
-            return Err(HelperError::UapiMalformed);
-        }
-        out.push_str(&format!("public_key={}\n", peer.public_key_base64));
+        let peer_hex = base64_key_to_hex(peer.public_key_base64)?;
+        out.push_str(&format!("public_key={peer_hex}\n"));
         if peer.remove {
             out.push_str("remove=true\n");
         } else {
@@ -292,6 +310,18 @@ pub fn parse_uapi_get(response: &str) -> Result<UapiDevice, HelperError> {
         pairs.push((key.to_owned(), value.to_owned()));
     }
     Ok(UapiDevice { errno, pairs })
+}
+
+/// Last-handshake epoch seconds from a UAPI `get` observation. The pinned
+/// helper reports `last_handshake_time_sec` (the kernel reports
+/// `latest_handshake`); absent or zero means no handshake has completed.
+pub fn last_handshake_secs(device: &UapiDevice) -> Option<u64> {
+    device
+        .pairs
+        .iter()
+        .find(|(key, _)| key == "last_handshake_time_sec")
+        .and_then(|(_, value)| value.parse().ok())
+        .filter(|seconds| *seconds > 0)
 }
 
 /// One bounded UAPI round trip over an already-connected socket.
@@ -456,6 +486,21 @@ mod tests {
     }
 
     #[test]
+    fn uapi_keys_convert_from_base64_to_helper_hex() {
+        assert_eq!(
+            base64_key_to_hex("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").unwrap(),
+            "00".repeat(32)
+        );
+        assert_eq!(
+            base64_key_to_hex("6LTHiAM4vgKEgi5vm30f/EBIEWFDmySkTc9EWCcIqEs=").unwrap(),
+            concat!("e8b4c7880338be0284822e6f9b7d1ffc40481161439b24a44dcf44582708a", "84b")
+        );
+        assert!(base64_key_to_hex("short").is_err());
+        assert!(base64_key_to_hex("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").is_err());
+        assert!(base64_key_to_hex("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!").is_err());
+    }
+
+    #[test]
     fn uapi_set_renders_typed_fields_with_bounds() {
         let key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
         let peer = UapiPeerConfig {
@@ -468,6 +513,11 @@ mod tests {
         let rendered = render_uapi_set(Some(key), Some(51820), Some(&peer)).unwrap();
         assert!(rendered.starts_with("set=1\n"));
         assert!(rendered.contains("private_key="));
+        assert!(rendered.contains(&format!("private_key={}", "00".repeat(32))));
+        assert!(
+            !rendered.contains("AAAA"),
+            "base64 must never reach the helper wire"
+        );
         assert!(rendered.contains("listen_port=51820\n"));
         assert!(rendered.ends_with("\n\n"));
         assert!(render_uapi_set(Some(key), Some(0), None).is_err());
@@ -517,6 +567,23 @@ mod tests {
         assert!(device.pairs.iter().any(|(key, _)| key == "listen_port"));
         assert!(parse_uapi_get("garbage\n\n").is_err());
         assert!(parse_uapi_get("errno=0\nno-equals-here\n\n").is_err());
+    }
+
+    #[test]
+    fn uapi_handshake_reads_helper_epoch_not_kernel_name() {
+        let device = parse_uapi_get(
+            concat!("errno=0\npublic_key=e8b4c7880338be0284822e6f9b7d1ffc40481161439b24a44dcf44582708a", "84b\nlast_handshake_time_sec=1720000000\nlast_handshake_time_nsec=123\ntx_bytes=100\nrx_bytes=200\n\n"),
+        )
+        .unwrap();
+        assert_eq!(last_handshake_secs(&device), Some(1_720_000_000));
+        let fresh = parse_uapi_get("errno=0\nlast_handshake_time_sec=0\n\n").unwrap();
+        assert_eq!(last_handshake_secs(&fresh), None);
+        let kernel_shaped = parse_uapi_get("errno=0\nlatest_handshake=1720000000\n\n").unwrap();
+        assert_eq!(
+            last_handshake_secs(&kernel_shaped),
+            None,
+            "kernel field names must not satisfy the helper observation"
+        );
     }
 
     #[test]
