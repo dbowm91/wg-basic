@@ -1070,8 +1070,7 @@ fn live_nat_egress_and_disable_retry() {
     let endpoint_a = LiveEndpoint::spawn(&mut evidence, &helper_path, &baseline, "nat-a");
     let mut baseline_plus_a = baseline.clone();
     baseline_plus_a.push(endpoint_a.utun.clone());
-    let endpoint_b =
-        LiveEndpoint::spawn(&mut evidence, &helper_path, &baseline_plus_a, "nat-b");
+    let endpoint_b = LiveEndpoint::spawn(&mut evidence, &helper_path, &baseline_plus_a, "nat-b");
 
     // Side A encrypts the probe (peer allows the gateway target); side B
     // delivers it to the stack for forwarding (peer allows A's address).
