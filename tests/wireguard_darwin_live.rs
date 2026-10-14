@@ -362,6 +362,12 @@ fn ensure_uapi_dir(evidence: &mut Evidence) {
     evidence.log(&format!("UAPI dir ready: {}", dir.display()));
 }
 
+/// First whitespace field of a `netstat -rn` line (the destination), or an
+/// empty string for blank/header lines.
+fn route_destination(line: &str) -> &str {
+    line.split_whitespace().next().unwrap_or("")
+}
+
 fn remove_if_exists(path: &Path) {
     let _ = std::fs::remove_file(path);
 }
@@ -730,18 +736,52 @@ fn live_route_inventory_preserved() {
         "default route must be byte-identical after the fixture"
     );
     let after_routes = sh(&mut evidence, "netstat", &["-rn", "-f", "inet"]);
-    let baseline_set: HashSet<&str> = baseline_routes.lines().collect();
-    let foreign: Vec<&str> = after_routes
+    // Destination-set comparison: the fixture may only ADD destinations for
+    // our own utun/test-net. Counter drift (Refs/Use/Expire) on pre-existing
+    // gateway/ARP lines is background host noise, not fixture damage, so
+    // full-line comparison would false-positive on any live host.
+    let baseline_dests: HashSet<&str> = baseline_routes.lines().map(route_destination).collect();
+    let mut baseline_gateways: std::collections::HashMap<&str, HashSet<&str>> =
+        std::collections::HashMap::new();
+    for line in baseline_routes.lines() {
+        let destination = route_destination(line);
+        if destination.is_empty() {
+            continue;
+        }
+        let gateway = line.split_whitespace().nth(1).unwrap_or("");
+        baseline_gateways
+            .entry(destination)
+            .or_default()
+            .insert(gateway);
+    }
+    let added: Vec<&str> = after_routes
         .lines()
         .filter(|line| {
-            !baseline_set.contains(line) && !line.contains(&utun) && !line.contains("192.0.2.")
+            let destination = route_destination(line);
+            !destination.is_empty() && !baseline_dests.contains(destination)
         })
         .collect();
     assert!(
-        foreign.is_empty(),
-        "inventory diff must be utun-scoped only: {foreign:?}"
+        added
+            .iter()
+            .all(|line| line.contains(&utun) || line.contains("192.0.2.")),
+        "added destinations must be utun-scoped only: {added:?}"
     );
-    evidence.log("default route identical; inventory diff utun-scoped only");
+    for line in after_routes.lines() {
+        let destination = route_destination(line);
+        if destination.is_empty() {
+            continue;
+        }
+        if let Some(known) = baseline_gateways.get(destination) {
+            let gateway = line.split_whitespace().nth(1).unwrap_or("");
+            assert!(
+                known.contains(gateway),
+                "pre-existing destination {destination} changed gateway \
+                 (was {known:?}, now {gateway}): fixture must never reroute foreign state"
+            );
+        }
+    }
+    evidence.log("default route identical; added destinations utun-scoped only");
     evidence.write();
 }
 
