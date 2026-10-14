@@ -1157,9 +1157,9 @@ fn live_forwarding_and_unattached_anchor_probe() {
     );
 
     // Rendered policy: filter + IPv4 masquerade for the test prefix only.
-    // The anchor loads (proving the lifecycle), but no parent references it:
-    // the main-ruleset replacement that would attach it is refused by the
-    // platform guard (attempted parse-only below, recorded verbatim).
+    // The filter anchor loads (proving the lifecycle), but NAT rules cannot
+    // be staged anywhere and the main-ruleset replacement that would attach
+    // anything is refused by the platform guard (both recorded verbatim).
     let anchor = format!("wg-basic-nat-{}", std::process::id());
     let tunnel_prefix: NetworkPrefix = "192.0.2.0/24".parse().expect("test prefix");
     let rules = render_policy(
@@ -1172,33 +1172,41 @@ fn live_forwarding_and_unattached_anchor_probe() {
     let scratch = std::env::temp_dir().join(format!("wgb-nat-{}", std::process::id()));
     std::fs::create_dir_all(&scratch).expect("nat scratch dir");
     let main_file = scratch.join("pf.conf");
-    let anchor_file = scratch.join("anchor.conf");
+    let filter_file = scratch.join("filter.conf");
+    let nat_file = scratch.join("nat.conf");
     std::fs::write(
         &main_file,
         format!("anchor \"{anchor}\"\nnat-anchor \"{anchor}\"\npass in all\npass out all\n"),
     )
     .expect("main ruleset");
-    std::fs::write(
-        &anchor_file,
-        rules.filter.join("\n") + "\n" + &rules.nat.join("\n") + "\n",
-    )
-    .expect("anchor file");
+    std::fs::write(&filter_file, rules.filter.join("\n") + "\n").expect("filter file");
+    std::fs::write(&nat_file, rules.nat.join("\n") + "\n").expect("nat file");
     let main_arg = main_file.to_string_lossy().into_owned();
-    let anchor_arg = anchor_file.to_string_lossy().into_owned();
-    let (parse_ok, parse_out) = sh_unchecked(&mut evidence, "pfctl", &["-n", "-f", &main_arg]);
+    let filter_arg = filter_file.to_string_lossy().into_owned();
+    let nat_arg = nat_file.to_string_lossy().into_owned();
+    let (main_ok, main_out) = sh_unchecked(&mut evidence, "pfctl", &["-n", "-f", &main_arg]);
     assert!(
-        !parse_ok,
+        !main_ok,
         "main-ruleset replacement must stay platform-refused, but it parsed"
     );
     evidence.log(&format!(
-        "platform guard pins unattached operation: {parse_out}"
+        "platform guard pins unattached operation: {main_out}"
     ));
-    sh(&mut evidence, "pfctl", &["-a", &anchor, "-f", &anchor_arg]);
-    let listed_nat = sh(&mut evidence, "pfctl", &["-a", &anchor, "-s", "nat"]);
+    sh(&mut evidence, "pfctl", &["-n", "-f", &filter_arg]);
+    sh(&mut evidence, "pfctl", &["-n", "-f", &nat_arg]);
+    evidence.log("rendered filter + NAT files parse under pfctl -n");
+    sh(&mut evidence, "pfctl", &["-a", &anchor, "-f", &filter_arg]);
+    let listed = sh(&mut evidence, "pfctl", &["-a", &anchor, "-s", "rules"]);
     assert!(
-        listed_nat.contains("192.0.2.0/24"),
-        "anchor must list our NAT rule"
+        listed.contains(&format!("pass in on {}", endpoint_b.utun)),
+        "loaded anchor must list our tunnel rule"
     );
+    let (nat_ok, nat_out) = sh_unchecked(&mut evidence, "pfctl", &["-a", &anchor, "-f", &nat_arg]);
+    assert!(
+        !nat_ok,
+        "NAT staging must stay platform-refused, but it loaded"
+    );
+    evidence.log(&format!("platform guard pins NAT staging: {nat_out}"));
 
     // Forwarding cycles on the disposable host and restores afterwards.
     sh(&mut evidence, "sysctl", &["-w", "net.inet.ip.forwarding=1"]);
