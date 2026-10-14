@@ -1044,22 +1044,22 @@ fn live_nat_egress_and_disable_retry() {
         "fixture starts from PF disabled, got: {pf_info}"
     );
     let default_route = sh(&mut evidence, "route", &["-n", "get", "default"]);
-    let gateway: String = default_route
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("gateway: ").map(str::to_owned))
-        .expect("default route must report a gateway");
     let egress: String = default_route
         .lines()
         .find_map(|line| line.trim().strip_prefix("interface: ").map(str::to_owned))
         .expect("default route must report an interface");
-    evidence.log(&format!("egress target: gateway={gateway} via {egress}"));
+    // Public echo target: the runner's own gateway drops ICMP (proven by a
+    // failed control probe during development), so the probe uses an address
+    // that answers. Volume is a handful of echo requests on a disposable host.
+    let target = "8.8.8.8";
+    evidence.log(&format!("egress target: {target} via {egress}"));
 
-    // The gateway must answer ICMP directly first (control): otherwise a
+    // The target must answer ICMP directly first (control): otherwise a
     // later tunnel probe failure could not be attributed to our path.
-    let direct = sh(&mut evidence, "ping", &["-c", "3", "-i", "0.2", &gateway]);
+    let direct = sh(&mut evidence, "ping", &["-c", "3", "-i", "0.2", target]);
     assert!(
         direct.contains("0.0% packet loss"),
-        "gateway must answer a direct probe (control)"
+        "target must answer a direct probe (control)"
     );
 
     let baseline = utun_names();
@@ -1072,12 +1072,12 @@ fn live_nat_egress_and_disable_retry() {
     baseline_plus_a.push(endpoint_a.utun.clone());
     let endpoint_b = LiveEndpoint::spawn(&mut evidence, &helper_path, &baseline_plus_a, "nat-b");
 
-    // Side A encrypts the probe (peer allows the gateway target); side B
+    // Side A encrypts the probe (peer allows the echo target); side B
     // delivers it to the stack for forwarding (peer allows A's address).
-    let gateway_prefix: IpNet = format!("{gateway}/32").parse().expect("gateway prefix");
+    let target_prefix: IpNet = format!("{target}/32").parse().expect("target prefix");
     let allowed_a: [IpNet; 2] = [
         format!("{addr_b}/32").parse().expect("peer prefix"),
-        gateway_prefix,
+        target_prefix,
     ];
     let allowed_b: [IpNet; 1] = [format!("{addr_a}/32").parse().expect("peer prefix")];
     let peer_for_a = wg_darwin::UapiPeerConfig {
@@ -1141,17 +1141,17 @@ fn live_nat_egress_and_disable_retry() {
         ],
     );
 
-    // Divert only the gateway target into our tunnel (scoped /32, removed
+    // Divert only the echo target into our tunnel (scoped /32, removed
     // at teardown; the default route itself is never touched).
     sh(
         &mut evidence,
         "route",
-        &["add", "-host", &gateway, "-interface", &endpoint_a.utun],
+        &["add", "-host", target, "-interface", &endpoint_a.utun],
     );
-    let diverted = sh(&mut evidence, "route", &["get", &gateway]);
+    let diverted = sh(&mut evidence, "route", &["get", target]);
     assert!(
         diverted.contains(&format!("interface: {}", endpoint_a.utun)),
-        "gateway target must route via our utun"
+        "echo target must route via our utun"
     );
 
     // Rendered policy: filter + IPv4 masquerade for the test prefix only.
@@ -1204,33 +1204,33 @@ fn live_nat_egress_and_disable_retry() {
         "PF must enable on the disposable host"
     );
 
-    // The gateway probe traverses tunnel, forward, NAT, egress, and back:
-    // without the translation the gateway could never reply (it has no
+    // The echo probe traverses tunnel, forward, NAT, egress, and back:
+    // without the translation the target could never reply (it has no
     // route to TEST-NET-1), so success proves effective NAT.
-    let probe = sh(&mut evidence, "ping", &["-c", "4", "-i", "0.2", &gateway]);
+    let probe = sh(&mut evidence, "ping", &["-c", "4", "-i", "0.2", target]);
     assert!(
         probe.contains("0.0% packet loss"),
-        "NATed gateway probe must be lossless"
+        "NATed echo probe must be lossless"
     );
     let states = sh(&mut evidence, "pfctl", &["-s", "states"]);
     assert!(
         states.contains("192.0.2.11"),
         "state table must show the translated tunnel flow"
     );
-    evidence.log("gateway flow proven through tunnel + forward + NAT");
+    evidence.log("echo flow proven through tunnel + forward + NAT");
 
     // Disable: flushing the anchor must break the flow (degraded, no false
     // convergence). Retry: re-attaching must restore it.
     sh(&mut evidence, "pfctl", &["-a", &anchor, "-F", "rules"]);
     sh(&mut evidence, "pfctl", &["-a", &anchor, "-F", "nat"]);
-    let (broken_ok, broken) = sh_unchecked(&mut evidence, "ping", &["-c", "3", &gateway]);
+    let (broken_ok, broken) = sh_unchecked(&mut evidence, "ping", &["-c", "3", target]);
     assert!(
         !broken_ok || !broken.contains("0.0% packet loss"),
-        "flushed anchor must break the gateway flow"
+        "flushed anchor must break the echo flow"
     );
     evidence.log("disable proven: flow stops without the anchor");
     sh(&mut evidence, "pfctl", &["-a", &anchor, "-f", &anchor_arg]);
-    let retry = sh(&mut evidence, "ping", &["-c", "4", "-i", "0.2", &gateway]);
+    let retry = sh(&mut evidence, "ping", &["-c", "4", "-i", "0.2", target]);
     assert!(
         retry.contains("0.0% packet loss"),
         "re-attached anchor must restore the flow"
@@ -1238,7 +1238,7 @@ fn live_nat_egress_and_disable_retry() {
     evidence.log("retry proven: flow resumes after re-attach");
 
     // Restore the host: route, PF, forwarding, helpers, sockets.
-    sh(&mut evidence, "route", &["delete", "-host", &gateway]);
+    sh(&mut evidence, "route", &["delete", "-host", target]);
     sh(&mut evidence, "pfctl", &["-a", &anchor, "-F", "rules"]);
     sh(&mut evidence, "pfctl", &["-a", &anchor, "-F", "nat"]);
     sh(&mut evidence, "pfctl", &["-F", "rules"]);
@@ -1273,7 +1273,7 @@ fn live_nat_egress_and_disable_retry() {
         .filter(|name| !baseline.contains(name))
         .collect();
     assert!(leaked.is_empty(), "no utun may leak: {leaked:?}");
-    evidence.log("gateway fixture complete: host restored, inventory at baseline");
+    evidence.log("egress fixture complete: host restored, inventory at baseline");
     evidence.write();
 }
 
