@@ -24,10 +24,10 @@
 //!   read-only forwarding facts, rendered anchor parse check, dedicated
 //!   anchor load/verify/flush with explicit non-attachment recorded.
 //!   Forwarded/NAT traffic stays **unqualified** (advanced-admin-only).
-//! - `live_nat_egress_and_disable_retry` (M005): tunnel traffic forwarded
-//!   and NATed to egress and back through the attached anchor, then anchor
-//!   flush breaks the flow (degraded) and re-attach restores it (retry).
-//!   IPv6 egress stays **unqualified** (no v6 uplink on hosted runners).
+//! - `live_forwarding_and_unattached_anchor_probe` (M005): forwarding/PF
+//!   cycle with restore, anchor provably unattached even while PF runs, no
+//!   false convergence without attachment, and the platform's main-ruleset
+//!   guard recorded. Effective NAT traffic stays **unqualified**.
 //! - `live_launchd_bootstrap_cycle` (M006): rendered plist lint, system-domain
 //!   bootstrap/print/bootout of the real `netd` binary, KeepAlive
 //!   re-supervision, DB-free state-dir preservation, and a reinstall cycle.
@@ -1022,15 +1022,17 @@ fn sh_unchecked(evidence: &mut Evidence, program: &str, args: &[&str]) -> (bool,
     (output.status.success(), transcript)
 }
 
-/// M005 live gateway proof: tunnel traffic is forwarded and NATed to
-/// egress and back, then an anchor flush breaks the flow (degraded) and a
-/// re-attach restores it (retry). Explicitly scoped to a per-run anchor and
-/// the TEST-NET-1 tunnel prefix; forwarding and PF are restored afterwards.
-/// IPv6 egress stays unqualified (hosted runners have no v6 uplink).
+/// M005 live platform proof: the forwarding toggle cycles and restores,
+/// PF enables/disables, the dedicated anchor stays provably unattached
+/// even while PF is enabled, and tunnel traffic without attachment
+/// provably fails (no false convergence). The main-ruleset replacement the
+/// product must never perform is attempted parse-only and recorded as
+/// platform-refused. Effective NAT traffic stays unqualified (it needs that
+/// refused attachment plus a v6 uplink hosted runners lack).
 #[test]
 #[ignore = "needs WGB_DARWIN_LIVE=1 as root on a disposable macOS host"]
-fn live_nat_egress_and_disable_retry() {
-    let mut evidence = Evidence::new("m005-nat-egress");
+fn live_forwarding_and_unattached_anchor_probe() {
+    let mut evidence = Evidence::new("m005-platform-probe");
     let helper_path = require_live(&mut evidence);
     ensure_uapi_dir(&mut evidence);
 
@@ -1155,6 +1157,9 @@ fn live_nat_egress_and_disable_retry() {
     );
 
     // Rendered policy: filter + IPv4 masquerade for the test prefix only.
+    // The anchor loads (proving the lifecycle), but no parent references it:
+    // the main-ruleset replacement that would attach it is refused by the
+    // platform guard (attempted parse-only below, recorded verbatim).
     let anchor = format!("wg-basic-nat-{}", std::process::id());
     let tunnel_prefix: NetworkPrefix = "192.0.2.0/24".parse().expect("test prefix");
     let rules = render_policy(
@@ -1180,22 +1185,27 @@ fn live_nat_egress_and_disable_retry() {
     .expect("anchor file");
     let main_arg = main_file.to_string_lossy().into_owned();
     let anchor_arg = anchor_file.to_string_lossy().into_owned();
-    sh(&mut evidence, "pfctl", &["-n", "-f", &main_arg]);
-    sh(&mut evidence, "pfctl", &["-n", "-f", &anchor_arg]);
-    evidence.log("gateway ruleset parses under pfctl -n");
-
-    sh(&mut evidence, "sysctl", &["-w", "net.inet.ip.forwarding=1"]);
-    let forwarding = sh(&mut evidence, "sysctl", &["net.inet.ip.forwarding"]);
+    let (parse_ok, parse_out) = sh_unchecked(&mut evidence, "pfctl", &["-n", "-f", &main_arg]);
     assert!(
-        forwarding.contains("1"),
-        "forwarding must enable for the fixture"
+        !parse_ok,
+        "main-ruleset replacement must stay platform-refused, but it parsed"
     );
-    sh(&mut evidence, "pfctl", &["-f", &main_arg]);
+    evidence.log(&format!(
+        "platform guard pins unattached operation: {parse_out}"
+    ));
     sh(&mut evidence, "pfctl", &["-a", &anchor, "-f", &anchor_arg]);
     let listed_nat = sh(&mut evidence, "pfctl", &["-a", &anchor, "-s", "nat"]);
     assert!(
         listed_nat.contains("192.0.2.0/24"),
         "anchor must list our NAT rule"
+    );
+
+    // Forwarding cycles on the disposable host and restores afterwards.
+    sh(&mut evidence, "sysctl", &["-w", "net.inet.ip.forwarding=1"]);
+    let forwarding = sh(&mut evidence, "sysctl", &["net.inet.ip.forwarding"]);
+    assert!(
+        forwarding.contains("net.inet.ip.forwarding: 1"),
+        "forwarding must enable for the fixture"
     );
     sh(&mut evidence, "pfctl", &["-e"]);
     let enabled = sh(&mut evidence, "pfctl", &["-s", "info"]);
@@ -1203,46 +1213,28 @@ fn live_nat_egress_and_disable_retry() {
         enabled.contains("Status: Enabled"),
         "PF must enable on the disposable host"
     );
+    let parent_filter = sh(&mut evidence, "pfctl", &["-s", "rules"]);
+    let parent_nat = sh(&mut evidence, "pfctl", &["-s", "nat"]);
+    assert!(
+        !attachment_verified(&parent_filter, &parent_nat, &anchor),
+        "fixture anchor must stay unattached even while PF is enabled"
+    );
+    evidence.log("anchor loaded, PF enabled, attachment absent: inert by construction");
 
-    // The echo probe traverses tunnel, forward, NAT, egress, and back:
-    // without the translation the target could never reply (it has no
-    // route to TEST-NET-1), so success proves effective NAT.
-    let probe = sh(&mut evidence, "ping", &["-c", "4", "-i", "0.2", target]);
+    // Without attachment the diverted probe must fail: the target has no
+    // route to TEST-NET-1, so only a translation could complete the flow.
+    // Success here would be false convergence, not a gateway.
+    let (probe_ok, probe) = sh_unchecked(&mut evidence, "ping", &["-c", "3", target]);
     assert!(
-        probe.contains("0.0% packet loss"),
-        "NATed echo probe must be lossless"
+        !probe_ok || !probe.contains("0.0% packet loss"),
+        "unattached anchor must not forward the echo flow"
     );
-    let states = sh(&mut evidence, "pfctl", &["-s", "states"]);
-    assert!(
-        states.contains("192.0.2.11"),
-        "state table must show the translated tunnel flow"
-    );
-    evidence.log("echo flow proven through tunnel + forward + NAT");
-
-    // Disable: flushing the anchor must break the flow (degraded, no false
-    // convergence). Retry: re-attaching must restore it.
-    sh(&mut evidence, "pfctl", &["-a", &anchor, "-F", "rules"]);
-    sh(&mut evidence, "pfctl", &["-a", &anchor, "-F", "nat"]);
-    let (broken_ok, broken) = sh_unchecked(&mut evidence, "ping", &["-c", "3", target]);
-    assert!(
-        !broken_ok || !broken.contains("0.0% packet loss"),
-        "flushed anchor must break the echo flow"
-    );
-    evidence.log("disable proven: flow stops without the anchor");
-    sh(&mut evidence, "pfctl", &["-a", &anchor, "-f", &anchor_arg]);
-    let retry = sh(&mut evidence, "ping", &["-c", "4", "-i", "0.2", target]);
-    assert!(
-        retry.contains("0.0% packet loss"),
-        "re-attached anchor must restore the flow"
-    );
-    evidence.log("retry proven: flow resumes after re-attach");
+    evidence.log("no false convergence: unattached policy carries no traffic");
 
     // Restore the host: route, PF, forwarding, helpers, sockets.
     sh(&mut evidence, "route", &["delete", "-host", target]);
     sh(&mut evidence, "pfctl", &["-a", &anchor, "-F", "rules"]);
     sh(&mut evidence, "pfctl", &["-a", &anchor, "-F", "nat"]);
-    sh(&mut evidence, "pfctl", &["-F", "rules"]);
-    sh(&mut evidence, "pfctl", &["-F", "nat"]);
     sh(&mut evidence, "pfctl", &["-d"]);
     let disabled = sh(&mut evidence, "pfctl", &["-s", "info"]);
     assert!(
