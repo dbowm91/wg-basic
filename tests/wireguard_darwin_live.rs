@@ -1051,14 +1051,33 @@ fn live_forwarding_and_unattached_anchor_probe() {
         .find_map(|line| line.trim().strip_prefix("interface: ").map(str::to_owned))
         .expect("default route must report an interface");
     // Public echo target: the runner's own gateway drops ICMP (proven by a
-    // failed control probe during development), so the probe uses an address
-    // that answers. Volume is a handful of echo requests on a disposable host.
-    let target = "8.8.8.8";
+    // failed control probe during development), and runner networks differ
+    // in which public addresses answer, so take the first of several
+    // well-known echo addresses that answers. Volume is a handful of echo
+    // requests on a disposable host.
+    let mut target = String::new();
+    for candidate in ["8.8.8.8", "1.1.1.1", "9.9.9.9"] {
+        let (ok, out) = sh_unchecked(&mut evidence, "ping", &["-c", "2", "-i", "0.2", candidate]);
+        if ok && out.contains("0.0% packet loss") {
+            target = candidate.to_owned();
+            break;
+        }
+        evidence.log(&format!("control {candidate} does not answer here"));
+    }
+    assert!(
+        !target.is_empty(),
+        "no echo target answers from this runner: without ICMP egress the \
+         gateway path is unprovable here"
+    );
     evidence.log(&format!("egress target: {target} via {egress}"));
 
     // The target must answer ICMP directly first (control): otherwise a
     // later tunnel probe failure could not be attributed to our path.
-    let direct = sh(&mut evidence, "ping", &["-c", "3", "-i", "0.2", target]);
+    let direct = sh(
+        &mut evidence,
+        "ping",
+        &["-c", "3", "-i", "0.2", target.as_str()],
+    );
     assert!(
         direct.contains("0.0% packet loss"),
         "target must answer a direct probe (control)"
@@ -1148,9 +1167,15 @@ fn live_forwarding_and_unattached_anchor_probe() {
     sh(
         &mut evidence,
         "route",
-        &["add", "-host", target, "-interface", &endpoint_a.utun],
+        &[
+            "add",
+            "-host",
+            target.as_str(),
+            "-interface",
+            &endpoint_a.utun,
+        ],
     );
-    let diverted = sh(&mut evidence, "route", &["get", target]);
+    let diverted = sh(&mut evidence, "route", &["get", target.as_str()]);
     assert!(
         diverted.contains(&format!("interface: {}", endpoint_a.utun)),
         "echo target must route via our utun"
@@ -1237,7 +1262,7 @@ fn live_forwarding_and_unattached_anchor_probe() {
     // Without attachment the diverted probe must fail: the target has no
     // route to TEST-NET-1, so only a translation could complete the flow.
     // Success here would be false convergence, not a gateway.
-    let (probe_ok, probe) = sh_unchecked(&mut evidence, "ping", &["-c", "3", target]);
+    let (probe_ok, probe) = sh_unchecked(&mut evidence, "ping", &["-c", "3", target.as_str()]);
     assert!(
         !probe_ok || !probe.contains("0.0% packet loss"),
         "unattached anchor must not forward the echo flow"
@@ -1245,7 +1270,11 @@ fn live_forwarding_and_unattached_anchor_probe() {
     evidence.log("no false convergence: unattached policy carries no traffic");
 
     // Restore the host: route, PF, forwarding, helpers, sockets.
-    sh(&mut evidence, "route", &["delete", "-host", target]);
+    sh(
+        &mut evidence,
+        "route",
+        &["delete", "-host", target.as_str()],
+    );
     sh(&mut evidence, "pfctl", &["-a", &anchor, "-F", "rules"]);
     sh(&mut evidence, "pfctl", &["-a", &anchor, "-F", "nat"]);
     sh(&mut evidence, "pfctl", &["-d"]);
