@@ -242,6 +242,42 @@ const PRODUCTION_SOURCES: &[(&str, &str)] = &[
         "src/domain/state.rs",
         include_str!("../src/domain/state.rs"),
     ),
+    // M001 macOS portability boundary: platform traits, OS-neutral identity,
+    // and Darwin stubs that must fail closed. Registered so the M001 guards
+    // below inspect code, not prose.
+    (
+        "src/platform/mod.rs",
+        include_str!("../src/platform/mod.rs"),
+    ),
+    (
+        "src/platform/linux.rs",
+        include_str!("../src/platform/linux.rs"),
+    ),
+    (
+        "src/platform/darwin.rs",
+        include_str!("../src/platform/darwin.rs"),
+    ),
+    (
+        "src/reconcile/service_darwin.rs",
+        include_str!("../src/reconcile/service_darwin.rs"),
+    ),
+    (
+        "src/firewall/service_darwin.rs",
+        include_str!("../src/firewall/service_darwin.rs"),
+    ),
+    (
+        "src/wireguard/darwin.rs",
+        include_str!("../src/wireguard/darwin.rs"),
+    ),
+    // M004 Darwin address/route modeling: pure planner, no I/O or mutation.
+    (
+        "src/reconcile/darwin.rs",
+        include_str!("../src/reconcile/darwin.rs"),
+    ),
+    // M005 Darwin PF anchor model: pure rendering/verification, no pfctl yet.
+    ("src/firewall/pf.rs", include_str!("../src/firewall/pf.rs")),
+    // M006 Darwin launchd installer: pure layout/receipt logic, no install.
+    ("src/launchd.rs", include_str!("../src/launchd.rs")),
 ];
 
 #[test]
@@ -410,8 +446,13 @@ fn minisign_fixture_private_key_is_not_embedded_in_shipped_sources() {
     }
 }
 
+/// Production modules permitted to spawn a process. M003 adds the bounded
+/// Darwin helper supervisor next to the Linux nft backend; both are audited
+/// fixed-argv boundaries, never shells or generic exec.
+const PROCESS_MODULES: &[&str] = &["src/firewall/nft.rs", "src/wireguard/darwin.rs"];
+
 #[test]
-fn process_execution_is_isolated_to_the_nft_backend() {
+fn process_execution_is_isolated_to_audited_backends() {
     let mut sites = Vec::new();
     for (path, source) in PRODUCTION_SOURCES {
         if source.contains("std::process::Command")
@@ -423,9 +464,56 @@ fn process_execution_is_isolated_to_the_nft_backend() {
     }
     assert_eq!(
         sites,
-        vec![ONLY_PROCESS_MODULE],
-        "process execution must stay isolated to the bounded nft backend"
+        PROCESS_MODULES,
+        "process execution must stay isolated to the bounded nft backend and the bounded Darwin helper supervisor"
     );
+}
+
+#[test]
+fn the_darwin_helper_supervisor_spawns_only_the_pinned_foreground_helper() {
+    // M003: the single Darwin exception to the nft-only process rule. Fixed
+    // argv (`utun`), controlled foreground env, no shell, no PATH lookup, no
+    // caller flags or paths, hash-pinned identity checked before spawn.
+    let helper = shippable(source_of("src/wireguard/darwin.rs"));
+    assert!(
+        helper.contains("Command::new(&argv.helper)"),
+        "the helper must be spawned from the validated absolute path, never a name"
+    );
+    assert!(
+        helper.contains(".env_clear()"),
+        "the helper must not inherit the caller environment"
+    );
+    assert!(
+        helper.contains("HELPER_INTERFACE_ARG"),
+        "the helper argv must be the pinned fixed argv"
+    );
+    for forbidden in [
+        "Command::new(\"sh\")",
+        "Command::new(\"bash\")",
+        "Command::new(\"/bin/sh\")",
+        "wg-quick",
+        "WG_TUN_FD",
+        "PATH",
+    ] {
+        // `PATH` here means a lookup or a pass-through, not prose: the module
+        // documents that PATH is absent, which names the word. Check the
+        // precise dangerous forms instead.
+        if forbidden == "PATH" {
+            assert!(
+                !helper.contains("env::var(\"PATH\""),
+                "the helper must never read PATH"
+            );
+            assert!(
+                !helper.contains("Command::new(\"wireguard-go\")"),
+                "the helper must never be resolved by name"
+            );
+            continue;
+        }
+        assert!(
+            !helper.contains(forbidden),
+            "the Darwin supervisor must not contain {forbidden}"
+        );
+    }
 }
 
 #[test]
@@ -1026,7 +1114,9 @@ fn the_admin_cli_offers_no_argv_or_environment_secret_path() {
     // acceptable input is this process's own standard input, behind a flag that
     // is mandatory.
     let main = code_only(source_of("src/main.rs"));
-    for forbidden in ["env::var", "std::env", "env!(\"WG_BASIC"] {
+    // `std::env::consts` (compile-time OS/arch) is not an environment read;
+    // only actual runtime environment/argv access is forbidden here.
+    for forbidden in ["env::var", "std::env::var", "env!(\"WG_BASIC"] {
         assert!(
             !main.contains(forbidden),
             "the CLI must not read a secret from the environment ({forbidden})"
@@ -1737,21 +1827,26 @@ fn the_long_running_roles_catch_a_supervisors_termination_signal() {
     );
 
     let main = shippable(source_of("src/main.rs"));
-    // Exactly the two roles that run forever install the handler: `netd` and
-    // `serve`. A third would mean some one-shot command had started waiting for
-    // a signal it will never receive.
+    // The roles that run forever install the handler: Linux `netd` + `serve`
+    // and Darwin `netd` (M002; Darwin `serve` reuses the same portable `serve`
+    // function as Linux, so it shares that handler). A fourth would mean some
+    // one-shot command had started waiting for a signal it will never receive.
     assert_eq!(
         main.matches("ctrlc::set_handler").count(),
-        2,
-        "exactly the netd and serve roles install a shutdown handler; a one-shot \
-         command must not"
+        3,
+        "the Linux netd, Linux/Darwin serve, and Darwin netd roles install a \
+         shutdown handler; a one-shot command must not"
     );
     for arm in ["Some(Command::Netd {", "Some(Command::Serve"] {
         assert!(
             main.contains(arm),
-            "the `{arm}` role should exist and be one of the two that run forever"
+            "the `{arm}` role should exist and be one of the roles that run forever"
         );
     }
+    assert!(
+        main.contains("fn run_darwin_netd"),
+        "the Darwin netd role owns the third handler"
+    );
 }
 
 #[test]
@@ -1798,4 +1893,257 @@ fn bundled_sqlite_runtime_is_past_the_wal_reset_advisory_range() {
         rusqlite::version().contains("3.53.2"),
         "recorded bundled SQLite version changed; review the runtime security qualification"
     );
+}
+
+// ---------------------------------------------------------------------------
+// M001: portable boundaries and Darwin build
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cargo_target_tables_keep_linux_backends_linux_only() {
+    // Truly common dependencies are unconditional; only the kernel backends
+    // stay under the Linux target table. A portable crate drifting back under
+    // `cfg(target_os = "linux")` would break the Darwin build M001 proves.
+    let manifest = code_only(include_str!("../Cargo.toml"));
+    let linux_section = manifest
+        .split("[target.'cfg(target_os = \"linux\")'.dependencies]")
+        .nth(1)
+        .expect("Linux target table exists");
+    for linux_only in ["nl-wireguard", "rtnetlink"] {
+        assert!(
+            linux_section.contains(linux_only),
+            "{linux_only} must stay Linux-only"
+        );
+    }
+    for portable in [
+        "tokio",
+        "serde_json",
+        "nix",
+        "x25519-dalek",
+        "ctrlc",
+        "eggserve-server",
+        "eggserve-primitives",
+        "futures-util",
+    ] {
+        assert!(
+            !linux_section.contains(portable),
+            "{portable} must not be Linux-gated: it is shared by the Darwin management surface"
+        );
+    }
+}
+
+#[test]
+fn the_platform_boundary_stays_pure_types_without_privilege_or_process() {
+    // The platform module owns identity and capability vocabulary only. I/O,
+    // processes, shells, netlink, nftables, and the state store would turn a
+    // shared type module into a second privileged path.
+    assert_shippable_avoids(
+        "src/platform/",
+        &[
+            "crate::state",
+            "crate::protocol",
+            "crate::aggregate",
+            "crate::reconcile",
+            "crate::firewall",
+            "crate::wireguard",
+            "std::process::Command",
+            "Command::new",
+            "rtnetlink",
+            "nl_wireguard",
+            "nft",
+            "pfctl",
+            "getpeereid",
+        ],
+        "platform is shared vocabulary, never a backend",
+    );
+    // The Darwin floor and both target triples are declared in one place.
+    let darwin = shippable(source_of("src/platform/darwin.rs"));
+    for required in [
+        "MIN_MACOS_VERSION",
+        "SUPPORTED_TARGETS",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+    ] {
+        assert!(
+            darwin.contains(required),
+            "src/platform/darwin.rs must declare {required}"
+        );
+    }
+}
+
+#[test]
+fn darwin_stubs_fail_closed_without_process_or_shell() {
+    // M001 Darwin backends compile so portable code can target both OSes, but
+    // they must never pretend success: every stub reports an unsupported or
+    // backend-failure category, never a converged receipt.
+    for name in [
+        "src/reconcile/service_darwin.rs",
+        "src/firewall/service_darwin.rs",
+    ] {
+        let code = shippable(source_of(name));
+        assert!(
+            code.contains("Unsupported") || code.contains("BackendFailure"),
+            "{name} must fail closed as unsupported"
+        );
+        for forbidden in [
+            "std::process::Command",
+            "Command::new",
+            "\"sh\"",
+            "\"bash\"",
+            "rtnetlink",
+            "nl_wireguard",
+            "\"nft\"",
+            "\"pfctl\"",
+        ] {
+            assert!(
+                !code.contains(forbidden),
+                "{name} must not contain {forbidden}"
+            );
+        }
+    }
+    // Process execution stays isolated to audited backends: the Linux nft
+    // backend plus, since M003, the bounded Darwin helper supervisor (pinned
+    // separately by `process_execution_is_isolated_to_audited_backends`).
+    // The reconcile/firewall Darwin *stubs* below still spawn nothing.
+    let mut sites = Vec::new();
+    for (path, source) in PRODUCTION_SOURCES {
+        if source.contains("std::process::Command")
+            || source.contains("Command::new")
+            || source.contains("process::Stdio")
+        {
+            sites.push(*path);
+        }
+    }
+    assert_eq!(
+        sites, PROCESS_MODULES,
+        "process execution must stay isolated to audited backends"
+    );
+}
+
+#[test]
+fn linux_observation_metadata_is_not_universal_ownership_proof() {
+    // `ifindex` and `interface_alias` are Linux backend metadata. The portable
+    // ownership proof is `OwnerTag`; Darwin must never fabricate an alias to
+    // satisfy a Linux-shaped check.
+    let model = shippable(source_of("src/reconcile/model.rs"));
+    assert!(
+        model.contains("interface_alias"),
+        "the Linux alias field stays where Linux reconciliation can use it"
+    );
+    let platform = shippable(source_of("src/platform/mod.rs"));
+    assert!(
+        platform.contains("OsLocator"),
+        "the OS-neutral locator vocabulary must exist alongside the Linux fields"
+    );
+    assert!(
+        platform.contains("LogicalTunnel"),
+        "logical tunnel identity must be distinct from any OS locator"
+    );
+}
+
+#[test]
+fn the_darwin_reconciler_plans_without_touching_the_host() {
+    // M004 modeling scope: pure observe→plan, no route socket, no ifconfig,
+    // no shell, no deletion by numeric guess. The privileged backend that
+    // fills these observations lands with the live helper.
+    let darwin = shippable(source_of("src/reconcile/darwin.rs"));
+    for forbidden in [
+        "std::process::Command",
+        "Command::new",
+        "rtnetlink",
+        "nl_wireguard",
+        "\"ifconfig\"",
+        "\"route\"",
+        "pfctl",
+        "nft",
+    ] {
+        assert!(
+            !darwin.contains(forbidden),
+            "src/reconcile/darwin.rs must not contain {forbidden}"
+        );
+    }
+    for required in [
+        "GlobalTakeoverRefused",
+        "Conflict",
+        "InterfaceAbsent",
+        "ifscope",
+    ] {
+        assert!(
+            darwin.contains(required),
+            "src/reconcile/darwin.rs must model {required}"
+        );
+    }
+}
+
+#[test]
+fn the_darwin_pf_model_renders_without_executing() {
+    // M005 policy scope: pure anchor rendering/verification. No `pfctl`
+    // execution, shell, nftables reuse, or caller-supplied PF text. The
+    // bounded invocation lands with live qualification.
+    let pf = shippable(source_of("src/firewall/pf.rs"));
+    for forbidden in [
+        "std::process::Command",
+        "Command::new",
+        "process::Stdio",
+        "\"sh\"",
+        "\"bash\"",
+        "rtnetlink",
+        "nl_wireguard",
+        "\"nft\"",
+        "pfctl -f",
+        "/etc/pf.conf",
+    ] {
+        assert!(
+            !pf.contains(forbidden),
+            "src/firewall/pf.rs must not contain {forbidden}"
+        );
+    }
+    for required in [
+        "ANCHOR_PREFIX",
+        "attachment_verified",
+        "rules_digest",
+        "teardown_order",
+        "is_ipv4",
+    ] {
+        assert!(
+            pf.contains(required),
+            "src/firewall/pf.rs must model {required}"
+        );
+    }
+}
+
+#[test]
+fn the_darwin_installer_claims_no_signing_and_touches_no_system_path() {
+    // M006 installation scope: pure layout/receipt logic. No signing trust,
+    // no self-update enablement, no process execution, no PF auto-config, no
+    // hardcoded live-system writes outside the explicit-root installer.
+    let installer = shippable(source_of("src/launchd.rs"));
+    for forbidden in [
+        "std::process::Command",
+        "Command::new",
+        "minisign",
+        "signature",
+        "public_key",
+        "pfctl",
+        "/etc/pf.conf",
+        "/Library/LaunchDaemons/com.wg-basic",
+    ] {
+        assert!(
+            !installer.contains(forbidden),
+            "src/launchd.rs must not contain {forbidden}"
+        );
+    }
+    for required in [
+        "NETD_LABEL",
+        "SERVE_LABEL",
+        "DarwinInstallReceipt",
+        "verify_installed_root",
+        "uninstall_preserving_state",
+        "DARWIN_TARGETS",
+    ] {
+        assert!(
+            installer.contains(required),
+            "src/launchd.rs must model {required}"
+        );
+    }
 }

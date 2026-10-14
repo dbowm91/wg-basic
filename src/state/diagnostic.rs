@@ -47,7 +47,9 @@ pub struct StateIdentity {
 pub fn inspect_identity_readonly(path: &Path) -> Result<StateIdentity, StateError> {
     use sha2::Digest;
 
-    let path = std::path::absolute(path).map_err(|_| StateError::DatabaseOpenFailed)?;
+    // Portable (M001): resolve macOS symlink components (`/var`, `/tmp`)
+    // before `NOFOLLOW` opens; the file itself must still not be a symlink.
+    let path = fs::canonicalize(path).map_err(|_| StateError::DatabaseOpenFailed)?;
     verify_path_readonly(&path)?;
     let wal_exists = sidecar(&path, "-wal").exists();
     let shm_exists = sidecar(&path, "-shm").exists();
@@ -114,7 +116,8 @@ pub fn inspect_identity_readonly(path: &Path) -> Result<StateIdentity, StateErro
 /// Loads and validates one immutable SQLite snapshot without migrations,
 /// pragma updates, WAL creation, or any other writes.
 pub fn inspect_readonly(path: &Path) -> Result<StateDiagnostic, StateError> {
-    let path = std::path::absolute(path).map_err(|_| StateError::DatabaseOpenFailed)?;
+    // Portable (M001): see `inspect_identity_readonly`.
+    let path = fs::canonicalize(path).map_err(|_| StateError::DatabaseOpenFailed)?;
     verify_path_readonly(&path)?;
     if sidecar(&path, "-wal").exists() || sidecar(&path, "-shm").exists() {
         return Err(StateError::Busy);

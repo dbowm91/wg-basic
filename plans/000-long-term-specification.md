@@ -154,9 +154,15 @@ Tier-1 architecture targets:
 
 ARMv7 MAY be added where dependency/toolchain support and release qualification are practical.
 
-### 6.2 Deferred platforms
+### 6.2 Optional macOS platform extension
 
-macOS, Windows, FreeBSD, and userspace-WireGuard hosts are deferred. Internal domain APIs SHOULD avoid gratuitous Linux assumptions where doing so is cheap, but cross-platform abstraction MUST NOT complicate the first Linux implementation.
+macOS native headless WireGuard server support has an authorized, separately gated post-Linux expansion under ADR-008 and `plans/subsystems/macos-native-server-roadmap.md`. The existing Linux kernel dataplane, release/privilege boundaries, runtime footprint and qualified Linux installation remain canonical for Linux hosts; platform-neutral control-plane types, IPC and desired-state semantics MUST NOT regress them.
+
+A macOS server MAY use a pinned, verified userspace WireGuard helper with dynamic utun identity, native route management and narrowly scoped platform networking policies behind typed, authenticated privileged netd. The single-binary preference is waived only for the explicitly declared bundled macOS helper, not for Linux. No active claim of full macOS gateway capability is permitted until native peer traffic, IPv4 NAT/IPv6 forwarding, crash/restart, foreign-state preservation, and service/installer qualification are demonstrated on supported targets. Apple's TN3165 PF guidance requires a separate affirmative support/distribution decision; unsupported or unqualified gateway mode MUST fail closed.
+
+### 6.3 Other deferred platforms
+
+Windows, FreeBSD, and additional userspace-WireGuard hosts remain deferred. Internal APIs SHOULD avoid gratuitous Linux coupling while preserving qualified Linux behavior.
 
 ## 7. WireGuard domain requirements
 

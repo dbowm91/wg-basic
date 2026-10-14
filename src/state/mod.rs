@@ -52,7 +52,6 @@ pub use model::{
     AttemptDisposition, CommittedDesiredState, ConvergenceRecord, InstallationMetadata,
     PersistedDesiredState,
 };
-#[cfg(target_os = "linux")]
 pub use projection::{project, ClientVisibility, ProjectionError, ResolvedNetworkIntent};
 pub use schema::{recovery_snapshot_path, OpenIntent};
 pub use store::product::{

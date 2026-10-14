@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-11 (R001–R004a closed; R004b waived by maintainer decision — checksums-only releases, `v0.1.0` stable; solo-maintainer policy with zero required PR approvals)
+Last planning reconciliation: 2026-10-13 (macOS server planning added; prior release policy retained; 2026-10-11 (R001–R004a closed; R004b waived by maintainer decision — checksums-only releases, `v0.1.0` stable; solo-maintainer policy with zero required PR approvals))
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -21,6 +21,7 @@ This file is the compact control surface for active wg-basic planning. Detailed 
 | `plans/adr/005-operational-hardening-maintenance-and-recovery.md` | accepted Phase 9 diagnostics/maintenance/recovery/security architecture |
 | `plans/adr/006-distribution-install-authenticity-and-update.md` | accepted Phase 10 release/install/authenticity/update architecture |
 | `plans/adr/007-ipv6-forwarding-ownership.md` | accepted Phase 11 global IPv6 forwarding ownership contract |
+| `plans/adr/008-macos-headless-platform-backends.md` | accepted staged headless macOS support direction; PF/NAT remains gated by Apple TN3165 |
 
 Authority order for implementation handoff:
 
@@ -75,8 +76,29 @@ Runtime dependency adoption remains evidence-driven.
 | Distribution/install/update | closed (technical) | `plans/subsystems/distribution-install-update-roadmap.md` | M001–M005 closed; production release remains blocked on signing |
 | IPv6/route-policy qualification | closed | `plans/subsystems/ipv6-route-policy-roadmap.md` | M001–M004 closed; `plans/closure/ipv6-route-policy/004-status.md` |
 | Release readiness and supply-chain security | closed (R004b waived; checksums-only releases) | `plans/subsystems/release-readiness-security-roadmap.md` | R001–R004a closed; waiver `004b-waiver-status.md` |
+| Headless macOS native server/gateway | active (M001–M004 closed, M005–M006 narrowed blocked, M007 blocked verdict) | `plans/subsystems/macos-native-server-roadmap.md` | M001–M004 closed (M003–M004 live on hosted arm64+Intel runners, run `38524007872`); M005 narrowed (effective NAT + v6 egress need admin-integrated host) + M006 narrowed (reboot needs rebootable host) + M007 updated verdict — macOS MUST NOT release |
 
 Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
+
+## 4A. Active macOS server planning handoff (not implemented)
+
+Architecture: `plans/adr/008-macos-headless-platform-backends.md`.
+Canonical new roadmap: `plans/subsystems/macos-native-server-roadmap.md`.
+Baseline: `47c72b0e81d569d48396c615120453bf0cf1d46e` (Linux stable `v0.1.0` remains unchanged).
+macOS M001–M004 are implemented and closed with native evidence below (M003–M004 live on hosted arm64 + Intel runners, run `38524007872`); M005–M006 carry narrowed blocked tails with exact platform residuals in each closure; M007 verdict updated with MUST-NOT-release standing. No macOS release or gateway claim exists.
+
+| Milestone | Status | Handoff |
+|---|---|---|
+| M001 portability/Cargo/build/typed platform seams | **closed 2026-10-13** | `plans/implementation/macos-native-server/001-portable-boundaries-and-darwin-build.md`; closure `plans/closure/macos-native-server/001-status.md` |
+| M002 Darwin IPC, peer identity and doctor | **closed 2026-10-13** (M001 closed) | `plans/implementation/macos-native-server/002-darwin-privileged-ipc-and-capabilities.md`; closure `plans/closure/macos-native-server/002-status.md` |
+| M003 wireguard-go/utun lifecycle/UAPI | **closed 2026-10-14** (hosted live arm64+Intel, run `38524007872`) | `plans/implementation/macos-native-server/003-wireguard-go-utun-backend.md`; closure `plans/closure/macos-native-server/003-status.md` — loopback handshake/traffic/counters/RSS/ownership/kill-restart both arches; off-host interop residual |
+| M004 address/route ownership and Darwin reconciliation | **closed 2026-10-14** (hosted live arm64+Intel, run `38524007872`) | `plans/implementation/macos-native-server/004-darwin-interface-address-route-reconciliation.md`; closure `plans/closure/macos-native-server/004-status.md` — v4+v6 lifecycle, planner-vs-live-observation, preservation; sleep/roaming residual |
+| M005 forwarding, PF/NAT and Apple policy review | **blocked** (narrowed 2026-10-14; hosted live, run `38524007872`) | `plans/implementation/macos-native-server/005-forwarding-pf-nat-and-platform-policy.md`; closure `plans/closure/macos-native-server/005-status.md` — TN3165 decision evidence-backed; anchor/forwarding/PF-cycle qualified; effective NAT + v6 egress need admin-integrated host; installer MUST NOT auto-configure PF |
+| M005 forwarding, PF/NAT and Apple policy review | blocked on M004 and PF-support decision | `plans/implementation/macos-native-server/005-forwarding-pf-nat-and-platform-policy.md` |
+| M006 launchd, installer, helper provenance and recovery | **blocked** (narrowed 2026-10-14; hosted live arm64, run `38524007872`) | `plans/implementation/macos-native-server/006-launchd-installation-distribution-and-recovery.md`; closure `plans/closure/macos-native-server/006-status.md` — bootstrap/KeepAlive/bootout/reinstall/DB-free qualified; reboot + post-reboot traffic need rebootable host |
+| M007 native dual-arch E2E, security and release qualification | **blocked** (updated 2026-10-14: MUST-NOT-release stands) | `plans/implementation/macos-native-server/007-native-e2e-security-release-qualification.md`; closure `plans/closure/macos-native-server/007-status.md` — M003–M004 closed, M005–M006 narrowed, residuals enumerated (off-host interop, NAT+v6 egress, reboot, Intel launchd, release audit + authorization) |
+
+Explicit macOS stop gate: Apple TN3165 warns PF is not an API for broad product use. PF anchor/NAT capability for advanced-admin deployments must be documented, qualified and approved separately before advertising full macOS gateway support. Do not modify foreign PF configuration automatically or accept compilation as networking evidence. Linux remains canonical and strictly qualified.
 
 ## 5. Implementation plan status (including external gates)
 
@@ -104,6 +126,72 @@ M004 and its corrective slices are closed: `plans/closure/distribution/004-statu
 
 ## 7. Recently closed work
 
+- macOS M003 closed 2026-10-14: hosted live qualification on arm64 +
+  Intel (`macos-15`, `macos-15-intel`, macOS 15.7.9, run `38524007872`) —
+  pinned-helper spawn, utun delta mapping, hex-key UAPI set/get, dual-stack
+  loopback handshake/traffic/counters/RSS (~6.2 MiB/helper), ownership
+  proof + negative case, kill/restart with renumber tolerance. Two
+  kernel-vs-helper wire deviations fixed in the codec (hex keys, errno
+  trailer). Closure `plans/closure/macos-native-server/003-status.md`.
+- macOS M004 closed 2026-10-14: v4+v6 address/alias lifecycle on live
+  `utun`, pure planner verified against live observation, default route
+  byte-identical, inventories scoped (counter drift excluded after one
+  false-positive). Closure
+  `plans/closure/macos-native-server/004-status.md`.
+- macOS M005 narrowed 2026-10-14: TN3165 advanced-admin-only decision now
+  evidence-backed (attachment needs system-ruleset surgery the OS guards);
+  anchor lifecycle, forwarding/PF cycle with restore, unattached-inert
+  proof, no-false-convergence qualified live. Effective NAT + v6 egress
+  remain blocked. Closure
+  `plans/closure/macos-native-server/005-status.md`.
+- macOS M006 narrowed 2026-10-14: plist lint, system bootstrap/print/
+  bootout, KeepAlive re-supervision, DB-free state, reinstall cycle
+  qualified live on arm64. Reboot + post-reboot traffic remain blocked.
+  Closure `plans/closure/macos-native-server/006-status.md`.
+- macOS M007 verdict updated 2026-10-14: MUST-NOT-release stands with
+  enumerated residuals (off-host Linux interop, NAT+v6 egress, reboot,
+  Intel launchd, release audit + authorization). Closure
+  `plans/closure/macos-native-server/007-status.md`.
+- macOS M007 blocked verdict 2026-10-13: support matrix (only loopback
+  management + IPC qualified on arm64), threat review, serve footprint
+  (0.097s ready, 11.3 MiB RSS, 0.0% idle), docs audit, binding MUST-NOT-release
+  decision + 5-step unblock checklist. Closure
+  `plans/closure/macos-native-server/007-status.md`. The line is closed as far
+  as unprivileged qualification can take it.
+- macOS M006 blocked 2026-10-13: installation scope at `8a063de`
+  (two-label plists, provenance receipts with helper hash + Darwin targets,
+  explicit-root install/verify/state-preserving-uninstall fixtures; 4 unit
+  tests; no signing claims). Native install/boot/reboot/recovery
+  unqualified — shared privileged-host blocker. Closure
+  `plans/closure/macos-native-server/006-status.md`.
+- macOS M005 blocked 2026-10-13: TN3165 advanced-admin-only decision +
+  anchor model at `be077d1` (installation-scoped anchors, masquerade without
+  NAT66, attachment verification, drift digest, conservative teardown; 6 unit
+  tests; read-only facts: pfctl root-gated, forwarding 0/0 untouched). Live
+  gateway traffic unqualified — shared privileged-host blocker; installer
+  MUST NOT auto-configure PF. Closure
+  `plans/closure/macos-native-server/005-status.md`.
+- macOS M004 blocked 2026-10-13: modeling scope at `42fa94c` (typed Darwin
+  observation, pure planner with idempotence/foreign-preservation/conflict/
+  global-takeover/renumber cases; 6 unit tests; purity guard). Native
+  convergence unqualified — shared privileged-host blocker; no convergence
+  claimed. Closure `plans/closure/macos-native-server/004-status.md`.
+- macOS M003 blocked 2026-10-13: safe unprivileged scope at `b1c831c`
+  (pinned wireguard-go 0.0.20250522 MIT, fixed-argv supervision, bounded UAPI
+  codec, fail-closed ownership logic, audited process boundary; 9 new unit
+  tests). Live utun handshake/traffic unqualified — no sudo/disposable Mac
+  VM/opt-in in this session; no packet claim made. Closure
+  `plans/closure/macos-native-server/003-status.md`.
+- macOS M002 strict closure 2026-10-13: Darwin `getpeereid` IPC at `96075b5`
+  (authorized Ping/capabilities, no root bypass, bounded framing, socket
+  lifecycle, SIGTERM/restart; 6/6 native `darwin_ipc` + 10 portable socket
+  unit tests). Closure
+  `plans/closure/macos-native-server/002-status.md`. M003 is now ready.
+- macOS M001 strict closure 2026-10-13: portable Cargo/build/typed platform
+  seams at `9c99fc6` (native arm64 `cargo test` 561 passed; Intel target
+  compiles; loopback admin/serve/auth/doctor smoke reports backend-unavailable
+  degradation, never convergence). Closure
+  `plans/closure/macos-native-server/001-status.md`. M002 is now ready.
 - Release-readiness R004a closure 2026-10-11: `v0.1.0` public pre-release
   (unsigned, evaluation only) at source `7527241`. Release run
   `38115877717` (11 jobs) + provenance run `38152418203` green; RF-07

@@ -12,7 +12,6 @@ use crate::domain::{
 };
 use std::collections::BTreeSet;
 
-#[cfg(target_os = "linux")]
 use crate::{
     firewall::{DesiredNetworkPolicy, Ipv4Forwarding, Ipv6Forwarding, NatMode},
     reconcile::{
@@ -92,10 +91,8 @@ impl ClientVisibility {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResolvedNetworkIntent {
     /// One entry per managed interface, in snapshot order.
-    #[cfg(target_os = "linux")]
     pub interfaces: Vec<DesiredManagedInterface>,
     /// The typed dual-stack policy, when the snapshot declares one.
-    #[cfg(target_os = "linux")]
     pub network_policy: Option<DesiredNetworkPolicy>,
     /// The interfaces whose link should exist but which currently have no peers.
     ///
@@ -108,7 +105,10 @@ pub struct ResolvedNetworkIntent {
 ///
 /// Determinism: interface, address, route, and peer order follow the snapshot
 /// order exactly, and no map iteration or clock read affects the result.
-#[cfg(target_os = "linux")]
+///
+/// Portable (M001): the same projection runs on Linux and Darwin. Darwin
+/// backends interpret the typed intent with their own address/route/PF
+/// implementations in M004–M005; M001 applies nothing on Darwin.
 pub fn project(
     state: &DesiredState,
     installation_id: crate::domain::InstallationId,
@@ -134,7 +134,6 @@ pub fn project(
     })
 }
 
-#[cfg(target_os = "linux")]
 fn project_interface(
     interface: &crate::domain::DesiredInterface,
     installation_id: crate::domain::InstallationId,
@@ -214,7 +213,6 @@ fn project_interface(
     })
 }
 
-#[cfg(target_os = "linux")]
 fn project_network_policy(
     policy: &DomainNetworkPolicy,
 ) -> Result<DesiredNetworkPolicy, ProjectionError> {

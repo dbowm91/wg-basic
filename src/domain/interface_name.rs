@@ -1,7 +1,16 @@
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 
-/// Linux interface locator (IFNAMSIZ includes the terminating NUL).
+/// Logical managed interface name (e.g. `wg0`).
+///
+/// This is the operator-configured, OS-neutral logical identity stored in
+/// SQLite alongside the [`InterfaceId`]. It is stable across reboots and, on
+/// Darwin, across `utunN` renumbering: the kernel-assigned `utunN` name is an
+/// ephemeral [`OsLocator`](crate::platform::OsLocator), never this value.
+///
+/// Bounds follow `IFNAMSIZ` (15 bytes plus NUL) on both Linux and Darwin
+/// (Darwin `IFNAMSZ` is likewise 16), so the same validation holds for both
+/// backends. Darwin `utunN` names (`utun0`…`utun4095`) satisfy these bounds.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct InterfaceName(String);
@@ -54,7 +63,7 @@ impl fmt::Display for InterfaceName {
 pub enum InterfaceNameError {
     #[error("interface name must not be empty")]
     Empty,
-    #[error("interface name exceeds Linux IFNAMSIZ limit of 15 bytes")]
+    #[error("interface name exceeds IFNAMSIZ limit of 15 bytes (Linux and Darwin)")]
     TooLong,
     #[error(
         "interface name contains a forbidden control, whitespace, slash, colon, or NUL character"
@@ -83,5 +92,37 @@ mod tests {
         ] {
             assert!(InterfaceName::new(invalid).is_err(), "{invalid:?}");
         }
+    }
+
+    /// M001: Darwin `utunN` names satisfy the same logical bounds, but they
+    /// are ephemeral locators, never logical identity. The logical name stays
+    /// `wg0` while the OS locator churns.
+    #[test]
+    fn darwin_utun_names_satisfy_logical_bounds_but_are_not_identity() {
+        for utun in ["utun0", "utun4", "utun107", "utun4095"] {
+            assert!(InterfaceName::new(utun).is_ok(), "{utun}");
+        }
+        // The logical tunnel keeps its UUID identity across utun renumbering.
+        let installation = crate::domain::InstallationId::new();
+        let interface_id = crate::domain::InterfaceId::new();
+        let logical =
+            crate::platform::LogicalTunnel::new(installation, interface_id, "wg0".parse().unwrap());
+        assert_eq!(
+            logical.owner_tag(),
+            crate::domain::OwnerTag::new(installation, interface_id)
+        );
+        // Two different utun locators map to the same logical tunnel.
+        let first = crate::platform::OsLocator::Darwin {
+            utun_name: Some("utun4".into()),
+        };
+        let second = crate::platform::OsLocator::Darwin {
+            utun_name: Some("utun7".into()),
+        };
+        assert_ne!(first, second, "locators churn");
+        assert_eq!(
+            logical.name.as_str(),
+            "wg0",
+            "logical identity is stable across utun churn"
+        );
     }
 }

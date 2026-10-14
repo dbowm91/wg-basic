@@ -1,0 +1,160 @@
+name: macOS qualification
+
+# Native macOS server-line qualification on disposable GitHub-hosted runners.
+# Scope (binding): ephemeral runners only, TEST-NET-1 addresses, loopback
+# peering, per-run anchor/job names. No default-route surgery, no global
+# forwarding change, no `pfctl -e`, no /etc/pf.conf write, no NAT traffic.
+# Forwarded/NAT traffic, reboot/reinstall, and any release stay unqualified.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [plans/macos-native-support]
+
+permissions:
+  contents: read
+
+jobs:
+  gates-arm64:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: clippy, rustfmt
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo check --all-targets --locked
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+      - run: cargo check --target aarch64-apple-darwin --locked --all-targets
+      - run: cargo check --target x86_64-apple-darwin --locked --all-targets
+      - run: cargo +1.89.0 check --all-targets --locked
+
+  live-arm64:
+    needs: [gates-arm64]
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: clippy, rustfmt
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - name: Install pinned Go 1.27.1 without third-party actions
+        run: |
+          if command -v go >/dev/null 2>&1 && go version 2>/dev/null | grep -q '^go version go1\.27\.1 '; then
+            go version
+          else
+            arch=arm64
+            [ "$(uname -m)" = "x86_64" ] && arch=amd64
+            curl -fsSL -o "$RUNNER_TEMP/go1.27.1.darwin-$arch.tar.gz" "https://go.dev/dl/go1.27.1.darwin-$arch.tar.gz"
+            mkdir -p "$RUNNER_TEMP/gotools"
+            tar -xzf "$RUNNER_TEMP/go1.27.1.darwin-$arch.tar.gz" -C "$RUNNER_TEMP/gotools"
+            echo "$RUNNER_TEMP/gotools/go/bin" >> "$GITHUB_PATH"
+            "$RUNNER_TEMP/gotools/go/bin/go" version
+          fi
+      - name: Build the pinned wireguard-go helper and verify provenance
+        run: |
+          go version
+          git clone --branch 0.0.20250522 --depth 1 https://github.com/WireGuard/wireguard-go "$RUNNER_TEMP/wireguard-go-src"
+          git -C "$RUNNER_TEMP/wireguard-go-src" rev-parse 'HEAD^{commit}'
+          test "$(git -C "$RUNNER_TEMP/wireguard-go-src" rev-parse 'HEAD^{commit}')" = "f333402bd9cbe0f3eeb02507bd14e23d7d639280"
+          grep -q 'Permission is hereby granted, free of charge' "$RUNNER_TEMP/wireguard-go-src/LICENSE"
+          (cd "$RUNNER_TEMP/wireguard-go-src" && go build -o "$RUNNER_TEMP/wireguard-go" .)
+          shasum -a 256 "$RUNNER_TEMP/wireguard-go" | tee "$RUNNER_TEMP/wireguard-go.sha256"
+      - name: Build the wg-basic binary and the live test target
+        run: |
+          cargo build --locked --bin wg-basic
+          cargo test --locked --no-run --test wireguard_darwin_live
+      - name: Qualify M003/M004/M005/M006 live fixtures as root (disposable host)
+        run: |
+          test_binary=$(find "$PWD/target/debug/deps" -maxdepth 1 -name 'wireguard_darwin_live-*' ! -name '*.*' | head -1)
+          echo "live test binary: $test_binary"
+          sudo \
+            "WGB_DARWIN_LIVE=1" \
+            "WGB_WIREGUARD_GO=$RUNNER_TEMP/wireguard-go" \
+            "WGB_HELPER_SHA256=$(cut -d' ' -f1 "$RUNNER_TEMP/wireguard-go.sha256")" \
+            "WGB_BINARY=$PWD/target/debug/wg-basic" \
+            "WGB_EVIDENCE_DIR=$RUNNER_TEMP/wgb-evidence" \
+            "$test_binary" --ignored --test-threads=1 --nocapture
+      - name: Upload live evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-live-evidence-arm64
+          path: ${{ runner.temp }}/wgb-evidence
+          if-no-files-found: warn
+
+  gates-intel:
+    runs-on: macos-15-intel
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: clippy, rustfmt
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo check --all-targets --locked
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+
+  live-intel-tunnel:
+    needs: [gates-intel]
+    runs-on: macos-15-intel
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: clippy, rustfmt
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - name: Install pinned Go 1.27.1 without third-party actions
+        run: |
+          if command -v go >/dev/null 2>&1 && go version 2>/dev/null | grep -q '^go version go1\.27\.1 '; then
+            go version
+          else
+            arch=arm64
+            [ "$(uname -m)" = "x86_64" ] && arch=amd64
+            curl -fsSL -o "$RUNNER_TEMP/go1.27.1.darwin-$arch.tar.gz" "https://go.dev/dl/go1.27.1.darwin-$arch.tar.gz"
+            mkdir -p "$RUNNER_TEMP/gotools"
+            tar -xzf "$RUNNER_TEMP/go1.27.1.darwin-$arch.tar.gz" -C "$RUNNER_TEMP/gotools"
+            echo "$RUNNER_TEMP/gotools/go/bin" >> "$GITHUB_PATH"
+            "$RUNNER_TEMP/gotools/go/bin/go" version
+          fi
+      - name: Build the pinned wireguard-go helper and verify provenance
+        run: |
+          go version
+          git clone --branch 0.0.20250522 --depth 1 https://github.com/WireGuard/wireguard-go "$RUNNER_TEMP/wireguard-go-src"
+          git -C "$RUNNER_TEMP/wireguard-go-src" rev-parse 'HEAD^{commit}'
+          test "$(git -C "$RUNNER_TEMP/wireguard-go-src" rev-parse 'HEAD^{commit}')" = "f333402bd9cbe0f3eeb02507bd14e23d7d639280"
+          grep -q 'Permission is hereby granted, free of charge' "$RUNNER_TEMP/wireguard-go-src/LICENSE"
+          (cd "$RUNNER_TEMP/wireguard-go-src" && go build -o "$RUNNER_TEMP/wireguard-go" .)
+          shasum -a 256 "$RUNNER_TEMP/wireguard-go" | tee "$RUNNER_TEMP/wireguard-go.sha256"
+      - name: Build the live test target
+        run: cargo test --locked --no-run --test wireguard_darwin_live
+      - name: Qualify M003/M004 live fixtures as root (disposable host)
+        run: |
+          test_binary=$(find "$PWD/target/debug/deps" -maxdepth 1 -name 'wireguard_darwin_live-*' ! -name '*.*' | head -1)
+          echo "live test binary: $test_binary"
+          sudo \
+            "WGB_DARWIN_LIVE=1" \
+            "WGB_WIREGUARD_GO=$RUNNER_TEMP/wireguard-go" \
+            "WGB_HELPER_SHA256=$(cut -d' ' -f1 "$RUNNER_TEMP/wireguard-go.sha256")" \
+            "WGB_EVIDENCE_DIR=$RUNNER_TEMP/wgb-evidence" \
+            "$test_binary" --ignored --test-threads=1 --nocapture \
+              live_loopback_handshake_and_traffic live_route_inventory_preserved \
+              live_forwarding_and_unattached_anchor_probe
+      - name: Upload live evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-live-evidence-intel
+          path: ${{ runner.temp }}/wgb-evidence
+          if-no-files-found: warn
