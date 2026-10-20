@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-13 (macOS server planning added; prior release policy retained; 2026-10-11 (R001–R004a closed; R004b waived by maintainer decision — checksums-only releases, `v0.1.0` stable; solo-maintainer policy with zero required PR approvals))
+Last planning reconciliation: 2026-10-20 (macOS C001–C005 corrective handoff registered; 2026-10-13 macOS server planning added; prior release policy retained; 2026-10-11 (R001–R004a closed; R004b waived by maintainer decision — checksums-only releases, `v0.1.0` stable; solo-maintainer policy with zero required PR approvals))
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -76,16 +76,16 @@ Runtime dependency adoption remains evidence-driven.
 | Distribution/install/update | closed (technical) | `plans/subsystems/distribution-install-update-roadmap.md` | M001–M005 closed; production release remains blocked on signing |
 | IPv6/route-policy qualification | closed | `plans/subsystems/ipv6-route-policy-roadmap.md` | M001–M004 closed; `plans/closure/ipv6-route-policy/004-status.md` |
 | Release readiness and supply-chain security | closed (R004b waived; checksums-only releases) | `plans/subsystems/release-readiness-security-roadmap.md` | R001–R004a closed; waiver `004b-waiver-status.md` |
-| Headless macOS native server/gateway | active (M001–M004 closed, M005–M006 narrowed blocked, M007 blocked verdict) | `plans/subsystems/macos-native-server-roadmap.md` | M001–M004 closed (M003–M004 live on hosted arm64+Intel runners, run `38524007872`); M005 narrowed (effective NAT + v6 egress need admin-integrated host) + M006 narrowed (reboot needs rebootable host) + M007 updated verdict — macOS MUST NOT release |
+| Headless macOS native server/gateway | active; low-level M001–M004 qualified, product not yet wired; M005–M007 blocked | `plans/subsystems/macos-native-server-roadmap.md` + `plans/subsystems/macos-native-server-corrective-roadmap.md` | C001 ready; C002 interface-ready; C003–C005 blocked. M003/M004 native runner `38524007872` does not prove product runtime; macOS MUST NOT release |
 
 Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
 
-## 4A. Active macOS server planning handoff (not implemented)
+## 4A. Active macOS server implementation and corrective handoff
 
 Architecture: `plans/adr/008-macos-headless-platform-backends.md`.
 Canonical new roadmap: `plans/subsystems/macos-native-server-roadmap.md`.
 Baseline: `47c72b0e81d569d48396c615120453bf0cf1d46e` (Linux stable `v0.1.0` remains unchanged).
-macOS M001–M004 are implemented and closed with native evidence below (M003–M004 live on hosted arm64 + Intel runners, run `38524007872`); M005–M006 carry narrowed blocked tails with exact platform residuals in each closure; M007 verdict updated with MUST-NOT-release standing. No macOS release or gateway claim exists.
+macOS M001–M004 have qualified **isolated primitives** below (M003–M004 live on hosted arm64 + Intel runners, run `38524007872`); production WireGuardBackend/ReconciliationService/FirewallService still fail closed and live tests bypass application convergence. M005–M006 carry narrowed blocked tails; M007 retains MUST-NOT-release standing. C001–C005 now own product integration, least privilege, scoped routing/PF, and release requalification. No macOS release, integrated network-server or gateway claim exists.
 
 | Milestone | Status | Handoff |
 |---|---|---|
@@ -94,9 +94,23 @@ macOS M001–M004 are implemented and closed with native evidence below (M003–
 | M003 wireguard-go/utun lifecycle/UAPI | **closed 2026-10-14** (hosted live arm64+Intel, run `38524007872`) | `plans/implementation/macos-native-server/003-wireguard-go-utun-backend.md`; closure `plans/closure/macos-native-server/003-status.md` — loopback handshake/traffic/counters/RSS/ownership/kill-restart both arches; off-host interop residual |
 | M004 address/route ownership and Darwin reconciliation | **closed 2026-10-14** (hosted live arm64+Intel, run `38524007872`) | `plans/implementation/macos-native-server/004-darwin-interface-address-route-reconciliation.md`; closure `plans/closure/macos-native-server/004-status.md` — v4+v6 lifecycle, planner-vs-live-observation, preservation; sleep/roaming residual |
 | M005 forwarding, PF/NAT and Apple policy review | **blocked** (narrowed 2026-10-14; hosted live, run `38524007872`) | `plans/implementation/macos-native-server/005-forwarding-pf-nat-and-platform-policy.md`; closure `plans/closure/macos-native-server/005-status.md` — TN3165 decision evidence-backed; anchor/forwarding/PF-cycle qualified; effective NAT + v6 egress need admin-integrated host; installer MUST NOT auto-configure PF |
-| M005 forwarding, PF/NAT and Apple policy review | blocked on M004 and PF-support decision | `plans/implementation/macos-native-server/005-forwarding-pf-nat-and-platform-policy.md` |
 | M006 launchd, installer, helper provenance and recovery | **blocked** (narrowed 2026-10-14; hosted live arm64, run `38524007872`) | `plans/implementation/macos-native-server/006-launchd-installation-distribution-and-recovery.md`; closure `plans/closure/macos-native-server/006-status.md` — bootstrap/KeepAlive/bootout/reinstall/DB-free qualified; reboot + post-reboot traffic need rebootable host |
 | M007 native dual-arch E2E, security and release qualification | **blocked** (updated 2026-10-14: MUST-NOT-release stands) | `plans/implementation/macos-native-server/007-native-e2e-security-release-qualification.md`; closure `plans/closure/macos-native-server/007-status.md` — M003–M004 closed, M005–M006 narrowed, residuals enumerated (off-host interop, NAT+v6 egress, reboot, Intel launchd, release audit + authorization) |
+
+
+### Active macOS corrective implementation plans — 2026-10-20
+
+Recorded against `fc51146e811cabebd042d852449c6e7f4f854265`; source roadmap: `plans/subsystems/macos-native-server-corrective-roadmap.md`. These are **planning-only** handoffs; no new macOS closure or release evidence is claimed. Historical M003–M007 closures remain untouched.
+
+| Corrective | Status | Implementation plan / immediate gate |
+|---|---|---|
+| C001 production WireGuard/reconciliation/firewall host-only integration | **ready** | `plans/implementation/macos-native-server/c001-production-wiring-host-only.md` — actual API → netd → helper/route/receipt and off-host Linux peer traffic |
+| C002 privileged launchd identity/installer | **interface-ready**, integrated closure hard C001 | `plans/implementation/macos-native-server/c002-launchd-privilege-and-install.md` — fix implicit root `serve`, real service IDs, native reboot |
+| C003 bounded routed LAN without NAT | **blocked** on C001 | `plans/implementation/macos-native-server/c003-routed-lan-no-nat.md` — forwarding, admin policy, proven return routing |
+| C004 effective administrator-opt-in PF/NAT | **blocked** on C003 + controlled host | `plans/implementation/macos-native-server/c004-pf-nat-effective-gateway.md` — independent filter/NAT effective attachment and packet evidence; TN3165 |
+| C005 E2E, Eggpack, and release authorization | **blocked** on C001+C002 and claimed-mode C003/C004 | `plans/implementation/macos-native-server/c005-release-qualification-and-reconciliation.md` — support matrix, Intel launchd/reboot, release truth; M007 MUST-NOT-release remains |
+
+Staged host-only/routed capability does **not** automatically permit a macOS release: the original M007 gateway/reboot/dual-arch requirements remain binding. Any narrower release needs an explicit maintainer-approved ADR-008/M007 decision before publication; gateway still needs C004. All old Linux state, CI, artifacts, updater policy and historical closures remain unchanged.
 
 Explicit macOS stop gate: Apple TN3165 warns PF is not an API for broad product use. PF anchor/NAT capability for advanced-admin deployments must be documented, qualified and approved separately before advertising full macOS gateway support. Do not modify foreign PF configuration automatically or accept compilation as networking evidence. Linux remains canonical and strictly qualified.
 
