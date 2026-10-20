@@ -39,9 +39,19 @@ primary group is not the dedicated group. A renamed or reused identity is
 refused rather than trusted.
 
 The privileged socket is the whole path from the management daemon to the
-privileged one. It is created mode `0660` and bound to the management group,
-and the privileged daemon admits the management UID that the *verified install
-receipt* records, never a name supplied on a command line.
+privileged one. The privileged daemon always sets the socket's ownership
+explicitly, because a socket keeps the creating process's group by default and
+that group is not an identity this product chose: it is mode `0660`, owned by
+root and the management group, when the *verified install receipt* records a
+management identity, and mode `0600`, owned by the privileged daemon alone,
+when it does not. The privileged daemon admits the management UID that the
+*verified install receipt* records, never a name supplied on a command line.
+
+The install receipt lives inside the management-owned state directory and
+belongs to the management identity, so the management daemon can read the
+helper digest and its own identity from it. A root-owned receipt in a
+management-owned directory would be unreadable by the management daemon that
+owns it.
 
 ## The isolated Darwin OS boundary (C001)
 
