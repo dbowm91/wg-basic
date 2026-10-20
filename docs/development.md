@@ -111,7 +111,7 @@ Privileged Darwin fixtures run only on ephemeral GitHub-hosted runners
 create real `utun` interfaces, assign test-net addresses, load PF anchors,
 and bootstrap launchd jobs, all torn down afterwards. Workflow
 `.github/workflows/macos-qualification.yml` (gates + privileged fixtures
-with evidence artifacts); fixtures live in
+with evidence artifacts); the hosted-runner fixtures live in
 `tests/wireguard_darwin_live.rs` (`#[ignore]`d, require
 `WGB_DARWIN_LIVE=1` as root plus `WGB_WIREGUARD_GO` pointing at a
 pinned-commit helper build and `WGB_BINARY` for the launchd cycle):
@@ -131,8 +131,11 @@ global forwarding change left behind, no `pfctl -e` left enabled, no
 provide (no reboot, no v6 uplink, main-ruleset attachment OS-refused) stays
 recorded as blocked in the milestone closures, not worked around.
 
-Two controlled-host legs need a host that is not a hosted runner, and both are
-driven by the same test binary.
+Two controlled-host legs need a host that is not a hosted runner. They live in
+a **separate test target** (`tests/wireguard_darwin_controlled.rs`), because
+the hosted job runs every `#[ignore]`d test in the `wireguard_darwin_live`
+target and a controlled-host fixture must never be picked up there. The two
+targets share their helpers through `tests/darwin_live_common/mod.rs`.
 
 The **off-host peer** leg proves the product path against an independent
 Linux-kernel WireGuard implementation. The peer is reached through a driver
@@ -143,6 +146,18 @@ with `WGB_PEER_COMMAND`, and `WGB_PEER_SSH_HOST`, `WGB_PEER_SSH_USER`, and
 and a loaded `wireguard.ko`, and its exported configuration has to be
 narrowed to the server's tunnel addresses, or the peer's own traffic is
 blackholed.
+
+```sh
+cargo test --locked --no-run --test wireguard_darwin_controlled
+sudo WGB_DARWIN_LIVE=1 WGB_WIREGUARD_GO=/path/to/wireguard-go \
+  WGB_HELPER_SHA256=<expected> WGB_BINARY=$PWD/target/debug/wg-basic \
+  WGB_EVIDENCE_DIR=/tmp/wgb-evidence \
+  WGB_PEER_COMMAND=$PWD/tests/fixtures/darwin-peer/wg-basic-peer.sh \
+  WGB_PEER_SSH_HOST=<peer> WGB_PEER_SSH_USER=<user> WGB_PEER_SSH_KEY=<key> \
+  ./target/debug/deps/wireguard_darwin_controlled-* \
+  live_c001_product_path_carries_traffic_to_an_off_host_linux_peer \
+  --ignored --exact --test-threads=1 --nocapture
+```
 
 The **cold reboot** leg proves that the deployment comes back from the system
 domain after a cold reboot. It has three phases, because a reboot ends the
@@ -155,9 +170,10 @@ still holds the same client, that the network reconverged, and that the
 uninstall leaves no job behind.
 
 ```sh
-WGB_C002_REBOOT_PHASE=arm   sudo ./target/debug/deps/wireguard_darwin_live-* \
+cargo test --locked --no-run --test wireguard_darwin_controlled
+WGB_C002_REBOOT_PHASE=arm   sudo ./target/debug/deps/wireguard_darwin_controlled-* \
   live_c002_cold_reboot_persists_the_deployment --ignored --exact --nocapture
-WGB_C002_REBOOT_PHASE=reboot sudo ./target/debug/deps/wireguard_darwin_live-* \
+WGB_C002_REBOOT_PHASE=reboot sudo ./target/debug/deps/wireguard_darwin_controlled-* \
   live_c002_cold_reboot_persists_the_deployment --ignored --exact --nocapture
 # the host reboots; the boot-time job runs the verify phase and writes the evidence
 ```

@@ -51,7 +51,8 @@ Targets with `linux-integration` only compile/run under
 | `service_rootful_e2e` | root | HTTP surface reflects real network state (`ok` vs `degraded`), survives backend loss without restart, leaks no key material; `serve` on host, `netd` in namespace |
 | `upgrade_rehearsal_rootful` | root, `#[ignore]`d, needs `WGB_OLD_BINARY` + `WGB_CANDIDATE_BINARY` | Real v4 product traffic, backup verification, candidate migration/failed health, v4 restore, doctor, old-service recovery, re-upgrade |
 | `darwin_ipc` | none, macOS only | Native `getpeereid` IPC auth, framing, socket lifecycle, SIGTERM/restart against the real `netd` binary |
-| `wireguard_darwin_live` | root, macOS only, `#[ignore]`d, needs `WGB_DARWIN_LIVE=1` + `WGB_WIREGUARD_GO` (+ `WGB_BINARY` for launchd) | Disposable-host fixtures only: loopback handshake/traffic/counters (v4+v6), route inventory preservation, PF anchor lifecycle, forwarding/PF cycle, launchd bootstrap/reinstall; `--test-threads=1` |
+| `wireguard_darwin_live` | root, macOS only, `#[ignore]`d, needs `WGB_DARWIN_LIVE=1` + `WGB_WIREGUARD_GO` (+ `WGB_BINARY` for launchd) | Ephemeral-hosted-runner fixtures only: loopback handshake/traffic/counters (v4+v6), route inventory preservation, PF anchor lifecycle, forwarding/PF cycle, launchd bootstrap/reinstall, production backend ownership, unprivileged management daemon, backend convergence; `--test-threads=1` |
+| `wireguard_darwin_controlled` | root, macOS only, `#[ignore]`d, needs `WGB_DARWIN_LIVE=1` + `WGB_WIREGUARD_GO` + `WGB_BINARY` (+ `WGB_PEER_COMMAND` for the off-host peer, `WGB_C002_REBOOT_PHASE` for the reboot leg) | Disposable controlled-host fixtures only, in a separate target so the hosted runner never picks them up: product path against an off-host Linux-kernel peer, and the three-phase cold-reboot leg; `--test-threads=1` |
 
 ## Architecture-guard categories
 
@@ -173,5 +174,5 @@ not run it.
 | CI job | Test command |
 |---|---|
 | `gates-arm64` (`macos-15`) / `gates-intel` (`macos-15-intel`) | `cargo fmt --all -- --check`, `cargo check --all-targets --locked`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`, both Darwin target triples, MSRV check |
-| `live-arm64` | Pinned-helper build (tag + commit + license verified) then the ignored `wireguard_darwin_live` target as root with `WGB_DARWIN_LIVE=1`: all five fixtures, evidence artifacts uploaded |
+| `live-arm64` | Pinned-helper build (tag + commit + license verified) then the ignored `wireguard_darwin_live` target as root with `WGB_DARWIN_LIVE=1`: all eight fixtures, evidence artifacts uploaded |
 | `live-intel-tunnel` | Same helper build for `darwin/amd64`, then tunnel/route/platform-probe fixtures only (no launchd job on Intel) |
