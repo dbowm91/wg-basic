@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 use wg_basic::{doctor::DoctorReport, state::StateStore};
 
@@ -160,6 +160,7 @@ fn link_state_snapshot() -> Vec<(String, Vec<(String, String)>)> {
 #[test]
 fn doctor_plan_only_diagnoses_managed_drift_without_mutating_the_namespace() {
     use std::os::unix::fs::MetadataExt;
+    use std::time::{SystemTime, UNIX_EPOCH};
     use wg_basic::{
         domain::{ClientRoutePolicy, DesiredGeneration, NetworkPrefix},
         management::set_password_at,

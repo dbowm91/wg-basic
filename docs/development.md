@@ -12,6 +12,44 @@ cargo test --locked
 cargo +1.89.0 check --all-targets --locked
 ```
 
+### Checking the Linux-only code from a macOS workstation
+
+Several modules and test files exist only on Linux (`src/reconcile/service.rs`,
+the `linux-integration` suites, and the platform-gated helpers in
+`tests/doctor_readonly.rs`). A native macOS build never compiles them, so a
+macOS-only gate run cannot see a break in them.
+
+Cross-compile the Linux **test targets** — not just the library — to catch
+them. With [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild) and
+Zig installed:
+
+```sh
+cargo zigbuild --locked --target x86_64-unknown-linux-gnu --all-targets
+```
+
+To run Linux clippy for the same target, the C compiler needs the Rust triple
+translated into the one Zig understands:
+
+```sh
+cat > /tmp/zig-cc <<'SH'
+#!/bin/bash
+args=()
+for a in "$@"; do
+  case "$a" in
+    --target=x86_64-unknown-linux-gnu) args+=("--target=x86_64-linux-gnu") ;;
+    *) args+=("$a") ;;
+  esac
+done
+exec zig cc "${args[@]}"
+SH
+chmod +x /tmp/zig-cc
+CC_x86_64_unknown_linux_gnu=/tmp/zig-cc AR_x86_64_unknown_linux_gnu="zig ar" \
+  cargo clippy --locked --target x86_64-unknown-linux-gnu --all-targets -- -D warnings
+CC_x86_64_unknown_linux_gnu=/tmp/zig-cc AR_x86_64_unknown_linux_gnu="zig ar" \
+  cargo clippy --locked --target x86_64-unknown-linux-gnu --all-targets \
+  --features linux-integration -- -D warnings
+```
+
 ## macOS (Darwin) portability workflow (M001)
 
 The portable control-plane, product, authentication, state, and HTTP layers

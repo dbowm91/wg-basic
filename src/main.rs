@@ -443,12 +443,19 @@ fn run_darwin_netd(
         .map_err(|_| "could not safely bind the configured netd socket path".to_owned())?;
     // The socket is the whole path from the unprivileged management daemon to
     // the privileged one, so it is bound to the management identity: root and
-    // that group only.
-    if let Some(identity) =
-        wg_basic::launchd::recorded_management_identity(std::path::Path::new("/"))
-    {
-        wg_basic::launchd::authorize_socket_group(&socket, &identity)
-            .map_err(|_| "could not bind the netd socket to the management identity".to_owned())?;
+    // that group only. When no management identity is recorded the socket
+    // stays root-only, because a socket left with the creating process's group
+    // would be reachable by every process in a group this product never chose.
+    match wg_basic::launchd::recorded_management_identity(std::path::Path::new("/")) {
+        Some(identity) => {
+            wg_basic::launchd::authorize_socket_group(&socket, &identity).map_err(|_| {
+                "could not bind the netd socket to the management identity".to_owned()
+            })?;
+        }
+        None => {
+            wg_basic::launchd::restrict_socket_to_owner(&socket)
+                .map_err(|_| "could not restrict the netd socket to its owner".to_owned())?;
+        }
     }
     let shutdown = Arc::new(AtomicBool::new(false));
     let signal_shutdown = shutdown.clone();

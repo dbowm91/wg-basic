@@ -1,9 +1,11 @@
 use std::{
     fs,
+    io::Read,
     net::{TcpListener, TcpStream},
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
+    sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
 };
@@ -89,10 +91,78 @@ fn wait_listening(bind: &str, child: &mut Child) {
     }
 }
 
-fn stop(mut child: ChildGuard, bind: &str) -> std::process::Output {
-    wait_listening(bind, child.0.as_mut().unwrap());
-    child.0.as_mut().unwrap().kill().unwrap();
-    child.0.take().unwrap().wait_with_output().unwrap()
+/// Reads one piped stream into a shared buffer on its own thread.
+///
+/// The output has to be collected while the child is still running, so the
+/// readiness event can be observed before the child is stopped.
+fn read_pipe<R: Read + Send + 'static>(stream: R) -> (Arc<Mutex<Vec<u8>>>, thread::JoinHandle<()>) {
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&buffer);
+    let reader = thread::spawn(move || {
+        let mut stream = std::io::BufReader::new(stream);
+        let mut chunk = [0u8; 1024];
+        loop {
+            match stream.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(count) => sink
+                    .lock()
+                    .expect("the pipe buffer lock")
+                    .extend_from_slice(&chunk[..count]),
+            }
+        }
+    });
+    (buffer, reader)
+}
+
+/// Waits until the captured output contains the event code.
+fn wait_for_event(buffer: &Arc<Mutex<Vec<u8>>>, event: &str, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let seen = buffer
+            .lock()
+            .expect("the pipe buffer lock")
+            .windows(event.len())
+            .any(|window| window == event.as_bytes());
+        if seen {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the child never reported {event}"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// The captured output of one stopped `serve` process.
+struct Captured {
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+fn stop(mut guard: ChildGuard, bind: &str) -> Captured {
+    let child = guard.0.as_mut().expect("a child");
+    let stdout = child.stdout.take().expect("a piped stdout");
+    let stderr = child.stderr.take().expect("a piped stderr");
+    let (stdout_buffer, stdout_reader) = read_pipe(stdout);
+    let (stderr_buffer, stderr_reader) = read_pipe(stderr);
+    wait_listening(bind, guard.0.as_mut().expect("a child"));
+    // The HTTP listener is bound before the readiness event is written, so
+    // "the port accepts a connection" is not a sufficient readiness signal: a
+    // child stopped in that window never reports that it started. The event
+    // itself is the readiness signal.
+    wait_for_event(&stderr_buffer, "serve.started", Duration::from_secs(15));
+    let child = guard.0.as_mut().expect("a child");
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = stdout_reader.join();
+    let _ = stderr_reader.join();
+    let stdout_bytes = stdout_buffer.lock().expect("the pipe buffer lock").clone();
+    let stderr_bytes = stderr_buffer.lock().expect("the pipe buffer lock").clone();
+    Captured {
+        stdout: stdout_bytes,
+        stderr: stderr_bytes,
+    }
 }
 
 #[test]

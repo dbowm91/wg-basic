@@ -66,6 +66,8 @@ pub const SERVE_LABEL: &str = "com.wg-basic.serve";
 pub const BINARY_PATH: &str = "/usr/local/bin/wg-basic";
 pub const HELPER_PATH: &str = "/usr/local/libexec/wg-basic/wireguard-go";
 pub const STATE_DIR: &str = "/var/db/wg-basic";
+/// The install receipt's file name inside the state directory.
+pub const RECEIPT_NAME: &str = "install.json";
 pub const STATE_PATH: &str = "/var/db/wg-basic/state.db";
 pub const RUNTIME_DIR: &str = "/var/run/wg-basic";
 pub const SOCKET_PATH: &str = "/var/run/wg-basic/netd.sock";
@@ -331,6 +333,9 @@ pub const RUNTIME_DIR_MODE: u32 = 0o755;
 /// The exact mode of the privileged socket. The management group may connect;
 /// nobody else may.
 pub const SOCKET_MODE: u32 = 0o660;
+/// The exact mode of the privileged socket when no management identity is
+/// recorded: its owner alone.
+pub const SOCKET_OWNER_MODE: u32 = 0o600;
 /// The exact mode of the log directory.
 pub const LOG_DIR_MODE: u32 = 0o755;
 /// The exact mode of each daemon log file.
@@ -457,7 +462,7 @@ pub fn install_to_root(
     };
     let encoded = serde_json::to_vec_pretty(&receipt).map_err(|_| InstallError::Io)?;
     secure_file(
-        &owned_path(root, &format!("{STATE_DIR}/install.json")),
+        &owned_path(root, &format!("{STATE_DIR}/{RECEIPT_NAME}")),
         &encoded,
         RECEIPT_MODE,
     )?;
@@ -478,7 +483,7 @@ pub fn bind_management_identity(
     receipt.management_identity = Some(identity.clone());
     let encoded = serde_json::to_vec_pretty(&receipt).map_err(|_| InstallError::Io)?;
     secure_file(
-        &owned_path(root, &format!("{STATE_DIR}/install.json")),
+        &owned_path(root, &format!("{STATE_DIR}/{RECEIPT_NAME}")),
         &encoded,
         RECEIPT_MODE,
     )?;
@@ -487,7 +492,7 @@ pub fn bind_management_identity(
 
 /// Reads the install receipt without verifying the installed content.
 fn read_receipt(root: &Path) -> Result<DarwinInstallReceipt, InstallError> {
-    let encoded = std::fs::read(owned_path(root, &format!("{STATE_DIR}/install.json")))
+    let encoded = std::fs::read(owned_path(root, &format!("{STATE_DIR}/{RECEIPT_NAME}")))
         .map_err(|_| InstallError::NotInstalled)?;
     serde_json::from_slice(&encoded).map_err(|_| InstallError::ReceiptCorrupt)
 }
@@ -559,6 +564,16 @@ pub fn apply_service_ownership(
         let gid = nix::unistd::Gid::from_raw(identity.gid);
         nix::unistd::chown(&owned_path(root, STATE_DIR), Some(uid), Some(gid))
             .map_err(|_| InstallError::Io)?;
+        // The receipt lives inside the management-owned state directory, so it
+        // belongs to the management identity too. A root-owned receipt in a
+        // management-owned directory is unreadable by the management daemon,
+        // which needs it for the helper digest and for its own identity.
+        nix::unistd::chown(
+            &owned_path(root, &format!("{STATE_DIR}/{RECEIPT_NAME}")),
+            Some(uid),
+            Some(gid),
+        )
+        .map_err(|_| InstallError::Io)?;
         nix::unistd::chown(&owned_path(root, SERVE_LOG), Some(uid), Some(gid))
             .map_err(|_| InstallError::Io)?;
     }
@@ -588,6 +603,36 @@ pub fn authorize_socket_group(
             socket,
             Some(nix::unistd::Uid::from_raw(0)),
             Some(nix::unistd::Gid::from_raw(identity.gid)),
+        )
+        .map_err(|_| InstallError::Io)?;
+    }
+    Ok(())
+}
+
+/// Restricts the privileged socket to its owner alone.
+///
+/// A socket the privileged daemon creates carries the creating process's group
+/// by default, and that group is not an identity this product chose. When no
+/// management identity is recorded, the socket stays root-only: the
+/// management daemon cannot reach the privileged daemon until an installer
+/// records the identity that is allowed to reach it.
+pub fn restrict_socket_to_owner(socket: &Path) -> Result<(), InstallError> {
+    let metadata = std::fs::symlink_metadata(socket).map_err(|_| InstallError::Io)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{FileTypeExt as _, PermissionsExt as _};
+        if metadata.file_type().is_symlink() || !metadata.file_type().is_socket() {
+            return Err(InstallError::Modified);
+        }
+        std::fs::set_permissions(socket, std::fs::Permissions::from_mode(SOCKET_OWNER_MODE))
+            .map_err(|_| InstallError::Io)?;
+        // The owner is the privileged daemon itself, and the group is its own:
+        // the mode already denies the group and every other identity, so the
+        // group only has to stop being an inherited one.
+        nix::unistd::chown(
+            socket,
+            Some(nix::unistd::Uid::effective()),
+            Some(nix::unistd::Gid::effective()),
         )
         .map_err(|_| InstallError::Io)?;
     }
