@@ -62,6 +62,10 @@ pub const RECEIPT_SUFFIX: &str = "receipt";
 /// How long the backend waits for the helper to publish its `utunN` device.
 const HELPER_DEVICE_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// How long the backend waits for the helper to publish its UAPI socket once
+/// the device is up.
+const HELPER_SOCKET_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// The durable receipt for one managed tunnel.
 ///
 /// The receipt is the durable ownership claim. It is never sufficient on its
@@ -375,15 +379,30 @@ pub fn spawn_managed_tunnel(
     let argv = HelperArgv::new(helper.path.clone())?;
     let child = SupervisedHelper::spawn(&argv)?;
     let deadline = std::time::Instant::now() + HELPER_DEVICE_TIMEOUT;
-    loop {
+    let name = loop {
         if let Ok(name) = super::darwin::interface_delta(&before, &utun_interface_names()) {
-            return Ok((child, name));
+            break name;
         }
         if std::time::Instant::now() >= deadline {
             return Err(HelperError::StartupFailed);
         }
         std::thread::sleep(Duration::from_millis(100));
+    };
+    // The helper publishes its UAPI socket a moment after the kernel hands it
+    // the device. A tunnel is not usable until that control socket exists, so
+    // the spawn does not return before it does: an ownership proof taken in
+    // that window would fail closed on a socket that is merely late, and a
+    // receipt written in that window would claim a tunnel nobody can configure
+    // yet.
+    let socket = super::darwin::uapi_socket_path(&name);
+    let socket_deadline = std::time::Instant::now() + HELPER_SOCKET_TIMEOUT;
+    while !socket.exists() {
+        if std::time::Instant::now() >= socket_deadline {
+            return Err(HelperError::StartupFailed);
+        }
+        std::thread::sleep(Duration::from_millis(50));
     }
+    Ok((child, name))
 }
 
 /// Every `utunN` interface currently present in the kernel.

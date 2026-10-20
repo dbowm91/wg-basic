@@ -1444,6 +1444,14 @@ fn live_launchd_bootstrap_cycle() {
         !print_after.status.success(),
         "booted-out job must be gone from the system domain"
     );
+    // `bootout` is asynchronous: launchd unloads the job and then asks the
+    // daemon to stop. The socket is unlinked by the daemon itself as it drains,
+    // so its disappearance is observed rather than assumed.
+    wait_until(
+        "netd socket removal after bootout",
+        Duration::from_secs(30),
+        || !socket.exists(),
+    );
     assert!(!socket.exists(), "daemon socket must be gone after bootout");
     assert!(
         !state_dir.join("state.db").exists(),
@@ -1618,5 +1626,240 @@ fn live_c001_production_backend_owns_and_configures_a_managed_tunnel() {
         .collect();
     assert!(leaked.is_empty(), "no utun may leak: {leaked:?}");
     evidence.log("teardown complete: no device, socket, or receipt left behind");
+    evidence.write();
+}
+
+/// C002 live: the management daemon really runs unprivileged.
+///
+/// The plist text is not the proof. This cycle preprovisiones a disposable
+/// management account, installs the canonical layout, bootstraps both roles,
+/// and then reads the **real** effective UID of each running daemon and the
+/// real owner and mode of the privileged socket.
+#[test]
+#[ignore = "needs WGB_DARWIN_LIVE=1 as root on a disposable macOS host"]
+fn live_c002_management_daemon_runs_unprivileged() {
+    let mut evidence = Evidence::new("c002-unprivileged-serve");
+    let helper_path = require_live(&mut evidence);
+    let binary = std::env::var("WGB_BINARY").expect("WGB_BINARY must be set");
+    let binary_bytes = std::fs::read(&binary).expect("binary bytes");
+    let helper_bytes = std::fs::read(&helper_path).expect("helper bytes");
+    let target = format!("{}-apple-darwin", std::env::consts::ARCH);
+
+    // A disposable management account. The installer never creates accounts;
+    // the qualification supplies one, exactly as an operator would.
+    let group = launchd::SERVE_GROUP;
+    let user = launchd::SERVE_USER;
+    for (path, key, value) in [
+        (format!("/Groups/{group}"), "PrimaryGroupID", "8999"),
+        (format!("/Users/{user}"), "UserShell", "/usr/bin/false"),
+        (format!("/Users/{user}"), "PrimaryGroupID", "8999"),
+        (format!("/Users/{user}"), "UniqueID", "8998"),
+        (format!("/Users/{user}"), "NFSHomeDirectory", "/var/empty"),
+        (format!("/Users/{user}"), "RealName", "wg-basic serve"),
+    ] {
+        sh(&mut evidence, "dscl", &[".", "-create", &path, key, value]);
+    }
+    sh(
+        &mut evidence,
+        "dscl",
+        &[
+            ".",
+            "-create",
+            &format!("/Groups/{group}"),
+            "GroupMembership",
+            user,
+        ],
+    );
+    evidence.log("preprovisioned the disposable management account and group");
+
+    // The directory service publishes a new local record asynchronously, so the
+    // identity is resolved with a bounded retry rather than a single lookup.
+    let mut resolved = None;
+    for _ in 0..40 {
+        if let Ok(identity) = launchd::resolve_service_identity(launchd::ServiceRole::Serve) {
+            resolved = Some(identity);
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    let identity = resolved.expect("the preprovisioned management identity must resolve");
+    assert!(
+        identity.uid >= launchd::MIN_SERVICE_UID,
+        "the management identity must not be a reserved system id"
+    );
+    assert_ne!(identity.uid, 0, "the management daemon must never be root");
+    evidence.log(&format!(
+        "management identity {} uid={} gid={}",
+        identity.user, identity.uid, identity.gid
+    ));
+
+    launchd::install_to_root(
+        Path::new("/"),
+        env!("CARGO_PKG_VERSION"),
+        &target,
+        &binary_bytes,
+        &helper_bytes,
+    )
+    .expect("install the canonical layout");
+    launchd::bind_management_identity(Path::new("/"), &identity)
+        .expect("record the management identity");
+    launchd::apply_service_ownership(Path::new("/"), &identity)
+        .expect("apply the management ownership");
+
+    let netd_plist = format!("/Library/LaunchDaemons/{}.plist", launchd::NETD_LABEL);
+    let serve_plist = format!("/Library/LaunchDaemons/{}.plist", launchd::SERVE_LABEL);
+    sh(
+        &mut evidence,
+        "launchctl",
+        &["bootstrap", "system", netd_plist.as_str()],
+    );
+    sh(
+        &mut evidence,
+        "launchctl",
+        &["bootstrap", "system", serve_plist.as_str()],
+    );
+
+    let netd_job = format!("system/{}", launchd::NETD_LABEL);
+    let serve_job = format!("system/{}", launchd::SERVE_LABEL);
+    let running = |job: &str| {
+        Command::new("launchctl")
+            .args(["print", job])
+            .output()
+            .is_ok_and(|output| {
+                output.status.success()
+                    && String::from_utf8_lossy(&output.stdout).contains("state = running")
+            })
+    };
+    wait_until("both roles running", Duration::from_secs(60), || {
+        running(&netd_job) && running(&serve_job)
+    });
+    // The job description carries the reason a role is not running, so a
+    // failure here explains itself instead of timing out silently.
+    for job in [&netd_job, &serve_job] {
+        let print = Command::new("launchctl")
+            .args(["print", job])
+            .output()
+            .expect("launchctl print");
+        let text = String::from_utf8_lossy(&print.stdout);
+        let interesting: Vec<&str> = text
+            .lines()
+            .filter(|line| {
+                line.contains("state = ")
+                    || line.contains("last exit code")
+                    || line.contains("path = ")
+                    || line.contains("reason")
+            })
+            .collect();
+        evidence.log(&format!("{job}: {}", interesting.join(" | ")));
+    }
+
+    let pid_of = |job: &str| -> u32 {
+        let print = Command::new("launchctl")
+            .args(["print", job])
+            .output()
+            .expect("launchctl print");
+        String::from_utf8_lossy(&print.stdout)
+            .lines()
+            .find_map(|line| {
+                line.trim()
+                    .strip_prefix("pid = ")
+                    .and_then(|pid| pid.parse().ok())
+            })
+            .unwrap_or_else(|| panic!("{job} must report a daemon pid"))
+    };
+    let netd_pid = pid_of(&netd_job);
+    let serve_pid = pid_of(&serve_job);
+
+    // The real effective UID of the running process, not the plist text.
+    let euid_of = |pid: u32| -> u32 {
+        let output = Command::new("ps")
+            .args(["-o", "ruid=", "-p", &pid.to_string()])
+            .output()
+            .expect("ps");
+        String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .parse()
+            .unwrap_or_else(|_| panic!("ps must report the effective uid of {pid}"))
+    };
+    let netd_euid = euid_of(netd_pid);
+    let serve_euid = euid_of(serve_pid);
+    evidence.log(&format!(
+        "netd pid={netd_pid} euid={netd_euid}; serve pid={serve_pid} euid={serve_euid}"
+    ));
+    assert_eq!(netd_euid, 0, "the privileged daemon must run as root");
+    assert_eq!(
+        serve_euid, identity.uid,
+        "the management daemon must run as the dedicated unprivileged account"
+    );
+    assert_ne!(
+        serve_euid, 0,
+        "the management daemon must never run as root"
+    );
+
+    // The privileged socket is the whole path to the privileged daemon: it
+    // must be owned by root and the management group, and nobody else.
+    let socket = Path::new(launchd::SOCKET_PATH);
+    wait_until("netd socket", Duration::from_secs(30), || socket.exists());
+    let stat = sh(
+        &mut evidence,
+        "stat",
+        &["-f", "%Su %Sg %Lp", socket.to_string_lossy().as_ref()],
+    );
+    let mut fields = stat.split_whitespace();
+    let owner = fields.next().unwrap_or_default().to_owned();
+    let socket_group = fields.next().unwrap_or_default().to_owned();
+    let mode = fields.next().unwrap_or_default().to_owned();
+    evidence.log(&format!(
+        "socket owner={owner} group={socket_group} mode={mode}"
+    ));
+    assert_eq!(owner, "root", "the privileged socket must be root-owned");
+    assert_eq!(
+        socket_group, group,
+        "the privileged socket must be reachable by the management group only"
+    );
+    assert_eq!(
+        mode, "660",
+        "the privileged socket must not be reachable by other identities"
+    );
+
+    // Teardown: stop both roles, wait for the system domain to forget them,
+    // and remove the disposable account. The jobs must be gone before the
+    // next live test bootstraps the same labels.
+    for plist in [&serve_plist, &netd_plist] {
+        let _ = Command::new("launchctl")
+            .args(["bootout", "system", plist])
+            .output();
+    }
+    for job in [&serve_job, &netd_job] {
+        wait_until(
+            "job unloaded from the system domain",
+            Duration::from_secs(30),
+            || {
+                Command::new("launchctl")
+                    .args(["print", job])
+                    .output()
+                    .is_ok_and(|output| !output.status.success())
+            },
+        );
+    }
+    remove_if_exists(Path::new(&netd_plist));
+    remove_if_exists(Path::new(&serve_plist));
+    remove_if_exists(Path::new(launchd::BINARY_PATH));
+    remove_if_exists(Path::new(launchd::HELPER_PATH));
+    std::fs::remove_dir_all(Path::new(launchd::RUNTIME_DIR)).ok();
+    std::fs::remove_dir_all(Path::new(launchd::STATE_DIR)).ok();
+    std::fs::remove_dir_all("/var/log/wg-basic").ok();
+    std::fs::remove_dir_all("/usr/local/libexec/wg-basic").ok();
+    sh(
+        &mut evidence,
+        "dscl",
+        &[".", "-delete", &format!("/Users/{user}")],
+    );
+    sh(
+        &mut evidence,
+        "dscl",
+        &[".", "-delete", &format!("/Groups/{group}")],
+    );
+    evidence.log("teardown complete: roles stopped, account removed");
     evidence.write();
 }

@@ -16,14 +16,17 @@ struct TempDirectory(PathBuf);
 
 impl TempDirectory {
     fn new() -> Self {
+        // The wall clock is too coarse to tell two concurrent tests apart, so
+        // the scratch path is suffixed with a per-process counter instead of
+        // a timestamp.
+        static SCRATCH_SEQUENCE: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
         let path = Path::new("/tmp").join(format!(
             "wg-basic-doctor-readonly-{}-{}",
             std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            SCRATCH_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
+        let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir(&path).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
         Self(path)

@@ -316,21 +316,31 @@ fn sidecar(path: &Path, suffix: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{
-        os::unix::fs::PermissionsExt,
-        time::{SystemTime, UNIX_EPOCH},
-    };
+    use std::os::unix::fs::PermissionsExt;
+
+    /// A per-process scratch-path counter.
+    ///
+    /// The wall clock is too coarse to tell two concurrent tests apart: on
+    /// macOS consecutive `SystemTime::now()` calls routinely return the same
+    /// nanosecond value, so a timestamped scratch path is not unique and one
+    /// test's directory collides with another's. A counter is unique by
+    /// construction within the process, and the pid separates processes.
+    static SCRATCH_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    /// A scratch directory path that no concurrent test can claim.
+    fn scratch_directory(prefix: &str) -> PathBuf {
+        let path = Path::new("/tmp").join(format!(
+            "{prefix}-{}-{}",
+            std::process::id(),
+            SCRATCH_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        ));
+        let _ = std::fs::remove_dir_all(&path);
+        path
+    }
 
     #[test]
     fn immutable_inspection_decodes_state_without_mutating_files() {
-        let directory = Path::new("/tmp").join(format!(
-            "wg-basic-state-diagnostic-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let directory = scratch_directory("wg-basic-state-diagnostic");
         fs::create_dir(&directory).unwrap();
         fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
         let database = directory.join("state.db");
@@ -365,14 +375,7 @@ mod tests {
 
     #[test]
     fn immutable_inspection_refuses_a_newer_schema_without_migrating_it() {
-        let directory = Path::new("/tmp").join(format!(
-            "wg-basic-newer-diagnostic-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let directory = scratch_directory("wg-basic-newer-diagnostic");
         fs::create_dir(&directory).unwrap();
         fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
         let database = directory.join("state.db");
@@ -393,14 +396,7 @@ mod tests {
 
     #[test]
     fn identity_inspection_reads_v4_with_live_wal_without_migrating() {
-        let directory = Path::new("/tmp").join(format!(
-            "wg-basic-identity-diagnostic-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let directory = scratch_directory("wg-basic-identity-diagnostic");
         fs::create_dir(&directory).unwrap();
         fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
         let database = directory.join("state.db");
