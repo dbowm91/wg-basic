@@ -41,3 +41,22 @@ Creating a managed tunnel spawns the pinned helper, adopts exactly one new
 waits for the kernel device to disappear, and only then drops the receipt. A
 device that does not disappear fails the delete instead of leaving a claim
 that no longer describes anything.
+
+A route that names an interface and no next hop carries that interface's own
+link-level address as the route's gateway. The kernel refuses a route
+addition that carries no gateway at all, and it matches the address against
+the interface's own link-level address to find the interface the route
+belongs to; this is the message shape Apple's `route(8)` sends for
+`route add -interface`. The address is the kernel's own, read through
+`getifaddrs`, so it carries the interface type the kernel compares.
+
+Reading the table back is the mirror of that: the addresses are walked in the
+platform's own order, each one occupying the next four-byte word, and the
+interface a route belongs to is read from the message header rather than from
+an attribute. A route's prefix comes from the compact netmask the kernel
+writes, which carries only the significant mask bytes.
+
+The managed tunnel interface carries its pool: the desired state holds a route
+for every tunnel prefix, so replies to client addresses leave through the
+managed link. WireGuard AllowedIPs selects the peer but adds no host route,
+and on macOS the helper adds none either.

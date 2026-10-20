@@ -23,7 +23,7 @@
 
 use std::ffi::{CStr, CString};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::os::raw::{c_char, c_int, c_uchar, c_ushort, c_void};
+use std::os::raw::{c_char, c_int, c_uchar, c_void};
 use std::sync::atomic::{AtomicI32, Ordering};
 
 use ipnet::IpNet;
@@ -34,6 +34,12 @@ use super::{InterfaceInfo, RouteInfo, SysError, SysErrorKind};
 
 /// `IFF_UP` from `<net/if.h>`.
 pub(crate) const IFF_UP: u16 = 0x1;
+
+/// `IFF_POINTOPOINT` from `<net/if.h>`.
+///
+/// A point-to-point interface carries a destination address beside its local
+/// one, and the kernel refuses an address assignment that leaves it unset.
+const IFF_POINTOPOINT: u16 = 0x10;
 
 const SIOCGIFFLAGS: libc::c_ulong = 0xc020_6911;
 const SIOCSIFFLAGS: libc::c_ulong = 0x8020_6910;
@@ -53,6 +59,10 @@ const NET_RT_DUMP: c_int = 1;
 
 const RTM_ADD: u8 = 0x1;
 const RTM_DELETE: u8 = 0x2;
+/// `RTM_GET` from `<net/route.h>`.
+///
+/// A macOS route dump carries `RTM_GET` messages.
+const RTM_GET: u8 = 0x4;
 const RTM_VERSION: u8 = 5;
 
 const RTF_UP: i32 = 0x1;
@@ -236,23 +246,62 @@ fn sockaddr_for(address: IpAddr) -> Vec<u8> {
     }
 }
 
-/// Builds the `sockaddr_dl` bytes naming an interface.
-fn sockaddr_dl_for(name: &str, index: u32) -> Vec<u8> {
-    // SAFETY: every field of this kernel structure is a plain integer or a
-    // byte array, so an all-zero bit pattern is a valid, fully initialised
-    // value for it.
-    let mut sdl: libc::sockaddr_dl = unsafe { std::mem::zeroed() };
-    sdl.sdl_len = std::mem::size_of::<libc::sockaddr_dl>() as c_uchar;
-    sdl.sdl_family = AF_LINK as c_uchar;
-    sdl.sdl_index = index as c_ushort;
-    sdl.sdl_type = 0;
-    let raw = name.as_bytes();
-    let length = raw.len().min(sdl.sdl_data.len());
-    sdl.sdl_nlen = length as c_uchar;
-    for (slot, byte) in sdl.sdl_data.iter_mut().zip(raw.iter()) {
-        *slot = *byte as c_char;
+/// Reads the kernel's link-level address for one interface.
+///
+/// `getifaddrs` reports an `AF_LINK` entry for every interface: the
+/// `sockaddr_dl` the kernel itself uses to name it. Apple's `route(8)` copies
+/// that structure verbatim into `RTA_GATEWAY` when a route names an interface
+/// without a next hop, and the kernel matches the copy against the
+/// interface's own link-level address to find the interface the route belongs
+/// to. A hand-built structure would leave out the interface type the kernel
+/// compares, and the route would land on no interface at all.
+fn interface_link_address(name: &str) -> Option<Vec<u8>> {
+    let mut head: *mut libc::ifaddrs = std::ptr::null_mut();
+    // SAFETY: `getifaddrs` fills `head` with a linked list that this function
+    // releases with `freeifaddrs` on every path, including the error path.
+    let status = unsafe { libc::getifaddrs(&mut head) };
+    if status != 0 {
+        return None;
     }
-    bytes_of(&sdl)
+    let mut found: Option<Vec<u8>> = None;
+    let mut cursor = head;
+    while !cursor.is_null() {
+        // SAFETY: `cursor` is a live node of the list returned by
+        // `getifaddrs`; reading it and advancing to `ifa_next` stays in bounds.
+        let entry = unsafe { &*cursor };
+        cursor = entry.ifa_next;
+        if entry.ifa_addr.is_null() {
+            continue;
+        }
+        // SAFETY: `ifa_name` is a NUL-terminated string owned by the list.
+        let entry_name = unsafe { CStr::from_ptr(entry.ifa_name) }.to_string_lossy();
+        if entry_name != name {
+            continue;
+        }
+        // SAFETY: `ifa_addr` points at a live socket address owned by the list.
+        let family = unsafe { (*entry.ifa_addr).sa_family };
+        if family != AF_LINK as libc::sa_family_t {
+            continue;
+        }
+        // SAFETY: an `AF_LINK` socket address is a `sockaddr_dl`.
+        let link = unsafe { &*(entry.ifa_addr as *const libc::sockaddr_dl) };
+        let length = link.sdl_len as usize;
+        if length > std::mem::size_of::<libc::sockaddr_dl>() {
+            break;
+        }
+        // The kernel reads exactly `sdl_len` bytes of the address and then
+        // skips to the next four-byte boundary, which is what `route(8)` sends.
+        let mut bytes = bytes_of(link);
+        bytes.truncate(length);
+        while bytes.len() % 4 != 0 {
+            bytes.push(0);
+        }
+        found = Some(bytes);
+        break;
+    }
+    // SAFETY: `head` came from `getifaddrs` and is released exactly once.
+    unsafe { libc::freeifaddrs(head) };
+    found
 }
 
 /// Builds a zeroed `ifreq` carrying the interface name.
@@ -266,7 +315,7 @@ fn ifreq_for(name: &str) -> libc::ifreq {
 }
 
 /// Builds a `struct ifaliasreq` for one IPv4 address.
-fn ifaliasreq_for(name: &str, address: IpNet) -> Option<IfAliasReq> {
+fn ifaliasreq_for(name: &str, address: IpNet, point_to_point: bool) -> Option<IfAliasReq> {
     let IpAddr::V4(ip) = address.addr() else {
         return None;
     };
@@ -297,11 +346,21 @@ fn ifaliasreq_for(name: &str, address: IpNet) -> Option<IfAliasReq> {
     request.ifra_mask.sa_len = mask_in.sin_len;
     request.ifra_mask.sa_family = mask_in.sin_family;
     write_sockaddr_in_body(&mut request.ifra_mask.sa_data, &mask_in);
+    if point_to_point {
+        // On a point-to-point interface the `ifra_broadaddr` slot carries the
+        // destination address, and the kernel refuses the assignment without
+        // one. The tunnel's local address is its own destination, which is
+        // what `ifconfig` writes for a `utun` address.
+        let destination_in = sockaddr_in_for(ip);
+        request.ifra_broadaddr.sa_len = destination_in.sin_len;
+        request.ifra_broadaddr.sa_family = destination_in.sin_family;
+        write_sockaddr_in_body(&mut request.ifra_broadaddr.sa_data, &destination_in);
+    }
     Some(request)
 }
 
 /// Builds a `struct in6_aliasreq` for one IPv6 address.
-fn in6_aliasreq_for(name: &str, address: IpNet) -> Option<In6AliasReq> {
+fn in6_aliasreq_for(name: &str, address: IpNet, point_to_point: bool) -> Option<In6AliasReq> {
     let IpAddr::V6(ip) = address.addr() else {
         return None;
     };
@@ -333,6 +392,11 @@ fn in6_aliasreq_for(name: &str, address: IpNet) -> Option<In6AliasReq> {
     fill_name(&mut request.ifra_name, name);
     request.ifra_addr = sockaddr_in6_for(ip);
     request.ifra_prefixmask = sockaddr_in6_for(mask);
+    if point_to_point {
+        // The same rule as IPv4: a point-to-point interface needs its
+        // destination address, and the tunnel's local address is it.
+        request.ifra_dstaddr = sockaddr_in6_for(ip);
+    }
     Some(request)
 }
 
@@ -543,9 +607,18 @@ pub(crate) fn process_executable_path(pid: u32) -> Option<Vec<u8>> {
 }
 
 fn ioctl_socket() -> Result<c_int, SysError> {
+    ioctl_socket_for(libc::AF_INET)
+}
+
+/// Opens a datagram socket for interface ioctls.
+///
+/// The socket's address family decides which ioctls it accepts: an IPv6
+/// interface ioctl on an IPv4 socket is refused with `ENOTTY`, so the IPv6
+/// address calls need an IPv6 socket of their own.
+fn ioctl_socket_for(family: c_int) -> Result<c_int, SysError> {
     // SAFETY: `socket` is a plain syscall wrapper; the descriptor is closed by
     // the caller on every path.
-    let descriptor = unsafe { libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0) };
+    let descriptor = unsafe { libc::socket(family, libc::SOCK_DGRAM, 0) };
     if descriptor < 0 {
         return Err(last_error("socket"));
     }
@@ -567,6 +640,34 @@ pub(crate) fn interface_mtu(name: &str) -> Result<u32, SysError> {
     // own, so reading that member is initialised.
     let mtu = unsafe { request.ifr_ifru.ifru_mtu };
     Ok(mtu as u32)
+}
+
+/// Reads an interface's flags.
+fn interface_flags(name: &str) -> Result<u16, SysError> {
+    let descriptor = ioctl_socket()?;
+    let mut request = ifreq_for(name);
+    // SAFETY: `SIOCGIFFLAGS` fills the `ifru_flags` member of the `ifreq` we
+    // own; the pointer is valid for the duration of the call.
+    let status = unsafe { libc::ioctl(descriptor, SIOCGIFFLAGS, &mut request as *mut libc::ifreq) };
+    if status < 0 {
+        // SAFETY: `descriptor` was opened by `ioctl_socket` and is not used again.
+        unsafe { libc::close(descriptor) };
+        return Err(last_error("SIOCGIFFLAGS"));
+    }
+    // SAFETY: `SIOCGIFFLAGS` wrote the `ifru_flags` member of the `ifreq` we
+    // own.
+    let flags = unsafe { request.ifr_ifru.ifru_flags } as u16;
+    // SAFETY: `descriptor` was opened by `ioctl_socket` and is not used again.
+    unsafe { libc::close(descriptor) };
+    Ok(flags)
+}
+
+/// Whether an interface is a point-to-point link.
+///
+/// A `utun` interface is point-to-point: the kernel stores a destination
+/// address beside the local one.
+fn is_point_to_point(name: &str) -> Result<bool, SysError> {
+    Ok(interface_flags(name)? & IFF_POINTOPOINT != 0)
 }
 
 pub(crate) fn set_link_up(name: &str, up: bool) -> Result<(), SysError> {
@@ -600,10 +701,17 @@ pub(crate) fn set_link_up(name: &str, up: bool) -> Result<(), SysError> {
 }
 
 pub(crate) fn add_address(name: &str, address: IpNet) -> Result<(), SysError> {
-    let descriptor = ioctl_socket()?;
+    // The socket's address family decides which ioctls it accepts: an IPv6
+    // interface ioctl on an IPv4 socket is refused with `ENOTTY`.
+    let family = match address.addr() {
+        IpAddr::V4(_) => libc::AF_INET,
+        IpAddr::V6(_) => libc::AF_INET6,
+    };
+    let descriptor = ioctl_socket_for(family)?;
     let outcome = match address.addr() {
         IpAddr::V4(_) => {
-            let Some(mut request) = ifaliasreq_for(name, address) else {
+            let point_to_point = is_point_to_point(name)?;
+            let Some(mut request) = ifaliasreq_for(name, address, point_to_point) else {
                 // SAFETY: `descriptor` was opened by `ioctl_socket` and is not
                 // used again.
                 unsafe { libc::close(descriptor) };
@@ -624,7 +732,8 @@ pub(crate) fn add_address(name: &str, address: IpNet) -> Result<(), SysError> {
             }
         }
         IpAddr::V6(_) => {
-            let Some(mut request) = in6_aliasreq_for(name, address) else {
+            let point_to_point = is_point_to_point(name)?;
+            let Some(mut request) = in6_aliasreq_for(name, address, point_to_point) else {
                 // SAFETY: `descriptor` was opened by `ioctl_socket` and is not
                 // used again.
                 unsafe { libc::close(descriptor) };
@@ -656,7 +765,13 @@ pub(crate) fn add_address(name: &str, address: IpNet) -> Result<(), SysError> {
 }
 
 pub(crate) fn remove_address(name: &str, address: IpNet) -> Result<(), SysError> {
-    let descriptor = ioctl_socket()?;
+    // The same rule as `add_address`: the socket's family has to match the
+    // address family's ioctls.
+    let family = match address.addr() {
+        IpAddr::V4(_) => libc::AF_INET,
+        IpAddr::V6(_) => libc::AF_INET6,
+    };
+    let descriptor = ioctl_socket_for(family)?;
     let outcome = match address.addr() {
         IpAddr::V4(ip) => {
             let mut request = ifreq_for(name);
@@ -708,12 +823,19 @@ pub(crate) fn remove_address(name: &str, address: IpNet) -> Result<(), SysError>
 }
 
 /// Reads the `sockaddr` at `cursor`, returning its bytes and padded length.
+/// Reads one socket address from a routing message payload.
+///
+/// A routing message walks its addresses in four-byte words: an address
+/// occupies the next word boundary after its own length, and an address with
+/// no length at all still occupies one word. This is the rounding Apple's
+/// `route print` applies when it reads a dump.
 fn take_sockaddr(payload: &[u8], cursor: usize) -> Option<(&[u8], usize)> {
     let length = *payload.get(cursor)? as usize;
-    if length < 2 || cursor + length > payload.len() {
+    let consumed = if length > 0 { (length + 3) & !3 } else { 4 };
+    if cursor + consumed > payload.len() {
         return None;
     }
-    Some((&payload[cursor..cursor + length], (length + 3) & !3))
+    Some((&payload[cursor..cursor + length], consumed))
 }
 
 fn sockaddr_ip(bytes: &[u8]) -> Option<IpAddr> {
@@ -735,23 +857,28 @@ fn sockaddr_ip(bytes: &[u8]) -> Option<IpAddr> {
     }
 }
 
-fn sockaddr_prefix(bytes: &[u8]) -> Option<u8> {
-    let family = *bytes.get(1)?;
-    match family {
-        AF_INET if bytes.len() >= std::mem::size_of::<libc::sockaddr_in>() => {
-            // SAFETY: an `AF_INET` netmask is a `sockaddr_in` and the slice is
-            // at least that long.
-            let sin = unsafe { &*(bytes.as_ptr() as *const libc::sockaddr_in) };
-            Some(prefix_len_v4(Ipv4Addr::from(sin.sin_addr.s_addr.to_be())))
-        }
-        AF_INET6 if bytes.len() >= std::mem::size_of::<libc::sockaddr_in6>() => {
-            // SAFETY: an `AF_INET6` netmask is a `sockaddr_in6` and the slice is
-            // at least that long.
-            let sin6 = unsafe { &*(bytes.as_ptr() as *const libc::sockaddr_in6) };
-            Some(prefix_len_v6(Ipv6Addr::from(sin6.sin6_addr.s6_addr)))
-        }
-        _ => None,
+/// The prefix length carried by a routing message's netmask.
+///
+/// A macOS route dump writes the netmask in a compact form: the entry is the
+/// length byte, a fixed family-sized run of filler, and then the mask's
+/// significant high-order bytes. The prefix is the number of leading one
+/// bits in those bytes.
+fn compact_mask_prefix(bytes: &[u8], family: u8) -> Option<u8> {
+    let overhead = if family == AF_INET6 { 8 } else { 4 };
+    if bytes.len() <= overhead {
+        return None;
     }
+    let significant = &bytes[bytes.len() - (bytes.len() - overhead)..];
+    let mut prefix = 0u8;
+    for byte in significant {
+        if *byte == 0xff {
+            prefix = prefix.saturating_add(8);
+        } else {
+            prefix = prefix.saturating_add(byte.leading_ones() as u8);
+            break;
+        }
+    }
+    Some(prefix)
 }
 
 fn sockaddr_link(bytes: &[u8]) -> Option<(String, u32)> {
@@ -776,7 +903,9 @@ fn parse_route(header: &libc::rt_msghdr, payload: &[u8]) -> Option<RouteInfo> {
     let mut gateway: Option<IpAddr> = None;
     let mut prefix: Option<u8> = None;
     let mut interface_name: Option<String> = None;
-    let mut interface_index_value = 0u32;
+    // The interface index travels in the header, not in an attribute: the
+    // kernel writes the interface's own address into `RTA_IFA`.
+    let mut interface_index_value = header.rtm_index as u32;
     // The socket addresses appear in `RTAX_*` order, which is the order this
     // loop walks.
     for which in [
@@ -796,8 +925,22 @@ fn parse_route(header: &libc::rt_msghdr, payload: &[u8]) -> Option<RouteInfo> {
         cursor += consumed;
         match which {
             RTA_DST => destination = sockaddr_ip(bytes),
-            RTA_GATEWAY => gateway = sockaddr_ip(bytes),
-            RTA_NETMASK => prefix = sockaddr_prefix(bytes),
+            RTA_GATEWAY => {
+                // A link-level gateway is how a route names its interface.
+                if let Some((name, index)) = sockaddr_link(bytes) {
+                    interface_name = Some(name);
+                    interface_index_value = index;
+                } else {
+                    gateway = sockaddr_ip(bytes);
+                }
+            }
+            RTA_NETMASK => {
+                let family = destination.map(|address| match address {
+                    IpAddr::V4(_) => AF_INET,
+                    IpAddr::V6(_) => AF_INET6,
+                });
+                prefix = family.and_then(|family| compact_mask_prefix(bytes, family));
+            }
             RTA_IFP => {
                 if let Some((name, index)) = sockaddr_link(bytes) {
                     interface_name = Some(name);
@@ -832,7 +975,9 @@ fn parse_route_dump(buffer: &[u8]) -> Vec<RouteInfo> {
         if length < header_size || offset + length > buffer.len() {
             break;
         }
-        if header.rtm_type == RTM_ADD {
+        // A macOS route dump carries `RTM_GET` messages; a dump written as
+        // `RTM_ADD` is read the same way.
+        if header.rtm_type == RTM_ADD || header.rtm_type == RTM_GET {
             if let Some(route) =
                 parse_route(&header, &buffer[offset + header_size..offset + length])
             {
@@ -892,21 +1037,34 @@ fn build_route_message(
     command: u8,
     destination: IpNet,
     gateway: Option<IpAddr>,
-    interface: &str,
-    interface_index: u32,
+    link_address: &[u8],
     sequence: i32,
 ) -> Vec<u8> {
-    let mut addresses = RTA_DST | RTA_NETMASK | RTA_IFP;
+    let mut addresses = RTA_DST | RTA_NETMASK;
     let mut flags = RTF_UP | RTF_STATIC;
     let mut payload: Vec<u8> = Vec::new();
     payload.extend_from_slice(&sockaddr_for(destination.addr()));
-    if let Some(next_hop) = gateway {
-        addresses |= RTA_GATEWAY;
-        flags |= RTF_GATEWAY;
-        payload.extend_from_slice(&sockaddr_for(next_hop));
+    match gateway {
+        Some(next_hop) => {
+            // A gateway route names its next hop and the interface it leaves
+            // through.
+            addresses |= RTA_GATEWAY;
+            flags |= RTF_GATEWAY;
+            payload.extend_from_slice(&sockaddr_for(next_hop));
+            addresses |= RTA_IFP;
+            payload.extend_from_slice(link_address);
+        }
+        None => {
+            // A direct route names its interface as a link-level gateway. The
+            // kernel refuses an `RTM_ADD` that carries no gateway at all, and
+            // it matches this address against the interface's own link-level
+            // address to find the interface the route belongs to. This is the
+            // shape `route add -interface` sends.
+            addresses |= RTA_GATEWAY;
+            payload.extend_from_slice(link_address);
+        }
     }
     payload.extend_from_slice(&sockaddr_for(netmask_of(destination)));
-    payload.extend_from_slice(&sockaddr_dl_for(interface, interface_index));
     if destination.prefix_len() == max_prefix_len(destination.addr()) {
         flags |= RTF_HOST;
     }
@@ -944,16 +1102,15 @@ fn write_route(
     gateway: Option<IpAddr>,
     interface: &str,
 ) -> Result<(), SysError> {
-    let index = interface_index(interface).ok_or(SysError {
+    let link_address = interface_link_address(interface).ok_or(SysError {
         kind: SysErrorKind::NotFound,
-        operation: "route",
+        operation: "route interface",
     })?;
     let message = build_route_message(
         command,
         destination,
         gateway,
-        interface,
-        index,
+        &link_address,
         next_sequence(),
     );
     // SAFETY: an `AF_ROUTE` socket is the documented transport for routing
@@ -1051,6 +1208,44 @@ mod tests {
     }
 
     #[test]
+    fn a_compact_netmask_carries_the_prefix_length() {
+        // The form a macOS route dump writes: the length byte, a
+        // family-sized run of filler, and the mask's significant bytes.
+        assert_eq!(
+            compact_mask_prefix(&[0x05, 0xff, 0xff, 0xff, 0xff], AF_INET),
+            Some(8)
+        );
+        assert_eq!(
+            compact_mask_prefix(&[0x05, 0xff, 0xff, 0xff, 0xf0], AF_INET),
+            Some(4)
+        );
+        assert_eq!(
+            compact_mask_prefix(&[0x06, 0xff, 0xff, 0xff, 0xff, 0xff], AF_INET),
+            Some(16)
+        );
+        assert_eq!(
+            compact_mask_prefix(
+                &[
+                    0x0e, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+                    0xff
+                ],
+                AF_INET6
+            ),
+            Some(48)
+        );
+        assert_eq!(
+            compact_mask_prefix(
+                &[
+                    0x10, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+                    0xff, 0xff, 0xff
+                ],
+                AF_INET6
+            ),
+            Some(64)
+        );
+    }
+
+    #[test]
     fn prefix_lengths_follow_the_netmask() {
         assert_eq!(prefix_len_v4(Ipv4Addr::new(255, 255, 255, 0)), 24);
         assert_eq!(prefix_len_v4(Ipv4Addr::new(255, 255, 255, 255)), 32);
@@ -1076,10 +1271,30 @@ mod tests {
         );
     }
 
+    /// The link-level address a tunnel interface reports to the kernel.
+    fn link_address_for(name: &str, index: u32) -> Vec<u8> {
+        // SAFETY: every field of this kernel structure is a plain integer or a
+        // byte array, so an all-zero bit pattern is a valid, fully initialised
+        // value for it.
+        let mut sdl: libc::sockaddr_dl = unsafe { std::mem::zeroed() };
+        sdl.sdl_len = std::mem::size_of::<libc::sockaddr_dl>() as c_uchar;
+        sdl.sdl_family = AF_LINK as c_uchar;
+        sdl.sdl_index = index as libc::c_ushort;
+        // `IFT_OTHER`, the type a `utun` interface reports.
+        sdl.sdl_type = 1;
+        let raw = name.as_bytes();
+        sdl.sdl_nlen = raw.len().min(sdl.sdl_data.len()) as c_uchar;
+        for (slot, byte) in sdl.sdl_data.iter_mut().zip(raw.iter()) {
+            *slot = *byte as c_char;
+        }
+        bytes_of(&sdl)
+    }
+
     #[test]
     fn route_message_carries_the_expected_socket_addresses() {
         let destination: IpNet = "10.0.0.2/32".parse().unwrap();
-        let message = build_route_message(RTM_ADD, destination, None, "utun7", 19, 42);
+        let link = link_address_for("utun7", 19);
+        let message = build_route_message(RTM_ADD, destination, None, &link, 42);
         let header_size = std::mem::size_of::<libc::rt_msghdr>();
         assert!(message.len() > header_size);
         // SAFETY: the message was built by this module and is at least a
@@ -1090,34 +1305,73 @@ mod tests {
         assert_eq!(header.rtm_version, RTM_VERSION);
         assert_eq!(header.rtm_seq, 42);
         assert_eq!(header.rtm_msglen as usize, message.len());
-        assert_eq!(header.rtm_addrs, RTA_DST | RTA_NETMASK | RTA_IFP);
+        // A direct route names its interface as a link-level gateway: the
+        // kernel refuses an `RTM_ADD` that carries no gateway at all.
+        assert_eq!(header.rtm_addrs, RTA_DST | RTA_GATEWAY | RTA_NETMASK);
         assert_eq!(header.rtm_flags & RTF_UP, RTF_UP);
         assert_eq!(header.rtm_flags & RTF_HOST, RTF_HOST);
         assert_eq!(header.rtm_flags & RTF_GATEWAY, 0);
 
-        // The destination socket address is first, then the netmask, then the
-        // interface name.
+        // The destination socket address is first, then the link-level
+        // gateway, then the netmask.
         let payload = &message[header_size..];
-        let (destination_bytes, consumed) = take_sockaddr(payload, 0).unwrap();
+        let (destination_bytes, first) = take_sockaddr(payload, 0).unwrap();
         assert_eq!(
             sockaddr_ip(destination_bytes),
             Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)))
         );
-        let (mask_bytes, consumed) = take_sockaddr(payload, consumed).unwrap();
+        let (gateway_bytes, second) = take_sockaddr(payload, first).unwrap();
         assert_eq!(
-            sockaddr_prefix(mask_bytes),
-            Some(32),
+            sockaddr_link(gateway_bytes),
+            Some(("utun7".to_owned(), 19)),
+            "the gateway names the interface the route belongs to"
+        );
+        let (mask_bytes, _) = take_sockaddr(payload, first + second).unwrap();
+        assert_eq!(
+            sockaddr_ip(mask_bytes),
+            Some(IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255))),
             "a /32 destination carries a full netmask"
         );
-        let (link_bytes, _) = take_sockaddr(payload, consumed * 2).unwrap();
-        assert_eq!(sockaddr_link(link_bytes), Some(("utun7".to_owned(), 19)));
+    }
+
+    #[test]
+    fn a_direct_route_names_its_interface_as_a_link_level_gateway() {
+        // The kernel refuses an `RTM_ADD` without a gateway, and it finds the
+        // interface by matching a link-level gateway against the interface's
+        // own link-level address.
+        let destination: IpNet = "2001:db8:78::/64".parse().unwrap();
+        let link = link_address_for("utun7", 19);
+        let message = build_route_message(RTM_ADD, destination, None, &link, 3);
+        let header_size = std::mem::size_of::<libc::rt_msghdr>();
+        // SAFETY: the message was built by this module and is at least a
+        // header long.
+        let header =
+            unsafe { std::ptr::read_unaligned(message.as_ptr() as *const libc::rt_msghdr) };
+        assert_eq!(header.rtm_addrs, RTA_DST | RTA_GATEWAY | RTA_NETMASK);
+        assert_eq!(header.rtm_flags & RTF_HOST, 0);
+        let payload = &message[header_size..];
+        let (destination_bytes, first) = take_sockaddr(payload, 0).unwrap();
+        assert_eq!(
+            sockaddr_ip(destination_bytes),
+            Some(IpAddr::V6("2001:db8:78::".parse::<Ipv6Addr>().unwrap()))
+        );
+        let (gateway_bytes, second) = take_sockaddr(payload, first).unwrap();
+        assert_eq!(sockaddr_link(gateway_bytes), Some(("utun7".to_owned(), 19)));
+        let (mask_bytes, _) = take_sockaddr(payload, first + second).unwrap();
+        assert_eq!(
+            sockaddr_ip(mask_bytes),
+            Some(IpAddr::V6(
+                "ffff:ffff:ffff:ffff::".parse::<Ipv6Addr>().unwrap()
+            ))
+        );
     }
 
     #[test]
     fn gateway_routes_set_the_gateway_flag_and_carry_the_next_hop() {
         let destination: IpNet = "10.0.0.0/24".parse().unwrap();
         let gateway: IpAddr = "10.0.0.1".parse().unwrap();
-        let message = build_route_message(RTM_ADD, destination, Some(gateway), "utun7", 19, 7);
+        let link = link_address_for("utun7", 19);
+        let message = build_route_message(RTM_ADD, destination, Some(gateway), &link, 7);
         let header_size = std::mem::size_of::<libc::rt_msghdr>();
         // SAFETY: the message was built by this module and is at least a
         // header long.
@@ -1150,7 +1404,7 @@ mod tests {
     #[test]
     fn ipv4_alias_requests_carry_the_address_and_its_netmask() {
         let address: IpNet = "10.8.0.1/24".parse().unwrap();
-        let request = ifaliasreq_for("utun7", address).unwrap();
+        let request = ifaliasreq_for("utun7", address, false).unwrap();
         assert_eq!(name_bytes(&request.ifra_name), b"utun7".to_vec());
         assert_eq!(request.ifra_addr.sa_family, AF_INET as libc::sa_family_t);
         let body = &request.ifra_addr.sa_data[2..6];
@@ -1160,9 +1414,38 @@ mod tests {
     }
 
     #[test]
+    fn a_point_to_point_alias_request_carries_the_destination() {
+        // A `utun` interface is point-to-point, and the kernel refuses an
+        // address assignment that leaves the destination unset.
+        let address: IpNet = "10.78.0.1/32".parse().unwrap();
+        let request = ifaliasreq_for("utun7", address, true).unwrap();
+        assert_eq!(
+            request.ifra_broadaddr.sa_family,
+            AF_INET as libc::sa_family_t
+        );
+        assert_eq!(
+            sign_bytes(&request.ifra_broadaddr.sa_data[2..6]),
+            vec![10, 78, 0, 1]
+        );
+
+        let address: IpNet = "2001:db8:78::1/128".parse().unwrap();
+        let request = in6_aliasreq_for("utun7", address, true).unwrap();
+        assert_eq!(
+            request.ifra_dstaddr.sin6_addr.s6_addr,
+            [0x20, 0x01, 0x0d, 0xb8, 0x00, 0x78, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
+        );
+
+        // A broadcast interface keeps the destination unset: the slot carries
+        // the broadcast address there, and the kernel computes it.
+        let address: IpNet = "10.78.0.1/32".parse().unwrap();
+        let request = ifaliasreq_for("en0", address, false).unwrap();
+        assert_eq!(request.ifra_broadaddr.sa_family, 0);
+    }
+
+    #[test]
     fn ipv6_alias_requests_carry_the_address_and_its_prefix_mask() {
         let address: IpNet = "2001:db8::1/64".parse().unwrap();
-        let request = in6_aliasreq_for("utun7", address).unwrap();
+        let request = in6_aliasreq_for("utun7", address, false).unwrap();
         assert_eq!(name_bytes(&request.ifra_name), b"utun7".to_vec());
         assert_eq!(request.ifra_addr.sin6_len, 28);
         assert_eq!(
