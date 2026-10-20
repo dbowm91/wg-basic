@@ -13,7 +13,8 @@ Date: 2026-10-20.
 ## Implementation revision
 
 - Repository baseline: `0887964` (the C001–C005 corrective handoff).
-- Implementation head: `1806d3e` ("macos(c002): release the privileged socket when the daemon is stopped"),
+- Implementation head: `b53ce2d` ("macos(c001,c002): make the Darwin route messages and the tunnel pool real"),
+  on top of `1806d3e` ("macos(c002): release the privileged socket when the daemon is stopped"),
   on top of `c9f8fc9` ("macos(c002): read the effective identity the way BSD ps
   reports it"), on top of `e4f47d5` ("macos(c002): own the receipt and the privileged
   socket explicitly"), `1d8ca63` ("macos(c001,c002): fix the Darwin interface
@@ -83,7 +84,11 @@ The arm64 leg of the product path was run as root on a disposable arm64 Mac
 peer on a different host (Ubuntu 24.04, kernel 6.8, `wireguard.ko`, the
 in-kernel `wireguard-tools` implementation). The peer is driven through
 `tests/fixtures/darwin-peer/wg-basic-peer.sh`, whose contract keeps the Rust
-fixture free of SSH and topology knowledge.
+fixture free of SSH and topology knowledge. The fixture is
+`live_c001_product_path_carries_traffic_to_an_off_host_linux_peer` in
+`tests/wireguard_darwin_controlled.rs` — the controlled-host target, kept
+apart from the hosted-runner suite so a hosted runner never executes a
+fixture that needs a host it cannot be.
 
 Commands, run from the repository root:
 

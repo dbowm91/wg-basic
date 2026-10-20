@@ -1,6 +1,6 @@
 # macOS Native Server — Post-M007 Integration and Release Corrective Roadmap
 
-Status: active corrective line, 2026-10-20. Source branch `plans/macos-native-support`; corrective handoff recorded at `fc51146e811cabebd042d852449c6e7f4f854265`; **C001 and C002 implemented at `1806d3e` and dispositioned `blocked (narrowed)`**; C003–C005 remain blocked. The original M007 MUST-NOT-release verdict remains binding and nothing in this line changes it.
+Status: active corrective line, 2026-10-20. Source branch `plans/macos-native-support`; corrective handoff recorded at `fc51146e811cabebd042d852449c6e7f4f854265`; **C001 and C002 implemented at `b53ce2d` and dispositioned `blocked (narrowed)`**; C003–C005 remain blocked. The original M007 MUST-NOT-release verdict remains binding and nothing in this line changes it.
 
 Authority: `plans/000-long-term-specification.md`; `plans/003-planning-process.md`; accepted ADR-008 and ADR-001–007; `plans/subsystems/macos-native-server-roadmap.md`; M003–M007 historical closure records. The original M007 MUST-NOT-release verdict remains binding.
 
@@ -21,7 +21,7 @@ The missing integration is observable directly at this baseline:
 
 Prior closures were scoped to their recorded evidence and are **not** retroactively invalidated. This corrective records the product-integration gap those narrower fixtures did not exercise. Do not edit historical closures to claim they did.
 
-**Status of the gap list above (2026-10-20, implementation head `1806d3e`):** the
+**Status of the gap list above (2026-10-20, implementation head `b53ce2d`):** the
 gaps above are the ones **C001 and C002 were created to close**, and both plans
 are now implemented against them. The Darwin production backend is wired
 (no longer `UnsupportedBackend`), the Darwin reconciliation service runs the
@@ -45,17 +45,17 @@ C005 governs all distribution decisions. **ADR-008/M007 currently withhold every
 
 ## 3. Dependency graph and active registry
 
-`C001 production host-only integration` (**implemented at `1806d3e`; disposition blocked (narrowed)** — no unmet hard predecessor; the **arm64** closure gate is met by a controlled-host run against an off-host Linux-kernel peer, and what remains is the native Intel arch of the same path)
+`C001 production host-only integration` (**implemented at `b53ce2d`; disposition blocked (narrowed)** — no unmet hard predecessor; the **arm64** closure gate is met by a controlled-host run against an off-host Linux-kernel peer, and what remains is the native Intel arch of the same path)
   → `C003 routed-LAN integration` (hard C001 closure, not merely C001 implementation)
   → `C004 administrator-integrated PF/NAT` (hard C003 + external controlled host)
 
-`C002 launchd least-privilege/install` (**implemented at `1806d3e`; disposition blocked (narrowed)** — integrated closure is hard C001, and the plan additionally forbids closure unless reboot persistence is demonstrated; the three-phase cold-reboot qualification is written with its arm phase observed and passing on a controlled arm64 host, and the reboot itself is the remaining gate)
+`C002 launchd least-privilege/install` (**implemented at `b53ce2d`; disposition blocked (narrowed)** — integrated closure is hard C001, and the plan additionally forbids closure unless reboot persistence is demonstrated; the three-phase cold-reboot qualification is written with its arm phase observed and passing on a controlled arm64 host, and the reboot itself is the remaining gate)
   → `C005 native E2E / distribution / release decision` (hard C001 + C002; C003 if routed mode claimed; C004 if gateway claimed; operational external host/authorization gates).
 
 | Corrective | Status | Primary class | Plan | Gate |
 |---|---|---|---|---|
-| C001 — product wiring and host-only convergence | **blocked (narrowed)** 2026-10-20; implemented at `1806d3e`; closure `plans/closure/macos-native-server-corrective/c001-status.md` | corrective / capability / invariant | `plans/implementation/macos-native-server/c001-production-wiring-host-only.md` | Existing M003/M004/M002 primitives — met. Off-host Linux-kernel peer, dual-stack off-host traffic, and API telemetry through the real authenticated HTTP path — **met on arm64** on a controlled host. Remaining: the **native Intel** arch of the same path |
-| C002 — least-privilege launchd and CLI | **blocked (narrowed)** 2026-10-20; implemented at `1806d3e`; closure `plans/closure/macos-native-server-corrective/c002-status.md` | corrective / invariant | `plans/implementation/macos-native-server/c002-launchd-privilege-and-install.md` | Verified service identity, no root serve — met and observed at runtime. Remaining: the reboot itself. The three-phase cold-reboot qualification is written and its arm phase is observed and passing on a controlled arm64 host; the API-traffic leg is met on arm64 by C001's product path |
+| C001 — product wiring and host-only convergence | **blocked (narrowed)** 2026-10-20; implemented at `b53ce2d`; closure `plans/closure/macos-native-server-corrective/c001-status.md` | corrective / capability / invariant | `plans/implementation/macos-native-server/c001-production-wiring-host-only.md` | Existing M003/M004/M002 primitives — met. Off-host Linux-kernel peer, dual-stack off-host traffic, and API telemetry through the real authenticated HTTP path — **met on arm64** on a controlled host. Remaining: the **native Intel** arch of the same path |
+| C002 — least-privilege launchd and CLI | **blocked (narrowed)** 2026-10-20; implemented at `b53ce2d`; closure `plans/closure/macos-native-server-corrective/c002-status.md` | corrective / invariant | `plans/implementation/macos-native-server/c002-launchd-privilege-and-install.md` | Verified service identity, no root serve — met and observed at runtime. Remaining: the reboot itself. The three-phase cold-reboot qualification is written and its arm phase is observed and passing on a controlled arm64 host; the API-traffic leg is met on arm64 by C001's product path |
 | C003 — bounded routed LAN | **blocked on C001 closure** | corrective / capability | `plans/implementation/macos-native-server/c003-routed-lan-no-nat.md` | Routed traffic/return-route/admin firewall evidence |
 | C004 — effective opt-in PF/NAT | **blocked on C003 and admin-integrated host** | corrective / invariant | `plans/implementation/macos-native-server/c004-pf-nat-effective-gateway.md` | TN3165, effective rules and real egress |
 | C005 — integrated release qualification | **blocked on C001/C002 and scoped network gates** | corrective / qualification | `plans/implementation/macos-native-server/c005-release-qualification-and-reconciliation.md` | Native E2E, reboot, architectures, provenance, maintainer authorization |
