@@ -367,18 +367,22 @@ impl<'a> ProductService<'a> {
                         presence: ResourcePresence::Present,
                     }))
                     .collect(),
-                    // Linux needs a route for the tunnel pool so replies to
-                    // IPv6 client addresses leave through this WireGuard link.
-                    // WireGuard AllowedIPs selects the peer, but does not add
-                    // routes to the host routing table.
-                    routes: ipv6_tunnel_prefix
-                        .clone()
+                    // The managed tunnel interface carries its pool: a route
+                    // for every tunnel prefix so replies to client addresses
+                    // leave through this WireGuard link. WireGuard AllowedIPs
+                    // selects the peer, but does not add routes to the host
+                    // routing table on every platform: Linux derives
+                    // per-peer routes from AllowedIPs and still needs the pool
+                    // route for IPv6, and macOS derives none at all, so
+                    // without the IPv4 pool route the IPv4 half of the
+                    // tunnel cannot carry traffic.
+                    routes: std::iter::once(tunnel_prefix.clone())
+                        .chain(ipv6_tunnel_prefix.clone())
                         .map(|destination| ManagedRoute {
                             destination,
                             gateway: None,
                             presence: ResourcePresence::Present,
                         })
-                        .into_iter()
                         .collect(),
                     peers: Vec::new(),
                     clients: Vec::new(),

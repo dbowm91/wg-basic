@@ -131,6 +131,41 @@ global forwarding change left behind, no `pfctl -e` left enabled, no
 provide (no reboot, no v6 uplink, main-ruleset attachment OS-refused) stays
 recorded as blocked in the milestone closures, not worked around.
 
+Two controlled-host legs need a host that is not a hosted runner, and both are
+driven by the same test binary.
+
+The **off-host peer** leg proves the product path against an independent
+Linux-kernel WireGuard implementation. The peer is reached through a driver
+script (`tests/fixtures/darwin-peer/wg-basic-peer.sh`) whose contract keeps
+the Rust fixture free of SSH and topology knowledge; the driver is selected
+with `WGB_PEER_COMMAND`, and `WGB_PEER_SSH_HOST`, `WGB_PEER_SSH_USER`, and
+`WGB_PEER_SSH_KEY` tell it where the peer is. The peer needs `wireguard-tools`
+and a loaded `wireguard.ko`, and its exported configuration has to be
+narrowed to the server's tunnel addresses, or the peer's own traffic is
+blackholed.
+
+The **cold reboot** leg proves that the deployment comes back from the system
+domain after a cold reboot. It has three phases, because a reboot ends the
+process that starts it: `arm` installs the deployment, enrolls a client
+through the real HTTP surface, records what has to survive, and registers a
+boot-time job that runs the verify phase; `reboot` takes the host down; and
+`verify` runs in the new boot, where it checks that both roles came back,
+that the management daemon still runs unprivileged, that the state database
+still holds the same client, that the network reconverged, and that the
+uninstall leaves no job behind.
+
+```sh
+WGB_C002_REBOOT_PHASE=arm   sudo ./target/debug/deps/wireguard_darwin_live-* \
+  live_c002_cold_reboot_persists_the_deployment --ignored --exact --nocapture
+WGB_C002_REBOOT_PHASE=reboot sudo ./target/debug/deps/wireguard_darwin_live-* \
+  live_c002_cold_reboot_persists_the_deployment --ignored --exact --nocapture
+# the host reboots; the boot-time job runs the verify phase and writes the evidence
+```
+
+Both legs are destructive to the host they run on: they install the product,
+create real `utun` interfaces, assign tunnel addresses, and bootstrap launchd
+jobs. Use a disposable host.
+
 The default unit/protocol suite does not require root or network namespace setup. The Linux WireGuard backend mutates only through typed requests to an existing device; real-kernel integration suites create temporary namespaces and fixture links and require root, `CAP_NET_ADMIN`, `iproute2`, `iputils-ping`, and kernel WireGuard support. Dual-stack tunnel addressing and explicit family-correct client route config are qualified by product and export tests. Hosted `product-management-rootful` exercises the authenticated full-tunnel export, real client handshake and dual-family tunnel traffic, disable/re-enable, and restart/reapply. The `network-control-e2e` fixture carries IPv4 and IPv6 full-tunnel traffic, then changes to split prefixes and proves selected destinations pass while destinations outside those prefixes do not. It also qualifies routed IPv6 forwarding, upstream return routing, foreign-state preservation, sticky forwarding, and absence of NAT66.
 
 The installed serve unit runs `doctor` as the management account before each
