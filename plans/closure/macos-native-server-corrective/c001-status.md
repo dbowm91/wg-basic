@@ -1,10 +1,12 @@
 # macOS Native Server C001 — Production Backend Wiring and Host-Only Convergence
 
-Disposition: **blocked** (narrowed 2026-10-20: the production Darwin wiring and
-the native hosted evidence are complete; the plan's full acceptance needs an
-off-host independent Linux-kernel WireGuard peer with dual-stack traffic
-through the real authenticated HTTP product path, which hosted macOS runners
-cannot provide — the same off-host interop residual M003 already records).
+Disposition: **blocked** (narrowed again 2026-10-20: the production Darwin wiring
+and the **arm64 controlled-host** product path are now closed with observed
+evidence — a real installer, a real `netd` and unprivileged `serve`, the real
+authenticated HTTP surface, an off-host independent Linux-kernel WireGuard peer,
+a real handshake, dual-stack IPv4/IPv6 traffic, and API telemetry; what remains
+is the **native Intel** arch of the same product path, which needs the off-host
+peer to be reachable from a hosted macOS runner).
 
 Date: 2026-10-20.
 
@@ -33,7 +35,7 @@ Date: 2026-10-20.
 | §6 Operational contract: deterministic replay, cleanup, retention or degraded results for enable/disable/peer mutations/SIGTERM/helper crash/netd crash/repeat/concurrent/replace; document the helper recovery and no-foreign-adoption contract | The Darwin service serializes observe/plan/apply/verify with one installation-wide lock; the receipt registry survives a reader restart and re-proves itself; the ownership and no-foreign-adoption contract is written into `architecture/wireguard-control.md` and `architecture/ownership.md`. Repeated apply is idempotent through the portable planner's keep/set/clear semantics. The full SIGTERM/helper-crash/netd-crash/concurrent/replace matrix on a real product deployment is part of the blocked off-host qualification below | Partially passed (code + contract); live matrix blocked |
 | Security/compatibility: `serve` unprivileged; `netd` the only host-network authority; SQLite keeps keys/generation/authorship with the existing secret handling and redaction; UDS `getpeereid` authorization and bounded framing; explicit typed operations only; a protected receipt alone NEVER authorizes deletion; macOS helper source MIT license/revision, no PATH discovery, no unsafe shell | `serve` runs as the dedicated `_wg-basic-serve` principal and `netd` as root (C002). The privileged socket is `0660`, bound to the management group, and the privileged daemon admits the management UID that the *verified receipt* records. The reported device private key is converted to the device public key and dropped; the per-peer preshared key is never read at all. The helper is hash-pinned, absolute, and spawned with a cleared environment and a fixed argv. The receipt never authorizes anything on its own | Passed (code + unit + native live) |
 | Focused tests: Linux netlink behavior unchanged; Darwin UAPI hex/errno parsing; helper restart/utun renumber; ambiguous ownership; malicious UDS frames; wrong helper digest; stale socket; missing/foreign address; global route conflicts; peer update/delete; exact-generation CAS; a replaced stub must fail the end-to-end test | Unit coverage in `crates/darwin-sys` (9), `src/wireguard/darwin_backend.rs` (UAPI mapping, hex decoding, partial peer updates, refusal), `src/reconcile/backend_darwin.rs` (route classification, absence), and `src/firewall/service_darwin.rs` (host-only refusal). New architecture guards pin the isolated `unsafe` boundary, the joint ownership proof, the host-only firewall refusal, the closed launchctl verb set, the non-root management daemon, the privileged socket's ownership, and the receipt's owner. Linux netlink behavior is unchanged: the Linux reconciliation service now shares the same portable apply module with byte-identical plan and failure mapping, and the Linux build and clippy are clean | Passed |
-| Root-run disposable ARM64 and native Intel: real `netd` + unprivileged `serve`, SQLite/admin init, server configuration and peer enrollment over HTTP, handshake, IPv4 **and** IPv6 packets with local Mac-owned addresses, telemetry at the API, disable/delete with interface/route/pid/socket cleanup, netd/helper restart, idempotent replay, foreign-owner refusal, before/after route and VPN inventory | The new native live test `live_c001_production_backend_owns_and_configures_a_managed_tunnel` drives the **production** path (registry receipt → joint ownership proof → production backend observe → reader restart → teardown with no leaked device, socket, or receipt) on the hosted arm64 and Intel runners, run `39427791794`. The existing M003/M004/M005 live suites still pass on the same run | Partially passed (native hosted backend evidence); **blocked** on the off-host Linux-kernel peer, the HTTP product path, dual-stack off-host traffic, and the API telemetry measurement |
+| Root-run disposable ARM64 and native Intel: real `netd` + unprivileged `serve`, SQLite/admin init, server configuration and peer enrollment over HTTP, handshake, IPv4 **and** IPv6 packets with local Mac-owned addresses, telemetry at the API, disable/delete with interface/route/pid/socket cleanup, netd/helper restart, idempotent replay, foreign-owner refusal, before/after route and VPN inventory | The new native live test `live_c001_production_backend_owns_and_configures_a_managed_tunnel` drives the **production** path (registry receipt → joint ownership proof → production backend observe → reader restart → teardown with no leaked device, socket, or receipt) on the hosted arm64 and Intel runners, run `39427791794`. The existing M003/M004/M005 live suites still pass on the same run. The **arm64 controlled-host** product path is now also proven end to end by `live_c001_product_path_carries_traffic_to_an_off_host_linux_peer`, run as root on a disposable arm64 Mac against an independent Ubuntu 24.04 Linux-kernel WireGuard peer on another host: the product's own installer, the real privileged and unprivileged daemons, the real authenticated HTTP surface, a real handshake, dual-stack traffic, and API telemetry — observed output is reproduced under *Verification* below. The **native Intel** arch of the same product path is not yet run: the hosted Intel runner cannot reach the off-host peer, which sits on a private LAN | Partially passed (native hosted backend evidence; **arm64** controlled-host product path); **blocked** on the native Intel product-path leg |
 
 ## Verification
 
@@ -74,6 +76,73 @@ unreadable by the management daemon, and the daemon did not release its socket
 when it was stopped during startup). The root causes are recorded under
 *Unresolved findings by severity* below.
 
+### Arm64 controlled-host product path
+
+The arm64 leg of the product path was run as root on a disposable arm64 Mac
+(macOS 26.6.2, rustc 1.89.0) against an **independent Linux-kernel** WireGuard
+peer on a different host (Ubuntu 24.04, kernel 6.8, `wireguard.ko`, the
+in-kernel `wireguard-tools` implementation). The peer is driven through
+`tests/fixtures/darwin-peer/wg-basic-peer.sh`, whose contract keeps the Rust
+fixture free of SSH and topology knowledge.
+
+Commands, run from the repository root:
+
+```
+cargo fmt --all
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
+cargo build --locked --bin wg-basic
+cargo test --locked --no-run --test wireguard_darwin_live
+WGB_DARWIN_LIVE=1 WGB_WIREGUARD_GO=/tmp/wgb-qual/wireguard-go \
+WGB_HELPER_SHA256=a490f82f540130730f0fde5d10a3e6dab6a4dfa066b94c6968873c8104c69d21 \
+WGB_BINARY=$PWD/target/debug/wg-basic WGB_EVIDENCE_DIR=/tmp/wgb-qual/evidence \
+WGB_PEER_COMMAND=$PWD/tests/fixtures/darwin-peer/wg-basic-peer.sh \
+WGB_PEER_SSH_HOST=192.168.182.143 WGB_PEER_SSH_USER=sugarwookie \
+WGB_PEER_SSH_KEY=/Users/davidbowman/.ssh/id_ed25519 \
+  target/debug/deps/wireguard_darwin_live-159cd4b8de69b40d \
+  live_c001_product_path_carries_traffic_to_an_off_host_linux_peer \
+  --ignored --exact --test-threads=1 --nocapture
+```
+
+Observed output (the evidence file the run wrote,
+`c001-product-path-off-host-peer.txt`):
+
+```
+the transactional installer completed the deployment
+the administrator was provisioned as the management identity
+the management session is authenticated
+the product converged a server from the HTTP setup
+the product enrolled client 9c8aa140-b06d-4375-82ed-52b83c399024 with public key Qz7lwtkvNxIoI3X4w7WnZ3UaCT1RCWoMf+RSlWCKDgU=
+the off-host peer installed the exported configuration
+the managed device carries the enrolled peer: {"client_id":"9c8aa140-...","drift":false,"enabled":true,"endpoint":"192.168.182.143:38144","latest_handshake_age_seconds":0,"latest_handshake_unix_seconds":1792513929,"observation":"present","peer_id":"06c20504-...","rx_bytes":180,"tx_bytes":92}
+the off-host peer completed a handshake at 1792513930
+IPv4 traffic reached 10.77.0.1 from the off-host peer
+--- 10.77.0.1 ping statistics ---
+3 packets transmitted, 3 received, 0% packet loss, time 2003ms
+IPv6 traffic reached 2001:db8:77::1 from the off-host peer
+--- 2001:db8:77::1 ping statistics ---
+3 packets transmitted, 3 received, 0% packet loss, time 2002ms
+telemetry: handshake age 51s rx=1028 tx=908
+disabling the client removed the peer from the managed device
+```
+
+The two implementations agree independently: the macOS product's API reports
+the handshake timestamp `1792513929` and the peer's own
+`wg show … latest-handshakes` reports `1792513930` for the same session, and
+the peer carries the server's public key while the server's telemetry carries
+the peer's endpoint `192.168.182.143:38144`.
+
+The same run also proved the Darwin backend's convergence on a product-shaped
+desired state (`live_c001_darwin_backend_converges_a_product_shaped_desired_state`):
+
+```
+the Darwin backend converged: status=Applied planned=[CreateWireGuardLink, ConfigureWireGuard, AddAddress 10.78.0.1/32, AddAddress 2001:db8:78::1/128, SetLinkUp, AddRoute 2001:db8:78::/64] completed=6 failed=None
+the managed device is observed with 3 address(es) and 2 route(s)
+```
+
+Four real defects were found by this leg and fixed; each is recorded under
+*Unresolved findings by severity* below.
+
 ## Security and ownership evidence
 
 - The Darwin kernel boundary is the only `unsafe` in the workspace, and it lives in one small workspace member (`crates/darwin-sys`) whose only unsafe module is the OS boundary. The product crate keeps `#![forbid(unsafe_code)]`. New guard `the_darwin_unsafe_lives_in_one_isolated_os_boundary` pins both facts.
@@ -94,8 +163,18 @@ when it was stopped during startup). The root causes are recorded under
 
 ## Known limitations
 
-1. **Off-host product end-to-end is unqualified.** The plan's acceptance needs an independent Linux-kernel WireGuard peer reached through the real authenticated HTTP path with dual-stack traffic and API telemetry. Hosted macOS runners have no second kernel to peer with, so this remains unqualified — the same residual M003 records.
-2. **The product `serve`/`netd` deployment is not yet exercised live as a pair.** The live C001 evidence covers the production `netd` backend path; the paired unprivileged `serve` deployment is C002's evidence.
+1. **The native Intel leg of the product path is unqualified.** The arm64
+   controlled-host leg is now proven end to end (see *Verification*), but the
+   same leg on a hosted Intel runner needs the off-host Linux-kernel peer to
+   be reachable from that runner. The peer used here sits on a private LAN
+   with no inbound path from the internet, so the Intel runner cannot reach
+   it. This is the same off-host interop residual M003 already records, now
+   narrowed to one architecture rather than both.
+2. **The product `serve`/`netd` deployment is now exercised live as a pair**
+   on the arm64 controlled host: the same run drives the installer, the
+   privileged daemon, the unprivileged management daemon, the authenticated
+   HTTP surface, and the off-host peer. The Intel arch of that pairing is the
+   remaining gap above.
 3. **IPv6 link-local and scoped behaviour is preserved, not re-created.** The backend observes and refuses to touch the kernel's own address-derived routes, but it does not manage link-local scope.
 4. **The peer endpoint is reported by the helper, but the helper's UAPI dump is the only source.** A peer endpoint that the helper does not report is reported as absent rather than invented.
 5. **No release claim exists.** ADR-008/M007 still withhold every macOS release, and this record changes nothing about that.
@@ -105,21 +184,29 @@ when it was stopped during startup). The root causes are recorded under
 - **Medium (pre-existing, out of scope):** the `dependency-audit` CI job fails on three upstream `zip 6.0.0` advisories reached through `eggup-archive = "=0.1.3"`. Not resolvable in this repository without an upstream release; it does not affect the C001 code.
 - **Low (pre-existing, fixed here):** the dead `getsockopt`/`PeerCredentials` import in `src/protocol/socket.rs` had the branch's Linux `-D warnings` gate red before this change; it is removed here and the gate is green.
 - **Medium (introduced by this change, fixed here):** the audited interface inventory in `crates/darwin-sys` listed only interfaces that carried an address. `getifaddrs` reports one entry per interface/address pair, and a freshly created tunnel has no address yet, so the managed `utunN` was invisible: the helper spawn timed out (`StartupFailed`), the reconciliation reported a live tunnel as absent, and the delete path's "wait for the device to disappear" check was vacuous. The inventory now lists every interface, and the grouping rule is unit-tested in `crates/darwin-sys`.
+- **Medium (introduced by this change, fixed here):** the Darwin route message carried no gateway at all. The kernel refuses an `RTM_ADD` that has no `RTA_GATEWAY` (`bsd/net/rtsock.c`, `route_output`), so **every** route addition failed with `EINVAL` and the managed interface could never carry its tunnel prefix. The message now carries the interface's own link-level `sockaddr_dl` in `RTA_GATEWAY`, which is the shape Apple's `route(8)` sends for `route add -interface` and the shape the kernel matches against the interface's link-level address.
+- **Medium (introduced by this change, fixed here):** the route dump parser read the interface index out of `RTA_IFA` as a four-byte integer. `RTA_IFA` carries the interface's own socket address, and the interface index is in the header's `rtm_index`; the parser also stopped the walk at the first address shorter than a `sockaddr`, while the kernel writes a zero-length address as one four-byte word. Every managed route was therefore attributed to no interface, so the reconciliation saw a converged tunnel as having no routes. The parser now reads the index from the header and walks the addresses in `RTAX_*` order with the rounding Apple's `route print` applies.
+- **Medium (pre-existing, fixed here):** the desired state carried the tunnel-pool route for the IPv6 prefix only. WireGuard AllowedIPs selects the peer but adds no host route, and on macOS the helper adds none either, so the IPv4 half of the tunnel had no route at all: the peer's IPv4 echo request was answered through the default route instead of the tunnel. The desired state now carries the pool route for **every** tunnel prefix; on Linux the IPv4 route is redundant with the kernel's AllowedIPs route and the more specific per-peer route still wins.
+- **Low (pre-existing, configuration, not a defect):** the exported client configuration carries no persistent keepalive by default. A peer behind NAT that holds no traffic of its own never initiates a session, so the two ends never met. The management API already exposes `client_keepalive_seconds`, the exported configuration carries it when it is set, and the qualification enrolls the off-host peer with it. The default stays unset because an interactive WireGuard client initiates on connect.
 - **Low (introduced by this change, fixed here):** the managed helper publishes its UAPI control socket a moment after the kernel hands it the device, so a spawn that returned on the device alone could hand back a tunnel nobody could configure yet. `spawn_managed_tunnel` now waits for the control socket before it returns.
 - **Low (pre-existing, fixed here):** the test scratch paths were suffixed with `SystemTime::now()` nanoseconds. The macOS wall clock is coarse enough that concurrent tests routinely receive the same value, so two tests collided on one directory (`AlreadyExists`) and the gate failed intermittently. Reproduced at the pre-C001 baseline `0887964`. The scratch paths now use a per-process counter.
 
 ## Disposition
 
-**Blocked.** The implementation is complete and the native hosted evidence for the
-production Darwin path exists — run `39427791794` is green, and the C001 live
-qualification records the joint ownership proof, the production backend's
-observation of the managed device, the receipt's survival across a reader
-restart, and a teardown that leaves no device, socket, or receipt behind — but
-the plan's acceptance explicitly requires
-real product/API → typed IPC → helper + addresses/routes → observed generation
-convergence, dual-stack off-host traffic, and truthful failure behaviour on
-both native arches. That evidence needs a second, independent Linux-kernel peer
-and cannot be produced on a hosted macOS runner. Per the planning process,
-closure is not claimed from expected evidence. C003's hard dependency on C001
-therefore stays **blocked**: the C001 *implementation* is in place, but its
-integrated closure gate is not met.
+**Blocked (narrowed to the native Intel arch).** The implementation is complete
+and the **arm64 controlled-host** product path is now closed with observed
+evidence: the product's own installer deploys the privileged daemon and the
+unprivileged management daemon, the real authenticated HTTP surface converges a
+server and enrolls a client, an **independent Linux-kernel** WireGuard peer on
+another host completes a real handshake with it, IPv4 and IPv6 traffic crosses
+the tunnel in both directions, the API reports that traffic as telemetry, and
+disabling the client removes the peer from the device. Four real defects were
+found by that leg and are fixed and recorded above.
+
+What is still open is the plan's requirement to run the same product path on
+the **native Intel** arch. The hosted Intel runner has no second kernel and no
+path to the off-host peer, so the Intel leg of the product path is
+**environmental**, not an implementation gap. Per the planning process,
+closure is not claimed from expected evidence, so C001 remains **blocked** —
+now narrowed from "both arches" to "the Intel arch". C003's hard dependency on
+C001 therefore stays **blocked** as well.
