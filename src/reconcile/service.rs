@@ -51,8 +51,8 @@ impl ReconciliationService {
 mod tests {
     use super::super::apply::ReconcileBackend;
     use super::super::model::{
-        DesiredAddress, DesiredManagedInterface, LinkLifecycle, OwnershipDeclaration,
-        ResourcePresence,
+        ApplyStatus, DesiredAddress, DesiredManagedInterface, LinkLifecycle,
+        ObservedManagedInterface, OwnershipDeclaration, ResourcePresence,
     };
     use super::*;
     use crate::domain::{InstallationId, InterfaceId, InterfaceName, OwnerTag};

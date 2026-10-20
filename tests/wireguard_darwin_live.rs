@@ -1641,9 +1641,6 @@ fn live_c002_management_daemon_runs_unprivileged() {
     let mut evidence = Evidence::new("c002-unprivileged-serve");
     let helper_path = require_live(&mut evidence);
     let binary = std::env::var("WGB_BINARY").expect("WGB_BINARY must be set");
-    let binary_bytes = std::fs::read(&binary).expect("binary bytes");
-    let helper_bytes = std::fs::read(&helper_path).expect("helper bytes");
-    let target = format!("{}-apple-darwin", std::env::consts::ARCH);
 
     // A disposable management account. The installer never creates accounts;
     // the qualification supplies one, exactly as an operator would.
@@ -1693,32 +1690,15 @@ fn live_c002_management_daemon_runs_unprivileged() {
         identity.user, identity.uid, identity.gid
     ));
 
-    launchd::install_to_root(
-        Path::new("/"),
-        env!("CARGO_PKG_VERSION"),
-        &target,
-        &binary_bytes,
-        &helper_bytes,
-    )
-    .expect("install the canonical layout");
-    launchd::bind_management_identity(Path::new("/"), &identity)
-        .expect("record the management identity");
-    launchd::apply_service_ownership(Path::new("/"), &identity)
-        .expect("apply the management ownership");
+    // The product's own transactional installer runs here, not a hand-rolled
+    // equivalent: the live evidence must describe the path an operator
+    // actually takes.
+    wg_basic::launchd_install::install(Path::new("/"), Path::new(&binary), Path::new(&helper_path))
+        .expect("the installer must complete the deployment");
+    evidence.log("the transactional installer completed the deployment");
 
     let netd_plist = format!("/Library/LaunchDaemons/{}.plist", launchd::NETD_LABEL);
     let serve_plist = format!("/Library/LaunchDaemons/{}.plist", launchd::SERVE_LABEL);
-    sh(
-        &mut evidence,
-        "launchctl",
-        &["bootstrap", "system", netd_plist.as_str()],
-    );
-    sh(
-        &mut evidence,
-        "launchctl",
-        &["bootstrap", "system", serve_plist.as_str()],
-    );
-
     let netd_job = format!("system/{}", launchd::NETD_LABEL);
     let serve_job = format!("system/{}", launchd::SERVE_LABEL);
     let running = |job: &str| {
@@ -1770,21 +1750,30 @@ fn live_c002_management_daemon_runs_unprivileged() {
     let netd_pid = pid_of(&netd_job);
     let serve_pid = pid_of(&serve_job);
 
-    // The real effective UID of the running process, not the plist text.
-    let euid_of = |pid: u32| -> u32 {
+    // The real effective UID and GID of the running process, not the plist
+    // text: the plist only states what launchd was asked for.
+    let identity_of = |pid: u32| -> (u32, u32) {
         let output = Command::new("ps")
-            .args(["-o", "ruid=", "-p", &pid.to_string()])
+            .args(["-o", "euid=,egid=", "-p", &pid.to_string()])
             .output()
             .expect("ps");
-        String::from_utf8_lossy(&output.stdout)
-            .trim()
-            .parse()
-            .unwrap_or_else(|_| panic!("ps must report the effective uid of {pid}"))
+        let text = String::from_utf8_lossy(&output.stdout);
+        let mut fields = text.split_whitespace();
+        let uid = fields
+            .next()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or_else(|| panic!("ps must report the effective uid of {pid}"));
+        let gid = fields
+            .next()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or_else(|| panic!("ps must report the effective gid of {pid}"));
+        (uid, gid)
     };
-    let netd_euid = euid_of(netd_pid);
-    let serve_euid = euid_of(serve_pid);
+    let (netd_euid, netd_egid) = identity_of(netd_pid);
+    let (serve_euid, serve_egid) = identity_of(serve_pid);
     evidence.log(&format!(
-        "netd pid={netd_pid} euid={netd_euid}; serve pid={serve_pid} euid={serve_euid}"
+        "netd pid={netd_pid} euid={netd_euid} egid={netd_egid}; \
+         serve pid={serve_pid} euid={serve_euid} egid={serve_egid}"
     ));
     assert_eq!(netd_euid, 0, "the privileged daemon must run as root");
     assert_eq!(
@@ -1803,14 +1792,16 @@ fn live_c002_management_daemon_runs_unprivileged() {
     let stat = sh(
         &mut evidence,
         "stat",
-        &["-f", "%Su %Sg %Lp", socket.to_string_lossy().as_ref()],
+        &["-f", "%Su %Sg %u %g %Lp", socket.to_string_lossy().as_ref()],
     );
     let mut fields = stat.split_whitespace();
     let owner = fields.next().unwrap_or_default().to_owned();
     let socket_group = fields.next().unwrap_or_default().to_owned();
+    let owner_uid = fields.next().unwrap_or_default().to_owned();
+    let socket_gid = fields.next().unwrap_or_default().to_owned();
     let mode = fields.next().unwrap_or_default().to_owned();
     evidence.log(&format!(
-        "socket owner={owner} group={socket_group} mode={mode}"
+        "socket owner={owner}({owner_uid}) group={socket_group}({socket_gid}) mode={mode}"
     ));
     assert_eq!(owner, "root", "the privileged socket must be root-owned");
     assert_eq!(
@@ -1818,18 +1809,36 @@ fn live_c002_management_daemon_runs_unprivileged() {
         "the privileged socket must be reachable by the management group only"
     );
     assert_eq!(
+        socket_gid,
+        identity.gid.to_string(),
+        "the privileged socket's group must be the management group"
+    );
+    assert_eq!(
         mode, "660",
         "the privileged socket must not be reachable by other identities"
     );
 
-    // Teardown: stop both roles, wait for the system domain to forget them,
-    // and remove the disposable account. The jobs must be gone before the
-    // next live test bootstraps the same labels.
-    for plist in [&serve_plist, &netd_plist] {
-        let _ = Command::new("launchctl")
-            .args(["bootout", "system", plist])
-            .output();
-    }
+    // The receipt the management daemon reads for the helper digest and its
+    // own identity has to be readable by the management identity.
+    let receipt = Path::new(launchd::STATE_DIR).join(launchd::RECEIPT_NAME);
+    let receipt_metadata = std::fs::symlink_metadata(&receipt).expect("the install receipt");
+    let receipt_uid = {
+        use std::os::unix::fs::MetadataExt as _;
+        receipt_metadata.uid()
+    };
+    evidence.log(&format!(
+        "install receipt uid={receipt_uid} (management uid={})",
+        identity.uid
+    ));
+    assert_eq!(
+        receipt_uid, identity.uid,
+        "the management daemon must own the receipt it reads"
+    );
+
+    // Teardown: the product's own uninstall stops both roles and preserves the
+    // state, then the disposable account is removed. The jobs must be gone
+    // from the system domain before the next live test bootstraps the labels.
+    wg_basic::launchd_install::uninstall(Path::new("/")).expect("uninstall the deployment");
     for job in [&serve_job, &netd_job] {
         wait_until(
             "job unloaded from the system domain",
