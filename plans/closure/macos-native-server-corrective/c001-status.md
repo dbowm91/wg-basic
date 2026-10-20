@@ -43,11 +43,13 @@ Date: 2026-10-20.
 Native Darwin arm64 (macOS 26.6.2, rustc 1.89.0), run from the repository root:
 
 - `cargo fmt --all -- --check` — passed.
+- `cargo check --all-targets --locked` — passed.
 - `cargo clippy --locked --all-targets -- -D warnings` — passed.
-- `cargo test --locked` — passed: 641 tests, 0 failures. The suite was run four times in a row after the scratch-path fix; every run was green.
-- `cargo test --locked -p wg-basic-darwin-sys` — passed: 9 tests.
+- `cargo test --locked` — passed: 644 tests, 0 failures. The suite was also run four times in a row after the scratch-path fix; every one of those runs was green.
+- `cargo test --locked -p wg-basic-darwin-sys` — passed: 12 tests.
+- `cargo +1.89.0 check --all-targets --locked` — passed (MSRV).
 - `cargo check --locked --target aarch64-apple-darwin` — passed.
-- `cargo check --locked --target x86_64-apple-darwin` — passed.
+- `cargo check --locked --target x86_64-apple-darwin --all-targets` — passed.
 - `cargo zigbuild --locked --target x86_64-unknown-linux-gnu --all-targets` — passed (the Linux **test** targets compile too; several modules and fixtures exist only on Linux and a macOS build never sees them).
 - `cargo clippy --locked --target x86_64-unknown-linux-gnu --all-targets -- -D warnings` — passed, with and without the `linux-integration` feature.
 - Linux native CI, run `39427800154`: every job passes — `rust`, `doctor-readonly`, `system-install-systemd`, `wireguard-kernel`, `network-control-e2e`, `network-reconcile-kernel`, `product-management-rootful`, `durable-owner`, `durable-backup`, `durable-restart`, `maintenance-rootful`, `upgrade-rehearsal`, `upgrade-rehearsal-rootful`, and `update-transaction-rootful` — except `dependency-audit`, which fails on **pre-existing** upstream advisories in `zip 6.0.0` (RUSTSEC-2026-0368/0369 and one more), which arrives through `eggup-archive v0.1.3` and cannot be resolved in this repository because `eggup-archive` is pinned with `=0.1.3` and `zip` cannot take a semver-major upgrade. It is unrelated to C001/C002 and is recorded as an unresolved finding below.

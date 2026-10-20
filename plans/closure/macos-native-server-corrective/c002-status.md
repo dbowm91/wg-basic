@@ -47,10 +47,12 @@ Date: 2026-10-20.
 Native Darwin arm64 (macOS 26.6.2, rustc 1.89.0), run from the repository root:
 
 - `cargo fmt --all -- --check` — passed.
+- `cargo check --all-targets --locked` — passed.
 - `cargo clippy --locked --all-targets -- -D warnings` — passed.
-- `cargo test --locked` — passed: 641 tests, 0 failures, including the new `launchd` identity, renderer, layout, and symlink tests and the seven new architecture guards. The suite was run four times in a row after the scratch-path fix; every run was green.
-- `cargo test --locked -p wg-basic-darwin-sys` — passed: 9 tests.
-- `cargo check --locked --target aarch64-apple-darwin` and `--target x86_64-apple-darwin` — passed.
+- `cargo test --locked` — passed: 644 tests, 0 failures, including the new `launchd` identity, renderer, layout, and symlink tests and the seven new architecture guards. The suite was also run four times in a row after the scratch-path fix; every one of those runs was green.
+- `cargo test --locked -p wg-basic-darwin-sys` — passed: 12 tests.
+- `cargo +1.89.0 check --all-targets --locked` — passed (MSRV).
+- `cargo check --locked --target aarch64-apple-darwin` and `--target x86_64-apple-darwin --all-targets` — passed.
 - `cargo zigbuild --locked --target x86_64-unknown-linux-gnu --all-targets` — passed (the Linux **test** targets compile too; several modules and fixtures exist only on Linux and a macOS build never sees them).
 - `cargo clippy --locked --target x86_64-unknown-linux-gnu --all-targets -- -D warnings` — passed, with and without the `linux-integration` feature.
 - The branch's Linux `cargo clippy --all-targets --locked -- -D warnings` gate was **red before this change** (a dead `getsockopt`/`PeerCredentials` import left behind in `src/protocol/socket.rs` by the M002 refactor). It is removed here and the gate is green again.
