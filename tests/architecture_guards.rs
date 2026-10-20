@@ -1855,14 +1855,16 @@ fn the_long_running_roles_catch_a_supervisors_termination_signal() {
     );
 
     let main = shippable(source_of("src/main.rs"));
-    // The roles that run forever install the handler: Linux `netd` + `serve`
-    // and Darwin `netd` (M002; Darwin `serve` reuses the same portable `serve`
-    // function as Linux, so it shares that handler). A fourth would mean some
-    // one-shot command had started waiting for a signal it will never receive.
+    // The roles that run forever install the handler: the Linux `netd` and
+    // `serve` and the Darwin `netd` (M002; Darwin `serve` reuses the same
+    // portable `serve` function as Linux, so it shares that handler). The two
+    // netd roles share one helper, so there are two call sites; a third would
+    // mean some one-shot command had started waiting for a signal it will
+    // never receive.
     assert_eq!(
         main.matches("ctrlc::set_handler").count(),
-        3,
-        "the Linux netd, Linux/Darwin serve, and Darwin netd roles install a \
+        2,
+        "the shared netd helper and the Linux/Darwin serve role install a \
          shutdown handler; a one-shot command must not"
     );
     for arm in ["Some(Command::Netd {", "Some(Command::Serve"] {
@@ -1873,7 +1875,74 @@ fn the_long_running_roles_catch_a_supervisors_termination_signal() {
     }
     assert!(
         main.contains("fn run_darwin_netd"),
-        "the Darwin netd role owns the third handler"
+        "the Darwin netd role exists"
+    );
+    // The handler must be installed *before* the socket is bound. A daemon
+    // that is asked to stop while it is still starting up would otherwise be
+    // killed by the default signal action and leave its socket behind for the
+    // next start to trip over.
+    let helper = main
+        .split("fn bind_privileged_socket")
+        .nth(1)
+        .expect("the shared netd helper exists");
+    let install = helper
+        .find("ctrlc::set_handler")
+        .expect("the shared netd helper installs the shutdown handler");
+    let bind = helper
+        .find("SocketServer::bind")
+        .expect("the shared netd helper binds the privileged socket");
+    assert!(
+        install < bind,
+        "the shutdown handler must be installed before the socket is bound, or a \
+         daemon stopped during startup leaves its socket behind"
+    );
+}
+
+/// C002: the privileged socket never keeps a group the product did not choose.
+///
+/// A socket is created with the creating process's group. That group is not an
+/// identity this product chose, so the privileged daemon must always set the
+/// socket's ownership itself.
+#[test]
+fn the_darwin_netd_always_sets_the_privileged_socket_ownership() {
+    let main = shippable(source_of("src/main.rs"));
+    let darwin_netd = main
+        .split("fn run_darwin_netd")
+        .nth(1)
+        .expect("the Darwin netd role exists");
+    assert!(
+        darwin_netd.contains("authorize_socket_group"),
+        "the Darwin netd binds the privileged socket to the management identity"
+    );
+    assert!(
+        darwin_netd.contains("restrict_socket_to_owner"),
+        "the Darwin netd restricts the privileged socket to its owner when no \
+         management identity is recorded, so the socket never keeps an \
+         inherited group"
+    );
+    let launchd = shippable(source_of("src/launchd.rs"));
+    assert!(
+        launchd.contains("pub fn restrict_socket_to_owner"),
+        "the owner-only mode of the privileged socket exists"
+    );
+}
+
+/// C002: the management identity owns the receipt it reads.
+///
+/// The receipt lives inside the management-owned state directory. A root-owned
+/// receipt in a management-owned directory is unreadable by the management
+/// daemon that needs it for the helper digest and for its own identity.
+#[test]
+fn the_management_identity_owns_the_receipt_it_reads() {
+    let launchd = shippable(source_of("src/launchd.rs"));
+    let ownership = launchd
+        .split("pub fn apply_service_ownership")
+        .nth(1)
+        .expect("the ownership function exists");
+    assert!(
+        ownership.contains("RECEIPT_NAME"),
+        "the receipt belongs to the management identity, because it lives in the \
+         management-owned state directory"
     );
 }
 

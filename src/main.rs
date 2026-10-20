@@ -408,6 +408,37 @@ fn run_darwin(command: Option<Command>) -> Result<(), String> {
     }
 }
 
+/// Installs the stop handler and binds the privileged socket.
+///
+/// The stop handler is installed **before** the socket is bound. A daemon that
+/// is asked to stop while it is still starting up must still release the
+/// socket it just created: with the handler installed after the bind, the
+/// default signal action would kill the process and leave the socket file
+/// behind for the next start to trip over.
+///
+/// `None` means a stop request arrived while the socket was being bound, so
+/// the caller releases it and exits without claiming to have started.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn bind_privileged_socket(
+    socket: &std::path::Path,
+    policy: wg_basic::protocol::AuthorizationPolicy,
+    shutdown: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<Option<wg_basic::protocol::SocketServer>, String> {
+    use std::sync::atomic::Ordering;
+    let signal_shutdown = shutdown.clone();
+    ctrlc::set_handler(move || signal_shutdown.store(true, Ordering::Release))
+        .map_err(|_| "could not install graceful shutdown handler".to_owned())?;
+    let server = wg_basic::protocol::SocketServer::bind(socket, policy)
+        .map_err(|_| "could not safely bind the configured netd socket path".to_owned())?;
+    if shutdown.load(Ordering::Acquire) {
+        // The stop request arrived while the socket was being bound. Releasing
+        // the socket is the whole point of returning here.
+        drop(server);
+        return Ok(None);
+    }
+    Ok(Some(server))
+}
+
 /// M002 Darwin privileged network service.
 ///
 /// Binds the same narrow, authorized Unix-domain request/response service as
@@ -424,7 +455,7 @@ fn run_darwin_netd(
     allowed_users: Vec<String>,
 ) -> Result<(), String> {
     use std::sync::{atomic::AtomicBool, Arc};
-    use wg_basic::protocol::{AuthorizationPolicy, SocketServer};
+    use wg_basic::protocol::AuthorizationPolicy;
 
     let mut policy = AuthorizationPolicy::current_user();
     policy.extend(allowed_uids);
@@ -439,8 +470,13 @@ fn run_darwin_netd(
     {
         policy.extend(vec![identity.uid]);
     }
-    let server = SocketServer::bind(&socket, policy)
-        .map_err(|_| "could not safely bind the configured netd socket path".to_owned())?;
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let Some(server) = bind_privileged_socket(socket.as_path(), policy, &shutdown)? else {
+        // The daemon was asked to stop while it was still starting up. The
+        // socket it had just created is released; nothing is claimed to have
+        // started.
+        return Ok(());
+    };
     // The socket is the whole path from the unprivileged management daemon to
     // the privileged one, so it is bound to the management identity: root and
     // that group only. When no management identity is recorded the socket
@@ -457,10 +493,6 @@ fn run_darwin_netd(
                 .map_err(|_| "could not restrict the netd socket to its owner".to_owned())?;
         }
     }
-    let shutdown = Arc::new(AtomicBool::new(false));
-    let signal_shutdown = shutdown.clone();
-    ctrlc::set_handler(move || signal_shutdown.store(true, std::sync::atomic::Ordering::Release))
-        .map_err(|_| "could not install graceful shutdown handler".to_owned())?;
     wg_basic::operational::emit(
         "netd.started",
         wg_basic::operational::Severity::Info,
@@ -727,9 +759,7 @@ fn run_darwin_doctor(
 #[cfg(target_os = "linux")]
 fn run_linux(command: Option<Command>) -> Result<(), String> {
     use std::sync::{atomic::AtomicBool, Arc};
-    use wg_basic::protocol::{
-        request, AuthorizationPolicy, RequestOperation, ResponseBody, SocketServer,
-    };
+    use wg_basic::protocol::{request, AuthorizationPolicy, RequestOperation, ResponseBody};
 
     match command {
         None => {
@@ -995,14 +1025,13 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
             let resolved = wg_basic::distribution::resolve_allowed_user_uids(&allowed_users)
                 .map_err(|_| "could not resolve a configured local netd user".to_owned())?;
             policy.extend(resolved);
-            let server = SocketServer::bind(&socket, policy)
-                .map_err(|_| "could not safely bind the configured netd socket path".to_owned())?;
             let shutdown = Arc::new(AtomicBool::new(false));
-            let signal_shutdown = shutdown.clone();
-            ctrlc::set_handler(move || {
-                signal_shutdown.store(true, std::sync::atomic::Ordering::Release)
-            })
-            .map_err(|_| "could not install graceful shutdown handler".to_owned())?;
+            let Some(server) = bind_privileged_socket(socket.as_path(), policy, &shutdown)? else {
+                // The daemon was asked to stop while it was still starting up.
+                // The socket it had just created is released; nothing is
+                // claimed to have started.
+                return Ok(());
+            };
             wg_basic::operational::emit(
                 "netd.started",
                 wg_basic::operational::Severity::Info,
