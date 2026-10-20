@@ -16,7 +16,8 @@ Date: 2026-10-20.
 ## Implementation revision
 
 - Repository baseline: `0887964` (the C001–C005 corrective handoff).
-- Implementation head: `1806d3e` ("macos(c002): release the privileged socket when the daemon is stopped"),
+- Implementation head: `b53ce2d` ("macos(c001,c002): make the Darwin route messages and the tunnel pool real"),
+  on top of `1806d3e` ("macos(c002): release the privileged socket when the daemon is stopped"),
   on top of `c9f8fc9` ("macos(c002): read the effective identity the way BSD ps
   reports it"), on top of `e4f47d5` ("macos(c002): own the receipt and the privileged
   socket explicitly"), `1d8ca63` ("macos(c001,c002): fix the Darwin interface
@@ -92,7 +93,11 @@ below.
 ### Arm64 controlled-host cold-reboot qualification (arm phase)
 
 The cold-reboot leg was run as root on a disposable arm64 Mac (macOS 26.6.2,
-rustc 1.89.0). The **arm phase** is observed and passing:
+rustc 1.89.0). The **arm phase** is observed and passing. The fixture is
+`live_c002_cold_reboot_persists_the_deployment` in
+`tests/wireguard_darwin_controlled.rs` — the controlled-host target, kept
+apart from the hosted-runner suite so a hosted runner never executes a
+fixture that needs a host it cannot be:
 
 ```
 the transactional installer completed the deployment
