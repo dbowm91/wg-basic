@@ -1375,6 +1375,13 @@ fn live_launchd_bootstrap_cycle() {
     let state_dir = Path::new(launchd::STATE_DIR);
     let runtime_dir = Path::new(launchd::RUNTIME_DIR);
 
+    // A job left registered by an earlier test would make the bootstrap fail
+    // with an opaque I/O error, so the label is cleared first. Foreign jobs
+    // are never touched: only this deployment's own label is unloaded.
+    let job = format!("system/{}", launchd::NETD_LABEL);
+    let _ = Command::new("launchctl")
+        .args(["bootout", "system", job.as_str()])
+        .output();
     sh(
         &mut evidence,
         "launchctl",
@@ -1382,7 +1389,6 @@ fn live_launchd_bootstrap_cycle() {
     );
     evidence.log("netd bootstrapped into the system domain (ephemeral host)");
 
-    let job = format!("system/{}", launchd::NETD_LABEL);
     wait_until("netd running", Duration::from_secs(30), || {
         Command::new("launchctl")
             .args(["print", &job])
@@ -1629,6 +1635,69 @@ fn live_c001_production_backend_owns_and_configures_a_managed_tunnel() {
     evidence.write();
 }
 
+/// Removes the deployment and the disposable account when the test ends.
+///
+/// The cleanup runs when the test ends **including when an assertion
+/// panics**: the next live test bootstraps the same launchd labels and must
+/// find the system domain clean, so a failed test may not leave a job
+/// registered or a socket behind.
+struct DisposableDeployment {
+    user: String,
+    group: String,
+}
+
+impl DisposableDeployment {
+    /// Waits until the system domain forgets both jobs.
+    fn wait_until_unloaded(&self) {
+        for job in [
+            format!("system/{}", launchd::SERVE_LABEL),
+            format!("system/{}", launchd::NETD_LABEL),
+        ] {
+            let deadline = std::time::Instant::now() + Duration::from_secs(30);
+            loop {
+                let loaded = Command::new("launchctl")
+                    .args(["print", &job])
+                    .output()
+                    .is_ok_and(|output| output.status.success());
+                if !loaded {
+                    break;
+                }
+                if std::time::Instant::now() >= deadline {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+    }
+}
+
+impl Drop for DisposableDeployment {
+    fn drop(&mut self) {
+        let _ = wg_basic::launchd_install::uninstall(Path::new("/"));
+        self.wait_until_unloaded();
+        for plist in [
+            format!("/Library/LaunchDaemons/{}.plist", launchd::NETD_LABEL),
+            format!("/Library/LaunchDaemons/{}.plist", launchd::SERVE_LABEL),
+        ] {
+            remove_if_exists(Path::new(&plist));
+        }
+        remove_if_exists(Path::new(launchd::BINARY_PATH));
+        remove_if_exists(Path::new(launchd::HELPER_PATH));
+        let _ = std::fs::remove_dir_all(Path::new(launchd::RUNTIME_DIR));
+        let _ = std::fs::remove_dir_all(Path::new(launchd::STATE_DIR));
+        let _ = std::fs::remove_dir_all("/var/log/wg-basic");
+        let _ = std::fs::remove_dir_all("/usr/local/libexec/wg-basic");
+        for record in [
+            format!("/Users/{}", self.user),
+            format!("/Groups/{}", self.group),
+        ] {
+            let _ = Command::new("dscl")
+                .args([".", "-delete", &record])
+                .output();
+        }
+    }
+}
+
 /// C002 live: the management daemon really runs unprivileged.
 ///
 /// The plist text is not the proof. This cycle preprovisiones a disposable
@@ -1668,6 +1737,12 @@ fn live_c002_management_daemon_runs_unprivileged() {
         ],
     );
     evidence.log("preprovisioned the disposable management account and group");
+    // The cleanup guard is armed before anything else can fail, so a failed
+    // test still leaves the host clean for the next one.
+    let _cleanup = DisposableDeployment {
+        user: user.to_owned(),
+        group: group.to_owned(),
+    };
 
     // The directory service publishes a new local record asynchronously, so the
     // identity is resolved with a bounded retry rather than a single lookup.
@@ -1751,10 +1826,11 @@ fn live_c002_management_daemon_runs_unprivileged() {
     let serve_pid = pid_of(&serve_job);
 
     // The real effective UID and GID of the running process, not the plist
-    // text: the plist only states what launchd was asked for.
+    // text: the plist only states what launchd was asked for. BSD `ps` reports
+    // the effective identifiers under `uid`/`gid`; it has no `euid`/`egid`.
     let identity_of = |pid: u32| -> (u32, u32) {
         let output = Command::new("ps")
-            .args(["-o", "euid=,egid=", "-p", &pid.to_string()])
+            .args(["-o", "uid=,gid=", "-p", &pid.to_string()])
             .output()
             .expect("ps");
         let text = String::from_utf8_lossy(&output.stdout);
@@ -1836,8 +1912,8 @@ fn live_c002_management_daemon_runs_unprivileged() {
     );
 
     // Teardown: the product's own uninstall stops both roles and preserves the
-    // state, then the disposable account is removed. The jobs must be gone
-    // from the system domain before the next live test bootstraps the labels.
+    // state, then the disposable account is removed. The drop guard repeats the
+    // cleanup so a failed assertion cannot leave a job registered.
     wg_basic::launchd_install::uninstall(Path::new("/")).expect("uninstall the deployment");
     for job in [&serve_job, &netd_job] {
         wait_until(
