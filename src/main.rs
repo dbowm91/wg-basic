@@ -160,6 +160,12 @@ enum SystemCommand {
         /// Optional staging executable; defaults to this running executable.
         #[arg(long)]
         candidate: Option<PathBuf>,
+        /// Optional pinned WireGuard helper executable (macOS only).
+        ///
+        /// The Darwin deployment installs a hash-pinned helper alongside the
+        /// product binary; Linux has no helper and ignores this argument.
+        #[arg(long)]
+        helper: Option<PathBuf>,
     },
     /// Read-only installation ownership and service status.
     Status,
@@ -348,10 +354,18 @@ fn run_darwin(command: Option<Command>) -> Result<(), String> {
             }
             Ok(())
         }
-        Some(Command::System { action }) => {
-            let _ = action;
-            Err("system install/uninstall is not supported on macOS in M001: Linux systemd layout only; launchd installation lands in M006".into())
-        }
+        Some(Command::System { action }) => match action {
+            SystemCommand::Install { candidate, helper } => {
+                let candidate = match candidate {
+                    Some(path) => path,
+                    None => wg_basic::distribution::current_executable()
+                        .map_err(|_| "could not identify the running executable".to_owned())?,
+                };
+                darwin_system_install(&candidate, helper.as_deref())
+            }
+            SystemCommand::Status => darwin_system_status(),
+            SystemCommand::Uninstall => darwin_system_uninstall(),
+        },
         Some(Command::Update { action }) => {
             let _ = action;
             Err("update check/run/recover is not supported on macOS in M001: no Darwin release target or trust root; see M006".into())
@@ -417,8 +431,25 @@ fn run_darwin_netd(
     let resolved = wg_basic::distribution::resolve_allowed_user_uids(&allowed_users)
         .map_err(|_| "could not resolve a configured local netd user".to_owned())?;
     policy.extend(resolved);
+    // The management identity is taken from the verified install receipt, so
+    // the account the privileged daemon admits is the account the installer
+    // bound and nobody else.
+    if let Some(identity) =
+        wg_basic::launchd::recorded_management_identity(std::path::Path::new("/"))
+    {
+        policy.extend(vec![identity.uid]);
+    }
     let server = SocketServer::bind(&socket, policy)
         .map_err(|_| "could not safely bind the configured netd socket path".to_owned())?;
+    // The socket is the whole path from the unprivileged management daemon to
+    // the privileged one, so it is bound to the management identity: root and
+    // that group only.
+    if let Some(identity) =
+        wg_basic::launchd::recorded_management_identity(std::path::Path::new("/"))
+    {
+        wg_basic::launchd::authorize_socket_group(&socket, &identity)
+            .map_err(|_| "could not bind the netd socket to the management identity".to_owned())?;
+    }
     let shutdown = Arc::new(AtomicBool::new(false));
     let signal_shutdown = shutdown.clone();
     ctrlc::set_handler(move || signal_shutdown.store(true, std::sync::atomic::Ordering::Release))
@@ -451,6 +482,66 @@ fn run_darwin_netd(
         Some("uds_listener"),
     );
     result
+}
+
+/// Darwin `system install`: the launchd deployment (C002).
+///
+/// The installer writes the owned layout, resolves and binds the management
+/// service identity, registers the privileged daemon first and the management
+/// daemon second, and refuses to finish with a half-registered deployment.
+#[cfg(target_os = "macos")]
+fn darwin_system_install(
+    candidate: &std::path::Path,
+    helper: Option<&std::path::Path>,
+) -> Result<(), String> {
+    let helper = helper.ok_or(
+        "macOS installation requires the pinned WireGuard helper; pass --helper PATH".to_owned(),
+    )?;
+    let status = wg_basic::launchd_install::install(std::path::Path::new("/"), candidate, helper)
+        .map_err(|error| error.to_string())?;
+    println!(
+        "installed {} {} ({}) for management identity {}",
+        status.product,
+        status.version,
+        status.target,
+        status
+            .management_identity
+            .as_ref()
+            .map(|identity| format!("{}:{}", identity.user, identity.uid))
+            .unwrap_or_else(|| "unbound".to_owned())
+    );
+    Ok(())
+}
+
+/// Darwin `system status`: the owned layout and the launchd registration.
+#[cfg(target_os = "macos")]
+fn darwin_system_status() -> Result<(), String> {
+    let status = wg_basic::launchd_install::status(std::path::Path::new("/"));
+    println!(
+        "layout_verified={} netd_registered={} serve_registered={} version={} target={}",
+        status.layout.layout_verified,
+        status.netd_registered,
+        status.serve_registered,
+        status.layout.version,
+        status.layout.target
+    );
+    if let Some(identity) = &status.layout.management_identity {
+        println!(
+            "management_identity={} uid={} gid={}",
+            identity.user, identity.uid, identity.gid
+        );
+    }
+    Ok(())
+}
+
+/// Darwin `system uninstall`: stops both services and removes the owned
+/// program files while preserving the secret-bearing state.
+#[cfg(target_os = "macos")]
+fn darwin_system_uninstall() -> Result<(), String> {
+    wg_basic::launchd_install::uninstall(std::path::Path::new("/"))
+        .map_err(|error| error.to_string())?;
+    println!("uninstalled; state and receipt preserved for reinstall");
+    Ok(())
 }
 
 /// M002 Darwin doctor: the same read-only state checks as Linux, a real
@@ -678,12 +769,15 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
             Ok(())
         }
         Some(Command::System { action }) => match action {
-            SystemCommand::Install { candidate } => {
+            SystemCommand::Install { candidate, helper } => {
                 let candidate = match candidate {
                     Some(path) => path,
                     None => wg_basic::distribution::current_executable()
                         .map_err(|_| "could not identify the running executable".to_owned())?,
                 };
+                // The pinned helper is a macOS deployment artifact; the Linux
+                // systemd layout has no helper.
+                let _ = helper;
                 wg_basic::distribution::install_local(&candidate)
             }
             SystemCommand::Status => wg_basic::distribution::install_status(),

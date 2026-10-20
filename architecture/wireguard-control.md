@@ -35,3 +35,37 @@ Handshake time is the kernel-reported time since Unix epoch, represented as an o
 ## Ownership layering
 
 The WireGuard backend owns device and peer configuration/telemetry. The reconciliation engine composes those typed patches with RTNETLINK link, address, and route operations; it does not absorb WireGuard state into an opaque network configuration call. See [reconciliation and ownership](reconciliation.md) for lifecycle ownership, route limits, ordering, and retry behavior. The aggregate coordinator above the reconciliation engine owns firewall, forwarding, and NAT as a second layer, and removes the owned firewall table before tearing an interface down so a blocked disable can never orphan a policy.
+
+## Darwin userspace backend (C001)
+
+macOS has no kernel WireGuard interface. A managed tunnel on Darwin is a
+supervised `wireguard-go` helper that owns one kernel-assigned `utunN` device
+and serves the WireGuard UAPI protocol on a Unix socket. The production
+backend lives in `src/wireguard/darwin_backend.rs`; the reusable primitives
+(supervisor, UAPI rendering and parsing, device delta, ownership verification)
+live in `src/wireguard/darwin.rs`.
+
+The helper identity is hash-pinned. `verify_helper_sha256` runs before every
+spawn, the executable path is absolute and never a `PATH` lookup, the argv is
+fixed to `[helper, "utun"]`, and the environment is cleared to a single
+foreground marker. The helper digest comes from the verified install receipt,
+so a replaced helper is refused rather than executed.
+
+The device name is ephemeral, so netd records which `utunN` it owns and
+re-proves it. Nothing is ever selected by numeric guess, and a foreign
+`utunN` is never adopted.
+
+### Darwin ownership receipt
+
+Darwin has no kernel interface alias that can carry the durable owner tag, so
+the durable claim is a **protected receipt**: an owner-only file in the
+managed-runtime directory that binds the installation, the logical interface,
+the kernel device, the helper pid, the helper executable and its digest, and
+the UAPI socket path.
+
+The receipt is a claim, never permission. `prove_ownership` re-observes the
+helper process (`proc_pidpath`, so a reused pid is a different executable, not
+the same one), the helper executable's digest, the UAPI socket's owner and
+type, and the kernel device, and only a joint proof authorizes a mutation. A
+receipt that cannot be re-proven is treated as absent, not as a foreign
+device to destroy.

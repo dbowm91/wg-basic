@@ -3,18 +3,99 @@ use crate::domain::{InterfaceName, NetworkPrefix, PresharedKey, PrivateKey, Publ
 mod backend;
 #[cfg(target_os = "macos")]
 pub mod darwin;
+#[cfg(target_os = "macos")]
+pub mod darwin_backend;
 
 #[cfg(target_os = "linux")]
 pub use backend::WireGuardBackend;
 
-/// M001 Darwin stub: the userspace (wireguard-go/utun) backend lands in M003.
-/// It compiles on Darwin so portable intent, protocol, and management code can
-/// target both OSes, but every method fails closed as unsupported.
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
+pub use darwin_backend::{HelperIdentity, ManagedRuntime, RegistryError, RuntimeRegistry};
+
+/// The production Darwin WireGuard backend (C001).
+///
+/// Darwin has no kernel WireGuard interface: a managed tunnel is a supervised
+/// `wireguard-go` helper that owns one `utunN` device and serves the UAPI
+/// protocol on a Unix socket. This backend configures and observes that device
+/// through the managed-runtime registry that records the durable ownership
+/// claim. See [`darwin_backend`] for the ownership contract.
+#[cfg(target_os = "macos")]
+#[derive(Clone)]
+pub struct WireGuardBackend {
+    inner: darwin_backend::DarwinWireGuardBackend,
+}
+
+#[cfg(target_os = "macos")]
+impl WireGuardBackend {
+    /// Builds the backend over an explicit managed-runtime registry.
+    pub fn with_registry(registry: std::sync::Arc<RuntimeRegistry>) -> Self {
+        Self {
+            inner: darwin_backend::DarwinWireGuardBackend::new(registry),
+        }
+    }
+
+    /// Builds the backend over the production managed-runtime directory.
+    pub fn production() -> Result<Self, RegistryError> {
+        let registry = RuntimeRegistry::open(&production_runtime_root())?;
+        Ok(Self::with_registry(std::sync::Arc::new(registry)))
+    }
+
+    /// Builds a backend that can never act, because the managed-runtime
+    /// directory could not be opened safely.
+    pub fn unavailable(reason: RegistryError) -> Self {
+        Self {
+            inner: darwin_backend::DarwinWireGuardBackend::unavailable(reason),
+        }
+    }
+
+    /// Builds the backend over the registry netd shares process-wide.
+    ///
+    /// A registry that cannot be opened safely yields a backend that can never
+    /// act: an unreadable ownership registry is never treated as "no managed
+    /// tunnels".
+    pub fn shared() -> Self {
+        match darwin_backend::DarwinWireGuardBackend::shared_registry() {
+            Ok(registry) => Self::with_registry(registry),
+            Err(reason) => Self {
+                inner: darwin_backend::DarwinWireGuardBackend::unavailable(reason),
+            },
+        }
+    }
+
+    /// Observes the managed device for one logical interface.
+    pub fn observe_device(
+        &self,
+        interface: &InterfaceName,
+    ) -> Result<ObservedWireGuardDevice, WireGuardValidationError> {
+        self.inner.observe_device(interface)
+    }
+
+    /// Applies one device patch to the managed device.
+    pub fn apply_patch(
+        &self,
+        interface: &InterfaceName,
+        patch: WireGuardDevicePatch,
+    ) -> Result<WireGuardApplyReceipt, WireGuardValidationError> {
+        self.inner.apply_patch(interface, patch)
+    }
+}
+
+/// The production managed-runtime directory that holds the ownership receipts.
+#[cfg(target_os = "macos")]
+pub fn production_runtime_root() -> std::path::PathBuf {
+    std::path::PathBuf::from(crate::launchd::RUNTIME_DIR)
+        .join(darwin_backend::MANAGED_RUNTIME_SUBDIR)
+}
+
+/// Stub for platforms that are neither Linux nor macOS.
+///
+/// These platforms are not a supported deployment target; the backend exists
+/// only so the crate still compiles and fails closed as unsupported.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct WireGuardBackend;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 impl WireGuardBackend {
     pub fn observe_device(
         &self,
@@ -28,9 +109,6 @@ impl WireGuardBackend {
         _interface: &InterfaceName,
         patch: WireGuardDevicePatch,
     ) -> Result<WireGuardApplyReceipt, WireGuardValidationError> {
-        // Validate before reporting unsupported: malformed input is
-        // `InvalidInput`, not a backend state, on both OSes (M003 owns the
-        // Darwin userspace backend; M002 only needs the honest distinction).
         validate_device_patch(&patch)?;
         Err(WireGuardValidationError::UnsupportedBackend)
     }

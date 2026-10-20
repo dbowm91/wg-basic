@@ -18,8 +18,6 @@ use super::wire::RequestEnvelope;
 use crate::{
     firewall::FirewallService, reconcile::ReconciliationService, wireguard::WireGuardBackend,
 };
-#[cfg(target_os = "linux")]
-use nix::sys::socket::{getsockopt, sockopt::PeerCredentials};
 use nix::sys::socket::{listen, Backlog};
 use std::{
     fs, io,
@@ -57,6 +55,22 @@ pub(crate) struct SocketIdentity {
     pub(crate) device: u64,
     pub(crate) inode: u64,
     pub(crate) uid: u32,
+}
+
+/// Builds the platform's WireGuard backend.
+///
+/// Linux talks to the kernel module directly and needs no construction. Darwin
+/// needs the managed-runtime registry that records the durable ownership
+/// claim, so it builds the backend over the registry netd shares
+/// process-wide.
+#[cfg(target_os = "linux")]
+fn platform_wireguard_backend() -> WireGuardBackend {
+    WireGuardBackend
+}
+
+#[cfg(target_os = "macos")]
+fn platform_wireguard_backend() -> WireGuardBackend {
+    WireGuardBackend::shared()
 }
 
 impl SocketServer {
@@ -113,7 +127,7 @@ impl SocketServer {
             identity,
             runtime_directory,
             authorization,
-            wireguard: WireGuardBackend,
+            wireguard: platform_wireguard_backend(),
             reconciliation: ReconciliationService::default(),
             firewall: FirewallService::default(),
             aggregate: crate::aggregate::AggregateCoordinator::default(),

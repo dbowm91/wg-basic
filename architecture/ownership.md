@@ -103,3 +103,22 @@ No receipt ever claims a rollback.
 ## Startup reconciliation
 
 Durable owner identity is stored alongside the desired state, and **automatic application of the durable desired state at startup is implemented**. Every management start opens the store, loads the current desired snapshot and generation, projects it to one installation intent, and applies that generation — unconditionally, because the kernel may have drifted while the service was stopped. Evidence records the attempt; a generation is marked converged only while it is still the current desired generation, so a late completion cannot mark a newer one converged.
+## Darwin interface ownership (C001)
+
+The Linux ownership proof is the kernel interface alias. Darwin has no such
+field, so the durable proof is the protected managed-runtime receipt
+described in `architecture/wireguard-control.md`.
+
+The portable contract is unchanged: `OwnerTag` is still the proof, and the
+portable planner still classifies an observation by comparing that proof
+against the alias the observation carries. On Darwin the observation carries
+the owner tag that the *proven* receipt recorded, and only then. An unproven
+receipt, a receipt for another installation, or a second receipt claiming the
+same tag all fail closed: the first is observed as absent, the second as a
+foreign tag, and the third as a duplicated owner tag. Nothing is adopted by
+name similarity.
+
+The receipt lives in `/var/run/wg-basic/managed`, an owner-only directory
+inside the root-controlled runtime directory. A receipt that is a symlink, is
+not a regular file, is owned by another user, or carries group or other
+permissions is refused rather than read.

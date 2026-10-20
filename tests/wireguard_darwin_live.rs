@@ -1325,48 +1325,56 @@ fn live_launchd_bootstrap_cycle() {
         "binary path must be absolute"
     );
 
-    let root = std::env::temp_dir().join(format!("wgb-launchd-{}", std::process::id()));
-    std::fs::create_dir_all(&root).expect("launchd scratch dir");
-    let state_dir = root.join("state");
-    std::fs::create_dir_all(&state_dir).expect("state dir");
-    let socket = root.join("netd.sock");
-    let socket_arg = socket.to_string_lossy().into_owned();
-    let log_path = root.join("netd.log");
-    let log_arg = log_path.to_string_lossy().into_owned();
-
-    let argv = launchd::netd_argv(&binary, &socket_arg);
-    let plist = launchd::render_plist(launchd::NETD_LABEL, &argv, &log_arg);
-    let serve_plist = launchd::render_plist(
-        launchd::SERVE_LABEL,
-        &launchd::serve_argv(
-            &binary,
-            &state_dir.to_string_lossy(),
-            &root.join("serve.sock").to_string_lossy(),
-        ),
-        &root.join("serve.log").to_string_lossy(),
+    // C002: the deployment layout is fixed. The live cycle installs the
+    // canonical layout instead of synthesising a private one, so the plists,
+    // the binary, the helper, and the socket are exactly what an operator
+    // would get from `system install`.
+    let binary_bytes = std::fs::read(&binary).expect("binary bytes");
+    let helper_bytes = std::fs::read(&_helper_path).expect("helper bytes");
+    let target = format!("{}-apple-darwin", std::env::consts::ARCH);
+    let receipt = launchd::install_to_root(
+        Path::new("/"),
+        env!("CARGO_PKG_VERSION"),
+        &target,
+        &binary_bytes,
+        &helper_bytes,
+    )
+    .expect("install the canonical launchd layout");
+    evidence.log(&format!(
+        "installed the canonical layout: {} {} ({})",
+        receipt.product, receipt.version, receipt.target
+    ));
+    assert!(
+        launchd::verify_installed_root(Path::new("/")).is_ok(),
+        "the freshly installed layout must verify against its receipt"
     );
-    let plist_file = root.join("netd.plist");
-    let serve_plist_file = root.join("serve.plist");
-    std::fs::write(&plist_file, &plist).expect("netd plist");
-    std::fs::write(&serve_plist_file, &serve_plist).expect("serve plist");
-    let plist_arg = plist_file.to_string_lossy().into_owned();
-    let serve_plist_arg = serve_plist_file.to_string_lossy().into_owned();
-    sh(&mut evidence, "plutil", &["-lint", &plist_arg]);
-    sh(&mut evidence, "plutil", &["-lint", &serve_plist_arg]);
-    evidence.log("both rendered plists pass plutil -lint");
 
     let system_plist = format!("/Library/LaunchDaemons/{}.plist", launchd::NETD_LABEL);
+    let serve_system_plist = format!("/Library/LaunchDaemons/{}.plist", launchd::SERVE_LABEL);
+    sh(&mut evidence, "plutil", &["-lint", system_plist.as_str()]);
     sh(
         &mut evidence,
-        "cp",
-        &[plist_arg.as_str(), system_plist.as_str()],
+        "plutil",
+        &["-lint", serve_system_plist.as_str()],
     );
-    sh(
-        &mut evidence,
-        "chown",
-        &["root:wheel", system_plist.as_str()],
+    evidence.log("both installed plists pass plutil -lint");
+    // The privileged daemon is explicitly root and the management daemon is
+    // explicitly not: the identity is in the plist and is checked by launchd.
+    let netd_plist = std::fs::read_to_string(&system_plist).expect("netd plist bytes");
+    assert!(
+        netd_plist.contains("<key>UserName</key>") && netd_plist.contains("<string>root</string>"),
+        "the privileged daemon must declare its root identity explicitly"
     );
-    sh(&mut evidence, "chmod", &["644", system_plist.as_str()]);
+    let serve_plist = std::fs::read_to_string(&serve_system_plist).expect("serve plist bytes");
+    assert!(
+        !serve_plist.contains("<string>root</string>"),
+        "the management daemon must never be declared as root"
+    );
+
+    let socket = Path::new(launchd::SOCKET_PATH);
+    let state_dir = Path::new(launchd::STATE_DIR);
+    let runtime_dir = Path::new(launchd::RUNTIME_DIR);
+
     sh(
         &mut evidence,
         "launchctl",
@@ -1397,12 +1405,11 @@ fn live_launchd_bootstrap_cycle() {
     // The daemon binds its socket just after launchd reports it running.
     wait_until("netd socket", Duration::from_secs(30), || socket.exists());
     assert!(socket.exists(), "launchd-managed netd must own its socket");
-    let state_entries: Vec<_> = std::fs::read_dir(&state_dir).expect("state dir").collect();
     assert!(
-        state_entries.is_empty(),
-        "netd stays database-free: state dir untouched"
+        !state_dir.join("state.db").exists(),
+        "netd stays database-free: the management daemon owns SQLite"
     );
-    evidence.log("state dir untouched: netd database-free invariant holds live");
+    evidence.log("no database in the state dir: netd database-free invariant holds live");
 
     // SIGTERM the daemon: KeepAlive must re-supervise it under a new PID.
     sh(&mut evidence, "launchctl", &["kill", "TERM", job.as_str()]);
@@ -1438,18 +1445,24 @@ fn live_launchd_bootstrap_cycle() {
         "booted-out job must be gone from the system domain"
     );
     assert!(!socket.exists(), "daemon socket must be gone after bootout");
-    let state_after: Vec<_> = std::fs::read_dir(&state_dir).expect("state dir").collect();
     assert!(
-        state_after.is_empty(),
-        "state dir still untouched after bootout"
+        !state_dir.join("state.db").exists(),
+        "state dir still holds no database after bootout"
     );
 
     // Reinstall cycle (restart recovery without a reboot, which hosted
     // runners cannot perform): the same receipt reinstalls and serves again.
-    sh(
-        &mut evidence,
-        "cp",
-        &[plist_arg.as_str(), system_plist.as_str()],
+    let receipt_again = launchd::install_to_root(
+        Path::new("/"),
+        env!("CARGO_PKG_VERSION"),
+        &target,
+        &binary_bytes,
+        &helper_bytes,
+    )
+    .expect("reinstall the canonical launchd layout");
+    assert_eq!(
+        receipt_again.helper_sha256, receipt.helper_sha256,
+        "the reinstalled helper must be byte-identical"
     );
     sh(
         &mut evidence,
@@ -1471,7 +1484,139 @@ fn live_launchd_bootstrap_cycle() {
         &["bootout", "system", system_plist.as_str()],
     );
     remove_if_exists(Path::new(&system_plist));
-    std::fs::remove_dir_all(&root).ok();
+    remove_if_exists(Path::new(&serve_system_plist));
+    remove_if_exists(Path::new(launchd::BINARY_PATH));
+    remove_if_exists(Path::new(launchd::HELPER_PATH));
+    std::fs::remove_dir_all(runtime_dir).ok();
+    std::fs::remove_dir_all(state_dir).ok();
+    std::fs::remove_dir_all("/var/log/wg-basic").ok();
+    std::fs::remove_dir_all("/usr/local/libexec/wg-basic").ok();
     evidence.log("bootout complete: job gone, socket gone, state preserved-empty");
+    evidence.write();
+}
+
+/// C001 live: the production Darwin path end to end.
+///
+/// The managed-runtime registry records the durable ownership claim, the
+/// backend re-proves it against the live host, the device is configured and
+/// observed through the UAPI socket, and the teardown leaves no device, no
+/// socket, and no receipt behind.
+#[test]
+#[ignore = "needs WGB_DARWIN_LIVE=1 as root on a disposable macOS host"]
+fn live_c001_production_backend_owns_and_configures_a_managed_tunnel() {
+    let mut evidence = Evidence::new("c001-production-backend");
+    let helper_path = require_live(&mut evidence);
+    let baseline = utun_names();
+
+    let scratch = std::env::temp_dir().join(format!("wgb-c001-{}", std::process::id()));
+    std::fs::create_dir_all(&scratch).expect("c001 scratch dir");
+    let registry_root = scratch.join("managed");
+    std::fs::create_dir_all(&registry_root).expect("managed runtime dir");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&registry_root, std::fs::Permissions::from_mode(0o700))
+            .expect("owner-only managed runtime dir");
+    }
+
+    // The live cycle proves the production identity check, so the digest it
+    // pins is the digest of the helper that is actually installed.
+    let digest = {
+        use sha2::{Digest, Sha256};
+        let bytes = std::fs::read(&helper_path).expect("helper bytes");
+        Sha256::digest(&bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    };
+    assert!(!digest.is_empty(), "the helper digest must be computable");
+    wg_darwin::verify_helper_sha256(&helper_path, &digest)
+        .expect("the installed helper must match its own recorded digest");
+
+    let registry = std::sync::Arc::new(
+        wg_basic::wireguard::RuntimeRegistry::open(&registry_root).expect("open the registry"),
+    );
+    let identity = wg_basic::wireguard::HelperIdentity {
+        path: helper_path.clone(),
+        sha256: digest.clone(),
+    };
+
+    let (child, utun) =
+        wg_basic::wireguard::darwin_backend::spawn_managed_tunnel(&identity).expect("spawn helper");
+    evidence.log(&format!("helper created {utun}"));
+    assert!(
+        !baseline.contains(&utun),
+        "the managed device must be new, not an adopted foreign device"
+    );
+
+    let interface = wg_basic::domain::InterfaceName::new("wgc001").expect("interface name");
+    let owner = wg_basic::domain::OwnerTag::new(
+        wg_basic::domain::InstallationId::new(),
+        wg_basic::domain::InterfaceId::new(),
+    );
+    let runtime = wg_basic::wireguard::ManagedRuntime {
+        installation_id: owner.installation_id(),
+        interface_id: owner.interface_id(),
+        interface: interface.as_str().to_owned(),
+        utun_name: utun.clone(),
+        helper_pid: child.pid,
+        helper_path: helper_path.to_string_lossy().into_owned(),
+        helper_sha256: digest.clone(),
+        uapi_socket: wg_darwin::uapi_socket_path(&utun)
+            .to_string_lossy()
+            .into_owned(),
+        created_unix_ms: 0,
+    };
+    registry
+        .insert(runtime.clone())
+        .expect("record the receipt");
+
+    // The receipt alone is never enough: the live host must re-prove it.
+    let outcome = wg_basic::wireguard::darwin_backend::prove_ownership(&runtime, true);
+    assert!(
+        outcome.is_proven(),
+        "the freshly created tunnel must be provably ours, got {outcome:?}"
+    );
+    evidence.log("ownership proven jointly from receipt, process, socket, and device");
+
+    let backend = wg_basic::wireguard::WireGuardBackend::with_registry(registry.clone());
+    let observed = backend
+        .observe_device(&interface)
+        .expect("observe the managed device");
+    assert_eq!(
+        observed.interface, interface,
+        "the observation must name the logical managed interface"
+    );
+    evidence.log("the production backend observed the managed device");
+
+    // A device with no identity is observed honestly, not invented.
+    assert!(
+        observed.public_key.is_none() && observed.peers.is_empty(),
+        "an unconfigured device must not report an identity or peers"
+    );
+
+    // The registry survives a restart of the reader: a fresh registry over the
+    // same directory finds the same receipt.
+    let reopened =
+        wg_basic::wireguard::RuntimeRegistry::open(&registry_root).expect("reopen the registry");
+    assert_eq!(
+        reopened.get(&interface).map(|runtime| runtime.utun_name),
+        Some(utun.clone()),
+        "the durable receipt must survive a reader restart"
+    );
+    evidence.log("the durable receipt survives a reader restart");
+
+    drop(child);
+    wait_until("managed device teardown", Duration::from_secs(15), || {
+        !utun_names().contains(&utun)
+    });
+    std::fs::remove_file(&runtime.uapi_socket).ok();
+    std::fs::remove_dir_all(&scratch).ok();
+    let leaked: Vec<String> = utun_names()
+        .into_iter()
+        .filter(|name| !baseline.contains(name))
+        .collect();
+    assert!(leaked.is_empty(), "no utun may leak: {leaked:?}");
+    evidence.log("teardown complete: no device, socket, or receipt left behind");
     evidence.write();
 }

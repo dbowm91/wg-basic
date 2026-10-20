@@ -25,6 +25,7 @@ cargo check --target aarch64-apple-darwin --locked
 cargo check --target x86_64-apple-darwin --locked
 cargo clippy --target aarch64-apple-darwin --locked --all-targets -- -D warnings
 cargo test --locked
+cargo test --locked -p wg-basic-darwin-sys
 ```
 
 Darwin `serve`/`admin`/`state`/`health`/`doctor` run against an intentionally

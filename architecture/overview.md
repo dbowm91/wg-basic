@@ -48,15 +48,17 @@ Two invariants shape everything:
 | `src/domain/` | typed identifiers, interface-name validation, IP prefix values, key/secret wrappers, generation, owner tags, intent/state shells | [domain-model](domain-model.md) |
 | `src/state/` | hardened SQLite store, ordered migrations, installation identity, CAS generations, projection, convergence evidence, backup/restore, service/maintenance leases | [state-store](state-store.md) |
 | `src/protocol/` | versioned UDS protocol: framing, peer-credential auth, capability inspection, dispatch, typed client | [privilege-boundary](privilege-boundary.md) |
-| `src/wireguard/` | kernel WireGuard backend over Generic Netlink (device/peer observe/patch, telemetry) | [wireguard-control](wireguard-control.md) |
-| `src/firewall/` | typed IPv4 forwarding/NAT policy, planner, bounded `nft` service, owned-table model | [firewall](firewall.md) |
-| `src/reconcile/` + `src/aggregate.rs` | deterministic link/address/route planner, Linux applier, aggregate coordinator, receipts | [reconciliation](reconciliation.md) |
+| `src/wireguard/` | kernel WireGuard backend over Generic Netlink (device/peer observe/patch, telemetry); on Darwin the userspace helper backend with its durable ownership receipt | [wireguard-control](wireguard-control.md) |
+| `src/firewall/` | typed IPv4 forwarding/NAT policy, planner, bounded `nft` service, owned-table model; on Darwin the host-only contract that refuses routed policies | [firewall](firewall.md) |
+| `src/reconcile/` + `src/aggregate.rs` | deterministic link/address/route planner, shared portable apply/verify sequence, Linux applier, Darwin applier, aggregate coordinator, receipts | [reconciliation](reconciliation.md) |
 | ownership markers | `IFLA_IFALIAS` owner tags, `inet wg_basic` table markers, aggregate generation monotonicity, fail-closed rules | [ownership](ownership.md) |
 | `src/management/` | runtime lifecycle, bounded worker, reconcile coordinator, health projection, credential/session operations | [startup-recovery](startup-recovery.md), [management-http](management-http.md), [authentication](authentication.md) |
 | `src/http/` | EggServe surface: routing, Host/Origin/CSRF perimeter, security headers, rate limits, readiness, embedded assets, `serve` lifecycle | [management-http](management-http.md) |
 | `src/management/auth.rs` + `src/domain/auth.rs` | Argon2id credentials, opaque digest-only sessions, cookie/CSRF profile, login/logout/session routes | [authentication](authentication.md) |
 | `src/product/` | server setup, client lifecycle, address allocation, config/QR export, one-time enrollment, telemetry, audit, embedded product UI | [product-management](product-management.md) |
 | `src/distribution.rs` | canonical system layout, authenticated metadata identity, exact systemd/sysusers material, local install/status transaction | [service-hardening](service-hardening.md) |
+| `src/launchd.rs` + `src/launchd_install.rs` | Darwin launchd layout: service identity, constrained plist rendering, owner receipts, exact filesystem/IPC layout, and the one bounded `launchctl` boundary | [privilege-boundary](privilege-boundary.md) |
+| `crates/darwin-sys/` | the single audited Darwin OS boundary: typed interface, address, route, process, and forwarding-state access; the only `unsafe` in the workspace | [privilege-boundary](privilege-boundary.md) |
 | `src/doctor.rs` + `src/operational.rs` + maintenance | read-only doctor/preflight, structured stderr events, service/maintenance leases, disable/enable/purge, backup/restore ops | [diagnostics-maintenance](diagnostics-maintenance.md) |
 | `src/main.rs` CLI roles | `serve`, `netd`, `reconcile`, `health`, `doctor`, `admin`, `state`, `network`, `system install/status` command surface | [cli-roles](cli-roles.md) |
 | `tests/` + fixtures | unprivileged suites, rootful namespace fixtures, static architecture guards, upgrade rehearsal | [testing-qualification](testing-qualification.md) |

@@ -278,6 +278,29 @@ const PRODUCTION_SOURCES: &[(&str, &str)] = &[
     ("src/firewall/pf.rs", include_str!("../src/firewall/pf.rs")),
     // M006 Darwin launchd installer: pure layout/receipt logic, no install.
     ("src/launchd.rs", include_str!("../src/launchd.rs")),
+    // C001 Darwin production backends: the durable ownership registry, the
+    // kernel-control backend, and the host-only firewall contract.
+    (
+        "src/wireguard/darwin_backend.rs",
+        include_str!("../src/wireguard/darwin_backend.rs"),
+    ),
+    (
+        "src/reconcile/backend_darwin.rs",
+        include_str!("../src/reconcile/backend_darwin.rs"),
+    ),
+    (
+        "src/firewall/service_other.rs",
+        include_str!("../src/firewall/service_other.rs"),
+    ),
+    (
+        "src/reconcile/service_other.rs",
+        include_str!("../src/reconcile/service_other.rs"),
+    ),
+    // C002 Darwin launchd control: the one bounded launchctl boundary.
+    (
+        "src/launchd_install.rs",
+        include_str!("../src/launchd_install.rs"),
+    ),
 ];
 
 #[test]
@@ -447,9 +470,14 @@ fn minisign_fixture_private_key_is_not_embedded_in_shipped_sources() {
 }
 
 /// Production modules permitted to spawn a process. M003 adds the bounded
-/// Darwin helper supervisor next to the Linux nft backend; both are audited
-/// fixed-argv boundaries, never shells or generic exec.
-const PROCESS_MODULES: &[&str] = &["src/firewall/nft.rs", "src/wireguard/darwin.rs"];
+/// Darwin helper supervisor next to the Linux nft backend; C002 adds the
+/// bounded launchd control. All three are audited fixed-argv boundaries, never
+/// shells or generic exec.
+const PROCESS_MODULES: &[&str] = &[
+    "src/firewall/nft.rs",
+    "src/wireguard/darwin.rs",
+    "src/launchd_install.rs",
+];
 
 #[test]
 fn process_execution_is_isolated_to_audited_backends() {
@@ -2146,4 +2174,168 @@ fn the_darwin_installer_claims_no_signing_and_touches_no_system_path() {
             "src/launchd.rs must model {required}"
         );
     }
+}
+
+#[test]
+fn the_darwin_unsafe_lives_in_one_isolated_os_boundary() {
+    // C001: the Darwin kernel boundary needs FFI. It lives in one tiny
+    // workspace member whose only unsafe module is the OS boundary; the
+    // product crate keeps its crate-wide `forbid(unsafe_code)`.
+    let product = include_str!("../src/lib.rs");
+    assert!(
+        product.contains("#![forbid(unsafe_code)]"),
+        "the product crate must keep its crate-wide forbid(unsafe_code)"
+    );
+    let boundary = include_str!("../crates/darwin-sys/src/lib.rs");
+    assert!(
+        boundary.contains("#![deny(unsafe_code)]"),
+        "the boundary crate must deny unsafe by default"
+    );
+    assert!(
+        boundary.contains("#[allow(unsafe_code)]"),
+        "the boundary crate must allow unsafe in exactly one audited module"
+    );
+    let mut unsafe_sites = Vec::new();
+    for entry in [
+        "crates/darwin-sys/src/lib.rs",
+        "crates/darwin-sys/src/ffi.rs",
+        "src/lib.rs",
+        "src/main.rs",
+    ] {
+        let source = match entry {
+            "crates/darwin-sys/src/lib.rs" => boundary,
+            "crates/darwin-sys/src/ffi.rs" => include_str!("../crates/darwin-sys/src/ffi.rs"),
+            "src/lib.rs" => product,
+            _ => include_str!("../src/main.rs"),
+        };
+        if source.contains("unsafe {") || source.contains("unsafe fn") {
+            unsafe_sites.push(entry);
+        }
+    }
+    assert_eq!(
+        unsafe_sites,
+        vec!["crates/darwin-sys/src/ffi.rs"],
+        "unsafe must live only in the audited Darwin OS boundary"
+    );
+}
+
+#[test]
+fn the_darwin_reconciler_proves_ownership_before_it_mutates() {
+    // C001: Darwin has no kernel interface alias, so the durable ownership
+    // claim is a protected receipt. The receipt is never sufficient: the
+    // backend must re-prove the helper process, the helper executable, the
+    // UAPI socket, and the kernel device before it mutates anything.
+    let backend = shippable(source_of("src/reconcile/backend_darwin.rs"));
+    assert!(
+        backend.contains("prove_ownership"),
+        "the Darwin backend must re-prove ownership against the live host"
+    );
+    assert!(
+        backend.contains("OwnershipOutcome"),
+        "the Darwin backend must distinguish the ownership outcomes"
+    );
+    assert!(
+        backend.contains("create_managed_tunnel"),
+        "the Darwin backend must own the managed-tunnel lifecycle"
+    );
+    let registry = shippable(source_of("src/wireguard/darwin_backend.rs"));
+    for required in [
+        "ManagedRuntime",
+        "RuntimeRegistry",
+        "owner_tag",
+        "helper_sha256",
+        "uapi_socket",
+        "process_executable_path",
+    ] {
+        assert!(
+            registry.contains(required),
+            "the Darwin runtime registry must record {required}"
+        );
+    }
+}
+
+#[test]
+fn the_darwin_firewall_refuses_routed_policies_rather_than_ignoring_them() {
+    // C001 host-only contract: a policy that needs forwarding or NAT is
+    // refused, never silently ignored and reported as a success.
+    let firewall = shippable(source_of("src/firewall/service_darwin.rs"));
+    assert!(
+        firewall.contains("FirewallError::Unsupported"),
+        "a routed policy must be refused on Darwin"
+    );
+    assert!(
+        firewall.contains("Ipv4Forwarding::Required")
+            && firewall.contains("Ipv6Forwarding::Required")
+            && firewall.contains("NatMode::Masquerade"),
+        "the Darwin refusal must cover forwarding and NAT"
+    );
+    for forbidden in ["pfctl", "Command::new", "/etc/pf.conf", "ip_forwarding"] {
+        assert!(
+            !firewall.contains(forbidden),
+            "the Darwin host-only firewall must not contain {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn the_darwin_launchd_control_is_a_closed_verb_and_target_set() {
+    // C002: the only process this product runs on Darwin is launchctl, with a
+    // closed verb set, a closed target set, and an absolute path.
+    let control = shippable(source_of("src/launchd_install.rs"));
+    assert!(
+        control.contains("pub const LAUNCHCTL_PATH: &str = \"/bin/launchctl\""),
+        "launchctl must be addressed by absolute path, never by name"
+    );
+    for verb in ["bootstrap", "bootout", "print"] {
+        assert!(
+            control.contains(verb),
+            "the launchctl verb set must include {verb}"
+        );
+    }
+    for forbidden in [
+        "Command::new(\"sh\")",
+        "Command::new(\"bash\")",
+        "Command::new(\"launchctl\")",
+        "Command::new(\"sudo\")",
+        "dscl",
+    ] {
+        assert!(
+            !control.contains(forbidden),
+            "the Darwin launchd control must not contain {forbidden}"
+        );
+    }
+    // The pure layout module keeps no process execution at all.
+    let layout = shippable(source_of("src/launchd.rs"));
+    assert!(
+        !layout.contains("Command::new") && !layout.contains("std::process::Command"),
+        "the launchd layout module must stay free of process execution"
+    );
+}
+
+#[test]
+fn the_darwin_management_daemon_is_never_root() {
+    // C002: the management daemon owns SQLite and HTTP and must run as a
+    // dedicated unprivileged principal. The privileged daemon is explicitly
+    // root; the management daemon never is.
+    let layout = shippable(source_of("src/launchd.rs"));
+    assert!(
+        layout.contains("pub const SERVE_USER: &str = \"_wg-basic-serve\""),
+        "the management daemon must have its own dedicated account"
+    );
+    assert!(
+        layout.contains("pub const NETD_USER: &str = \"root\""),
+        "the privileged daemon must declare its root identity explicitly"
+    );
+    assert!(
+        layout.contains("resolve_service_identity"),
+        "the installer must resolve the service identity through the directory service"
+    );
+    assert!(
+        layout.contains("MIN_SERVICE_UID"),
+        "the installer must refuse a renamed or reserved management identity"
+    );
+    assert!(
+        layout.contains("UserName") && layout.contains("GroupName"),
+        "the rendered plists must declare the service identity"
+    );
 }

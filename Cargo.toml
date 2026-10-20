@@ -1,3 +1,13 @@
+# The Darwin kernel backends need audited FFI. Rather than weakening this
+# package's crate-wide `#![forbid(unsafe_code)]` (src/lib.rs), the FFI lives in
+# one tiny workspace member whose only unsafe module is the OS boundary. The
+# M002 implementation plan anticipated exactly this: "isolate audited unsafe in
+# a tiny OS boundary via explicit ADR/lint exception rather than weakening
+# crate-wide forbid(unsafe_code)".
+[workspace]
+members = ["crates/darwin-sys"]
+default-members = [".", "crates/darwin-sys"]
+
 [package]
 name = "wg-basic"
 version = "0.1.0"
@@ -74,6 +84,11 @@ zeroize = "1.8"
 [target.'cfg(target_os = "linux")'.dependencies]
 nl-wireguard = "0.3.0"
 rtnetlink = "0.23.0"
+
+# The audited Darwin kernel boundary. macOS-only: the Linux build never
+# compiles it, so no Darwin syscall is reachable from a Linux binary.
+[target.'cfg(target_os = "macos")'.dependencies]
+wg-basic-darwin-sys = { path = "crates/darwin-sys" }
 
 [lints.rust]
 unsafe_code = "deny"
