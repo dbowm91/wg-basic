@@ -162,12 +162,24 @@ sudo WGB_DARWIN_LIVE=1 WGB_WIREGUARD_GO=/path/to/wireguard-go \
 The **cold reboot** leg proves that the deployment comes back from the system
 domain after a cold reboot. It has three phases, because a reboot ends the
 process that starts it: `arm` installs the deployment, enrolls a client
-through the real HTTP surface, records what has to survive, and registers a
+through the real HTTP surface, records what has to survive, and installs a
 boot-time job that runs the verify phase; `reboot` takes the host down; and
 `verify` runs in the new boot, where it checks that both roles came back,
 that the management daemon still runs unprivileged, that the state database
 still holds the same client, that the network reconverged, and that the
 uninstall leaves no job behind.
+
+The verify phase **observes** the reboot rather than inferring it: the arm
+phase records the kernel's boot time (`kern.boottime`) with the other
+expectations, and the verify phase's first assertion is that the boot time
+advanced. Every other assertion in that phase — the roles came back, the
+management daemon is still unprivileged, the credential still authenticates,
+the network reconverged — is also satisfied by a host that never went down,
+so a run that did not reboot has to fail before it can be mistaken for a
+reboot proof. The boot-time job is installed by writing its plist and is
+**not** registered with `launchctl`: `launchctl bootstrap` starts a
+`RunAtLoad` job immediately, which would run the verify phase against a host
+that had not rebooted yet.
 
 ```sh
 cargo test --locked --no-run --test wireguard_darwin_controlled
