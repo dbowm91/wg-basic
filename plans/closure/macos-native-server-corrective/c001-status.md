@@ -100,6 +100,11 @@ is recorded as a fixture defect, not an environment gap, and is fixed here —
 the probe is repeated within a small budget and only a run with no loss counts
 as an answer, so the fixture still claims exactly what it claimed before.
 
+Hosted run `39470322220` on the resulting change: **all four jobs passed** —
+`gates-arm64`, `gates-intel`, `live-arm64`, and `live-intel-tunnel`. The
+`live-arm64` job runs the eight fixtures a hosted runner can run; the
+controlled-host fixtures are in their own target and are not picked up there.
+
 ### Arm64 controlled-host product path
 
 The arm64 leg of the product path was run as root on a disposable arm64 Mac
