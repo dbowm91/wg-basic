@@ -12,7 +12,7 @@ use std::{
     path::PathBuf,
     process::{Child, Command, Stdio},
     thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 
 const CANDIDATE_FROM_TEST_BUILD: &str = env!("CARGO_BIN_EXE_wg-basic");
@@ -21,14 +21,17 @@ struct Scratch(PathBuf);
 
 impl Scratch {
     fn new() -> Self {
+        // The wall clock is too coarse to tell two concurrent tests apart, so
+        // the scratch path is suffixed with a per-process counter instead of
+        // a timestamp.
+        static SCRATCH_SEQUENCE: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
         let path = std::env::temp_dir().join(format!(
             "wg-basic-upgrade-rehearsal-{}-{}",
             std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            SCRATCH_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
+        let _ = fs::remove_dir_all(&path);
         fs::create_dir(&path).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
         Self(path)

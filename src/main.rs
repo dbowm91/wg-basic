@@ -2341,15 +2341,18 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn doctor_state_check_does_not_change_the_database_or_create_sidecars() {
-        use std::{os::unix::fs::PermissionsExt, time::SystemTime};
+        use std::os::unix::fs::PermissionsExt;
+        // The wall clock is too coarse to tell two concurrent tests apart, so
+        // the scratch path is suffixed with a per-process counter instead of
+        // a timestamp.
+        static SCRATCH_SEQUENCE: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
         let root = std::path::Path::new("/tmp").join(format!(
             "wg-basic-doctor-{}-{}",
             std::process::id(),
-            SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            SCRATCH_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
+        let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir(&root).unwrap();
         std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
         let path = root.join("state.db");

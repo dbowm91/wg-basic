@@ -399,7 +399,7 @@ pub(crate) fn list_interfaces() -> Result<Vec<InterfaceInfo>, SysError> {
     if status != 0 {
         return Err(last_error("getifaddrs"));
     }
-    let mut interfaces: Vec<InterfaceInfo> = Vec::new();
+    let mut raw: Vec<RawInterface> = Vec::new();
     let mut cursor = head;
     while !cursor.is_null() {
         // SAFETY: `cursor` is a live node of the list returned by
@@ -410,36 +410,65 @@ pub(crate) fn list_interfaces() -> Result<Vec<InterfaceInfo>, SysError> {
             .to_string_lossy()
             .into_owned();
         let flags = entry.ifa_flags as u16;
-        if let Some(address) = address_of(entry) {
-            match interfaces
-                .iter_mut()
-                .find(|interface| interface.name == name)
-            {
-                Some(existing) => existing.addresses.push(address),
-                None => interfaces.push(InterfaceInfo {
-                    index: interface_index(&name).unwrap_or(0),
-                    name,
-                    flags,
-                    mtu: 0,
-                    addresses: vec![address],
-                }),
-            }
-        } else if let Some(interface) = interfaces
-            .iter_mut()
-            .find(|interface| interface.name == name)
-        {
-            // A later entry for the same interface carries the authoritative
-            // flag word; the link-level entry may come first.
-            interface.flags = flags;
-        }
+        let addresses = address_of(entry).into_iter().collect();
+        raw.push(RawInterface {
+            name,
+            flags,
+            addresses,
+        });
         cursor = entry.ifa_next;
     }
     // SAFETY: `head` came from `getifaddrs` and is released exactly once.
     unsafe { libc::freeifaddrs(head) };
+    let mut interfaces = group_interfaces(raw);
     for interface in &mut interfaces {
+        interface.index = interface_index(&interface.name).unwrap_or(0);
         interface.mtu = interface_mtu(&interface.name).unwrap_or(0);
     }
     Ok(interfaces)
+}
+
+/// One raw `getifaddrs` observation: an interface name, its flag word, and the
+/// addresses reported alongside it.
+struct RawInterface {
+    name: String,
+    flags: u16,
+    addresses: Vec<IpNet>,
+}
+
+/// Groups raw per-address observations into one record per interface.
+///
+/// `getifaddrs` reports one entry per interface/address pair, and the
+/// link-level entry of an interface carries no address at all. An interface
+/// that has no configured address is still an interface: a freshly created
+/// tunnel is exactly that, and an interface missing from the inventory is an
+/// interface this product cannot see, prove, or manage.
+fn group_interfaces(raw: Vec<RawInterface>) -> Vec<InterfaceInfo> {
+    let mut interfaces: Vec<InterfaceInfo> = Vec::new();
+    for entry in raw {
+        let position = match interfaces
+            .iter()
+            .position(|interface| interface.name == entry.name)
+        {
+            Some(position) => position,
+            None => {
+                interfaces.push(InterfaceInfo {
+                    index: 0,
+                    name: entry.name.clone(),
+                    flags: entry.flags,
+                    mtu: 0,
+                    addresses: Vec::new(),
+                });
+                interfaces.len() - 1
+            }
+        };
+        let interface = &mut interfaces[position];
+        // A later entry for the same interface carries the authoritative flag
+        // word; the link-level entry may come first.
+        interface.flags = entry.flags;
+        interface.addresses.extend(entry.addresses);
+    }
+    interfaces
 }
 
 pub(crate) fn interface_index(name: &str) -> Option<u32> {
@@ -983,6 +1012,42 @@ mod tests {
 
     fn sign_bytes(slot: &[c_char]) -> Vec<u8> {
         slot.iter().map(|byte| *byte as u8).collect()
+    }
+
+    /// A raw observation of one interface that carries no address at all.
+    fn raw_without_addresses(name: &str, flags: u16) -> RawInterface {
+        RawInterface {
+            name: name.to_owned(),
+            flags,
+            addresses: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn an_interface_without_an_address_is_still_listed() {
+        // A freshly created tunnel has no configured address yet. If the
+        // inventory dropped it, the product could neither see nor prove the
+        // device it just created.
+        let grouped = group_interfaces(vec![raw_without_addresses("utun7", 0x1)]);
+        assert_eq!(grouped.len(), 1);
+        assert_eq!(grouped[0].name, "utun7");
+        assert!(grouped[0].addresses.is_empty());
+    }
+
+    #[test]
+    fn the_link_level_and_address_entries_group_into_one_interface() {
+        let address: IpNet = "192.0.2.1/24".parse().expect("a test address");
+        let grouped = group_interfaces(vec![
+            raw_without_addresses("en0", 0x1),
+            RawInterface {
+                name: "en0".to_owned(),
+                flags: 0x1,
+                addresses: vec![address],
+            },
+        ]);
+        assert_eq!(grouped.len(), 1);
+        assert_eq!(grouped[0].name, "en0");
+        assert_eq!(grouped[0].addresses, vec![address]);
     }
 
     #[test]

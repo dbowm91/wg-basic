@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 use wg_basic::state::StateStore;
 
@@ -14,14 +14,18 @@ const BINARY: &str = env!("CARGO_BIN_EXE_wg-basic");
 struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {
+        // The wall clock is too coarse to tell two concurrent tests apart: on
+        // macOS consecutive `SystemTime::now()` calls routinely return the same
+        // nanosecond value, so a timestamped scratch path is not unique. A
+        // per-process counter is.
+        static SCRATCH_SEQUENCE: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
         let path = std::env::temp_dir().join(format!(
             "wg-basic-operational-events-{}-{}",
             std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            SCRATCH_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
+        let _ = fs::remove_dir_all(&path);
         fs::create_dir(&path).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
         Self(path)
