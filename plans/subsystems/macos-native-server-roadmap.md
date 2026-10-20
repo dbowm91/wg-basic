@@ -1,8 +1,10 @@
 # macOS Native Server Support Roadmap
 
-Status: hosted qualification 2026-10-14 (run `38524007872`) — M001–M004 closed (M003–M004 live on arm64 + Intel hosted runners), M005–M006 narrowed blocked (effective NAT + v6 egress need admin-integrated host; reboot needs rebootable host), M007 blocked verdict with MUST-NOT-release decision + enumerated residuals
+Status: hosted low-level qualification 2026-10-14 (run `38524007872`) — M001–M004 scoped closure; M005–M006 narrowed blocked; M007 MUST-NOT-release. 2026-10-20 corrective C001–C005 registered to cover production-service integration, least-privilege install, routed/PF modes, and native release evidence.
 
 Owner: headless Darwin WireGuard server deployment, not a macOS WireGuard client application.
+
+Active corrective source: `plans/subsystems/macos-native-server-corrective-roadmap.md` (C001–C005, baseline `fc51146e`, planning only). Isolated M003/M004 live tests do **not** exercise the production `WireGuardBackend`, `ReconciliationService`, `FirewallService`, or full API-managed convergence. The existing M007 release prohibition is unchanged; see corrective roadmap for dependencies and separate host-only/routed/gateway acceptance gates.
 
 Canonical authority: plans/000-long-term-specification.md (platform extension); plans/002-long-term-roadmap.md; plans/003-planning-process.md; plans/adr/008-macos-headless-platform-backends.md; prior ADR-001 through ADR-007 remain binding for Linux.
 
