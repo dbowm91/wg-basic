@@ -79,6 +79,27 @@ unreadable by the management daemon, and the daemon did not release its socket
 when it was stopped during startup). The root causes are recorded under
 *Unresolved findings by severity* below.
 
+### Hosted qualification after the controlled-host split
+
+The hosted `live-arm64` job runs every `#[ignore]`d test in the
+`wireguard_darwin_live` target, so the two controlled-host fixtures could not
+stay in it: the hosted runner has no off-host peer and no reboot phase, and
+they failed there. They were moved to a separate `wireguard_darwin_controlled`
+target, with the shared helpers in `tests/darwin_live_common/mod.rs`.
+
+Hosted run `39466240917` on that change: **all four jobs passed** —
+`gates-arm64`, `gates-intel`, `live-arm64`, and `live-intel-tunnel`. The
+`live-arm64` job now runs the eight fixtures a hosted runner can run.
+
+Hosted run `39466942571` then failed `live-intel-tunnel` on a control probe
+that the fixture made stricter than the claim it supports: the M005 platform
+proof requires the public echo target to answer with **no** ICMP loss, and
+this runner's path to `8.8.8.8` dropped one of three replies
+(`3 packets transmitted, 2 packets received, 33.3% packet loss`). The failure
+is recorded as a fixture defect, not an environment gap, and is fixed here —
+the probe is repeated within a small budget and only a run with no loss counts
+as an answer, so the fixture still claims exactly what it claimed before.
+
 ### Arm64 controlled-host product path
 
 The arm64 leg of the product path was run as root on a disposable arm64 Mac
@@ -194,6 +215,7 @@ Four real defects were found by this leg and fixed; each is recorded under
 ## Unresolved findings by severity
 
 - **Medium (pre-existing, out of scope):** the `dependency-audit` CI job fails on three upstream `zip 6.0.0` advisories reached through `eggup-archive = "=0.1.3"`. Not resolvable in this repository without an upstream release; it does not affect the C001 code.
+- **Medium (pre-existing, fixed here):** the hosted `live-intel-tunnel` job decided whether a public echo target was reachable from a **single** ICMP probe, and required that probe to lose nothing. A public internet path loses the occasional echo reply, so a single dropped packet was indistinguishable from an unreachable target — and from a fixture defect. Hosted run `39466942571` failed this way (`33.3% packet loss` on the control probe to `8.8.8.8`). The probe is now repeated within a small budget and only a run with no loss counts as an answer, so the fixture still claims exactly what it claimed — the target answered cleanly — and a single lost reply no longer decides the run.
 - **Low (pre-existing, fixed here):** the dead `getsockopt`/`PeerCredentials` import in `src/protocol/socket.rs` had the branch's Linux `-D warnings` gate red before this change; it is removed here and the gate is green.
 - **Medium (introduced by this change, fixed here):** the audited interface inventory in `crates/darwin-sys` listed only interfaces that carried an address. `getifaddrs` reports one entry per interface/address pair, and a freshly created tunnel has no address yet, so the managed `utunN` was invisible: the helper spawn timed out (`StartupFailed`), the reconciliation reported a live tunnel as absent, and the delete path's "wait for the device to disappear" check was vacuous. The inventory now lists every interface, and the grouping rule is unit-tested in `crates/darwin-sys`.
 - **Medium (introduced by this change, fixed here):** the Darwin route message carried no gateway at all. The kernel refuses an `RTM_ADD` that has no `RTA_GATEWAY` (`bsd/net/rtsock.c`, `route_output`), so **every** route addition failed with `EINVAL` and the managed interface could never carry its tunnel prefix. The message now carries the interface's own link-level `sockaddr_dl` in `RTA_GATEWAY`, which is the shape Apple's `route(8)` sends for `route add -interface` and the shape the kernel matches against the interface's link-level address.
