@@ -21,3 +21,43 @@ When installed, use separate service identities where practical:
 No service unit is shipped yet; package installation and service lifecycle belong to later distribution work. The protocol exposes typed network operations alongside the original peer-authorized, bounded-framed read-only operations. Two further operations carry one installation's network intent at one desired generation: `PlanInstallationNetworkIntent` and `ApplyInstallationNetworkIntent`. They revalidate owner identity and generation before any privileged work and cannot carry raw nft source, sysctl paths, or key material beyond the typed configuration the interface intent already contains. Arbitrary command, path-based sysctl, nftables-source, file-write, and raw-netlink operations are not part of the protocol.
 
 The Linux network service supports typed WireGuard configuration, managed interface/address/route reconciliation, and dual-stack firewall/forwarding policy. The firewall service owns only `inet wg_basic`; it never flushes unrelated tables. IPv4 forwarding and explicitly requested IPv6 global forwarding may only be enabled to `1`; policy disable removes the owned table but never resets either control. IPv6 uses the fixed `net.ipv6.conf.all.forwarding` control, with its host-wide Host/Router and Router Advertisement consequences documented for operators. The supported policy and external-firewall interaction are documented in [firewall ownership](firewall.md). Persistence is implemented and confined to the unprivileged management role, which publishes its browser surface through `serve`.
+
+## Darwin service identity (C002)
+
+On Darwin the deployment is two launchd system daemons with different
+identities:
+
+- `netd` is the only root component. It owns the typed OS mutations.
+- `serve` is a dedicated, unprivileged local principal (`_wg-basic-serve`).
+  It owns SQLite and HTTP and never touches the kernel.
+
+The management account is **preprovisioned**. The installer never creates
+accounts and never adopts an unknown identity: it resolves the account
+through the directory service, refuses a missing account, refuses an account
+that resolves into macOS's reserved UID range, and refuses an account whose
+primary group is not the dedicated group. A renamed or reused identity is
+refused rather than trusted.
+
+The privileged socket is the whole path from the management daemon to the
+privileged one. It is created mode `0660` and bound to the management group,
+and the privileged daemon admits the management UID that the *verified install
+receipt* records, never a name supplied on a command line.
+
+## The isolated Darwin OS boundary (C001)
+
+The Darwin kernel boundary needs FFI. It lives in one small workspace member,
+`crates/darwin-sys`, whose only `unsafe` module is the OS boundary itself.
+The product crate keeps its crate-wide `#![forbid(unsafe_code)]`. This is the
+shape the M002 implementation plan anticipated: isolate audited `unsafe` in a
+tiny OS boundary rather than weaken the crate-wide rule.
+
+The boundary exposes a typed API only: interface and address observation,
+routing-table observation, link and address control, route mutation, process
+executable lookup, and the host forwarding state. No raw pointer, file
+descriptor, or `errno` escapes to a caller, and nothing in it parses a
+human-readable tool's output or executes a subprocess.
+
+The only process this product runs on Darwin is `launchctl`, from
+`src/launchd_install.rs`, with a closed verb set, a closed target set, and an
+absolute path. The pure layout module (`src/launchd.rs`) contains no process
+execution at all.

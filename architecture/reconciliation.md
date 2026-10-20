@@ -21,3 +21,23 @@ Each successful mutation is followed by re-observation. The receipt distinguishe
 Example from the kernel fixture: first apply creates the WireGuard link, configures its key/listen port, adds one address and one route, and brings the link up; it reports `Applied`. Repeating the same desired state reports `NoChange` with zero mutations. Unit fault injection allows the address add and then fails the link-state operation; the first result is `PartialFailure` with one completed action, the retry completes the one remaining operation, and a third apply is `NoChange`.
 
 Production link, address, route, and WireGuard reconciliation calls Rust netlink APIs and contains no `ip` subprocess. The M005 firewall backend invokes `nft` directly as a bounded transition path; it does not use a shell or accept caller-authored nftables text. Linux integration fixtures use `ip netns`/`ip` only to set up and inspect disposable namespaces.
+
+## Darwin reconciliation (C001)
+
+The Darwin service executes the *same* portable plan through the *same*
+observe/apply/verify sequence as Linux. `src/reconcile/apply.rs` owns that
+sequence and is portable; only the backend differs.
+
+The Darwin backend (`src/reconcile/backend_darwin.rs`) observes through
+`getifaddrs` and the routing-table dump, and mutates through typed address,
+route, and link operations. It classifies the routes it finds: the kernel's
+own address-derived and broadcast routes are not managed routes, a route the
+planner cannot express is counted as unsupported so a delete refuses rather
+than orphaning it, and the connected network the kernel derives from the
+managed address is not a managed route.
+
+Creating a managed tunnel spawns the pinned helper, adopts exactly one new
+`utunN`, and records the durable receipt. Deleting one stops the helper,
+waits for the kernel device to disappear, and only then drops the receipt. A
+device that does not disappear fails the delete instead of leaving a claim
+that no longer describes anything.

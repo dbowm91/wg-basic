@@ -25,6 +25,12 @@ pub mod http;
 /// Darwin launchd installation, artifact provenance, and recovery (M006
 /// installation scope; pure layout/receipt logic, no live system mutation).
 pub mod launchd;
+/// Darwin launchd control and the privileged installer (C002).
+///
+/// This is the only module that executes a process on Darwin, and the only
+/// process it executes is `launchctl` with a closed verb and target set.
+#[cfg(target_os = "macos")]
+pub mod launchd_install;
 pub mod management;
 pub mod operational;
 pub mod platform;

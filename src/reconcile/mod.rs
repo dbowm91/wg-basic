@@ -7,8 +7,9 @@
 //!   metadata from the portable [`OwnerTag`] ownership proof);
 //! - [`planner`] turns desired versus observed into a deterministic mutation plan
 //!   (portable, pure);
-//! - [`service`] serializes and applies that plan, then re-observes and verifies
-//!   (Linux backend; Darwin stub in M001 fails closed as unsupported);
+//! - [`apply`] serializes and applies that plan, then re-observes and verifies
+//!   (portable; both platforms execute the same sequence);
+//! - [`service`] owns the Linux backend that observes and mutates the host;
 //! - [`linux`] is the isolated RTNETLINK backend (Linux only; Darwin gains its
 //!   address/route backend in M004).
 //!
@@ -17,6 +18,9 @@
 //! the [`OwnerTag`] derived from the logical [`InterfaceId`], never by a name
 //! or index alone.
 
+mod apply;
+#[cfg(target_os = "macos")]
+mod backend_darwin;
 /// Darwin address/route observation + pure planning (M004 modeling scope;
 /// the privileged route-socket backend lands with the live helper).
 #[cfg(target_os = "macos")]
@@ -27,8 +31,10 @@ mod model;
 mod planner;
 #[cfg(target_os = "linux")]
 mod service;
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
 mod service_darwin;
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+mod service_other;
 
 #[cfg(target_os = "linux")]
 pub use linux::LinuxNetworkBackend;
@@ -44,8 +50,7 @@ pub use service::ReconciliationService;
 #[cfg(not(target_os = "linux"))]
 pub use service_darwin::ReconciliationService;
 
+pub(crate) use apply::ReconcileBackend;
 pub(crate) use planner::Mutation;
-#[cfg(target_os = "linux")]
-pub(crate) use service::ReconcileBackend;
-#[cfg(not(target_os = "linux"))]
-pub(crate) use service_darwin::ReconcileBackend;
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub(crate) use service_other::ReconcileBackend;

@@ -159,6 +159,8 @@ pub enum HelperError {
     UapiTransport,
     #[error("UAPI response was malformed or exceeded its bound")]
     UapiMalformed,
+    #[error("the helper refused the UAPI request")]
+    UapiRefused,
 }
 
 /// A supervised foreground helper child. Killed on drop if still running.
@@ -396,7 +398,8 @@ pub fn interface_delta(before: &[String], after: &[String]) -> Result<String, He
     }
 }
 
-fn is_utun_name(name: &str) -> bool {
+/// Whether a name is a kernel-assigned `utunN` device.
+pub fn is_utun_name(name: &str) -> bool {
     let rest = name.strip_prefix("utun").unwrap_or_default();
     !rest.is_empty() && rest.bytes().all(|byte| byte.is_ascii_digit())
 }

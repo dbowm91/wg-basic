@@ -44,13 +44,15 @@ impl NetworkCapabilitySnapshot {
         }
     }
 
-    /// M001 Darwin observation: honest unsupported/unknown, never Linux values.
+    /// Darwin observation: honest unsupported/unknown, never Linux values.
     ///
     /// `cap_net_admin` is `None` (no Linux capabilities on Darwin),
     /// `network_namespaces` is unavailable (no netns on macOS), and the
-    /// WireGuard/nftables slots report unavailable (Linux backends) while the
-    /// Darwin utun/PF/route backends remain unknown until M002–M005 qualify
-    /// them. No mutation is performed.
+    /// nftables slot is unavailable (Darwin has no nftables; the PF backend
+    /// lands with C003). The WireGuard slot reports the real Darwin control
+    /// surface: the pinned userspace helper, and only when the installed
+    /// helper still matches the digest the install receipt recorded. No
+    /// mutation is performed.
     #[cfg(not(target_os = "linux"))]
     pub fn observe(runtime_directory: &std::path::Path) -> Self {
         Self {
@@ -62,7 +64,7 @@ impl NetworkCapabilitySnapshot {
             kernel_release: darwin_kernel_release(),
             runtime_directory_safe: safe_runtime_directory(runtime_directory),
             network_namespaces: CapabilityState::Unavailable,
-            wireguard_control: CapabilityState::Unavailable,
+            wireguard_control: darwin_wireguard_control_state(),
             nftables: CapabilityState::Unavailable,
         }
     }
@@ -79,6 +81,27 @@ fn effective_capability(capability: u8) -> Option<bool> {
             })
         })
         .map(|effective| effective & (1_u64 << capability) != 0)
+}
+
+/// The Darwin WireGuard control surface.
+///
+/// Darwin has no kernel WireGuard interface: the managed tunnel is a pinned
+/// `wireguard-go` helper. The surface is available only when the installed
+/// helper is present and still hashes to the digest the install receipt
+/// recorded, so a replaced helper is reported as unavailable instead of
+/// trusted.
+#[cfg(not(target_os = "linux"))]
+fn darwin_wireguard_control_state() -> CapabilityState {
+    let Some(digest) = crate::launchd::installed_helper_digest(std::path::Path::new("/")) else {
+        return CapabilityState::Unavailable;
+    };
+    match crate::wireguard::darwin::verify_helper_sha256(
+        std::path::Path::new(crate::launchd::HELPER_PATH),
+        &digest,
+    ) {
+        Ok(()) => CapabilityState::Available,
+        Err(_) => CapabilityState::Unavailable,
+    }
 }
 
 /// Darwin kernel release via the audited `nix` `uname` wrapper (no new unsafe,
@@ -133,7 +156,9 @@ mod tests {
         // available on Darwin in M001.
         assert_eq!(snapshot.cap_net_admin, None);
         assert_eq!(snapshot.network_namespaces, CapabilityState::Unavailable);
-        assert_eq!(snapshot.wireguard_control, CapabilityState::Unavailable);
+        // The Darwin WireGuard slot reports the real helper, never a Linux
+        // value and never an optimistic "available".
+        assert_ne!(snapshot.wireguard_control, CapabilityState::Unknown);
         assert_eq!(snapshot.nftables, CapabilityState::Unavailable);
         // uname-backed release, never a /proc read.
         assert!(snapshot.kernel_release.is_some());

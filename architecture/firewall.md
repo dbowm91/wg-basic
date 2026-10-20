@@ -31,3 +31,22 @@ sudo -E cargo test --locked --features linux-integration --test network_control_
 ```
 
 The IPv4 no-NAT case must fail until masquerade is enabled. The IPv6 fixture installs an upstream route to the tunnel prefix and proves routed traffic plus established return traffic without NAT66. Its client starts with explicit IPv4 and IPv6 full-tunnel routes, then changes to independent split prefixes; selected destinations pass and destinations outside those prefixes do not. Traffic under the split policy resumes after server netd restart/reapply, while unrelated firewall, route, and egress-address state remains intact.
+
+## Darwin host-only contract (C001)
+
+The Darwin C001 deployment is **host-only**: the managed tunnel carries the
+host's own traffic, and the machine's own services reach the tunnel's peers.
+There is no forwarding, no NAT, no routed LAN, and no PF anchor.
+
+The Darwin firewall service therefore does exactly two things, and both are
+honest:
+
+1. it **refuses** any policy that requires forwarding or NAT, with
+   `FirewallError::Unsupported`, instead of silently ignoring the request and
+   reporting a success that did nothing; and
+2. it **reports** the host's global forwarding state, which is host-global
+   state this product does not own and never changes.
+
+Nothing in the Darwin path writes PF state, forwarding sysctls, or host
+routes. The PF backend lands with the routed-LAN corrective and stays behind
+an explicit distribution decision.

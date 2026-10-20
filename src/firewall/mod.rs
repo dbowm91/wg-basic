@@ -9,8 +9,10 @@
 //! - [`nft`] owns every Linux process, filesystem, and rendering boundary
 //!   (Linux only; Darwin gains its PF backend in M005, never by reusing this
 //!   module's owner-table claims);
-//! - [`service`] serializes application and reports the receipt (Linux backend;
-//!   Darwin stub in M001 fails closed as unsupported).
+//! - [`service`] serializes application and reports the receipt (Linux
+//!   backend);
+//! - [`service_darwin`] owns the Darwin host-only contract (C001): it refuses
+//!   any policy that needs forwarding or NAT and never writes PF state.
 //!
 //! On Linux `nft` is invoked directly with internally rendered input. No caller
 //! can supply nft source, and the sole owned table is `inet wg_basic`. Do not
@@ -26,8 +28,10 @@ mod planner;
 mod policy;
 #[cfg(target_os = "linux")]
 mod service;
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
 mod service_darwin;
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+mod service_other;
 
 pub use pf::{
     anchor_name, attachment_verified, render_policy, rules_digest, teardown_order, PfError,
@@ -40,5 +44,7 @@ pub use policy::{
 };
 #[cfg(target_os = "linux")]
 pub use service::FirewallService;
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
 pub use service_darwin::FirewallService;
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub use service_other::FirewallService;
