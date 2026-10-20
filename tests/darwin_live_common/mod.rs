@@ -390,8 +390,7 @@ pub fn remove_if_exists(path: &Path) {
     let _ = std::fs::remove_file(path);
 }
 
-/// M003 live: two pinned helpers peer over loopback, handshake, pass tunnel
-/// traffic, survive kill/restart with renumber tolerance.
+/// Runs a command as root without asserting success, for negative probes
 /// (the transcript is still logged as evidence).
 pub fn sh_unchecked(evidence: &mut Evidence, program: &str, args: &[&str]) -> (bool, String) {
     let output = Command::new(program)
@@ -416,6 +415,8 @@ pub fn sh_unchecked(evidence: &mut Evidence, program: &str, args: &[&str]) -> (b
 /// product must never perform is attempted parse-only and recorded as
 /// platform-refused. Effective NAT traffic stays unqualified (it needs that
 /// refused attachment plus a v6 uplink hosted runners lack).
+///
+/// Removes the deployment and the disposable account when the test ends.
 ///
 /// The cleanup runs when the test ends **including when an assertion
 /// panics**: the next live test bootstraps the same launchd labels and must

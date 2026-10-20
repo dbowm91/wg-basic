@@ -473,6 +473,34 @@ const REBOOT_ADMIN_PASSWORD: &str = "a disposable reboot administrator password"
 /// The root-owned directory the boot-time job's test binary is staged in.
 const QUAL_STAGE_DIR: &str = "/usr/local/libexec/wg-basic-qual";
 
+/// The kernel's boot time, in seconds since the epoch.
+///
+/// A cold reboot advances this value and nothing else does. The arm phase
+/// records it and the verify phase compares against it, so the leg **observes**
+/// that the host rebooted instead of inferring it from the fact that the
+/// deployment was still there. Without that check every verify-phase
+/// assertion is also satisfied by a host that never went down.
+fn kernel_boot_time(evidence: &mut Evidence) -> u64 {
+    let output = Command::new("/usr/sbin/sysctl")
+        .args(["-n", "kern.boottime"])
+        .output()
+        .expect("read kern.boottime");
+    assert!(
+        output.status.success(),
+        "kern.boottime must be readable: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8_lossy(&output.stdout);
+    let seconds = text
+        .split("sec = ")
+        .nth(1)
+        .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
+        .and_then(|field| field.parse::<u64>().ok())
+        .unwrap_or_else(|| panic!("kern.boottime must report a boot time: {text}"));
+    evidence.log(&format!("the kernel boot time is {seconds}"));
+    seconds
+}
+
 /// C002 live: a cold reboot preserves the deployment.
 ///
 /// A restart is not a reboot, and the plist text is not the proof. This cycle
@@ -523,6 +551,21 @@ fn arm_c002_cold_reboot() {
     std::fs::remove_dir_all("/var/log/wg-basic").ok();
     std::fs::remove_dir_all("/usr/local/libexec/wg-basic").ok();
     remove_if_exists(Path::new(REBOOT_JOB_PLIST));
+    // The job must not be registered in the running session: a registered
+    // `RunAtLoad` job would run the verify phase against a host that has not
+    // rebooted. The plist alone is what launchd loads at the next boot.
+    let _ = Command::new("/bin/launchctl")
+        .args(["bootout", "system", REBOOT_JOB_LABEL])
+        .output();
+    // The job's output file is preserved under a name that says what it is,
+    // so the next boot's output cannot be confused with an earlier run's.
+    let stale_log = Path::new(REBOOT_STATE_DIR).join("reboot-job.log");
+    if stale_log.exists() {
+        let _ = std::fs::rename(
+            &stale_log,
+            Path::new(REBOOT_STATE_DIR).join("reboot-job.log.superseded"),
+        );
+    }
     std::fs::create_dir_all(REBOOT_STATE_DIR).expect("the qualification state dir");
     #[cfg(unix)]
     {
@@ -707,6 +750,12 @@ fn arm_c002_cold_reboot() {
         "the enrolled peer must be on the device before the reboot"
     );
 
+    // The boot time is recorded so the verify phase can observe that the host
+    // really rebooted. It is read before the expectations are written, and it
+    // is the one expectation that cannot be satisfied by a host that never
+    // went down.
+    let boot_time = kernel_boot_time(&mut evidence);
+
     let expectations = serde_json::json!({
         "client_id": client_id,
         "client_public_key": client_public_key,
@@ -714,6 +763,7 @@ fn arm_c002_cold_reboot() {
         "interface_id": interface_id,
         "management_uid": identity.uid,
         "management_gid": identity.gid,
+        "boot_time_seconds": boot_time,
     });
     std::fs::write(
         REBOOT_EXPECTATIONS,
@@ -844,6 +894,28 @@ fn verify_c002_cold_reboot() {
     let management_uid = expectations["management_uid"]
         .as_u64()
         .expect("the recorded management uid");
+
+    // The first thing the verify phase proves is that the host really
+    // rebooted. Every other assertion below — the roles came back, the
+    // management daemon is still unprivileged, the credential still
+    // authenticates, the network reconverged — is also satisfied by a host
+    // that simply never went down, so the reboot itself has to be observed
+    // before any of them counts as evidence. The kernel's boot time advances
+    // on a cold reboot and on nothing else.
+    let recorded_boot_time = expectations["boot_time_seconds"]
+        .as_u64()
+        .expect("the recorded kernel boot time");
+    let boot_time = kernel_boot_time(&mut evidence);
+    assert_ne!(
+        boot_time, recorded_boot_time,
+        "the host did not reboot: the kernel boot time is still {boot_time}, \
+         so this run proves nothing about a cold reboot"
+    );
+    assert!(
+        boot_time > recorded_boot_time,
+        "the kernel boot time went backwards: {boot_time} is older than {recorded_boot_time}"
+    );
+    evidence.log("the host really rebooted: the kernel boot time advanced");
 
     let netd_job = format!("system/{}", launchd::NETD_LABEL);
     let serve_job = format!("system/{}", launchd::SERVE_LABEL);

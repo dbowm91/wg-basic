@@ -72,6 +72,8 @@ use wg_basic::wireguard::darwin as wg_darwin;
 mod darwin_live_common;
 use darwin_live_common::*;
 
+/// M003 live: two pinned helpers peer over loopback, handshake, pass tunnel
+/// traffic, survive kill/restart with renumber tolerance.
 #[test]
 #[ignore = "needs WGB_DARWIN_LIVE=1 as root on a disposable macOS host"]
 fn live_loopback_handshake_and_traffic() {
@@ -653,8 +655,36 @@ fn live_pf_inventory_and_anchor_cycle() {
     evidence.write();
 }
 
-/// Runs a command as root without asserting success, for negative probes
+/// Probes an echo target and reports whether it answered without any loss.
+///
+/// A public internet path drops the occasional ICMP echo, so a single probe
+/// cannot decide whether a target is reachable: one lost reply would be
+/// mistaken for an unreachable target, or — worse — for a fixture defect.
+/// The probe is repeated within a small budget, and only a run with **no**
+/// loss counts as an answer. The claim the fixture makes is therefore
+/// unchanged — the target answered cleanly — it is just no longer decided by
+/// a single sample of a lossy path.
+fn echo_answers_cleanly(evidence: &mut Evidence, target: &str, attempts: usize) -> bool {
+    for attempt in 1..=attempts {
+        let (ok, out) = sh_unchecked(evidence, "ping", &["-c", "3", "-i", "0.2", target]);
+        if ok && out.contains("0.0% packet loss") {
+            evidence.log(&format!("{target} answered cleanly on attempt {attempt}"));
+            return true;
+        }
+        evidence.log(&format!(
+            "{target} did not answer cleanly on attempt {attempt}"
+        ));
+    }
+    false
+}
 
+/// M005 live platform proof: the forwarding toggle cycles and restores,
+/// PF enables/disables, the dedicated anchor stays provably unattached
+/// even while PF is enabled, and tunnel traffic without attachment
+/// provably fails (no false convergence). The main-ruleset replacement the
+/// product must never perform is attempted parse-only and recorded as
+/// platform-refused. Effective NAT traffic stays unqualified (it needs that
+/// refused attachment plus a v6 uplink hosted runners lack).
 #[test]
 #[ignore = "needs WGB_DARWIN_LIVE=1 as root on a disposable macOS host"]
 fn live_forwarding_and_unattached_anchor_probe() {
@@ -683,8 +713,7 @@ fn live_forwarding_and_unattached_anchor_probe() {
     // requests on a disposable host.
     let mut target = String::new();
     for candidate in ["8.8.8.8", "1.1.1.1", "9.9.9.9"] {
-        let (ok, out) = sh_unchecked(&mut evidence, "ping", &["-c", "2", "-i", "0.2", candidate]);
-        if ok && out.contains("0.0% packet loss") {
+        if echo_answers_cleanly(&mut evidence, candidate, 3) {
             target = candidate.to_owned();
             break;
         }
@@ -699,13 +728,8 @@ fn live_forwarding_and_unattached_anchor_probe() {
 
     // The target must answer ICMP directly first (control): otherwise a
     // later tunnel probe failure could not be attributed to our path.
-    let direct = sh(
-        &mut evidence,
-        "ping",
-        &["-c", "3", "-i", "0.2", target.as_str()],
-    );
     assert!(
-        direct.contains("0.0% packet loss"),
+        echo_answers_cleanly(&mut evidence, &target, 3),
         "target must answer a direct probe (control)"
     );
 
@@ -1261,7 +1285,6 @@ fn live_c001_production_backend_owns_and_configures_a_managed_tunnel() {
     evidence.write();
 }
 
-/// Removes the deployment and the disposable account when the test ends.
 /// C002 live: the management daemon really runs unprivileged.
 ///
 /// The plist text is not the proof. This cycle preprovisiones a disposable

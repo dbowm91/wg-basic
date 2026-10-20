@@ -104,23 +104,41 @@ fixture that needs a host it cannot be:
 ```
 the transactional installer completed the deployment
 the administrator was provisioned as the management identity
-the product enrolled client 05acb66f-7658-40d7-aa39-21bcf0ad0233 with public key dJxTT6v9Dbs/WmKAhwsdZTYYV808ltE/4wEfa/NysGw=
+the product enrolled client f4b7ecc1-edf4-4634-aef5-e0f3c2088389 with public key gTGlZedY3s+94uJXqtBa7ap2XleI6aYmHgA3rC//Ozw=
+the kernel boot time is 1791353209
 recorded the expectations that must survive the reboot at /var/db/wg-basic-qual/reboot-expectations.json
 the boot-time job is installed and will run in the next boot, not now
 ```
 
-The host was left in that state: `netd` running as `root`, `serve` running as
-`_wg-basic-serve`, the managed tunnel's helper running, the state database
-owned by the management identity, and the boot-time job installed at
-`/Library/LaunchDaemons/com.wg-basic.qual-reboot.plist`.
+The recorded expectations are:
+
+```
+{
+  "boot_time_seconds": 1791353209,
+  "client_id": "f4b7ecc1-edf4-4634-aef5-e0f3c2088389",
+  "client_public_key": "gTGlZedY3s+94uJXqtBa7ap2XleI6aYmHgA3rC//Ozw=",
+  "interface_id": "64f99c1b-e55b-4d1c-a33d-f4f823a041b4",
+  "management_gid": 8998,
+  "management_uid": 8998,
+  "peer_id": "4b8e4d5d-da3f-4a77-ae9d-1b40679a8369"
+}
+```
+
+The host was left in that state: `netd` running as `root` (pid 65853), `serve`
+running as `_wg-basic-serve` (pid 65855), the managed tunnel's helper running
+as root, the state database owned by the management identity, and the boot-time
+job **installed but not registered** — `launchctl print
+system/com.wg-basic.qual-reboot` reports that the service is not in the
+domain, so the job can only run at the next boot.
 
 The **reboot has not been taken**: the maintainer deferred it, because it
 takes down the machine the qualification runs on. The reboot leg therefore
 remains unqualified, and this record does not claim it. The boot-time job
-runs the verify phase at the next boot of that host, which checks the
-system-domain boot, the unprivileged identity, the preserved database and
-client, the reconvergence, and the clean uninstall — and writes its evidence
-to `/tmp/wgb-qual/evidence/c002-cold-reboot-verify.txt`.
+runs the verify phase at the next boot of that host, which first observes that
+the kernel's boot time advanced, then checks the system-domain boot, the
+unprivileged identity, the preserved database and client, the reconvergence,
+and the clean uninstall — and writes its evidence to
+`/tmp/wgb-qual/evidence/c002-cold-reboot-verify.txt`.
 
 ## Security and ownership evidence
 
@@ -185,7 +203,9 @@ to `/tmp/wgb-qual/evidence/c002-cold-reboot-verify.txt`.
 - **Low (pre-existing, fixed here):** the dead `getsockopt`/`PeerCredentials`
   import in `src/protocol/socket.rs` had the branch's Linux `-D warnings` gate
   red before this change; it is removed here.
-- **Low (introduced by this change, fixed here):** the cold-reboot qualification registered its boot-time job with `launchctl bootstrap`, which **starts a `RunAtLoad` job immediately**. The verify phase therefore ran against a host that had not rebooted yet, uninstalled the deployment it was supposed to check, and removed itself. The job is now installed by writing the plist only: a plist in `/Library/LaunchDaemons` is loaded by launchd at the next boot, which is the behaviour the leg has to prove.
+- **Medium (introduced by this change, fixed here):** the cold-reboot qualification registered its boot-time job with `launchctl bootstrap`, which **starts a `RunAtLoad` job immediately**. The verify phase therefore ran against a host that had not rebooted yet, uninstalled the deployment it was supposed to check, and removed itself. The job is now installed by writing the plist only: a plist in `/Library/LaunchDaemons` is loaded by launchd at the next boot, which is the behaviour the leg has to prove.
+- **Medium (introduced by this change, fixed here):** fixing the registration was not enough. The verify phase asserted that both roles came back, that the management daemon was still unprivileged, that the credential still authenticated, and that the network reconverged — but **every one of those assertions is also satisfied by a host that never went down**, so the leg inferred the reboot from the launchd mechanism instead of observing it. The superseded job log shows the verify phase passing twice against a host that had not rebooted (two different enrolled clients, two different pids). The arm phase now records the kernel's boot time (`kern.boottime`) in the expectations, and the verify phase's **first** assertion is that the boot time advanced: if it did not, the run fails immediately with a message saying it proves nothing about a cold reboot. The reboot is now observed rather than assumed.
+- **Low (introduced by this change, fixed here):** the arm phase left an earlier run's job log in place, so the next boot's output could be confused with a superseded run's. The log is now preserved under the name `reboot-job.log.superseded` instead, and the arm phase also boots out any lingering registration of the job so it cannot run before the reboot.
 - **Low (introduced by this change, fixed here):** the rewritten M006 live test
   first asserted the daemon socket was already gone five milliseconds after
   `launchctl bootout`. `bootout` is asynchronous — launchd unloads the job and
