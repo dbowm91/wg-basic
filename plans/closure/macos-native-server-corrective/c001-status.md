@@ -92,17 +92,22 @@ cargo fmt --all
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 cargo build --locked --bin wg-basic
-cargo test --locked --no-run --test wireguard_darwin_live
+cargo test --locked --no-run --test wireguard_darwin_controlled
 WGB_DARWIN_LIVE=1 WGB_WIREGUARD_GO=/tmp/wgb-qual/wireguard-go \
 WGB_HELPER_SHA256=a490f82f540130730f0fde5d10a3e6dab6a4dfa066b94c6968873c8104c69d21 \
 WGB_BINARY=$PWD/target/debug/wg-basic WGB_EVIDENCE_DIR=/tmp/wgb-qual/evidence \
 WGB_PEER_COMMAND=$PWD/tests/fixtures/darwin-peer/wg-basic-peer.sh \
 WGB_PEER_SSH_HOST=192.168.182.143 WGB_PEER_SSH_USER=sugarwookie \
 WGB_PEER_SSH_KEY=/Users/davidbowman/.ssh/id_ed25519 \
-  target/debug/deps/wireguard_darwin_live-159cd4b8de69b40d \
+  target/debug/deps/wireguard_darwin_controlled-* \
   live_c001_product_path_carries_traffic_to_an_off_host_linux_peer \
   --ignored --exact --test-threads=1 --nocapture
 ```
+
+(The fixture was run from the `wireguard_darwin_live` target at the time of
+the observation. It now lives in the separate `wireguard_darwin_controlled`
+target, because the hosted runner executes every `#[ignore]`d test in the
+hosted target and must never pick up a controlled-host fixture.)
 
 Observed output (the evidence file the run wrote,
 `c001-product-path-off-host-peer.txt`):
