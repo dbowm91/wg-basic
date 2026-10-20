@@ -2,7 +2,7 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-20 (macOS C001–C005 corrective handoff registered; 2026-10-13 macOS server planning added; prior release policy retained; 2026-10-11 (R001–R004a closed; R004b waived by maintainer decision — checksums-only releases, `v0.1.0` stable; solo-maintainer policy with zero required PR approvals))
+Last planning reconciliation: 2026-10-20 (macOS C001/C002 implemented and dispositioned **blocked (narrowed)** at `1806d3e`; C003–C005 re-assessed and still blocked; macOS C001–C005 corrective handoff registered; 2026-10-13 macOS server planning added; prior release policy retained; 2026-10-11 (R001–R004a closed; R004b waived by maintainer decision — checksums-only releases, `v0.1.0` stable; solo-maintainer policy with zero required PR approvals))
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
@@ -76,7 +76,7 @@ Runtime dependency adoption remains evidence-driven.
 | Distribution/install/update | closed (technical) | `plans/subsystems/distribution-install-update-roadmap.md` | M001–M005 closed; production release remains blocked on signing |
 | IPv6/route-policy qualification | closed | `plans/subsystems/ipv6-route-policy-roadmap.md` | M001–M004 closed; `plans/closure/ipv6-route-policy/004-status.md` |
 | Release readiness and supply-chain security | closed (R004b waived; checksums-only releases) | `plans/subsystems/release-readiness-security-roadmap.md` | R001–R004a closed; waiver `004b-waiver-status.md` |
-| Headless macOS native server/gateway | active; low-level M001–M004 qualified, product not yet wired; M005–M007 blocked | `plans/subsystems/macos-native-server-roadmap.md` + `plans/subsystems/macos-native-server-corrective-roadmap.md` | C001 ready; C002 interface-ready; C003–C005 blocked. M003/M004 native runner `38524007872` does not prove product runtime; macOS MUST NOT release |
+| Headless macOS native server/gateway | active; low-level M001–M004 qualified; C001/C002 product wiring implemented but not closure-qualified; M005–M007 blocked | `plans/subsystems/macos-native-server-roadmap.md` + `plans/subsystems/macos-native-server-corrective-roadmap.md` | C001/C002 **blocked (narrowed)** 2026-10-20 — implementation complete, closure gates (off-host peer / cold reboot) unmet; C003–C005 remain blocked. M003/M004 native runner `38524007872` does not prove product runtime; macOS MUST NOT release |
 
 Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
 
@@ -85,7 +85,9 @@ Do not create the later subsystem implementation plans merely to fill the roadma
 Architecture: `plans/adr/008-macos-headless-platform-backends.md`.
 Canonical new roadmap: `plans/subsystems/macos-native-server-roadmap.md`.
 Baseline: `47c72b0e81d569d48396c615120453bf0cf1d46e` (Linux stable `v0.1.0` remains unchanged).
-macOS M001–M004 have qualified **isolated primitives** below (M003–M004 live on hosted arm64 + Intel runners, run `38524007872`); production WireGuardBackend/ReconciliationService/FirewallService still fail closed and live tests bypass application convergence. M005–M006 carry narrowed blocked tails; M007 retains MUST-NOT-release standing. C001–C005 now own product integration, least privilege, scoped routing/PF, and release requalification. No macOS release, integrated network-server or gateway claim exists.
+macOS M001–M004 have qualified **isolated primitives** below (M003–M004 live on hosted arm64 + Intel runners, run `38524007872`); production WireGuardBackend/ReconciliationService/FirewallService still fail closed and live tests bypass application convergence. M005–M006 carry narrowed blocked tails; M007 retains MUST-NOT-release standing. C001–C005 own product integration, least privilege, scoped routing/PF, and release requalification. No macOS release, integrated network-server or gateway claim exists.
+
+**Update 2026-10-20 (implementation head `1806d3e`):** C001 and C002 are now *implemented*, not merely planned. The Darwin production backend (`src/wireguard/darwin_backend.rs`, `src/reconcile/backend_darwin.rs`, `src/reconcile/service_darwin.rs`, `src/firewall/service_darwin.rs`) and the least-privilege installer (`src/launchd.rs`, `src/launchd_install.rs`) are wired into the real typed paths, with the audited OS boundary isolated in the `crates/darwin-sys` workspace member. Both plans are dispositioned **blocked (narrowed)**: their implementation and their hosted native evidence exist, but each plan's own acceptance gate needs evidence a hosted macOS runner cannot produce (an off-host Linux-kernel peer for C001; a cold reboot for C002). C003–C005 remain blocked; the M007 MUST-NOT-release standing is unchanged.
 
 | Milestone | Status | Handoff |
 |---|---|---|
@@ -100,15 +102,19 @@ macOS M001–M004 have qualified **isolated primitives** below (M003–M004 live
 
 ### Active macOS corrective implementation plans — 2026-10-20
 
-Recorded against `fc51146e811cabebd042d852449c6e7f4f854265`; source roadmap: `plans/subsystems/macos-native-server-corrective-roadmap.md`. These are **planning-only** handoffs; no new macOS closure or release evidence is claimed. Historical M003–M007 closures remain untouched.
+Recorded against `fc51146e811cabebd042d852449c6e7f4f854265`; source roadmap: `plans/subsystems/macos-native-server-corrective-roadmap.md`. C001 and C002 were **planning-only** handoffs at that baseline; both are now implemented at `1806d3e` with their own closure records. Historical M003–M007 closures remain untouched.
 
 | Corrective | Status | Implementation plan / immediate gate |
 |---|---|---|
-| C001 production WireGuard/reconciliation/firewall host-only integration | **ready** | `plans/implementation/macos-native-server/c001-production-wiring-host-only.md` — actual API → netd → helper/route/receipt and off-host Linux peer traffic |
-| C002 privileged launchd identity/installer | **interface-ready**, integrated closure hard C001 | `plans/implementation/macos-native-server/c002-launchd-privilege-and-install.md` — fix implicit root `serve`, real service IDs, native reboot |
-| C003 bounded routed LAN without NAT | **blocked** on C001 | `plans/implementation/macos-native-server/c003-routed-lan-no-nat.md` — forwarding, admin policy, proven return routing |
+| C001 production WireGuard/reconciliation/firewall host-only integration | **blocked (narrowed)** 2026-10-20 — implemented at `1806d3e`; closure `plans/closure/macos-native-server-corrective/c001-status.md` | `plans/implementation/macos-native-server/c001-production-wiring-host-only.md` — the production Darwin wiring, the joint ownership proof, and the host-only firewall refusal are done and natively evidenced; the remaining gate is off-host Linux-kernel peer traffic through the real authenticated HTTP path with dual-stack telemetry on both arches |
+| C002 privileged launchd identity/installer | **blocked (narrowed)** 2026-10-20 — implemented at `1806d3e`; closure `plans/closure/macos-native-server-corrective/c002-status.md` | `plans/implementation/macos-native-server/c002-launchd-privilege-and-install.md` — the unprivileged `serve` identity, the constrained plist renderer, the exact fs/IPC layout, and the transactional installer are done and hosted-live evidenced; the remaining gate is cold-reboot persistence on a rebootable host |
+| C003 bounded routed LAN without NAT | **blocked** on C001 | `plans/implementation/macos-native-server/c003-routed-lan-no-nat.md` — forwarding, admin policy, proven return routing. C001's *implementation* is in place, but its closure gate is not met, so C003 does not yet unblock |
 | C004 effective administrator-opt-in PF/NAT | **blocked** on C003 + controlled host | `plans/implementation/macos-native-server/c004-pf-nat-effective-gateway.md` — independent filter/NAT effective attachment and packet evidence; TN3165 |
 | C005 E2E, Eggpack, and release authorization | **blocked** on C001+C002 and claimed-mode C003/C004 | `plans/implementation/macos-native-server/c005-release-qualification-and-reconciliation.md` — support matrix, Intel launchd/reboot, release truth; M007 MUST-NOT-release remains |
+
+**Unblock assessment (2026-10-20):** neither C001 nor C002 unblocks its successors, because both are dispositioned **blocked (narrowed)** rather than closed — the implementation landed, but each plan's own acceptance gate is unmet and the planning process forbids closing from expected evidence. C003 therefore stays blocked on C001's closure gate; C004 stays blocked on C003 plus an external controlled host; C005 stays blocked on C001+C002 plus the claimed-mode gates. The two unmet gates are environmental, not code defects: C001 needs a second, independent Linux-kernel WireGuard peer, and C002 needs a rebootable macOS host (the same two residuals M003 and M006 already record). When those hosts exist, the recorded evidence is expected to satisfy the gates without further implementation, but that expectation is not closure.
+
+**Hosted qualification (macOS run `39427791794`):** all four jobs pass — `gates-arm64`, `gates-intel`, `live-arm64`, `live-intel-tunnel`. The C001 live qualification proves the joint ownership proof, the production backend's observation of the managed device, the receipt's survival across a reader restart, and a teardown with no leaked device, socket, or receipt. The C002 live qualification runs the product's own transactional installer and observes the privileged daemon as root and the management daemon as the dedicated unprivileged account, with the privileged socket root-owned and reachable only by the management group. Linux native CI run `39427800154` passes every job except the pre-existing `dependency-audit` upstream `zip` advisory.
 
 Staged host-only/routed capability does **not** automatically permit a macOS release: the original M007 gateway/reboot/dual-arch requirements remain binding. Any narrower release needs an explicit maintainer-approved ADR-008/M007 decision before publication; gateway still needs C004. All old Linux state, CI, artifacts, updater policy and historical closures remain unchanged.
 
@@ -140,6 +146,27 @@ M004 and its corrective slices are closed: `plans/closure/distribution/004-statu
 
 ## 7. Recently closed work
 
+- macOS C001 **blocked (narrowed)** 2026-10-20: production Darwin host-only
+  wiring implemented at `1806d3e` — the Darwin `WireGuardBackend` with a
+  durable runtime registry and a *joint* ownership proof (process executable
+  identity + helper digest + socket owner/type + kernel device), the Darwin
+  reconciliation service over the audited `getifaddrs`/`sysctl`/`ioctl`/`AF_ROUTE`
+  boundary, an explicitly host-only firewall that *refuses* routed and
+  masquerade policies, and the real capability surface — with the audited
+  `unsafe` isolated in the `crates/darwin-sys` workspace member so the product
+  crate keeps `#![forbid(unsafe_code)]`. Closure gate unmet: the plan's
+  off-host Linux-kernel peer / dual-stack / API-telemetry acceptance needs a
+  second kernel a hosted runner does not have. Closure
+  `plans/closure/macos-native-server-corrective/c001-status.md`.
+- macOS C002 **blocked (narrowed)** 2026-10-20: least-privilege launchd and a
+  real installer implemented at `1806d3e` — a dedicated unprivileged
+  `_wg-basic-serve` management principal (verified in the plist *and* observed
+  by effective UID at runtime), a fully fixed plist renderer that takes no
+  caller path, an exact fs/IPC layout with symlink and mode refusals, a
+  transactional installer with rollback, and helper provenance checked at
+  execution time. Closure gate unmet: the plan blocks closure when reboot
+  persistence cannot be demonstrated, and a hosted runner cannot cold-reboot.
+  Closure `plans/closure/macos-native-server-corrective/c002-status.md`.
 - macOS M003 closed 2026-10-14: hosted live qualification on arm64 +
   Intel (`macos-15`, `macos-15-intel`, macOS 15.7.9, run `38524007872`) —
   pinned-helper spawn, utun delta mapping, hex-key UAPI set/get, dual-stack
