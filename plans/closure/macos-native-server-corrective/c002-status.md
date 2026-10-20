@@ -104,7 +104,7 @@ fixture that needs a host it cannot be:
 ```
 the transactional installer completed the deployment
 the administrator was provisioned as the management identity
-the product enrolled client f4b7ecc1-edf4-4634-aef5-e0f3c2088389 with public key gTGlZedY3s+94uJXqtBa7ap2XleI6aYmHgA3rC//Ozw=
+the product enrolled client 305967a6-839d-4e52-8c65-013769e52628 with public key 8uRcoYKPwNrFJYDjn457QuI8BJYieRAkbHpQlaAVlwo=
 the kernel boot time is 1791353209
 recorded the expectations that must survive the reboot at /var/db/wg-basic-qual/reboot-expectations.json
 the boot-time job is installed and will run in the next boot, not now
@@ -115,21 +115,22 @@ The recorded expectations are:
 ```
 {
   "boot_time_seconds": 1791353209,
-  "client_id": "f4b7ecc1-edf4-4634-aef5-e0f3c2088389",
-  "client_public_key": "gTGlZedY3s+94uJXqtBa7ap2XleI6aYmHgA3rC//Ozw=",
-  "interface_id": "64f99c1b-e55b-4d1c-a33d-f4f823a041b4",
+  "client_id": "305967a6-839d-4e52-8c65-013769e52628",
+  "client_public_key": "8uRcoYKPwNrFJYDjn457QuI8BJYieRAkbHpQlaAVlwo=",
+  "interface_id": "4f59603d-5c90-493d-b22f-35a6af4e2f93",
   "management_gid": 8998,
   "management_uid": 8998,
-  "peer_id": "4b8e4d5d-da3f-4a77-ae9d-1b40679a8369"
+  "peer_id": "4a7dc58d-0d60-4bbd-9732-205f87d75732"
 }
 ```
 
-The host was left in that state: `netd` running as `root` (pid 65853), `serve`
-running as `_wg-basic-serve` (pid 65855), the managed tunnel's helper running
-as root, the state database owned by the management identity, and the boot-time
-job **installed but not registered** — `launchctl print
+The host was left in that state: `netd` running as `root` (pid 61433), `serve`
+running as `_wg-basic-serve` (pid 61435), the managed tunnel's helper running
+as root (pid 61624), the state database owned by the management identity, and
+the boot-time job **installed but not registered** — `launchctl print
 system/com.wg-basic.qual-reboot` reports that the service is not in the
-domain, so the job can only run at the next boot.
+domain, so the job can only run at the next boot. The staged test binary is
+the build of the pushed head.
 
 The **reboot has not been taken**: the maintainer deferred it, because it
 takes down the machine the qualification runs on. The reboot leg therefore
