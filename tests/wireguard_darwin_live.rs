@@ -3093,6 +3093,12 @@ fn arm_c002_cold_reboot() {
     // by the verify phase itself, so a later boot does not run it again. The
     // test binary is staged in a root-owned directory: a boot-time job must
     // not execute a file a user account can replace.
+    //
+    // The plist is written and **not** bootstrapped. `launchctl bootstrap`
+    // starts a `RunAtLoad` job immediately, which would run the verify phase
+    // against the deployment that has not rebooted yet. A plist in
+    // `/Library/LaunchDaemons` is loaded by launchd at the next boot, which
+    // is exactly what the leg has to prove.
     let test_binary = std::env::current_exe().expect("the running test binary");
     let staged_dir = Path::new(QUAL_STAGE_DIR);
     std::fs::create_dir_all(staged_dir).expect("the qualification staging dir");
@@ -3156,12 +3162,7 @@ fn arm_c002_cold_reboot() {
         std::fs::set_permissions(REBOOT_JOB_PLIST, std::fs::Permissions::from_mode(0o644))
             .expect("a readable boot-time job");
     }
-    sh(
-        &mut evidence,
-        "/bin/launchctl",
-        &["bootstrap", "system", REBOOT_JOB_PLIST],
-    );
-    evidence.log("the boot-time job is registered and will run in the next boot");
+    evidence.log("the boot-time job is installed and will run in the next boot, not now");
     evidence.write();
 }
 
