@@ -659,14 +659,17 @@ fn arm_c002_cold_reboot() {
         .to_owned();
 
     // The advertised endpoint has to be an address this host is reachable at,
-    // so it is taken from the route toward the off-host peer.
-    let peer_address = "192.168.182.143";
-    let route = sh(&mut evidence, "route", &["-n", "get", peer_address]);
-    let egress = route
+    // so it is taken from the default route's own interface. This leg never
+    // talks to the off-host peer — that is the other leg — so it must not
+    // depend on a route toward any particular address: the leg has to run on
+    // whatever disposable host it is given, including a virtual machine that
+    // cannot reach the peer's LAN at all.
+    let default_route = sh(&mut evidence, "route", &["-n", "get", "default"]);
+    let egress = default_route
         .lines()
         .find_map(|line| line.trim().strip_prefix("interface:"))
         .map(|name| name.trim().to_owned())
-        .expect("the route toward the peer names an interface");
+        .expect("the default route names an interface");
     let source = interface_ipv4(&mut evidence, &egress);
 
     let setup_body = format!(
