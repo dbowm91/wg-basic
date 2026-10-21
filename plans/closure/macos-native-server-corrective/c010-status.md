@@ -123,12 +123,20 @@ Finished `dev` profile
 The `x86_64-apple-darwin` cross-compile gate is gone with the target it
 qualified.
 
-Hosted: the **Linux native CI** run at the implementation head is green in
-every job except the pre-existing `dependency-audit` upstream advisory
-(`zip 6.0.0` through `eggup-archive = "=0.1.3"`), which is not resolvable in
-this repository without an upstream release and is unrelated to this change.
-The **macOS qualification workflow** at the implementation head runs the two
-arm64 jobs and no Intel job; its result is cited below.
+Hosted: the **macOS qualification workflow** run `39608980478` at the
+implementation head `08b67d2` is **green** — `gates-arm64` and `live-arm64`, the
+two arm64 jobs, with the declared helper built for the one supported target and
+its provenance receipt uploaded as `macos-helper-provenance-arm64` and the live
+evidence as `macos-live-evidence-arm64`. There is no Intel job in that workflow
+any more. The first attempt at that workflow (`39608033861`) failed in
+`gates-arm64` on rustfmt's formatting of the target-set guard, and the
+`live-arm64` job was skipped behind it; `08b67d2` is that formatting, with no
+behavior change.
+
+The **Linux native CI** at the implementation head is green in every job except
+the pre-existing `dependency-audit` upstream advisory (`zip 6.0.0` through
+`eggup-archive = "=0.1.3"`), which is not resolvable in this repository without
+an upstream release and is unrelated to this change.
 
 ## Security and ownership evidence
 
