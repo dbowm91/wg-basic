@@ -1875,7 +1875,7 @@ fn live_self_removing_job_leaves_no_registration() {
     let scratch = std::env::temp_dir().join(format!("wgb-bootout-probe-{}", std::process::id()));
     std::fs::create_dir_all(&scratch).expect("scratch dir");
 
-    for variant in ["a", "b"] {
+    for variant in ["a", "b", "c", "d"] {
         let label = format!("com.wg-basic.probe-{variant}");
         let plist = format!("/Library/LaunchDaemons/{label}.plist");
         let marker = scratch.join(format!("{variant}.marker"));
@@ -1883,22 +1883,36 @@ fn live_self_removing_job_leaves_no_registration() {
         let marker_path = marker.display().to_string();
         let outcome_path = outcome.display().to_string();
         // Variant A is the controlled fixture's form: the job removes its
-        // plist and spawns the detached bootout immediately. Variant B waits
-        // for the job to be gone before booting out.
-        let body = if variant == "a" {
-            format!(
+        // plist and spawns the detached bootout immediately, in its own
+        // process group. Variant B waits for the job to be gone before
+        // booting out. Variants C and D put the bootout in a new *session*,
+        // which is the difference between escaping the job's process group
+        // and escaping the job's teardown: launchd kills the job's remaining
+        // descendants when the job exits, and a helper that dies with the
+        // job never completes its bootout.
+        let body = match variant {
+            "a" => format!(
                 "rm -f '{plist}'; touch '{marker_path}'; \
                  /usr/bin/python3 -c 'import os;os.setpgrp();os.execv(\"/bin/launchctl\",\
                  [\"launchctl\",\"bootout\",\"system\",\"system/{label}\"])' </dev/null >/dev/null 2>&1 &"
-            )
-        } else {
-            format!(
+            ),
+            "b" => format!(
                 "rm -f '{plist}'; touch '{marker_path}'; \
                  /usr/bin/python3 -c 'import os,time;os.setpgrp();time.sleep(3);\
                  rc=os.spawnv(os.P_WAIT,\"/bin/launchctl\",\
                  [\"launchctl\",\"bootout\",\"system\",\"system/{label}\"]);\
                  open(\"{outcome_path}\",\"w\").write(\"bootout exit %d\\n\"%rc)' </dev/null >/dev/null 2>&1 &"
-            )
+            ),
+            "c" => format!(
+                "rm -f '{plist}'; touch '{marker_path}'; \
+                 /usr/bin/python3 -c 'import os;os.setsid();os.execv(\"/bin/launchctl\",\
+                 [\"launchctl\",\"bootout\",\"system/{label}\"])' </dev/null >/dev/null 2>&1 &"
+            ),
+            _ => format!(
+                "rm -f '{plist}'; touch '{marker_path}'; \
+                 /usr/bin/python3 -c 'import os;os.setsid();os.execv(\"/bin/launchctl\",\
+                 [\"launchctl\",\"bootout\",\"system\",\"system/{label}\"])' </dev/null >/dev/null 2>&1 &"
+            ),
         };
         // The body is shell text that contains `<`, `>` and `&`, none of
         // which may appear raw in XML.
