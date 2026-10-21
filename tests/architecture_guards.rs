@@ -2092,7 +2092,11 @@ fn the_platform_boundary_stays_pure_types_without_privilege_or_process() {
     // The Darwin floor and the supported target set are declared in one place,
     // and that set is Apple silicon only (ADR-009).
     let darwin = shippable(source_of("src/platform/darwin.rs"));
-    for required in ["MIN_MACOS_VERSION", "SUPPORTED_TARGETS", "aarch64-apple-darwin"] {
+    for required in [
+        "MIN_MACOS_VERSION",
+        "SUPPORTED_TARGETS",
+        "aarch64-apple-darwin",
+    ] {
         assert!(
             darwin.contains(required),
             "src/platform/darwin.rs must declare {required}"
