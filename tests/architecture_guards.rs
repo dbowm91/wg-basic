@@ -154,6 +154,10 @@ const PRODUCTION_SOURCES: &[(&str, &str)] = &[
         "src/management/worker.rs",
         include_str!("../src/management/worker.rs"),
     ),
+    (
+        "src/distribution.rs",
+        include_str!("../src/distribution.rs"),
+    ),
     ("src/domain/auth.rs", include_str!("../src/domain/auth.rs")),
     (
         "src/state/store/auth.rs",
@@ -1924,6 +1928,38 @@ fn the_darwin_netd_always_sets_the_privileged_socket_ownership() {
     assert!(
         launchd.contains("pub fn restrict_socket_to_owner"),
         "the owner-only mode of the privileged socket exists"
+    );
+}
+
+/// C009: the backend startup wait is Darwin's need, not Linux's.
+///
+/// `launchd` starts the two jobs concurrently, so the management daemon waits
+/// for the privileged daemon on Darwin. Linux's units already order the two
+/// services, so a wait there only delays the listener — and it delayed it by
+/// ten seconds in every Linux harness that starts the management daemon
+/// without a privileged daemon beside it.
+#[test]
+fn the_backend_startup_wait_is_darwin_specific() {
+    let worker = shippable(source_of("src/management/worker.rs"));
+    assert!(
+        worker.contains("#[cfg(target_os = \"macos\")]"),
+        "the startup wait must be platform-gated"
+    );
+    assert!(
+        worker.contains("pub const BACKEND_STARTUP_WAIT: Duration = Duration::from_secs(10);"),
+        "Darwin's bound is the ten seconds the boot-race fix needs"
+    );
+    assert!(
+        worker.contains("pub const BACKEND_STARTUP_WAIT: Duration = Duration::ZERO;"),
+        "every other platform waits for nothing"
+    );
+    // The reason the wait is unnecessary on Linux: the units order the two
+    // services and gate the management daemon on a pre-flight.
+    let distribution = shippable(source_of("src/distribution.rs"));
+    assert!(
+        distribution.contains("Requires=") && distribution.contains("After="),
+        "the Linux units must keep ordering the management daemon after the \
+         privileged one, which is why Linux does not need the wait"
     );
 }
 

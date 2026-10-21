@@ -82,7 +82,7 @@ all of which had to be fixed before the leg could produce its evidence.
 |---|---|---|
 | §4.1 The privileged daemon creates its own runtime directory when it is missing, with the installer's exact mode, and refuses a symlink or a foreign path | `src/launchd.rs`: `ensure_runtime_directory(path)` creates a **missing** directory with `RUNTIME_DIR_MODE` (0755) and leaves an existing one exactly as it is — it never repairs, widens, or adopts a directory it did not create; a symlink or a non-directory in the path is refused as `InstallError::Modified`. `src/main.rs::run_darwin_netd` calls it for the socket's parent directory before the socket is bound, and reports `could not create the netd runtime directory` if it cannot. `SocketServer::bind` remains the single place that refuses a symlink, a foreign owner, or a world/group-writable mode. This is the Darwin analogue of the Linux unit's `RuntimeDirectory=wg-basic` | Passed (code + unit + controlled host) |
 | §4.2 The management daemon waits, bounded, for the privileged daemon before its startup reconciliation, and the listener still comes up either way | `src/management/worker.rs`: `wait_for_backend(socket, budget)` probes with the **same read-only capability request the doctor makes**, so "ready" means the backend is serving *and* admits this peer; a missing socket, a refused connection, an unanswered request and a refusal all mean "not yet". The budget is `BACKEND_STARTUP_WAIT` (ten seconds) and a `WorkerConfig` knob. The wait runs **before** the startup reconciliation, so the reconciliation that is reported is the one that actually ran, and a backend that never appears leaves the startup attempt degraded — ADR-002's "the listener must come up either way" still holds. This is the Darwin analogue of the Linux unit's `Requires=`/`After=` plus its `doctor` pre-flight | Passed (code + unit + controlled host) |
-| §4 Neither fix widens the privileged boundary, and neither touches Linux | The first change creates one directory the privileged daemon already owns, with the mode the installer already publishes. The second is a read-only probe of a socket the management daemon is already allowed to use. The socket's ownership (`0660`, root and the management group), its peer-credential check, the receipt's authority, the shared `SocketServer::bind`, the Linux unit files, the wire and the schema are all unchanged. The Linux daemon's runtime directory is owned by systemd and the Linux units already order the two services, so on Linux the probe succeeds on the first attempt | Passed (code + unit + gates) |
+| §4 Neither fix widens the privileged boundary, and neither touches Linux | The first change creates one directory the privileged daemon already owns, with the mode the installer already publishes. The second is a read-only probe of a socket the management daemon is already allowed to use. The socket's ownership (`0660`, root and the management group), its peer-credential check, the receipt's authority, the shared `SocketServer::bind`, the Linux unit files, the wire and the schema are all unchanged. **Corrected 2026-10-21:** the second change did reach Linux — the wait it added was applied on every platform, so the Linux management daemon sat in the wait before its listener bound, and three Linux CI jobs failed. The wait is now Darwin's alone; see **C009** (`plans/closure/macos-native-server-corrective/c009-status.md`) | Corrected (see C009) |
 | §5 Regression evidence: the cold-reboot qualification re-run end to end, with the reboot observed and the network reconverged | See *Controlled-host cold-reboot qualification* below: the arm phase, a real `shutdown -r now`, and the verify phase at boot, all observed on a disposable arm64 macOS 26.6.2 guest | Passed |
 | §5 The qualification fixture must produce its evidence | Three fixture defects were found and fixed: the reconvergence wait **panicked** on a `503` body instead of treating it as "not yet"; the arm phase's bootout used `launchctl bootout system <label>`, which launchctl rejects with `Boot-out failed: 5: Input/output error` because after a domain target it expects a service *path* or a qualified `system/<label>` target; and the verify phase removed its own job **before** writing its evidence, so the evidence could never be written — `launchctl bootout` stops the running job, which is that process. The evidence is now written first, the plist is removed next, and the bootout is detached into its own process group | Passed |
 | Scope: no closed scope reopened, no release claimed | C001's evidence and disposition are untouched; the historical M003–M007 closures are untouched; no macOS release, tag, or asset is claimed; M007's MUST-NOT-release standing is unchanged | Passed |
@@ -399,8 +399,25 @@ recorded above.
 
 ## Disposition
 
-**Closed.** The boot-path defects the C002 cold-reboot qualification exposed
+**Closed** for the Darwin boot path, with one correction recorded on
+2026-10-21. The boot-path defects the C002 cold-reboot qualification exposed
 are fixed, and the qualification itself now passes end to end on a disposable
 arm64 macOS host with the reboot observed rather than inferred. C002's
 disposition becomes **blocked (narrowed)** on the native Intel arch of the
 same leg, and C003–C005 are unchanged.
+
+**Correction (2026-10-21).** This record's §4 row originally claimed that
+neither fix "touches Linux" and that on Linux "the probe succeeds on the
+first attempt". The second claim is true in production — systemd's units
+order the two services — and false in every Linux harness that starts the
+management daemon without a privileged daemon beside it, which is where the
+ten-second wait did its damage. The Linux native CI shows it: at this head,
+and at every head since, three jobs fail (`rust`,
+`upgrade-rehearsal`, `upgrade-rehearsal-rootful`); at the pre-C006 head
+`cdc4439` they pass. The defect is a material post-implementation one, so
+per `plans/003-planning-process.md` §13 it is corrected under its own plan
+rather than by rewriting this record: **C009**
+(`plans/implementation/macos-native-server/c009-restore-the-linux-startup-path.md`,
+closure `plans/closure/macos-native-server-corrective/c009-status.md`). The
+wait is now Darwin's alone, and the Linux startup path is what it was before
+C006.

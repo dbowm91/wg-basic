@@ -78,6 +78,16 @@ appears leaves the deployment degraded rather than absent — the same
 "degraded, not absent" contract the Linux units express with `Requires=` and
 `After=` plus their `doctor` pre-flight.
 
+The wait is **Darwin's need, and Darwin's only** (C009). The Linux units
+already order the two services, so a wait there would only delay the
+listener — and it delayed it by ten seconds in every Linux harness that
+starts the management daemon without a privileged daemon beside it. The
+bound is therefore zero off Darwin, where it is a true no-op: the deadline is
+checked before the request, so the management daemon neither probes nor
+sleeps. The bound is a named, exported constant, so the test harnesses that
+wait for the management daemon's listener derive their own bound from the
+product's instead of hard-coding one.
+
 ## The isolated Darwin OS boundary (C001)
 
 The Darwin kernel boundary needs FFI. It lives in one small workspace member,

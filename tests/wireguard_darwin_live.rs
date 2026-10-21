@@ -583,6 +583,13 @@ fn first_invoked_anchor(ruleset: &str, keyword: &str) -> Option<String> {
     })
 }
 
+/// Escapes the characters that may not appear raw in XML text.
+fn xml_escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
 /// M005 live mechanics: privileged PF inventory, read-only forwarding facts,
 /// rendered-anchor parse check, and a dedicated anchor load/verify/flush
 /// cycle that stays explicitly unattached (no parent invocation, no `pfctl
@@ -1893,6 +1900,9 @@ fn live_self_removing_job_leaves_no_registration() {
                  open(\"{outcome_path}\",\"w\").write(\"bootout exit %d\\n\"%rc)' </dev/null >/dev/null 2>&1 &"
             )
         };
+        // The body is shell text that contains `<`, `>` and `&`, none of
+        // which may appear raw in XML.
+        let body_xml = xml_escape(&body);
         let document = format!(
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
              <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \
@@ -1900,7 +1910,7 @@ fn live_self_removing_job_leaves_no_registration() {
              <plist version=\"1.0\"><dict>\
              <key>Label</key><string>{label}</string>\
              <key>ProgramArguments</key><array><string>/bin/sh</string><string>-c</string>\
-             <string>{body}</string></array>\
+             <string>{body_xml}</string></array>\
              <key>RunAtLoad</key><true/>\
              <key>StandardOutPath</key><string>{}</string>\
              <key>StandardErrorPath</key><string>{}</string>\
@@ -1909,12 +1919,19 @@ fn live_self_removing_job_leaves_no_registration() {
             scratch.join(format!("{variant}.err")).display()
         );
         std::fs::write(&plist, document).expect("write probe plist");
+        // The bootstrap's own diagnostics matter here: a plist that launchd
+        // refuses is the difference between a probe that observed something
+        // and a probe that never ran.
         let (bootstrapped, output) =
             sh_unchecked(&mut evidence, "launchctl", &["bootstrap", "system", &plist]);
         evidence.log(&format!(
             "variant {variant}: bootstrap {} -> {output}",
             if bootstrapped { "ok" } else { "failed" }
         ));
+        assert!(
+            bootstrapped,
+            "variant {variant}: launchd must accept the probe plist"
+        );
 
         wait_until(
             &format!("the variant {variant} probe job to run"),
