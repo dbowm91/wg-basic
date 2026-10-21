@@ -1861,6 +1861,7 @@ fn live_c001_darwin_backend_converges_a_product_shaped_desired_state() {
 /// fixture's form, and a form where the detached child waits for the job to
 /// be gone before it boots out — and records what each one leaves behind.
 #[test]
+#[ignore = "needs WGB_DARWIN_LIVE=1 as root on a disposable macOS host"]
 fn live_self_removing_job_leaves_no_registration() {
     let mut evidence = Evidence::new("m006-self-removal-probe");
     require_live(&mut evidence);
