@@ -76,9 +76,9 @@ including the `vcs.revision` stamp, which carries the same commit.
 With `-trimpath`, a fixed toolchain, and a clean checkout at a fixed
 commit, the build is byte-reproducible: the same source and toolchain
 produce the same digest for the same target. The macOS qualification
-workflow builds the helper through that builder on both architectures and
-uploads the receipt as a run artifact, so a qualification run can be tied to
-one specific helper build.
+workflow builds the helper through that builder for the one supported
+target and uploads the receipt as a run artifact, so a qualification run
+can be tied to one specific helper build.
 
 The device name is ephemeral, so netd records which `utunN` it owns and
 re-proves it. Nothing is ever selected by numeric guess, and a foreign
