@@ -1851,3 +1851,111 @@ fn live_c001_darwin_backend_converges_a_product_shaped_desired_state() {
     );
     evidence.write();
 }
+
+/// C006 limitation probe: does a launchd job that removes its own plist and
+/// then boots itself out leave a registration behind?
+///
+/// The controlled cold-reboot fixture removes its own plist and spawns a
+/// detached `launchctl bootout`, and the registration was observed to linger.
+/// This probe runs the same two mechanics on a disposable runner — the
+/// fixture's form, and a form where the detached child waits for the job to
+/// be gone before it boots out — and records what each one leaves behind.
+#[test]
+fn live_self_removing_job_leaves_no_registration() {
+    let mut evidence = Evidence::new("m006-self-removal-probe");
+    require_live(&mut evidence);
+    let scratch = std::env::temp_dir().join(format!("wgb-bootout-probe-{}", std::process::id()));
+    std::fs::create_dir_all(&scratch).expect("scratch dir");
+
+    for variant in ["a", "b"] {
+        let label = format!("com.wg-basic.probe-{variant}");
+        let plist = format!("/Library/LaunchDaemons/{label}.plist");
+        let marker = scratch.join(format!("{variant}.marker"));
+        let outcome = scratch.join(format!("{variant}.outcome"));
+        let marker_path = marker.display().to_string();
+        let outcome_path = outcome.display().to_string();
+        // Variant A is the controlled fixture's form: the job removes its
+        // plist and spawns the detached bootout immediately. Variant B waits
+        // for the job to be gone before booting out.
+        let body = if variant == "a" {
+            format!(
+                "rm -f '{plist}'; touch '{marker_path}'; \
+                 /usr/bin/python3 -c 'import os;os.setpgrp();os.execv(\"/bin/launchctl\",\
+                 [\"launchctl\",\"bootout\",\"system\",\"system/{label}\"])' </dev/null >/dev/null 2>&1 &"
+            )
+        } else {
+            format!(
+                "rm -f '{plist}'; touch '{marker_path}'; \
+                 /usr/bin/python3 -c 'import os,time;os.setpgrp();time.sleep(3);\
+                 rc=os.spawnv(os.P_WAIT,\"/bin/launchctl\",\
+                 [\"launchctl\",\"bootout\",\"system\",\"system/{label}\"]);\
+                 open(\"{outcome_path}\",\"w\").write(\"bootout exit %d\\n\"%rc)' </dev/null >/dev/null 2>&1 &"
+            )
+        };
+        let document = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+             <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \
+             \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\
+             <plist version=\"1.0\"><dict>\
+             <key>Label</key><string>{label}</string>\
+             <key>ProgramArguments</key><array><string>/bin/sh</string><string>-c</string>\
+             <string>{body}</string></array>\
+             <key>RunAtLoad</key><true/>\
+             <key>StandardOutPath</key><string>{}</string>\
+             <key>StandardErrorPath</key><string>{}</string>\
+             </dict></plist>",
+            scratch.join(format!("{variant}.out")).display(),
+            scratch.join(format!("{variant}.err")).display()
+        );
+        std::fs::write(&plist, document).expect("write probe plist");
+        let (bootstrapped, output) =
+            sh_unchecked(&mut evidence, "launchctl", &["bootstrap", "system", &plist]);
+        evidence.log(&format!(
+            "variant {variant}: bootstrap {} -> {output}",
+            if bootstrapped { "ok" } else { "failed" }
+        ));
+
+        wait_until(
+            &format!("the variant {variant} probe job to run"),
+            Duration::from_secs(30),
+            || marker.exists(),
+        );
+        // Give the detached child time to run its bootout.
+        std::thread::sleep(Duration::from_secs(8));
+        let (registered, _) = sh_unchecked(
+            &mut evidence,
+            "launchctl",
+            &["print", &format!("system/{label}")],
+        );
+        evidence.log(&format!(
+            "variant {variant}: the service is {} after the job removed its own plist",
+            if registered {
+                "STILL REGISTERED"
+            } else {
+                "not registered"
+            }
+        ));
+        if let Ok(text) = std::fs::read_to_string(&outcome) {
+            evidence.log(&format!("variant {variant}: {text}"));
+        }
+
+        // Leave nothing behind, whatever the outcome was.
+        sh_unchecked(
+            &mut evidence,
+            "launchctl",
+            &["bootout", &format!("system/{label}")],
+        );
+        remove_if_exists(Path::new(&plist));
+        let (left, _) = sh_unchecked(
+            &mut evidence,
+            "launchctl",
+            &["print", &format!("system/{label}")],
+        );
+        assert!(
+            !left,
+            "variant {variant}: the probe label must not survive the test"
+        );
+    }
+    evidence.log("the probe cleaned up every label it created");
+    evidence.write();
+}

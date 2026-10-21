@@ -159,7 +159,8 @@ jobs:
             "WGB_EVIDENCE_DIR=$RUNNER_TEMP/wgb-evidence" \
             "$test_binary" --ignored --test-threads=1 --nocapture \
               live_loopback_handshake_and_traffic live_route_inventory_preserved \
-              live_pf_inventory_and_anchor_cycle live_forwarding_and_unattached_anchor_probe
+              live_pf_inventory_and_anchor_cycle live_forwarding_and_unattached_anchor_probe \
+              live_self_removing_job_leaves_no_registration
       - name: Upload live evidence
         if: always()
         uses: actions/upload-artifact@v4

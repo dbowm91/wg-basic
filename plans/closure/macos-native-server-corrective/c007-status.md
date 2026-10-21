@@ -167,7 +167,29 @@ anchor loaded, PF enabled, attachment absent: inert by construction
 ```
 
 From `2b672da` the Intel job also runs the full anchor cycle, so both
-architectures qualify the same controls.
+architectures qualify the same controls. Run **39558364317**
+(`macos(c007): run the PF anchor cycle on the Intel runner too`, all four
+jobs green) carries that evidence: the Intel runner's
+`m005-pf-anchor-cycle.txt` records the same four controls against its own
+`pfctl` output —
+
+```
+control A (negative): the managed anchor is invoked by neither class
+control B (positive): the host's own filter invocation of com.apple/* is recognized
+control B (positive): the host's own NAT invocation of com.apple/* is recognized
+control C (positive): a real parent invocation verifies the filter class, and the NAT class stays independently missing
+control D (collision): a longer anchor name does not verify the managed anchor
+anchor cycle complete: loaded, verified, flushed; nothing attached
+```
+
+— and the Intel runner's own main ruleset has the same shape as the arm64
+runner's:
+
+```
+$ pfctl -s rules
+scrub-anchor "com.apple/*" all fragment reassemble
+anchor "com.apple/*" all
+```
 
 ## Verification
 
