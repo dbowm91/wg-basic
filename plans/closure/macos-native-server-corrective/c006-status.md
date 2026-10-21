@@ -333,6 +333,13 @@ recorded above.
    nevertheless remained in the session's domain, because
    `launchctl bootout` stops the running job — which is that process — before
    launchd records the unload. The plist removal is the load-bearing part.
+   The mechanics are now under a hosted probe —
+   `live_self_removing_job_leaves_no_registration` in
+   `tests/wireguard_darwin_live.rs`, added at `312900a` — that runs both the
+   fixture's form and a form where the detached child waits for the job to be
+   gone before it boots out, on disposable runners on both architectures, and
+   records what each one leaves behind. The limitation stands until that
+   probe's result is read and the controlled fixture is corrected to match.
 4. **The disposable guest is deleted.** The VM bundle, the IPSW and the
    working directory are removed after the evidence is captured, so the
    evidence lives in this record and in the C002 record, not on a host.
