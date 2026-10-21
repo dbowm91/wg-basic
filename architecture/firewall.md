@@ -50,3 +50,34 @@ honest:
 Nothing in the Darwin path writes PF state, forwarding sysctls, or host
 routes. The PF backend lands with the routed-LAN corrective and stays behind
 an explicit distribution decision.
+
+## Darwin PF attachment verification (C007)
+
+The PF model in `src/firewall/pf.rs` is a **pure** module: it renders the
+installation-scoped anchor's rules, digests them for drift detection, and
+verifies that an administrator's parent configuration actually attaches the
+anchor. It performs no I/O, spawns nothing, and mutates no host state; the
+live `pfctl` backend lands with the routed-LAN corrective (C004).
+
+Attachment verification is **per rule class and token-exact**:
+
+- the filter table and the NAT table hold independent anchors that may share
+  a name, and each is attached by its own parent rule, so the two classes are
+  observed separately (`observe_attachments` → `AttachmentObservation`);
+- a rule invokes the managed anchor only when the rule's **first token** is
+  that table's keyword (`anchor` in the filter table, `nat-anchor` in the
+  NAT table) **and** the rule's **second token** is the managed anchor's
+  name as a whole token, quoted or bare;
+- the verdict (`attachment_verified`) is a **conjunction** over the required
+  classes, so a parent that references one class never satisfies a
+  requirement for both.
+
+Everything else is not an invocation, and the observation fails closed: a
+name that merely *contains* the managed name, a comment naming it, another
+table's keyword (`scrub-anchor`, `rdr-anchor`), and the anchor's own
+definition all report **missing**. The hosted macOS live fixture proves
+each of those exclusions against real `pfctl` output — a scoped parent
+anchor that invokes the managed anchor (the positive case), a parent that
+invokes a longer name (the collision case), the host's own invocations, and
+the uninvoiced main ruleset — and asserts that the fixture leaves the main
+ruleset exactly as it found it.

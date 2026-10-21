@@ -1,6 +1,6 @@
 # macOS Native Server — Post-M007 Integration and Release Corrective Roadmap
 
-Status: active corrective line, 2026-10-21. Source branch `plans/macos-native-support`; corrective handoff recorded at `fc51146e811cabebd042d852449c6e7f4f854265`; **C001 and C002 implemented at `b53ce2d` and dispositioned `blocked (narrowed)`**; **C006 closed at `e37210b`** — the two boot-path defects C002's cold-reboot qualification exposed are corrected and the leg re-run to a pass; C003–C005 remain blocked. The original M007 MUST-NOT-release verdict remains binding and nothing in this line changes it.
+Status: active corrective line, 2026-10-21. Source branch `plans/macos-native-support`; corrective handoff recorded at `fc51146e811cabebd042d852449c6e7f4f854265`; **C001 and C002 implemented at `b53ce2d` and dispositioned `blocked (narrowed)`**; **C006 closed at `e37210b`** — the two boot-path defects C002's cold-reboot qualification exposed are corrected and the leg re-run to a pass; **C007 closed at `1bf4bb3`** and **C008 closed at `62337c5`** — the two defects that no environmental condition prevented fixing; C003–C005 remain blocked. The original M007 MUST-NOT-release verdict remains binding and nothing in this line changes it.
 
 Authority: `plans/000-long-term-specification.md`; `plans/003-planning-process.md`; accepted ADR-008 and ADR-001–007; `plans/subsystems/macos-native-server-roadmap.md`; M003–M007 historical closure records. The original M007 MUST-NOT-release verdict remains binding.
 
@@ -54,11 +54,17 @@ C005 governs all distribution decisions. **ADR-008/M007 currently withhold every
 
 `C006 boot-time runtime directory and backend readiness` (**closed at `e37210b`** — C002's corrective, raised by the material post-implementation defects the cold-reboot qualification found; no successor depends on it directly, it restores C002's own reboot-persistence gate)
 
+`C007 effective PF attachment verification` (**closed at `1bf4bb3`** — C004's corrective, raised by the one defect in C004's *model* half that no environmental condition prevented fixing; it makes C004's later live backend inherit an exact, per-class verifier, and it does not close C004's live half)
+
+`C008 declared helper build input and provenance` (**closed at `62337c5`** — C005's corrective, raised by the repository-engineering half of C005 item 4; it makes the helper a declared, immutable build input with recorded provenance, and it does not close C005's release half)
+
 | Corrective | Status | Primary class | Plan | Gate |
 |---|---|---|---|---|
 | C001 — product wiring and host-only convergence | **blocked (narrowed)** 2026-10-20; implemented at `b53ce2d`; closure `plans/closure/macos-native-server-corrective/c001-status.md` | corrective / capability / invariant | `plans/implementation/macos-native-server/c001-production-wiring-host-only.md` | Existing M003/M004/M002 primitives — met. Off-host Linux-kernel peer, dual-stack off-host traffic, and API telemetry through the real authenticated HTTP path — **met on arm64** on a controlled host. Remaining: the **native Intel** arch of the same path |
 | C002 — least-privilege launchd and CLI | **blocked (narrowed)** 2026-10-21; implemented at `b53ce2d`; closure `plans/closure/macos-native-server-corrective/c002-status.md` | corrective / invariant | `plans/implementation/macos-native-server/c002-launchd-privilege-and-install.md` | Verified service identity, no root serve — met and observed at runtime. The cold-reboot leg — install, enroll, record the expectations, `shutdown -r now`, and the verify phase in the new boot — is **met on arm64** on a disposable macOS guest: the reboot observed, both roles back from the system domain, the management daemon still unprivileged, the credential and enrolled client survived, the network reconverged, the uninstall leaving nothing behind. The API-traffic leg is met on arm64 by C001's product path. Remaining: the **native Intel** arch of the same leg |
 | C006 — boot-time runtime directory and backend readiness (C002's corrective) | **closed** 2026-10-21; implemented at `e37210b`; closure `plans/closure/macos-native-server-corrective/c006-status.md` | corrective / invariant | `plans/implementation/macos-native-server/c006-boot-time-runtime-and-backend-readiness.md` | The privileged daemon creates its own runtime directory when macOS's transient `/var/run` has been recreated; the management daemon waits, bounded, for the privileged daemon to answer before its startup reconciliation; the C002 cold-reboot leg re-run to a pass |
+| C007 — effective PF attachment verification (C004's model carve-out) | **closed** 2026-10-21; implemented at `1bf4bb3`; closure `plans/closure/macos-native-server-corrective/c007-status.md` | corrective / invariant | `plans/implementation/macos-native-server/c007-effective-pf-attachment-verification.md` | The attachment verifier is token-exact and per rule class: a filter-table `anchor` rule and a NAT-table `nat-anchor` rule, each naming the managed anchor as a whole token, and a verdict that is a conjunction over the required classes. A colliding name, a comment, another table's keyword, and a reference to the other class verify nothing |
+| C008 — declared helper build input and provenance (C005's repository carve-out) | **closed** 2026-10-21; implemented at `62337c5`; closure `plans/closure/macos-native-server-corrective/c008-status.md` | corrective / infrastructure | `plans/implementation/macos-native-server/c008-declared-helper-build-input.md` | One declared, immutable build input for the `wireguard-go` helper; one builder that refuses a mismatched commit, license, or toolchain and records a provenance receipt; the macOS qualification builds through it on both architectures and keeps the receipt as an artifact |
 | C003 — bounded routed LAN | **blocked on C001 closure** | corrective / capability | `plans/implementation/macos-native-server/c003-routed-lan-no-nat.md` | Routed traffic/return-route/admin firewall evidence |
 | C004 — effective opt-in PF/NAT | **blocked on C003 and admin-integrated host** | corrective / invariant | `plans/implementation/macos-native-server/c004-pf-nat-effective-gateway.md` | TN3165, effective rules and real egress |
 | C005 — integrated release qualification | **blocked on C001/C002 and scoped network gates** | corrective / qualification | `plans/implementation/macos-native-server/c005-release-qualification-and-reconciliation.md` | Native E2E, reboot, architectures, provenance, maintainer authorization |
@@ -116,7 +122,21 @@ the native Intel residual and does not unblock anything downstream.
 C001 and C002 together deliver the host-only endpoint's mechanics; the
 host-only release still requires C005's release decision and the explicit
 maintainer ADR/M007 addendum described in §2. Nothing here authorizes a macOS
-release, a tag, a release asset, or a merge as completed support.
+release, a tag, a release artifact, or a merge as completed support.
+
+**C007 and C008 closed the two reachable defects, not the blocked work.**
+The corrective roadmap's evidence-triggered gap list named two defects that
+no environmental condition prevents fixing. The PF attachment verifier
+failed open — a substring test over two rulesets joined by a disjunction —
+and it is now token-exact and per rule class (C007). The helper's build
+input was duplicated inside the qualification workflow and declared nowhere
+in the repository, and it is now one declared, immutable input with one
+builder and a provenance receipt (C008). Neither closes a downstream gate:
+C004's *live* half (the bounded `pfctl` backend, the ordering analysis, the
+effective-traffic evidence) still waits on C003 and on an
+administrator-integrated controlled host, and C005's *release* half (the
+Eggpack integration, the exact-target package, the release decision) still
+waits on C001 and C002's closure and on the maintainer's authority.
 
 ## 4. Cross-cutting invariants and non-goals
 
@@ -130,16 +150,17 @@ Each corrective creates its own **new** `plans/closure/macos-native-server-corre
 
 Normal gates: `cargo fmt --all -- --check`, `cargo check --all-targets --locked`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`, `cargo +1.89.0 check --all-targets --locked` on supported native targets, plus all pre-existing rootful Linux CI jobs. Run true Mac traffic tests on disposable consented hosts; no silent skips. Distinguish hosted macOS fixtures from controlled/rebootable/admin-integrated host evidence. Do not release, tag, merge as completed support, or create release assets via this planning handoff.
 
-### Applied to C001/C002/C006
+### Applied to C001/C002/C006/C007/C008
 
-Three closure records exist under `plans/closure/macos-native-server-corrective/`:
-`c001-status.md`, `c002-status.md`, and `c006-status.md`. All three record the
-implementation head, the requirement-to-evidence matrix, the exact commands and
-runs, the security/ownership evidence, the docs evidence, the known
-limitations, the findings by severity, and a scope-specific verdict. C001's
-and C002's verdicts are **blocked (narrowed)**; C006's is **closed**.
+Five closure records exist under `plans/closure/macos-native-server-corrective/`:
+`c001-status.md`, `c002-status.md`, `c006-status.md`, `c007-status.md`, and
+`c008-status.md`. All five record the implementation head, the
+requirement-to-evidence matrix, the exact commands and runs, the
+security/ownership evidence, the docs evidence, the known limitations, the
+findings by severity, and a scope-specific verdict. C001's and C002's verdicts
+are **blocked (narrowed)**; C006's, C007's, and C008's are **closed**.
 
-Three rules from the qualification protocol shaped those verdicts and shape
+Four rules from the qualification protocol shaped those verdicts and shape
 every later corrective in this line:
 
 1. **A hosted macOS runner is not a controlled host.** It has no second kernel
@@ -155,4 +176,13 @@ every later corrective in this line:
    always passed would have been a false record, so §13 of the planning process
    was followed: the defects were corrected under C006, with their own plan,
    their own closure record, and their own evidence, and C002's record points
-   at them.
+   at them. C007 and C008 followed the same rule: each took one reachable
+   defect out of a blocked successor (C004's verifier, C005's build input)
+   into its own plan, record, and evidence, and each left its successor's
+   own blocked scope exactly where it was.
+4. **A fix that is unreachable by a gate is not yet evidenced.** C007's
+   correction needed a *live* `pfctl` listing to be meaningful, so the live
+   fixture gained the positive, collision, and negative controls it never
+   had, and the Intel job was extended to run them too. A correction whose
+   evidence could only be produced on one architecture would have left the
+   same kind of residual C001 and C002 carry.
