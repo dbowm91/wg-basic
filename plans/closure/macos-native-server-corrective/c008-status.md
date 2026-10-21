@@ -107,7 +107,7 @@ nor the commit nor the tag; the workflow calls the builder and contains no
 | §11.3 The builder records the receipt's evidence | The receipt is written by `write_receipt` after every verification succeeded, and carries source, license, toolchain, target, flags, artifact digest and size, and the binary's embedded build settings. A real receipt is reproduced in full below | Passed (code + observed) |
 | §11.4 The workflow builds the helper through the builder on both architectures and carries no inline clone | `.github/workflows/macos-qualification.yml`: both live jobs run `python3 scripts/build-wireguard-go-helper.py --output-dir "$RUNNER_TEMP/helper" --target "$target"` with the target derived from `uname -m`, and the Go toolchain version is read from the declaration rather than written in the workflow. The guard asserts the builder call, the absence of `git clone`, and the absence of the upstream URL | Passed (code + guard) |
 | §11.5 The receipt is retained as a CI artifact of the qualification run | Both live jobs upload `macos-helper-provenance-arm64` / `macos-helper-provenance-intel` with `if: always()` | Passed (workflow) |
-| §11.6 Every gate is green and the Linux native CI shows no regression | See *Verification* | Passed |
+| §11.6 Every gate is green and the Linux native CI shows no regression | See *Verification*. The local gates are green. The Linux native CI at this head was red for three jobs **because of C006's cross-platform startup wait** — a defect this corrective neither caused nor fixed; it is corrected under C009, and the three jobs are green there | Passed here; the Linux residual is C009's |
 
 ## The real build
 

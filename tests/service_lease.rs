@@ -48,11 +48,11 @@ impl Drop for ChildGuard {
     }
 }
 
-/// The bound the harness gives the management daemon's HTTP listener to
-/// come up: the product's own backend startup wait plus five seconds of
-/// slack. On Linux the wait is zero, so the bound is five seconds; on
-/// Darwin it is the wait the boot-race fix needs.
-fn listener_deadline() -> Duration {
+/// The bound the harness gives the management daemon to come up: the
+/// product's own backend startup wait plus five seconds of slack. On Linux
+/// the wait is zero, so the bound is five seconds; on Darwin it is the wait
+/// the boot-race fix needs.
+fn startup_deadline() -> Duration {
     wg_basic::management::BACKEND_STARTUP_WAIT + Duration::from_secs(5)
 }
 
@@ -76,7 +76,7 @@ fn wait_for_lease(state: &Path, child: &mut Child) {
     // budget when no backend is running. The bound therefore follows the
     // product's own startup wait plus the harness's slack, so a delay that
     // the product does not have is not tolerated here.
-    let deadline = Instant::now() + listener_deadline();
+    let deadline = Instant::now() + startup_deadline();
     loop {
         if ServiceLease::is_held(state).unwrap() {
             return;
@@ -91,7 +91,7 @@ fn wait_for_lease(state: &Path, child: &mut Child) {
 
 fn wait_for_listener(bind: &str, child: &mut Child) {
     let address = bind.parse().unwrap();
-    let deadline = Instant::now() + listener_deadline();
+    let deadline = Instant::now() + startup_deadline();
     loop {
         if TcpStream::connect_timeout(&address, Duration::from_millis(20)).is_ok() {
             return;

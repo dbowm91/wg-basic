@@ -9,12 +9,15 @@ Date: 2026-10-21.
 
 Source plan: `plans/implementation/macos-native-server/c009-restore-the-linux-startup-path.md`.
 Baseline: `plans/macos-native-support@e37210b` (C006's implementation head).
-Implementation head: the commit that carries the Darwin-only bound; the
-Linux CI run that proves it is named in *Verification*.
+Implementation head: `c4daf35` — *macos(c009): make the backend startup wait
+Darwin's alone again*.
 
 ## Implementation revision
 
 - Repository baseline: `e37210b` — C006's implementation.
+- Implementation commit: `c4daf35` — the Darwin-only bound, the harness
+  bounds derived from it, the guard, the unit test, and the correction to
+  C006's record.
 - C006 is the corrective this one follows. C006's own closure record
   (`plans/closure/macos-native-server-corrective/c006-status.md`) claimed
   that neither of its fixes "touches Linux" and that on Linux "the probe
@@ -93,15 +96,29 @@ $ cargo clippy --all-targets --locked -- -D warnings
 (no output — clean)
 
 $ cargo test --locked
-<total> passed; 0 failed
+666 passed; 0 failed
 
 $ cargo +1.89.0 check --all-targets --locked
 Finished `dev` profile
 ```
 
 Hosted: the **Linux native CI** is the only environment that can run the
-three Linux-only suites, so it is the evidence that matters here; the macOS
-qualification workflow covers the Darwin path.
+three Linux-only suites, so it is the evidence that matters here. Run
+**39564492722** (head `c4daf35`, `pull_request`):
+
+| Linux CI job | At the C006 head | At the fixed head |
+|---|---|---|
+| `rust` | failure (`the_management_surface_meets_its_footprint_and_latency_shape`) | **success** |
+| `upgrade-rehearsal` | failure (`serve did not bind`) | **success** |
+| `upgrade-rehearsal-rootful` | failure (`serve did not bind`) | **success** |
+| `dependency-audit` | failure (upstream `zip 6.0.0` advisory) | failure (the same pre-existing advisory) |
+| `doctor-readonly`, `update-transaction-rootful`, `system-install-systemd`, `durable-backup`, `product-management-rootful`, `wireguard-kernel`, `durable-owner`, `durable-restart`, `network-reconcile-kernel`, `network-control-e2e`, `maintenance-rootful` | success | success |
+
+The three jobs that C006 broke are green, and the only remaining red job is
+the pre-existing upstream advisory, which is not resolvable in this
+repository and is recorded below.
+
+The macOS qualification workflow covers the Darwin path at the same head.
 
 ## Security and ownership evidence
 
