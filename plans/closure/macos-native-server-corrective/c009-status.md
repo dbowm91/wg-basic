@@ -120,7 +120,8 @@ repository and is recorded below.
 
 The two later heads — the rename commit and the probe commit — are the same:
 runs **39565554446** and **39566295229** are green in every job except
-`dependency-audit`, which fails on the same upstream advisory.
+`dependency-audit`, which fails on the same upstream advisory, and so is
+the final head's run **39568147274**.
 
 The macOS qualification workflow covers the Darwin path at the same head:
 run **39564486676** (head `c4daf35`) is green in all four jobs —
