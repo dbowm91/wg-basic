@@ -63,7 +63,10 @@ use ipnet::IpNet;
 use wg_basic::domain::{
     generate_keypair, InstallationId, InterfaceId, InterfaceName, NetworkPrefix,
 };
-use wg_basic::firewall::{anchor_name, attachment_verified, render_policy};
+use wg_basic::firewall::{
+    anchor_name, attachment_verified, observe_attachments, render_policy, Attachment,
+    RequiredAttachments,
+};
 use wg_basic::launchd;
 use wg_basic::reconcile::darwin as reconcile_model;
 use wg_basic::reconcile::DesiredManagedInterface;
@@ -559,6 +562,27 @@ fn live_route_inventory_preserved() {
     evidence.write();
 }
 
+/// The first anchor name the observed ruleset invokes, if any.
+///
+/// The fixture reads the host's **real** ruleset to learn a name the host
+/// itself invokes, so the positive control proves the matcher against output
+/// this product did not write.
+fn first_invoked_anchor(ruleset: &str, keyword: &str) -> Option<String> {
+    ruleset.lines().find_map(|line| {
+        let mut tokens = line.split_whitespace();
+        let first = tokens.next()?;
+        let second = tokens.next()?;
+        if first != keyword {
+            return None;
+        }
+        let name = second.trim_matches('"');
+        if name.is_empty() {
+            return None;
+        }
+        Some(name.to_string())
+    })
+}
+
 /// M005 live mechanics: privileged PF inventory, read-only forwarding facts,
 /// rendered-anchor parse check, and a dedicated anchor load/verify/flush
 /// cycle that stays explicitly unattached (no parent invocation, no `pfctl
@@ -632,13 +656,177 @@ fn live_pf_inventory_and_anchor_cycle() {
         listed.contains(&format!("pass in on {}", endpoint.utun)),
         "loaded anchor must list our tunnel rule"
     );
+
+    // C007: the attachment verifier is per rule class and token-exact, so the
+    // fixture proves it against real `pfctl` output in both directions.
+    //
+    // Control A (negative): the main ruleset does not invoke the managed
+    // anchor, in either class.
     let parent_filter = sh(&mut evidence, "pfctl", &["-s", "rules"]);
     let parent_nat = sh(&mut evidence, "pfctl", &["-s", "nat"]);
-    assert!(
-        !attachment_verified(&parent_filter, &parent_nat, &anchor),
-        "fixture anchor must stay unattached (no parent invocation)"
+    let observation = observe_attachments(&parent_filter, &parent_nat, &anchor);
+    assert_eq!(
+        observation.filter,
+        Attachment::Missing,
+        "the main ruleset must not invoke the managed anchor in the filter class"
     );
-    evidence.log("anchor loaded but correctly unattached: degraded-by-design confirmed");
+    assert_eq!(
+        observation.nat,
+        Attachment::Missing,
+        "the main ruleset must not invoke the managed anchor in the NAT class"
+    );
+    assert!(
+        !attachment_verified(
+            &parent_filter,
+            &parent_nat,
+            &anchor,
+            RequiredAttachments::FILTER_ONLY
+        ),
+        "an uninvoiced anchor verifies nothing"
+    );
+    assert!(
+        !attachment_verified(
+            &parent_filter,
+            &parent_nat,
+            &anchor,
+            RequiredAttachments::FILTER_AND_NAT
+        ),
+        "an uninvoiced anchor verifies nothing"
+    );
+    evidence.log("control A (negative): the managed anchor is invoked by neither class");
+
+    // Control B (positive): the matcher finds a real invocation the host
+    // itself printed, in each class, and does not confuse it with the managed
+    // anchor.
+    match first_invoked_anchor(&parent_filter, "anchor") {
+        Some(host_anchor) => {
+            let found = observe_attachments(&parent_filter, &parent_nat, &host_anchor);
+            assert_eq!(
+                found.filter,
+                Attachment::Invoked,
+                "a real filter invocation the host printed must be recognized"
+            );
+            evidence.log(&format!(
+                "control B (positive): the host's own filter invocation of {host_anchor} is recognized"
+            ));
+        }
+        None => evidence.log(
+            "control B (positive): the host's main ruleset invokes no filter anchor; this control is not exercised on this host",
+        ),
+    }
+    match first_invoked_anchor(&parent_nat, "nat-anchor") {
+        Some(host_anchor) => {
+            let found = observe_attachments(&parent_filter, &parent_nat, &host_anchor);
+            assert_eq!(
+                found.nat,
+                Attachment::Invoked,
+                "a real NAT invocation the host printed must be recognized"
+            );
+            evidence.log(&format!(
+                "control B (positive): the host's own NAT invocation of {host_anchor} is recognized"
+            ));
+        }
+        None => evidence.log(
+            "control B (positive): the host's NAT ruleset invokes no anchor; this control is not exercised on this host",
+        ),
+    }
+
+    // Control C (positive, scoped fixture): a parent anchor that invokes the
+    // managed anchor, observed through real `pfctl` output. The parent is
+    // itself never invoked by the main ruleset, so the chain is inert.
+    let parent_anchor = format!("{anchor}-parent");
+    let parent_file = scratch.join("parent.conf");
+    std::fs::write(&parent_file, format!("anchor \"{anchor}\" all\n")).expect("parent file");
+    let parent_arg = parent_file.to_string_lossy().into_owned();
+    sh(
+        &mut evidence,
+        "pfctl",
+        &["-a", &parent_anchor, "-f", &parent_arg],
+    );
+    let parent_rules = sh(
+        &mut evidence,
+        "pfctl",
+        &["-a", &parent_anchor, "-s", "rules"],
+    );
+    let parent_observation = observe_attachments(&parent_rules, "", &anchor);
+    assert_eq!(
+        parent_observation.filter,
+        Attachment::Invoked,
+        "a real parent invocation must verify the filter class"
+    );
+    assert_eq!(
+        parent_observation.nat,
+        Attachment::Missing,
+        "a filter-table parent does not attach the NAT class"
+    );
+    assert!(
+        attachment_verified(&parent_rules, "", &anchor, RequiredAttachments::FILTER_ONLY),
+        "the filter class alone satisfies a filter-only requirement"
+    );
+    assert!(
+        !attachment_verified(
+            &parent_rules,
+            "",
+            &anchor,
+            RequiredAttachments::FILTER_AND_NAT
+        ),
+        "one attached class never satisfies a requirement for two"
+    );
+    evidence.log(
+        "control C (positive): a real parent invocation verifies the filter class, and the NAT class stays independently missing",
+    );
+
+    // Control D (collision): a parent that invokes a *longer* anchor name
+    // must not verify the managed anchor.
+    let collision_anchor = format!("{anchor}-collision");
+    let collision_parent = format!("{anchor}-collision-parent");
+    let collision_file = scratch.join("collision.conf");
+    std::fs::write(
+        &collision_file,
+        format!("anchor \"{collision_anchor}\" all\n"),
+    )
+    .expect("collision file");
+    let collision_arg = collision_file.to_string_lossy().into_owned();
+    sh(
+        &mut evidence,
+        "pfctl",
+        &["-a", &collision_parent, "-f", &collision_arg],
+    );
+    let collision_rules = sh(
+        &mut evidence,
+        "pfctl",
+        &["-a", &collision_parent, "-s", "rules"],
+    );
+    let collision_observation = observe_attachments(&collision_rules, "", &anchor);
+    assert_eq!(
+        collision_observation.filter,
+        Attachment::Missing,
+        "a name that merely contains the managed name is not an invocation"
+    );
+    assert!(
+        !attachment_verified(
+            &collision_rules,
+            "",
+            &anchor,
+            RequiredAttachments::FILTER_ONLY
+        ),
+        "a colliding name verifies nothing"
+    );
+    evidence.log("control D (collision): a longer anchor name does not verify the managed anchor");
+
+    // The fixture must not have touched the main ruleset.
+    let parent_filter_after = sh(&mut evidence, "pfctl", &["-s", "rules"]);
+    assert_eq!(
+        parent_filter_after, parent_filter,
+        "the fixture must leave the main ruleset exactly as it found it"
+    );
+
+    sh(
+        &mut evidence,
+        "pfctl",
+        &["-a", &collision_parent, "-F", "all"],
+    );
+    sh(&mut evidence, "pfctl", &["-a", &parent_anchor, "-F", "all"]);
     sh(&mut evidence, "pfctl", &["-a", &anchor, "-F", "rules"]);
     let flushed = sh(&mut evidence, "pfctl", &["-a", &anchor, "-s", "rules"]);
     assert!(!flushed.contains("pass"), "anchor must flush clean");
@@ -903,8 +1091,33 @@ fn live_forwarding_and_unattached_anchor_probe() {
     );
     let parent_filter = sh(&mut evidence, "pfctl", &["-s", "rules"]);
     let parent_nat = sh(&mut evidence, "pfctl", &["-s", "nat"]);
+    let observation = observe_attachments(&parent_filter, &parent_nat, &anchor);
+    assert_eq!(
+        observation.filter,
+        Attachment::Missing,
+        "fixture anchor must stay unattached in the filter class even while PF is enabled"
+    );
+    assert_eq!(
+        observation.nat,
+        Attachment::Missing,
+        "fixture anchor must stay unattached in the NAT class even while PF is enabled"
+    );
     assert!(
-        !attachment_verified(&parent_filter, &parent_nat, &anchor),
+        !attachment_verified(
+            &parent_filter,
+            &parent_nat,
+            &anchor,
+            RequiredAttachments::FILTER_ONLY
+        ),
+        "fixture anchor must stay unattached even while PF is enabled"
+    );
+    assert!(
+        !attachment_verified(
+            &parent_filter,
+            &parent_nat,
+            &anchor,
+            RequiredAttachments::FILTER_AND_NAT
+        ),
         "fixture anchor must stay unattached even while PF is enabled"
     );
     evidence.log("anchor loaded, PF enabled, attachment absent: inert by construction");

@@ -34,8 +34,9 @@ mod service_darwin;
 mod service_other;
 
 pub use pf::{
-    anchor_name, attachment_verified, render_policy, rules_digest, teardown_order, PfError,
-    PfRuleSet, ANCHOR_PREFIX, IPV4_FORWARDING_SYSCTL, IPV6_FORWARDING_SYSCTL,
+    anchor_name, attachment_verified, observe_attachments, render_policy, rules_digest,
+    teardown_order, Attachment, AttachmentObservation, PfError, PfRuleSet, RequiredAttachments,
+    ANCHOR_PREFIX, IPV4_FORWARDING_SYSCTL, IPV6_FORWARDING_SYSCTL,
 };
 
 pub use policy::{
