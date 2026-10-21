@@ -135,6 +135,8 @@ $ file ~/wg-helper-build/aarch64/wireguard-go ~/wg-helper-build/x86_64/wireguard
 Two independent arm64 builds, each from a fresh clone of the declared
 commit, produced the **identical** digest: the declared build input is
 byte-reproducible, and the two architectures differ only by target triple.
+The hosted runners later produced the **same two digests** (see *Hosted
+qualification*), so the reproducibility holds across machines as well.
 
 The arm64 receipt, reproduced in full:
 
@@ -248,9 +250,35 @@ qualification* below.
 The macOS qualification runs of the implementation head build the helper
 through the declared builder on the arm64 and the Intel runner, and upload
 the receipt as `macos-helper-provenance-arm64` /
-`macos-helper-provenance-intel`. The receipts carry the same upstream
-commit and license as the local build, and the per-target digests differ
-only by the target triple.
+`macos-helper-provenance-intel`. From run **39557938154**
+(`macos(c008): declare the helper build input and record its provenance`, all
+four jobs green), the two receipts:
+
+| | arm64 runner | Intel runner |
+|---|---|---|
+| target | `aarch64-apple-darwin` | `x86_64-apple-darwin` |
+| source commit | `f333402bd9cbe0f3eeb02507bd14e23d7d639280` | the same |
+| release tag | `0.0.20250522` | the same |
+| license | MIT, `91276db973f25602…` | the same |
+| toolchain | `go1.27.1` (`darwin/arm64`) | `go1.27.1` (`darwin/amd64`) |
+| build flags | `-trimpath` | `-trimpath` |
+| artifact SHA-256 | `ccc10eaf95306a80eb1fe91fee2d9c9d5f8585be43b44384cb2a28fa1093e705` | `98ed1addfddc0eb28b7458a7d23b523c76d16bf264fadc98b4cd58e2f3fe6dd9` |
+| artifact size | 4 674 242 bytes | 4 968 784 bytes |
+| VCS stamp | `vcs.revision=f333402bd9cbe…`, `vcs.modified=false` | the same |
+| build run | `39557938154` attempt 1 | the same |
+| developer path in the receipt | none | none |
+
+**Both hosted artifacts are byte-identical to the locally built ones.** The
+arm64 runner's digest equals the digest this maintainer's M4 Pro produced
+from the same declared commit, and the Intel runner's digest equals the
+cross-built one. The declared build input is therefore reproducible not only
+across repeated builds but **across machines and across architectures**: the
+same source, toolchain, and flags give the same bytes for a given target,
+and different targets give different bytes.
+
+The live fixtures of the same run then qualified against those helpers: the
+helper digest the fixture checks is the one the builder recorded, and the
+run's `live-arm64` and `live-intel-tunnel` jobs are green.
 
 ## Security and ownership evidence
 
