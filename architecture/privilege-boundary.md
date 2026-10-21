@@ -53,6 +53,31 @@ helper digest and its own identity from it. A root-owned receipt in a
 management-owned directory would be unreadable by the management daemon that
 owns it.
 
+## Darwin boot-time runtime and backend readiness (C006)
+
+On macOS `/var/run` is `/private/var/run`, and macOS **recreates it at every
+boot**. A directory created under it by the installer is therefore gone in the
+next boot, and the privileged daemon would find no runtime directory to bind
+its socket in. The privileged daemon now creates its own runtime directory
+when it is missing, with the installer's published mode (`0755`), before it
+binds. It never adopts, widens, or repairs a directory it did not create: an
+existing directory is left exactly as it is, and a symlink or a non-directory
+in its place is refused. This is the Darwin analogue of the Linux unit's
+`RuntimeDirectory=`.
+
+`launchd` starts the system-domain jobs concurrently — measured 174 ms apart on
+a cold boot — so the management daemon cannot assume the privileged daemon is
+already listening. The management daemon now waits, **bounded** (ten seconds),
+for the privileged daemon to answer a read-only capability request — the same
+request the doctor makes — before its startup reconciliation. A missing
+socket, a refused connection, an unanswered request, and a refusal all mean
+"not yet". The wait adds no privilege and opens no new channel: it is a
+read-only request over the socket the management daemon is already permitted
+to use. The listener still comes up either way, so a backend that never
+appears leaves the deployment degraded rather than absent — the same
+"degraded, not absent" contract the Linux units express with `Requires=` and
+`After=` plus their `doctor` pre-flight.
+
 ## The isolated Darwin OS boundary (C001)
 
 The Darwin kernel boundary needs FFI. It lives in one small workspace member,

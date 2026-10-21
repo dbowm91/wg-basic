@@ -181,6 +181,16 @@ reboot proof. The boot-time job is installed by writing its plist and is
 `RunAtLoad` job immediately, which would run the verify phase against a host
 that had not rebooted yet.
 
+The leg has been run end to end on a disposable arm64 macOS guest and
+**passes**. Two boot-path defects had to be corrected first, and both are
+worth knowing about because they are invisible to any qualification that does
+not actually reboot a host: macOS recreates `/var/run` at every boot, so the
+privileged daemon now creates its own runtime directory when it is missing,
+and `launchd` starts the two jobs concurrently, so the management daemon now
+waits, bounded, for the privileged daemon to answer before its startup
+reconciliation. The leg proves the arm64 path only; the native Intel arch
+needs a native Intel host that can be rebooted, and a hosted runner cannot be.
+
 ```sh
 cargo test --locked --no-run --test wireguard_darwin_controlled
 WGB_C002_REBOOT_PHASE=arm   sudo ./target/debug/deps/wireguard_darwin_controlled-* \
