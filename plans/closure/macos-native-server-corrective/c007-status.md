@@ -118,7 +118,7 @@ observation is fail-closed: an ambiguous observation is `Missing`, never
 | §11.3 A parent that references the managed name in any other way verifies nothing | `a_longer_name_that_contains_the_managed_name_is_not_an_invocation`, `a_comment_naming_the_managed_anchor_is_not_an_invocation`, `another_tables_keyword_is_not_an_invocation`, `the_anchor_must_be_named_as_a_whole_token`; the live control D against a real `pfctl` listing of `anchor "wg-basic-live-2593-collision" all` | Passed (code + unit + live) |
 | §11.4 A required class that is not invoked makes the verdict false even when the other class is invoked | `the_two_rule_classes_are_verified_independently` asserts a filter-only parent and an NAT-only parent each fail `FILTER_AND_NAT`; `AttachmentObservation::verified` is a conjunction. The live control C asserts that a real parent invocation verifies `FILTER_ONLY` and **not** `FILTER_AND_NAT` | Passed (code + unit + live) |
 | §11.5 The live fixture's unattached-anchor assertion still holds, and the fixture proves the positive and collision cases against real `pfctl` output | `tests/wireguard_darwin_live.rs::live_pf_inventory_and_anchor_cycle` now runs controls A (negative), B (the host's own invocations), C (a scoped parent that invokes the managed anchor) and D (a colliding name), asserts the per-class observation, and asserts the main ruleset is byte-identical before and after. The hosted arm64 evidence reproduces all four; the Intel job runs the same test from `2b672da` | Passed (live, arm64 and Intel) |
-| §11.6 Every gate is green and the Linux native CI shows no regression | See *Verification* | Passed |
+| §11.6 Every gate is green and the Linux native CI shows no regression | See *Verification*. The local gates are green; the Linux native CI at this head was red for three jobs **because of C006's cross-platform startup wait**, which this corrective neither caused nor fixed — it is corrected under C009, and the three jobs are green there | Passed here; the Linux residual is C009's |
 | §3.3 The live `pfctl` backend, the ordering analysis, the effective-traffic evidence, the administrator distribution gate, and the NAT66/routed-IPv6 semantics stay with C004 | Nothing in this record implements them. C004's plan and its blocked disposition are unchanged; only its step 2's *model* half is closed | Passed (scope held) |
 
 ## Live qualification
@@ -225,9 +225,16 @@ Hosted:
 
 - macOS qualification run **39557082295**: `gates-arm64`, `gates-intel`,
   `live-arm64`, `live-intel-tunnel` — all four green.
-- The Linux native CI run of the same head passes every job except the
-  pre-existing `dependency-audit` upstream `zip 6.0.0` advisory, which is
-  unrelated to this corrective and is recorded below.
+- **The Linux native CI at this head was red, and not only for the
+  pre-existing `dependency-audit` upstream `zip 6.0.0` advisory.** Three
+  further jobs failed — `rust`, `upgrade-rehearsal`, and
+  `upgrade-rehearsal-rootful` — for a reason that belongs to C006, not to
+  this corrective: C006's backend startup wait was applied on every
+  platform and delayed the Linux management daemon's listener. The
+  pre-existing advisory hid those three failures in the same red runs. The
+  Linux path is restored, and the three jobs are green again, under
+  **C009** (`plans/closure/macos-native-server-corrective/c009-status.md`);
+  this corrective neither caused nor fixed it.
 - The Linux cross-clippy gate, which cannot run on this host without a cross
   C toolchain, runs again now that the documented `zig cc` wrapper is
   restored on the host:
