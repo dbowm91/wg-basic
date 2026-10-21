@@ -118,6 +118,10 @@ The three jobs that C006 broke are green, and the only remaining red job is
 the pre-existing upstream advisory, which is not resolvable in this
 repository and is recorded below.
 
+The two later heads — the rename commit and the probe commit — are the same:
+runs **39565554446** and **39566295229** are green in every job except
+`dependency-audit`, which fails on the same upstream advisory.
+
 The macOS qualification workflow covers the Darwin path at the same head:
 run **39564486676** (head `c4daf35`) is green in all four jobs —
 `gates-arm64`, `gates-intel`, `live-arm64`, `live-intel-tunnel` — and the
