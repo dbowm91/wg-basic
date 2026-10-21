@@ -118,7 +118,12 @@ The three jobs that C006 broke are green, and the only remaining red job is
 the pre-existing upstream advisory, which is not resolvable in this
 repository and is recorded below.
 
-The macOS qualification workflow covers the Darwin path at the same head.
+The macOS qualification workflow covers the Darwin path at the same head:
+run **39564486676** (head `c4daf35`) is green in all four jobs —
+`gates-arm64`, `gates-intel`, `live-arm64`, `live-intel-tunnel` — and the
+live jobs exercise the Darwin boot path's own fixtures, including the
+privileged IPC, the PF anchor cycle, the launchd cycle, and the management
+daemon's unprivileged identity.
 
 ## Security and ownership evidence
 
