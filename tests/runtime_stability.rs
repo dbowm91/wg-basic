@@ -57,6 +57,14 @@ struct ProcSample {
     rss_kib: u64,
 }
 
+/// The bound the harness gives the management daemon's HTTP listener to
+/// come up: the product's own backend startup wait plus five seconds of
+/// slack. On Linux the wait is zero, so the bound is five seconds; on
+/// Darwin it is the wait the boot-race fix needs.
+fn listener_deadline() -> Duration {
+    wg_basic::management::BACKEND_STARTUP_WAIT + Duration::from_secs(5)
+}
+
 /// Linux-only: `/proc/<pid>` sampling; no `/proc` on Darwin. Darwin resource
 /// qualification in M001 is via the manual smoke test (RSS via `ps`); the
 /// HTTP/row-growth contract below is portable and runs on both OSes.
@@ -134,11 +142,13 @@ fn repeated_valid_and_rejected_http_requests_have_bounded_resource_and_row_growt
             .spawn()
             .unwrap(),
     );
-    // The management daemon waits, bounded, for the privileged daemon to
-    // answer before its startup reconciliation, so the listener can come up
-    // after that budget when no backend is running. The deadline here is the
-    // harness's own "it hung" bound, not a product contract.
-    let deadline = Instant::now() + Duration::from_secs(30);
+    // The harness's own "it hung" bound. The management daemon waits,
+    // bounded, for the privileged daemon before its startup reconciliation on
+    // the platforms that need it, so the listener can come up after that
+    // budget when no backend is running. The bound therefore follows the
+    // product's own startup wait plus the harness's slack, so a delay that
+    // the product does not have is not tolerated here.
+    let deadline = Instant::now() + listener_deadline();
     loop {
         if TcpStream::connect_timeout(&addr, Duration::from_millis(25)).is_ok() {
             break;

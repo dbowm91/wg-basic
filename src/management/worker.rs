@@ -85,7 +85,16 @@ pub const DEFAULT_REPLY_DEADLINE: Duration = Duration::from_secs(5);
 /// the startup reconciliation races the backend's socket, exhausts its short
 /// retry budget, and the deployment comes back **degraded** after a cold
 /// reboot with nothing to retry it.
+///
+/// The wait is **Darwin's need**. On Linux the units already order the two
+/// services, and the wait would only delay the listener in the harnesses
+/// that start the management daemon without a privileged daemon beside it —
+/// so the bound is zero there and the Linux startup path is what it was
+/// before the Darwin fix.
+#[cfg(target_os = "macos")]
 pub const BACKEND_STARTUP_WAIT: Duration = Duration::from_secs(10);
+#[cfg(not(target_os = "macos"))]
+pub const BACKEND_STARTUP_WAIT: Duration = Duration::ZERO;
 
 /// The interval between two backend readiness probes.
 const BACKEND_PROBE_INTERVAL: Duration = Duration::from_millis(250);
@@ -908,10 +917,17 @@ pub fn spawn(config: WorkerConfig) -> Result<WorkerStartup, ManagementError> {
 /// Returns whether the backend answered within the budget. The caller does
 /// not treat a timeout as fatal: the listener must come up either way, and a
 /// backend that never answers is reported as degraded.
+///
+/// A budget of zero means **no wait at all**: the loop reports "not ready"
+/// before it sends a request, so a platform that does not need the wait
+/// neither probes nor sleeps.
 fn wait_for_backend(socket: &Path, budget: Duration) -> bool {
     use crate::protocol::{request, RequestOperation, ResponseBody};
     let deadline = std::time::Instant::now() + budget;
     loop {
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
         if request(socket, RequestOperation::InspectCapabilities, u64::MAX)
             .is_ok_and(|response| matches!(response, ResponseBody::Capabilities(_)))
         {
@@ -1459,6 +1475,27 @@ mod tests {
             &absent_socket(&temp),
             Duration::from_millis(200)
         ));
+    }
+
+    #[tokio::test]
+    async fn the_startup_wait_bound_is_darwin_specific() {
+        // The wait exists because launchd starts the two jobs concurrently.
+        // Linux's units order them, so the bound is zero there and the
+        // listener must not be delayed.
+        if cfg!(target_os = "macos") {
+            assert_eq!(BACKEND_STARTUP_WAIT, Duration::from_secs(10));
+        } else {
+            assert_eq!(BACKEND_STARTUP_WAIT, Duration::ZERO);
+        }
+        // A zero budget is not a wait: it reports "not ready" without asking
+        // the backend anything.
+        let temp = TempDir::new();
+        let started = std::time::Instant::now();
+        assert!(!wait_for_backend(&absent_socket(&temp), Duration::ZERO));
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "a zero budget must not probe or sleep"
+        );
     }
 
     #[tokio::test]
