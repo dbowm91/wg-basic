@@ -211,9 +211,15 @@ Finished `dev` profile
 $ cargo check --locked --target x86_64-apple-darwin --all-targets
 Finished `dev` profile
 
-$ cargo check --locked --target x86_64-unknown-linux-gnu --all-targets
+$ CC_x86_64_unknown_linux_gnu="$HOME/wg-toolchain/zigcc" \
+  AR_x86_64_unknown_linux_gnu="zig ar" \
+  cargo check --locked --target x86_64-unknown-linux-gnu --all-targets
 Finished `dev` profile
 ```
+
+(The Linux cross target needs a cross C compiler for `libsqlite3-sys`'s build
+script; the `zig cc` wrapper is the recipe `docs/development.md` already
+documents, and the wrapper on this host has been restored.)
 
 Hosted:
 
