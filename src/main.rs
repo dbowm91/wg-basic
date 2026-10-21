@@ -471,6 +471,16 @@ fn run_darwin_netd(
         policy.extend(vec![identity.uid]);
     }
     let shutdown = Arc::new(AtomicBool::new(false));
+    // The socket's runtime directory lives under `/var/run`, which macOS
+    // recreates at every boot: the copy the installer writes does not survive
+    // a reboot. The daemon launchd starts at boot has to create it itself, or
+    // it can never bind its socket and the deployment does not come back.
+    let runtime_directory = socket
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .ok_or_else(|| "the netd socket path must have a parent directory".to_owned())?;
+    wg_basic::launchd::ensure_runtime_directory(&runtime_directory)
+        .map_err(|_| "could not create the netd runtime directory".to_owned())?;
     let Some(server) = bind_privileged_socket(socket.as_path(), policy, &shutdown)? else {
         // The daemon was asked to stop while it was still starting up. The
         // socket it had just created is released; nothing is claimed to have
