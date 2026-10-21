@@ -330,16 +330,34 @@ recorded above.
 3. **The boot-time job's registration lingers in the session.** The verify
    phase removes its own plist and its staged binary, so the job **cannot run
    in a later boot**, which is what the leg requires. Its registration
-   nevertheless remained in the session's domain, because
-   `launchctl bootout` stops the running job — which is that process — before
-   launchd records the unload. The plist removal is the load-bearing part.
-   The mechanics are now under a hosted probe —
+   nevertheless remained in the session's domain. The mechanics are now
+   under a hosted probe —
    `live_self_removing_job_leaves_no_registration` in
-   `tests/wireguard_darwin_live.rs`, added at `312900a` — that runs both the
-   fixture's form and a form where the detached child waits for the job to be
-   gone before it boots out, on disposable runners on both architectures, and
-   records what each one leaves behind. The limitation stands until that
-   probe's result is read and the controlled fixture is corrected to match.
+   `tests/wireguard_darwin_live.rs`, added at `312900a` — that runs several
+   self-removal forms on disposable runners on both architectures and
+   records what each one leaves behind.
+
+   **Observed on the hosted Intel runner** (run `39564486676`, the
+   `m006-self-removal-probe` evidence): the fixture's form — the job removes
+   its own plist and spawns a detached `launchctl bootout system
+   system/<label>` in its own process group — leaves the service
+   **registered**: `launchctl print system/<label>` still prints the whole
+   record, `state = not running`, `runs = 1`, `last exit code = 0`. A variant
+   that delays the bootout by three seconds leaves it registered too, **and
+   never wrote its outcome file at all** — which is the mechanism: the
+   bootout helper is a descendant of the job, and launchd tears the job's
+   remaining descendants down when the job exits, so the helper dies before
+   it can complete the unload. The record's original explanation — that
+   `launchctl bootout` stops the running job before launchd records the
+   unload — is therefore not what happens; the helper's own death is.
+
+   Two further variants (a new **session** rather than a new process group,
+   with and without the two-argument bootout form) are under test at
+   `bc88587`. The limitation stands until that result is read: the
+   registration is inert — the plist is gone, so the job cannot run in a
+   later boot, and with `RunAtLoad` and no `KeepAlive` a job that has
+   already run does not run again in this boot — but it is residue, and the
+   plist removal remains the load-bearing part.
 4. **The disposable guest is deleted.** The VM bundle, the IPSW and the
    working directory are removed after the evidence is captured, so the
    evidence lives in this record and in the C002 record, not on a host.
