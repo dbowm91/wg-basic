@@ -39,10 +39,9 @@ BINARY_NAME = "wireguard-go"
 
 # The only triples the declaration may name, and how they map onto Go's
 # GOOS/GOARCH pair. A triple that is not in this table is refused rather than
-# guessed.
+# guessed. Apple silicon is the only Darwin target for this line (ADR-009).
 TARGET_TABLE = {
     "aarch64-apple-darwin": ("darwin", "arm64"),
-    "x86_64-apple-darwin": ("darwin", "amd64"),
 }
 
 

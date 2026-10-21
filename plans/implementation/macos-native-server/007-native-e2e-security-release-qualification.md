@@ -1,14 +1,14 @@
 # macOS Native Server M007 — Native macOS End-to-End, Security, and Release Qualification
 
-Status: **blocked** — verdict recorded in `plans/closure/macos-native-server/007-status.md` and updated 2026-10-14 with hosted evidence (M003–M004 closed, M005–M006 narrowed, MUST-NOT-release stands; residuals: off-host Linux interop, effective NAT + v6 egress, reboot, Intel launchd, release audit + authorization).
+Status: **blocked** — verdict recorded in `plans/closure/macos-native-server/007-status.md` and updated 2026-10-14 with hosted evidence (M003–M004 closed, M005–M006 narrowed, MUST-NOT-release stands; residuals: off-host Linux interop, effective NAT + v6 egress, reboot, Intel launchd, release audit + authorization). 2026-10-21: the architecture scope is narrowed to Apple silicon by ADR-009 (the Intel launchd residual is retired by scope, not by measurement); MUST-NOT-release stands.
 Primary class: qualification / invariant
 Roadmap: plans/subsystems/macos-native-server-roadmap.md M007
 Baseline: main 47c72b0e81d569d48396c615120453bf0cf1d46e; reconcile with actual implementation head.
-Authority: plans/000-long-term-specification.md; plans/002-long-term-roadmap.md; plans/003-planning-process.md; plans/adr/008-macos-headless-platform-backends.md; existing Linux ADRs remain in force.
+Authority: plans/000-long-term-specification.md; plans/002-long-term-roadmap.md; plans/003-planning-process.md; plans/adr/008-macos-headless-platform-backends.md; plans/adr/009-apple-silicon-only-darwin-target.md; existing Linux ADRs remain in force.
 
 ## Objective
 
-Demonstrate actual supported macOS headless WireGuard-server capability with native install, API enrollment, traffic, IPv4 NAT, routed IPv6, restart/recovery and safe foreign-state preservation on Apple Silicon and Intel. Record support boundary and future limitations without weak evidence.
+Demonstrate actual supported macOS headless WireGuard-server capability with native install, API enrollment, traffic, IPv4 NAT, routed IPv6, restart/recovery and safe foreign-state preservation on Apple Silicon (`aarch64-apple-darwin`). Record support boundary and future limitations without weak evidence.
 
 ## Non-goals
 
@@ -42,7 +42,7 @@ Repeat threat review with new trusted helper, launchd identities, Darwin IPC, pr
 
 ## Native and regression tests
 
-Native arm64 and native x86_64 full lifecycle with exact packet/path assertions; 2+ host types/versions within supported floor if available; route/firewall diff snapshots and foreign service evidence; endpoint roaming; repeated reboot/kill/restart tests; dual-stack split vs full routes; IPv4 NAT and IPv6 no-NAT66. Full Linux CI, Linux rootful E2E, MSRV/clippy/format and release dry-run. Record failures rather than elide missing runners.
+Native arm64 full lifecycle with exact packet/path assertions; 2+ host types/versions within supported floor if available; route/firewall diff snapshots and foreign service evidence; endpoint roaming; repeated reboot/kill/restart tests; dual-stack split vs full routes; IPv4 NAT and IPv6 no-NAT66. Full Linux CI, Linux rootful E2E, MSRV/clippy/format and release dry-run. Record failures rather than elide missing runners.
 
 ## Verification and documentation
 
@@ -51,13 +51,32 @@ Archive exact commands, system logs (with secrets redacted), source/tag SHA, OS 
 ## Explicit acceptance criteria
 
 - Real approved headless macOS gateway service operates end to end with clients and authenticates management users.
-- IPv4 NAT and IPv6 routed traffic, client lifecycle, disabled state, crash/restart and reinstallation all pass on both native target architectures.
+- IPv4 NAT and IPv6 routed traffic, client lifecycle, disabled state, crash/restart and reinstallation all pass on the native target architecture.
 - Fail-closed network/PF ownership, foreign preservation, privileged IPC, signing/provenance policy and package integrity reviewed with no unresolved high/medium findings.
 - Exact version/architecture qualification and docs agree; Linux CI passes.
 - Archive honest release decision; if macOS PF policy permits only advanced-admin deployment, label it accordingly, not general consumer support.
 
 ## Stop conditions
 
-If PF TN3165 gate not resolved for intended distribution, native Intel evidence absent while claiming Intel, production trust assertions exceed checksums-only policy, native traffic/NAT fails or unrelated routing/firewall can be destroyed: do not mark full support closed.
+If PF TN3165 gate not resolved for intended distribution, any native Intel support is claimed (Intel is retired by ADR-009, so a claim is a stop), production trust assertions exceed checksums-only policy, native traffic/NAT fails or unrelated routing/firewall can be destroyed: do not mark full support closed.
 
 Only after implementation write plans/closure/macos-native-server/007-status.md with exact head, commands/results, native host evidence, preservation and privilege matrix, unresolved severity-graded findings, docs, and a justified closure disposition. Do not edit historical Linux closure evidence.
+
+## Amendment (2026-10-21)
+
+ADR-009 makes Apple silicon (`aarch64-apple-darwin`) the only supported Darwin
+target for this line, so this plan's architecture scope narrows from Apple
+Silicon and Intel to Apple Silicon alone. The reason is structural, not
+cosmetic: the macOS controlled-host evidence exists for Apple silicon only —
+the arm64 product path against an independent Linux-kernel peer (C001) and the
+arm64 cold-reboot leg on a disposable macOS guest with an observed reboot
+(C002) — and no hosted macOS runner can reboot or reach the private-LAN peer,
+so the Intel legs were structurally unreachable rather than merely
+unattempted. The retired Intel capability is retired by scope, not by new
+measurement, and this plan never claimed Intel evidence.
+
+Nothing else in this plan changes. The TN3165/PF distribution gate, the
+no-release-without-explicit-authority rules, the signing and trust-root
+honesty rules, the old-binary and rollback requirements, and every acceptance
+criterion about evidence quality stand exactly as written. The macOS support
+floor stays macOS 13.0, and Linux is unaffected.

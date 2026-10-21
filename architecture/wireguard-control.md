@@ -61,7 +61,7 @@ anchored at **build time**, by a declared input.
 `helper/wireguard-go.provenance.json` is the single declaration of that
 input: the upstream repository, the release tag, the immutable commit, the
 SPDX license identifier and the license text marker to look for, the Go
-toolchain version, the supported target triples, and the build flags.
+toolchain version, the supported target triple, and the build flags.
 Nothing else in the repository names the upstream source.
 
 `scripts/build-wireguard-go-helper.py` is the only builder. It refuses to

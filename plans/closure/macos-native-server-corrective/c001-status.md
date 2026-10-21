@@ -1,14 +1,16 @@
 # macOS Native Server C001 — Production Backend Wiring and Host-Only Convergence
 
-Disposition: **blocked** (narrowed again 2026-10-20: the production Darwin wiring
-and the **arm64 controlled-host** product path are now closed with observed
-evidence — a real installer, a real `netd` and unprivileged `serve`, the real
-authenticated HTTP surface, an off-host independent Linux-kernel WireGuard peer,
-a real handshake, dual-stack IPv4/IPv6 traffic, and API telemetry; what remains
-is the **native Intel** arch of the same product path, which needs the off-host
-peer to be reachable from a hosted macOS runner).
+Disposition: **closed** (2026-10-21). The 2026-10-20 disposition was **blocked
+(narrowed again)**: the production Darwin wiring and the **arm64 controlled-host**
+product path were closed with observed evidence — a real installer, a real
+`netd` and unprivileged `serve`, the real authenticated HTTP surface, an
+off-host independent Linux-kernel WireGuard peer, a real handshake, dual-stack
+IPv4/IPv6 traffic, and API telemetry — and what remained was the **native
+Intel** arch of the same product path. That residual was retired by scope, not
+by new measurement: ADR-009 makes Apple silicon the only supported Darwin
+target.
 
-Date: 2026-10-20.
+Date: 2026-10-20 (implementation); 2026-10-21 (scope amendment and closure).
 
 ## Implementation revision
 
@@ -36,7 +38,7 @@ Date: 2026-10-20.
 | §6 Operational contract: deterministic replay, cleanup, retention or degraded results for enable/disable/peer mutations/SIGTERM/helper crash/netd crash/repeat/concurrent/replace; document the helper recovery and no-foreign-adoption contract | The Darwin service serializes observe/plan/apply/verify with one installation-wide lock; the receipt registry survives a reader restart and re-proves itself; the ownership and no-foreign-adoption contract is written into `architecture/wireguard-control.md` and `architecture/ownership.md`. Repeated apply is idempotent through the portable planner's keep/set/clear semantics. The full SIGTERM/helper-crash/netd-crash/concurrent/replace matrix on a real product deployment is part of the blocked off-host qualification below | Partially passed (code + contract); live matrix blocked |
 | Security/compatibility: `serve` unprivileged; `netd` the only host-network authority; SQLite keeps keys/generation/authorship with the existing secret handling and redaction; UDS `getpeereid` authorization and bounded framing; explicit typed operations only; a protected receipt alone NEVER authorizes deletion; macOS helper source MIT license/revision, no PATH discovery, no unsafe shell | `serve` runs as the dedicated `_wg-basic-serve` principal and `netd` as root (C002). The privileged socket is `0660`, bound to the management group, and the privileged daemon admits the management UID that the *verified receipt* records. The reported device private key is converted to the device public key and dropped; the per-peer preshared key is never read at all. The helper is hash-pinned, absolute, and spawned with a cleared environment and a fixed argv. The receipt never authorizes anything on its own | Passed (code + unit + native live) |
 | Focused tests: Linux netlink behavior unchanged; Darwin UAPI hex/errno parsing; helper restart/utun renumber; ambiguous ownership; malicious UDS frames; wrong helper digest; stale socket; missing/foreign address; global route conflicts; peer update/delete; exact-generation CAS; a replaced stub must fail the end-to-end test | Unit coverage in `crates/darwin-sys` (9), `src/wireguard/darwin_backend.rs` (UAPI mapping, hex decoding, partial peer updates, refusal), `src/reconcile/backend_darwin.rs` (route classification, absence), and `src/firewall/service_darwin.rs` (host-only refusal). New architecture guards pin the isolated `unsafe` boundary, the joint ownership proof, the host-only firewall refusal, the closed launchctl verb set, the non-root management daemon, the privileged socket's ownership, and the receipt's owner. Linux netlink behavior is unchanged: the Linux reconciliation service now shares the same portable apply module with byte-identical plan and failure mapping, and the Linux build and clippy are clean | Passed |
-| Root-run disposable ARM64 and native Intel: real `netd` + unprivileged `serve`, SQLite/admin init, server configuration and peer enrollment over HTTP, handshake, IPv4 **and** IPv6 packets with local Mac-owned addresses, telemetry at the API, disable/delete with interface/route/pid/socket cleanup, netd/helper restart, idempotent replay, foreign-owner refusal, before/after route and VPN inventory | The new native live test `live_c001_production_backend_owns_and_configures_a_managed_tunnel` drives the **production** path (registry receipt → joint ownership proof → production backend observe → reader restart → teardown with no leaked device, socket, or receipt) on the hosted arm64 and Intel runners, run `39427791794`. The existing M003/M004/M005 live suites still pass on the same run. The **arm64 controlled-host** product path is now also proven end to end by `live_c001_product_path_carries_traffic_to_an_off_host_linux_peer`, run as root on a disposable arm64 Mac against an independent Ubuntu 24.04 Linux-kernel WireGuard peer on another host: the product's own installer, the real privileged and unprivileged daemons, the real authenticated HTTP surface, a real handshake, dual-stack traffic, and API telemetry — observed output is reproduced under *Verification* below. The **native Intel** arch of the same product path is not yet run: the hosted Intel runner cannot reach the off-host peer, which sits on a private LAN | Partially passed (native hosted backend evidence; **arm64** controlled-host product path); **blocked** on the native Intel product-path leg |
+| Root-run disposable ARM64 and native Intel: real `netd` + unprivileged `serve`, SQLite/admin init, server configuration and peer enrollment over HTTP, handshake, IPv4 **and** IPv6 packets with local Mac-owned addresses, telemetry at the API, disable/delete with interface/route/pid/socket cleanup, netd/helper restart, idempotent replay, foreign-owner refusal, before/after route and VPN inventory | The new native live test `live_c001_production_backend_owns_and_configures_a_managed_tunnel` drives the **production** path (registry receipt → joint ownership proof → production backend observe → reader restart → teardown with no leaked device, socket, or receipt) on the hosted arm64 and Intel runners, run `39427791794`. The existing M003/M004/M005 live suites still pass on the same run. The **arm64 controlled-host** product path is now also proven end to end by `live_c001_product_path_carries_traffic_to_an_off_host_linux_peer`, run as root on a disposable arm64 Mac against an independent Ubuntu 24.04 Linux-kernel WireGuard peer on another host: the product's own installer, the real privileged and unprivileged daemons, the real authenticated HTTP surface, a real handshake, dual-stack traffic, and API telemetry — observed output is reproduced under *Verification* below. The **native Intel** arch of the same product path is not yet run: the hosted Intel runner cannot reach the off-host peer, which sits on a private LAN | Passed on the supported architecture (native hosted backend evidence; the **Apple silicon** controlled-host product path). The Intel leg was retired by scope under ADR-009 on 2026-10-21, not by measurement: no Intel product-path run was performed and none is claimed |
 
 ## Verification
 
@@ -207,12 +209,20 @@ Four real defects were found by this leg and fixed; each is recorded under
    be reachable from that runner. The peer used here sits on a private LAN
    with no inbound path from the internet, so the Intel runner cannot reach
    it. This is the same off-host interop residual M003 already records, now
-   narrowed to one architecture rather than both.
+   narrowed to one architecture rather than both. **Added 2026-10-21 (CI
+   feasibility assessment):** the named unblock is now specific — a peer
+   reachable from the server, either a publicly addressed Linux peer or a
+   Linux instance in the same cloud network as the server. A hosted macOS
+   runner has egress but no inbound path and no stable address of its own,
+   so it cannot supply that peer; the residual is unchanged in kind and named
+   in substance. **Added 2026-10-21 (scope decision):** that residual was then
+   retired by scope under ADR-009, which drops native Intel as a target for
+   this line. No Intel product-path run was performed, and none is claimed.
 2. **The product `serve`/`netd` deployment is now exercised live as a pair**
-   on the arm64 controlled host: the same run drives the installer, the
+   on the Apple silicon controlled host: the same run drives the installer, the
    privileged daemon, the unprivileged management daemon, the authenticated
-   HTTP surface, and the off-host peer. The Intel arch of that pairing is the
-   remaining gap above.
+   HTTP surface, and the off-host peer. The Intel arch of that pairing was
+   retired by scope under ADR-009.
 3. **IPv6 link-local and scoped behaviour is preserved, not re-created.** The backend observes and refuses to touch the kernel's own address-derived routes, but it does not manage link-local scope.
 4. **The peer endpoint is reported by the helper, but the helper's UAPI dump is the only source.** A peer endpoint that the helper does not report is reported as absent rather than invented.
 5. **No release claim exists.** ADR-008/M007 still withhold every macOS release, and this record changes nothing about that.
@@ -230,22 +240,51 @@ Four real defects were found by this leg and fixed; each is recorded under
 - **Low (introduced by this change, fixed here):** the managed helper publishes its UAPI control socket a moment after the kernel hands it the device, so a spawn that returned on the device alone could hand back a tunnel nobody could configure yet. `spawn_managed_tunnel` now waits for the control socket before it returns.
 - **Low (pre-existing, fixed here):** the test scratch paths were suffixed with `SystemTime::now()` nanoseconds. The macOS wall clock is coarse enough that concurrent tests routinely receive the same value, so two tests collided on one directory (`AlreadyExists`) and the gate failed intermittently. Reproduced at the pre-C001 baseline `0887964`. The scratch paths now use a per-process counter.
 
+## Scope amendment and closure (2026-10-21)
+
+The plan required the production product path to run on **native ARM64 and
+native Intel**. Only the ARM64 leg was ever run: the hosted Intel runner has no
+second kernel to peer with and no path to the private-LAN peer, and the
+CI-feasibility assessment in the corrective roadmap established that *no*
+hosted macOS runner can satisfy either half of the Intel leg (a hosted job is a
+fresh VM discarded at job end, nested virtualization is unsupported on macOS
+runners, and macOS larger runners have no stable address).
+
+The maintainer's decision recorded in **ADR-009** drops native Intel as a
+target for the macOS native-server line: Apple silicon is the only supported
+Darwin target, and an Intel Mac is refused at install time rather than running
+an unqualified build. The Intel leg is therefore retired **by scope, not by
+measurement** — no Intel product-path run was performed, and none is claimed.
+
+What closes this record is the ARM64 evidence already observed and recorded
+above: the product's own installer, the real privileged and unprivileged
+daemons, the real authenticated HTTP surface, a real handshake with an
+independent Linux-kernel peer on another host, dual-stack traffic in both
+directions, API telemetry, and the disable path. No further measurement was
+required, and none was fabricated.
+
+C001 is **closed**. C003's hard dependency on C001 is discharged for the
+Apple silicon scope, and C003 remains open on its own implementation and
+qualification.
+
 ## Disposition
 
-**Blocked (narrowed to the native Intel arch).** The implementation is complete
-and the **arm64 controlled-host** product path is now closed with observed
-evidence: the product's own installer deploys the privileged daemon and the
-unprivileged management daemon, the real authenticated HTTP surface converges a
-server and enrolls a client, an **independent Linux-kernel** WireGuard peer on
-another host completes a real handshake with it, IPv4 and IPv6 traffic crosses
-the tunnel in both directions, the API reports that traffic as telemetry, and
-disabling the client removes the peer from the device. Four real defects were
-found by that leg and are fixed and recorded above.
+**Closed.** The implementation is complete and the **Apple silicon
+controlled-host** product path is closed with observed evidence: the product's
+own installer deploys the privileged daemon and the unprivileged management
+daemon, the real authenticated HTTP surface converges a server and enrolls a
+client, an **independent Linux-kernel** WireGuard peer on another host
+completes a real handshake with it, IPv4 and IPv6 traffic crosses the tunnel in
+both directions, the API reports that traffic as telemetry, and disabling the
+client removes the peer from the device. Four real defects were found by that
+leg and are fixed and recorded above.
 
-What is still open is the plan's requirement to run the same product path on
-the **native Intel** arch. The hosted Intel runner has no second kernel and no
-path to the off-host peer, so the Intel leg of the product path is
-**environmental**, not an implementation gap. Per the planning process,
-closure is not claimed from expected evidence, so C001 remains **blocked** —
-now narrowed from "both arches" to "the Intel arch". C003's hard dependency on
-C001 therefore stays **blocked** as well.
+The plan's requirement to run the same product path on the **native Intel**
+arch was retired by scope on 2026-10-21 (ADR-009), which makes Apple silicon
+the only supported Darwin target. That retirement is not new evidence, and this
+record does not claim an Intel run that did not happen. The Intel leg was
+**environmental**, not an implementation gap, and the scope decision resolves
+it the same way the CI-feasibility assessment said it could be resolved.
+
+No macOS release, tag, or asset is claimed by this record, and M007's
+MUST-NOT-release standing is unchanged.

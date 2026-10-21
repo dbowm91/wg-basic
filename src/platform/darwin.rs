@@ -3,12 +3,16 @@
 //! Owner: headless Darwin WireGuard *server*, not a macOS client app.
 //! Linux remains the canonical qualified deployment.
 //!
-//! Support floor: macOS 13.0 (Ventura) or newer, on both
-//! `aarch64-apple-darwin` (Apple Silicon) and `x86_64-apple-darwin` (Intel).
-//! The floor is chosen because both target triples, `utun`/`wireguard-go`,
-//! launchd system daemons, and the PF anchor model M005 evaluates are all
-//! available and supportable there; older releases are not qualified and must
-//! fail closed rather than degrade silently.
+//! Support floor: macOS 13.0 (Ventura) or newer, on `aarch64-apple-darwin`
+//! (Apple Silicon). The floor is chosen because `utun`/`wireguard-go`, launchd
+//! system daemons, and the PF anchor model M005 evaluates are all available and
+//! supportable there; older releases are not qualified and must fail closed
+//! rather than degrade silently.
+//!
+//! Apple silicon is the only Darwin target for this line (ADR-009). An Intel
+//! Mac is not a supported target: the product refuses it at install time
+//! rather than running a build that was never qualified there. Rosetta
+//! translation never counts as native support.
 //!
 //! M001 status: no Darwin network mutation is implemented. Every Darwin host
 //! backend reports [`crate::platform::BackendCapability::Unsupported`] (when
@@ -20,10 +24,11 @@
 pub const MIN_MACOS_VERSION: &str = "13.0";
 /// Minimum supported Darwin major version number.
 pub const MIN_MACOS_MAJOR: u32 = 13;
-/// The two native server target triples. Apple Silicon qualification and
-/// Intel native evidence are distinct; Rosetta translation never counts as
-/// native Intel support.
-pub const SUPPORTED_TARGETS: &[&str] = &["aarch64-apple-darwin", "x86_64-apple-darwin"];
+/// The native server target triple. Apple silicon is the only Darwin target
+/// (ADR-009): the managed server's supported target set is closed, and an
+/// Intel Mac is refused at install time instead of running an unqualified
+/// build.
+pub const SUPPORTED_TARGETS: &[&str] = &["aarch64-apple-darwin"];
 /// SDK used to establish the M001 floor (macOS 26 SDK, native arm64 host).
 pub const M001_SDK_VERSION: &str = "26.5";
 /// Host that produced the M001 native evidence.

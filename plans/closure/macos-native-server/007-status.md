@@ -2,9 +2,12 @@
 
 Disposition: **blocked** (verdict updated 2026-10-14: M003–M004 closed on
 hosted evidence, M005–M006 narrowed to platform residuals — macOS server
-MUST NOT release).
+MUST NOT release). 2026-10-21: the architecture scope is amended to Apple
+silicon by ADR-009; the disposition remains **blocked** and the macOS server
+MUST NOT release.
 
-Date: 2026-10-13 (blocking verdict); 2026-10-14 (hosted-evidence update).
+Date: 2026-10-13 (blocking verdict); 2026-10-14 (hosted-evidence update);
+2026-10-21 (scope amendment).
 
 ## Implementation revision
 
@@ -62,6 +65,11 @@ reboot/recovery), native Intel evidence, release-binary footprint + advisory aud
 and maintainer re-authorization. If the macOS gateway ever ships, it ships labeled
 advanced-administrator-only with the M005 decision cited — never general consumer support.
 
+**Added 2026-10-21 (ADR-009):** the native Intel item in that list is retired
+by scope, not by measurement — Apple silicon is the only supported Darwin
+target. Every other item in the list stands as written, and the
+MUST-NOT-release decision is unchanged.
+
 ### 2026-10-14 update: what hosted qualification discharged and what remains
 
 Discharged on disposable hosted runners (run `38524007872`; `macos-15`
@@ -91,6 +99,48 @@ off-host Linux-kernel peer interop, effective NAT + routed IPv6 on an
 admin-integrated host, reboot + post-reboot traffic/preserved reinstall,
 Intel launchd-native evidence, release-binary footprint + advisory audit,
 and maintainer re-authorization. The MUST-NOT-release decision stands.
+
+**Added 2026-10-21 (ADR-009):** the Intel launchd-native item above is retired
+by scope, not by measurement; the remaining items are unchanged and the
+MUST-NOT-release decision stands.
+
+## Scope amendment (2026-10-21)
+
+ADR-009 narrows the macOS published scope to Apple silicon
+(`aarch64-apple-darwin`). The dual-architecture gate this record enumerated is
+amended to arm64-only, and the Intel evidence gap therefore no longer blocks
+the line: the retired Intel capability is retired **by scope, not by
+measurement**. This record is not rewritten to pretend Intel was never
+required — the plan and this record did require Intel evidence then, and they
+say so where they say so.
+
+The earlier statements in this record stand as what they observed at the time.
+The arm64 controlled-host evidence, the hosted Intel tunnel and route
+evidence, and the Intel residuals enumerated above are the observations made
+on 2026-10-13 and 2026-10-14, and the requirement-to-evidence matrix and the
+support matrix above are left exactly as recorded. The amendment changes the
+scope the evidence is measured against, not the observations themselves.
+
+The disposition remains **blocked / MUST-NOT-release**, and the reasons it
+remains blocked are:
+
+- **C003's routed-LAN capability is unimplemented and unqualified.** The
+  routed mode has no typed mode contract in the persisted desired state, no
+  proven return path, and no real routed-traffic evidence on a disposable
+  administrator-controlled Mac against a real Linux peer. No mock-only routed
+  claim is accepted.
+- **C004's PF/NAT effective-gateway capability is unqualified** and carries
+  the **unresolved TN3165 distribution gate** (Apple TN3165). The anchor
+  lifecycle is proven, but effective NAT traffic and routed IPv6 egress are
+  not, and no distribution decision is recorded.
+- **The macOS packaging/release trust root is not provisioned.** Checksums-only
+  stands: no signing, notarization, or release-binary footprint and advisory
+  audit, and no released Darwin artifact.
+- **The release authority is the maintainer's.** No maintainer authorization
+  changes this verdict, and no macOS release, tag, or asset is claimed by this
+  record.
+
+The macOS support floor stays macOS 13.0, and Linux is unaffected.
 
 ## Verification (this session, unprivileged only)
 
@@ -122,6 +172,10 @@ and maintainer re-authorization. The MUST-NOT-release decision stands.
   (2) run privileged fixtures for M003→M006 in order; (3) flip each blocked
   closure to closed with exact native evidence; (4) re-run full + Linux
   rootful CI at each head; (5) record release decision under M007.
+- **Added 2026-10-21 (ADR-009):** the native Intel hardware in the blocker
+  list and the Intel host in the unblock checklist are retired by scope, not by
+  measurement; a disposable Apple silicon host carries the line, and the
+  remaining checklist items stand as written.
 - Findings: no high/medium/low open items in the qualified scope. The one
   honest defect class found and fixed during the line: Darwin accepted
   sockets inherit nonblocking (slow-peer bound defeated) — fixed by forcing
