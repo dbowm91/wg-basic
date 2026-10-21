@@ -51,6 +51,35 @@ fixed to `[helper, "utun"]`, and the environment is cleared to a single
 foreground marker. The helper digest comes from the verified install receipt,
 so a replaced helper is refused rather than executed.
 
+### The declared helper build input (C008)
+
+The install receipt anchors the helper at **runtime**: it records the digest
+of the bytes that were installed, and the product refuses a helper whose
+bytes have changed. The chain from the upstream source to those bytes is
+anchored at **build time**, by a declared input.
+
+`helper/wireguard-go.provenance.json` is the single declaration of that
+input: the upstream repository, the release tag, the immutable commit, the
+SPDX license identifier and the license text marker to look for, the Go
+toolchain version, the supported target triples, and the build flags.
+Nothing else in the repository names the upstream source.
+
+`scripts/build-wireguard-go-helper.py` is the only builder. It refuses to
+produce a helper unless the clone resolves to the declared commit, the
+checkout is clean, the license file carries the declared marker, and the Go
+toolchain is the declared version. It writes the helper and a **provenance
+receipt** recording the source URL, tag and commit, the license identifier
+and license file digest, the Go version, the target triple, the build flags,
+the binary's SHA-256, and the binary's own embedded build settings —
+including the `vcs.revision` stamp, which carries the same commit.
+
+With `-trimpath`, a fixed toolchain, and a clean checkout at a fixed
+commit, the build is byte-reproducible: the same source and toolchain
+produce the same digest for the same target. The macOS qualification
+workflow builds the helper through that builder on both architectures and
+uploads the receipt as a run artifact, so a qualification run can be tied to
+one specific helper build.
+
 The device name is ephemeral, so netd records which `utunN` it owns and
 re-proves it. Nothing is ever selected by numeric guess, and a foreign
 `utunN` is never adopted.

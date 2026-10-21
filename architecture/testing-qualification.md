@@ -22,6 +22,7 @@ Targets with `linux-integration` only compile/run under
 | Target | Privilege | What it proves |
 |---|---|---|
 | `architecture_guards` | none | Static source-text invariants over shipped code (see categories below) |
+| `helper_provenance` | none | The declared helper build input is pinned, and there is exactly one declaration, one builder, and no second copy of the upstream source in the workflow |
 | `auth_sessions` | none | Real v1→v2 migration, Argon2id cost, credential/session persistence; no HTTP |
 | `authenticated_api` | none | Request policy directly: `Host`/`Origin`/`Sec-Fetch-*`, CSRF, cookie, limiter ordering |
 | `management_http` | none | Same perimeter over real HTTP/1.1 on a real TCP socket: routing, headers, `Origin`, CSRF, bounded 503, rejected IPv6 routes preserve generation |

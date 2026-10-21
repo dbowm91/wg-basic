@@ -106,6 +106,32 @@ Network operations beyond `ping`/`inspect_capabilities` return
 
 ## macOS hosted live qualification (M003–M006)
 
+### Building the pinned wireguard-go helper
+
+The Darwin fixtures need the `wireguard-go` helper, and the helper's build
+input is **declared** in `helper/wireguard-go.provenance.json`: the upstream
+repository, an immutable commit, the MIT license marker, the Go toolchain
+version, the target triples, and the build flags. One script builds it and
+writes a provenance receipt:
+
+```sh
+python3 scripts/build-wireguard-go-helper.py \
+  --output-dir /tmp/wgb-helper --target aarch64-apple-darwin
+```
+
+The builder refuses to continue unless the clone resolves to the declared
+commit, the checkout is clean, the license marker is present, and `go` is the
+declared version. It writes three files: the helper, `wireguard-go.sha256`,
+and `wireguard-go.provenance.json` — the receipt, which records the source
+commit, the license and its digest, the toolchain, the target, the flags,
+the artifact digest, and the binary's embedded build settings (including its
+`vcs.revision` stamp). `go version go1.27.1` is the declared toolchain; a
+different version is refused rather than used.
+
+Both architectures come from the same declaration, and the same source and
+toolchain produce the same bytes for a target, so the two architectures are
+qualified against helpers that differ only by target triple.
+
 Privileged Darwin fixtures run only on ephemeral GitHub-hosted runners
 (`macos-15` arm64, `macos-15-intel`), never on a development machine: they
 create real `utun` interfaces, assign test-net addresses, load PF anchors,
