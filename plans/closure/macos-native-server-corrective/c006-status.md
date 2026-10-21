@@ -209,6 +209,54 @@ ls: /var/db/wg-basic: No such file or directory
 ls: /var/log/wg-basic: No such file or directory
 ```
 
+### The maintainer's own working Mac was refreshed to the same build
+
+The abandoned arm-phase attempt on the maintainer's own working Mac had left
+that host armed with the **pre-C006** product and a **pre-C006** staged
+fixture. Left alone, that host's next reboot would have crash-looped the
+privileged daemon (no runtime directory after macOS recreates `/var/run`) and
+then **panicked** the old fixture on the `503 unavailable` body — so it would
+have written no evidence and left a degraded deployment behind. The host was
+therefore refreshed by re-running the arm phase with this corrective's build.
+What was observed afterwards:
+
+```
+the transactional installer completed the deployment
+the product enrolled client b89fedc6-dd3d-43fd-be5e-860118d26de7 with public key ZWrFivUgrk385XNHYlmGh60THIFJq7YVHfwxrfdCpBg=
+the kernel boot time is 1791353209
+recorded the expectations that must survive the reboot at /var/db/wg-basic-qual/reboot-expectations.json
+the boot-time job is installed and will run in the next boot, not now
+```
+
+```
+--- netd ---  state = running  pid = 50813
+--- serve --- state = running  pid = 50815
+--- serve process --- 8998 _wg-basic-serve 50815 /usr/local/bin/wg-basic serve --state /var/db/wg-basic/state.db --socket /var/run/wg-basic/netd.sock
+--- runtime dir ---
+drwxr-xr-x 4 root  daemon  128 /var/run/wg-basic
+srw-rw---- 1 root  _wg-basic-serve  0 /var/run/wg-basic/netd.sock
+--- installed binary hash ---
+874033d905293791fbe7827fbbfbe6a1fd7a03074514816c9bb024cc48904a6c  /usr/local/bin/wg-basic
+--- helper hash ---
+a490f82f540130730f0fde5d10a3e6dab6a4dfa066b94c6968873c8104c69d21  /usr/local/libexec/wg-basic/wireguard-go
+--- boot-time job ---
+-rw-r--r-- 1 root  wheel  1037 /Library/LaunchDaemons/com.wg-basic.qual-reboot.plist
+Could not find service "com.wg-basic.qual-reboot" in domain for system
+--- tunnel ---
+utun7: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1420
+	inet 10.77.0.1 --> 10.77.0.1 netmask 0xffffffff
+```
+
+The installed product's digest — `874033d9…` — is **byte-identical** to the
+digest the passing guest run installed, so both hosts carry the same C006
+build. The boot-time job is installed and **not registered**, exactly as the
+arm phase's invariant requires, and the managed tunnel is up on `utun7` with
+`inet 10.77.0.1`, the same address the guest run carried. That host's next
+reboot will therefore exercise the corrected boot path and, if it succeeds,
+produce an **independent arm64 cold-reboot proof on real hardware** rather
+than in a guest. That proof has not happened yet, so nothing is claimed from
+it here.
+
 ## Verification
 
 On the host (Apple M4 Pro, macOS 26.6.2, rustc 1.89.0), from the repository

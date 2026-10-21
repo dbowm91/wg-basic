@@ -261,14 +261,20 @@ job, and the job will run its verify phase at that host's next boot.
    authenticated HTTP surface, and an off-host peer. The native Intel arch of
    that pairing is still unqualified, because a hosted runner cannot reach
    the off-host peer.
-4. **The maintainer's own working Mac is still armed.** An earlier, abandoned
-   attempt ran the arm phase on the maintainer's own working Mac and left that
-   host armed with the product installed, a client enrolled, and the boot-time
-   job installed but unregistered. The maintainer deferred that host's reboot
-   and the leg was moved to a disposable guest instead, so the working host
-   still carries that deployment and its boot-time job, and the job will run
-   its verify phase at that host's next boot. The guest used for the evidence
-   was disposable and is deleted.
+4. **The maintainer's own working Mac is still armed, on the C006 build.** An
+   earlier, abandoned attempt ran the arm phase on the maintainer's own
+   working Mac and left that host armed with the product installed, a client
+   enrolled, and the boot-time job installed but unregistered. The maintainer
+   deferred that host's reboot and the leg was moved to a disposable guest
+   instead. That host has since been **refreshed to the C006 build** — the
+   arm phase was re-run there with the current fixture, so the product, the
+   staged boot-time fixture, and the recorded expectations are all the
+   corrected ones. Its next boot therefore exercises the *fixed* boot path: the
+   privileged daemon will create its runtime directory, the management daemon
+   will wait for it, and the verify phase will observe the reboot, write its
+   evidence, and uninstall the deployment. Until that boot happens the host
+   carries the qualification deployment. The guest used for the closure
+   evidence was disposable and is deleted.
 5. **No release claim exists.** ADR-008/M007 still withhold every macOS
    release; this record changes nothing about that.
 
