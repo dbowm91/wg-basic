@@ -25,4 +25,21 @@ No IPv4 masquerade, NAT66, automatic `/etc/pf.conf` edits, indiscriminate global
 
 On a disposable administrator-controlled Mac, use a separate LAN host and real WireGuard peer on Linux. Prove IPv4 and IPv6 packets: tunnel peer → utun → approved LAN host → return route → tunnel; verify wrong destination and spoofed source are rejected and counters confirm the intended path. Record upstream route tables, host routing + PF inventory before/after, and negative tests for no return route, forwarding off, disabled filter, foreign route collision, helper restart, physical link failover, reapply and teardown. No mock-only routed claim.
 
-Require native arm64 and Intel for the targeted published scope, routine/MSRV + all Linux rootful suites. Stop if the only workable strategy needs uncontrolled PF main-ruleset edits, unbounded sysctl write, broad default-route takeover, unqualified policy filtering, or foreign resource deletion. Document operator prerequisites and known unsupported topologies. Close only in `plans/closure/macos-native-server-corrective/c003-status.md` with real traffic and preservation evidence.
+Require native arm64 for the targeted published scope, routine/MSRV + all Linux rootful suites. Stop if the only workable strategy needs uncontrolled PF main-ruleset edits, unbounded sysctl write, broad default-route takeover, unqualified policy filtering, or foreign resource deletion. Document operator prerequisites and known unsupported topologies. Close only in `plans/closure/macos-native-server-corrective/c003-status.md` with real traffic and preservation evidence.
+
+## Amendment (2026-10-21)
+
+ADR-009 makes Apple silicon (`aarch64-apple-darwin`) the only supported Darwin
+target for the macOS native-server line, so the architecture gate above is
+amended from native arm64 and Intel to native arm64 alone. The retired Intel
+capability is retired by scope, not by new measurement: the macOS
+controlled-host evidence exists for Apple silicon only, and no hosted macOS
+runner can reboot or reach the private-LAN peer, so the Intel legs were
+structurally unreachable rather than merely unattempted.
+
+Nothing else in this plan changes. The disposable administrator-controlled Mac,
+the separate LAN host, the real Linux peer, the real-traffic proof,
+**no mock-only routed claim**, and the stop conditions remain exactly as
+written. C003 remains unimplemented and unqualified on its own implementation
+and qualification, the published scope still means a qualified and
+demonstrated configuration, and the macOS support floor stays macOS 13.0.

@@ -216,13 +216,12 @@ mod tests {
     }
 
     #[test]
-    fn darwin_target_floor_is_declared_and_supported_targets_are_both_darwin() {
+    fn darwin_target_floor_is_declared_and_the_supported_target_is_apple_silicon() {
         assert_eq!(darwin::MIN_MACOS_MAJOR, 13);
         assert_eq!(darwin::MIN_MACOS_VERSION, "13.0");
-        assert_eq!(
-            darwin::SUPPORTED_TARGETS,
-            &["aarch64-apple-darwin", "x86_64-apple-darwin"]
-        );
+        // The macOS support floor is unchanged; the target set is Apple silicon
+        // only (ADR-009).
+        assert_eq!(darwin::SUPPORTED_TARGETS, &["aarch64-apple-darwin"]);
     }
 
     #[test]

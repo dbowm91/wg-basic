@@ -1,20 +1,22 @@
 # macOS Native Server C002 — Least-Privilege LaunchDaemons and Real Installer
 
-Disposition: **blocked** (narrowed 2026-10-21: the service identity, the
-constrained installer, the bounded launchd control, and the hosted
-bootstrap/KeepAlive/bootout/reinstall cycle are implemented and evidenced, and
-the **three-phase cold-reboot qualification has now been run end to end on a
-disposable arm64 macOS guest** — it installs the deployment, enrolls a client
-through the real HTTP surface, records what has to survive, takes the host
-down, and checks it in the new boot — where the reboot was **observed** (the
-kernel boot time advanced), both roles came back from the system domain, the
-management daemon was still the unprivileged identity, the credential and the
-enrolled client survived, the network reconverged, and the uninstall left no
-job, plist, or binary behind. The first run of that leg **failed** and
-exposed two boot-path defects; both are fixed and closed in
-`plans/closure/macos-native-server-corrective/c006-status.md`. What remains
-for this plan is the **native Intel arch** of the same leg, which hosted
-macOS runners cannot prove — the same arch gap C001 records).
+Disposition: **closed** (2026-10-21). The 2026-10-21 disposition was **blocked
+(narrowed)**: the service identity, the constrained installer, the bounded
+launchd control, and the hosted bootstrap/KeepAlive/bootout/reinstall cycle were
+implemented and evidenced, and the **three-phase cold-reboot qualification had
+been run end to end on a disposable arm64 macOS guest** — it installs the
+deployment, enrolls a client through the real HTTP surface, records what has to
+survive, takes the host down, and checks it in the new boot — where the reboot
+was **observed** (the kernel boot time advanced), both roles came back from the
+system domain, the management daemon was still the unprivileged identity, the
+credential and the enrolled client survived, the network reconverged, and the
+uninstall left no job, plist, or binary behind. The first run of that leg
+**failed** and exposed two boot-path defects; both are fixed and closed in
+`plans/closure/macos-native-server-corrective/c006-status.md`. What remained
+was the **native Intel arch** of the same leg, which hosted macOS runners cannot
+prove — the same arch gap C001 records. That residual was retired by scope, not
+by new measurement: ADR-009 makes Apple silicon the only supported Darwin
+target.
 
 Date: 2026-10-21.
 
@@ -51,7 +53,7 @@ Date: 2026-10-21.
 | §4 Recovery and reboot: SIGTERM drains, KeepAlive restarts both roles with bounded backoff, stale socket and helper ownership resolved through C001 rather than a blind helper kill; prove system-domain boot after a cold reboot, service user identity, DB preservation, complete network reconvergence, and uninstall with no leaked jobs; test native ARM64 and Intel (hosted temporary bootstrap alone does not prove reboot) | `RunAtLoad` + `KeepAlive` + `ThrottleInterval` remain in the rendered plists; both roles already drain on SIGTERM. The hosted live cycle proves bootstrap, `launchctl print` with a running pid, KeepAlive re-supervision under a **new pid** after SIGTERM, bootout with the job gone from the system domain, and a reinstall cycle that serves again from the same receipt with a byte-identical helper. Stale socket and helper ownership are resolved through the C001 receipt and joint ownership proof, never a blind kill. The **cold reboot** qualification is written as three phases — `arm` installs the deployment, enrolls a client through the real HTTP surface, records the client, the peer, the interface, and the management identity, and installs the boot-time job; `reboot` takes the host down; `verify` runs in the new boot and checks that both roles came back from the system domain, that the management daemon still runs as the unprivileged identity, that the state database still authenticates the same credential and still holds the same client and peer, that the network reconverged, and that the uninstall leaves no job, plist, or binary behind. **The cold reboot was taken and observed on a disposable arm64 macOS guest**, and the leg now passes end to end: the kernel boot time advanced, both roles came back from the system domain, the management daemon was still the unprivileged identity, the credential and the enrolled client survived, the network reconverged, and the uninstall left no job, plist, or binary behind (see *Arm64 controlled-host cold-reboot qualification* below). The first run of that leg **failed** and exposed two boot-path defects in this plan's own implementation — the transient `/var/run` runtime directory and the boot-time race against the privileged daemon — both corrected and closed in `plans/closure/macos-native-server-corrective/c006-status.md` | Passed (hosted restart cycle; **cold-reboot leg observed and passing on a controlled arm64 host**); **blocked (narrowed)** on the native Intel arch of the same leg |
 | §5 Packaging truth: install both the pinned `wg-basic` binary and the pinned `wireguard-go` helper from immutable exact-target metadata; prohibit execution of unverified downloaded bytes as root; no production signature or automatic updater claims; `update run/check` stays fail closed | `install_to_root` takes the exact bytes of both artifacts, hashes them, records both digests in the owner-only receipt, and refuses an unsupported target triple or an empty artifact. The helper netd later executes is hash-verified against the receipt **at execution time** (`verify_helper_sha256` runs before every spawn), so unverified bytes are never executed as root. The module contains no signing claim and no updater enablement, and the existing guard `no_production_signing_claim_exists` still holds | Passed (code + unit) |
 | Static tests: refuse a missing/invalid service identity and dangerous plist characters; verify the exact XML entries and the trusted paths/labels; require effective UIDs; deny a root management service launch; refuse a foreign plist/helper/receipt, a symlink swap, a socket unauthorized peer, a wrong hash, and a wrong architecture | `src/launchd.rs` unit tests cover the fixed keys and identity in the rendered XML, the refusal of a control character, the symlink refusal in place of an owned directory, the non-world-writable runtime directory, the wrong target triple, and the empty artifact. New architecture guards `the_darwin_launchd_control_is_a_closed_verb_and_target_set`, `the_darwin_management_daemon_is_never_root`, `the_darwin_netd_always_sets_the_privileged_socket_ownership`, and `the_management_identity_owns_the_receipt_it_reads` pin the bounded `launchctl` boundary, the non-root management account, the socket's ownership, and the receipt's owner. The native live test `live_c002_management_daemon_runs_unprivileged` runs the product's own transactional installer, reads the **real** effective UID and GID of each running daemon with `ps`, and the **real** socket owner, group, and mode with `stat` | Passed (code + unit); live runtime UID proof in the hosted run |
-| Controlled host: initial install → health → API traffic from C001 → kill both roles → supervise → reboot → same keys/traffic → uninstall preserving DB → reinstall → identical identity, with foreign launchd jobs and route state preserved; capture `launchctl print`, `id`/EUID, `stat` perms, process ownership, helper hashes, and the pre/post host inventory; repeat Intel natively | The hosted ARM64 and Intel runs capture `launchctl print`, the effective UIDs, the socket permissions, and the helper digests, and prove the install → bootstrap → SIGTERM → supervise → bootout → reinstall cycle with the layout verified against its receipt. The API-traffic leg is **met on arm64** by C001's controlled-host product path (real installer, real daemons, real handshake, dual-stack traffic, API telemetry) — see `c001-status.md`. The **cold-reboot** leg is now **met on arm64**: it was run end to end on a disposable arm64 macOS guest — install, enroll, record the expectations, `shutdown -r now`, and the verify phase in the new boot — and it passed with the reboot observed. The Intel leg beyond the hosted restart cycle remains unqualified | Partially passed (hosted ARM64 + Intel; arm64 API-traffic leg; **arm64 cold-reboot leg observed and passing**); **blocked (narrowed)** on the native Intel arch of the same leg |
+| Controlled host: initial install → health → API traffic from C001 → kill both roles → supervise → reboot → same keys/traffic → uninstall preserving DB → reinstall → identical identity, with foreign launchd jobs and route state preserved; capture `launchctl print`, `id`/EUID, `stat` perms, process ownership, helper hashes, and the pre/post host inventory; repeat Intel natively | The hosted ARM64 and Intel runs capture `launchctl print`, the effective UIDs, the socket permissions, and the helper digests, and prove the install → bootstrap → SIGTERM → supervise → bootout → reinstall cycle with the layout verified against its receipt. The API-traffic leg is **met on arm64** by C001's controlled-host product path (real installer, real daemons, real handshake, dual-stack traffic, API telemetry) — see `c001-status.md`. The **cold-reboot** leg is now **met on arm64**: it was run end to end on a disposable arm64 macOS guest — install, enroll, record the expectations, `shutdown -r now`, and the verify phase in the new boot — and it passed with the reboot observed. The Intel leg beyond the hosted restart cycle remains unqualified | Passed on the supported architecture (hosted ARM64 + Intel runs; the Apple silicon API-traffic leg; the **Apple silicon cold-reboot leg observed and passing**). The Intel leg was retired by scope under ADR-009 on 2026-10-21, not by measurement: no Intel cold reboot was performed and none is claimed |
 | Blockers: never close if `serve` runs as root, if the privilege identity is only inferred from plist text, if helper provenance is not checked at execution time, if Linux paths change, or if reboot persistence cannot be demonstrated | `serve` is declared and, in the live qualification, **observed** as the dedicated unprivileged account; the identity is read from the running process, not from the plist text. The helper digest is checked before every spawn. No Linux path, unit, service, or schema changed: the Linux reconciliation service now shares the same portable apply module with byte-identical plan and failure mapping, and the Linux build and clippy are clean. Reboot persistence is **demonstrated** — observed on a controlled arm64 macOS host, after the two boot-path defects it first exposed were corrected in C006 | **Blocked (narrowed)** on the native Intel arch of the same leg |
 
 ## Verification
@@ -242,15 +244,16 @@ job, and the job will run its verify phase at that host's next boot.
 
 ## Known limitations
 
-1. **The cold-reboot leg is proven on arm64 only.** Hosted macOS runners are
-   discarded after the job, so a system-domain boot after a reboot cannot be
-   observed there. The three-phase qualification was run end to end on a
-   disposable arm64 macOS guest and **passes**, with the reboot observed and the
-   network reconverged; the **native Intel** arch of the same leg is
-   unqualified, because no native Intel host is available that can be rebooted.
-   The hosted restart cycle (SIGTERM → KeepAlive re-supervision → bootout →
-   reinstall) is proven on both architectures; the reboot is proven on arm64
-   only.
+1. **The cold-reboot leg is proven on the Apple silicon path, which is the only
+   supported Darwin target.** Hosted macOS runners are discarded after the job,
+   so a system-domain boot after a reboot cannot be observed there. The
+   three-phase qualification was run end to end on a disposable arm64 macOS
+   guest and **passes**, with the reboot observed and the network reconverged.
+   The **native Intel** arch of the same leg was never run and is no longer
+   required: ADR-009 retires it by scope. The hosted restart cycle (SIGTERM →
+   KeepAlive re-supervision → bootout → reinstall) was proven on both
+   architectures while both were in scope; the reboot is proven on the one
+   architecture that remains.
 2. **The management account must be provisioned out of band.** The installer
    deliberately does not create accounts, so a deployment needs a
    preprovisioned `_wg-basic-serve` account and group first. This is
@@ -261,20 +264,18 @@ job, and the job will run its verify phase at that host's next boot.
    authenticated HTTP surface, and an off-host peer. The native Intel arch of
    that pairing is still unqualified, because a hosted runner cannot reach
    the off-host peer.
-4. **The maintainer's own working Mac is still armed, on the C006 build.** An
-   earlier, abandoned attempt ran the arm phase on the maintainer's own
-   working Mac and left that host armed with the product installed, a client
-   enrolled, and the boot-time job installed but unregistered. The maintainer
-   deferred that host's reboot and the leg was moved to a disposable guest
-   instead. That host has since been **refreshed to the C006 build** — the
-   arm phase was re-run there with the current fixture, so the product, the
-   staged boot-time fixture, and the recorded expectations are all the
-   corrected ones. Its next boot therefore exercises the *fixed* boot path: the
-   privileged daemon will create its runtime directory, the management daemon
-   will wait for it, and the verify phase will observe the reboot, write its
-   evidence, and uninstall the deployment. Until that boot happens the host
-   carries the qualification deployment. The guest used for the closure
-   evidence was disposable and is deleted.
+4. **The maintainer's own working Mac is disarmed (2026-10-21).** An earlier,
+   abandoned attempt ran the arm phase on the maintainer's own working Mac and
+   left that host armed with the product installed, a client enrolled, and the
+   boot-time job installed but unregistered. The maintainer deferred that host's
+   reboot and the leg was moved to a disposable guest instead. That host was
+   then refreshed to the C006 build — the arm phase was re-run there with the
+   current fixture — so that its next boot would have exercised the *fixed*
+   boot path a second time. It has now been **disarmed**: the deployment was
+   uninstalled, the boot-time job and its plist were removed, the binaries and
+   the helper were removed, and the state and the qualification evidence were
+   preserved outside the host. The closure evidence this record relies on is the
+   disposable guest's run, and that guest was disposable and is deleted.
 5. **No release claim exists.** ADR-008/M007 still withhold every macOS
    release; this record changes nothing about that.
 
@@ -349,25 +350,55 @@ job, and the job will run its verify phase at that host's next boot.
   visible from a macOS build. The Linux test targets are now compiled locally
   as well, and `docs/development.md` records the cross-compile gate.
 
+## Scope amendment and closure (2026-10-21)
+
+The plan required the cold-reboot leg on **native ARM64 and native Intel**.
+Only the ARM64 leg was ever run. The CI-feasibility assessment recorded above
+established that no hosted macOS runner can produce the Intel half of it: a
+hosted job is a fresh VM discarded at job end, nested virtualization is
+documented as unsupported on macOS runners, an independent probe of all four
+hosted macOS images found the Intel image unable to start a guest, and macOS
+larger runners have no stable address — so the only verified substitute was a
+rented bare-metal Intel Mac acting as a self-hosted runner, paid per
+qualification cycle.
+
+The maintainer's decision recorded in **ADR-009** drops native Intel as a
+target for this line: Apple silicon is the only supported Darwin target, and an
+Intel Mac is refused at install time rather than running an unqualified build.
+The Intel half of the leg is therefore retired **by scope, not by measurement**
+— no Intel cold reboot was performed, and none is claimed.
+
+What closes this record is the ARM64 evidence already observed and recorded
+above: the three-phase qualification on a disposable macOS guest, the reboot
+**observed** through the kernel boot time, both roles back from the system
+domain, the management daemon still the unprivileged identity, the credential
+and the enrolled client surviving, the network reconverging, and the uninstall
+leaving no job, plist, or binary behind. No further measurement was required,
+and none was fabricated.
+
+C002 is **closed**. C005's hard dependency on C002 is discharged for the Apple
+silicon scope; C005 remains open on its own release authority and on C003.
+
 ## Disposition
 
-**Blocked (narrowed).** The implementation is complete: the management daemon
-is a dedicated unprivileged principal, the plist renderer is fully
+**Closed.** The implementation is complete: the management daemon is a
+dedicated unprivileged principal, the plist renderer is fully
 constrained, the filesystem and IPC layout is exact, the installer is
 transactional, and the helper's provenance is checked at execution time. The
 hosted qualification run `39427791794` is green and the C002 claim itself is
 observed there: the privileged daemon runs as root, the management daemon runs
 as the dedicated unprivileged account, and the privileged socket is root-owned
 and reachable only by the management group. The API-traffic leg is met on the
-arm64 controlled host by C001's product path, and the **cold-reboot leg is now
-met on arm64**: it was run end to end on a disposable arm64 macOS guest, the
+arm64 controlled host by C001's product path, and the **cold-reboot leg is
+met**: it was run end to end on a disposable arm64 macOS guest, the
 reboot was observed rather than inferred, both roles came back from the
 system domain, the management daemon was still unprivileged, the credential
 and the enrolled client survived, the network reconverged, and the uninstall
 left no job, plist, or binary behind.
 
 The plan's acceptance blocks closure when "reboot persistence cannot be
-demonstrated". It **can** now, on arm64. The first run of the leg failed and
+demonstrated". It **can** now, on the supported architecture. The first run of
+the leg failed and
 exposed two boot-path defects in this plan's own implementation; per the
 planning process's §13 a material post-implementation defect receives its own
 corrective, so both are fixed and closed in
@@ -376,8 +407,11 @@ papered over here. This record's own evidence therefore stands at the
 implementation head `b53ce2d`, with the boot-path corrections and the passing
 re-run recorded in C006.
 
-What is still open is the **native Intel** arch of the same leg: a hosted
-Intel macOS runner cannot be rebooted, and no native Intel host is available
-that can be. That residual is environmental, not a code defect, and it is the
-same residual C001 records for its own leg. Closure is therefore not claimed
-from expected evidence. C005's hard dependency on C002 stays **blocked**.
+The plan's acceptance also required the **native Intel** arch of the same leg.
+That requirement was retired by scope on 2026-10-21 (ADR-009). This record
+does not claim an Intel run that did not happen: the Intel leg was
+**environmental**, not a code defect, and the scope decision resolves it the
+way the CI-feasibility assessment said it could be resolved.
+
+No macOS release, tag, or asset is claimed by this record, and M007's
+MUST-NOT-release standing is unchanged.

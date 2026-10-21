@@ -1,6 +1,6 @@
 # ADR-008 — Headless macOS server support behind platform-specific network backends
 
-Status: accepted for architecture and staged research; PF/NAT production strategy is an explicit unresolved gate
+Status: accepted for architecture and staged research; PF/NAT production strategy is an explicit unresolved gate. Amended 2026-10-21 by ADR-009: the Darwin target set is Apple silicon only. This body is otherwise unchanged and stays a historical record.
 
 Date: 2026-10-13
 

@@ -53,14 +53,17 @@ CC_x86_64_unknown_linux_gnu=/tmp/zig-cc AR_x86_64_unknown_linux_gnu="zig ar" \
 ## macOS (Darwin) portability workflow (M001)
 
 The portable control-plane, product, authentication, state, and HTTP layers
-compile and test natively on Apple Silicon and Intel. Linux remains canonical;
+compile and test natively on Apple Silicon. Linux remains canonical;
 a Darwin compile is not a working VPN server (no `utun`, PF, or
 launchd support until M003–M006; Darwin `netd` IPC landed in M002 — see below).
 
+Apple silicon is the only Darwin target for this line (ADR-009). The installer
+refuses every other triple with an actionable error, so an Intel Mac is not an
+installable platform.
+
 ```sh
-# Native Apple Silicon build/test plus Intel compile (M001 floor: macOS 13+).
+# Native Apple Silicon build/test (floor: macOS 13+).
 cargo check --target aarch64-apple-darwin --locked
-cargo check --target x86_64-apple-darwin --locked
 cargo clippy --target aarch64-apple-darwin --locked --all-targets -- -D warnings
 cargo test --locked
 cargo test --locked -p wg-basic-darwin-sys
@@ -128,12 +131,13 @@ the artifact digest, and the binary's embedded build settings (including its
 `vcs.revision` stamp). `go version go1.27.1` is the declared toolchain; a
 different version is refused rather than used.
 
-Both architectures come from the same declaration, and the same source and
-toolchain produce the same bytes for a target, so the two architectures are
-qualified against helpers that differ only by target triple.
+The declared build input names one Darwin target, so the helper is built for
+Apple silicon only (ADR-009); the same source and toolchain produce the same
+bytes for that target, and the qualification runs against a helper that differs
+only by build.
 
 Privileged Darwin fixtures run only on ephemeral GitHub-hosted runners
-(`macos-15` arm64, `macos-15-intel`), never on a development machine: they
+(`macos-15`, arm64), never on a development machine: they
 create real `utun` interfaces, assign test-net addresses, load PF anchors,
 and bootstrap launchd jobs, all torn down afterwards. Workflow
 `.github/workflows/macos-qualification.yml` (gates + privileged fixtures
@@ -214,8 +218,8 @@ not actually reboot a host: macOS recreates `/var/run` at every boot, so the
 privileged daemon now creates its own runtime directory when it is missing,
 and `launchd` starts the two jobs concurrently, so the management daemon now
 waits, bounded, for the privileged daemon to answer before its startup
-reconciliation. The leg proves the arm64 path only; the native Intel arch
-needs a native Intel host that can be rebooted, and a hosted runner cannot be.
+reconciliation. The leg proves the Apple silicon path, which is the only
+supported Darwin target (ADR-009).
 
 ```sh
 cargo test --locked --no-run --test wireguard_darwin_controlled

@@ -72,8 +72,10 @@ pub const STATE_PATH: &str = "/var/db/wg-basic/state.db";
 pub const RUNTIME_DIR: &str = "/var/run/wg-basic";
 pub const SOCKET_PATH: &str = "/var/run/wg-basic/netd.sock";
 pub const PLIST_DIR: &str = "/Library/LaunchDaemons";
-/// Native server target triples (support floor macOS 13+, M001).
-pub const DARWIN_TARGETS: &[&str] = &["aarch64-apple-darwin", "x86_64-apple-darwin"];
+/// Native server target triples (support floor macOS 13+, M001; Apple silicon
+/// only per ADR-009). The installer reads the platform's own closed set, so
+/// there is exactly one place where the supported target set is written down.
+pub const DARWIN_TARGETS: &[&str] = crate::platform::darwin::SUPPORTED_TARGETS;
 /// The privileged daemon's account. It is the only component that mutates the
 /// host, so it is explicitly root rather than implicitly root-by-default.
 pub const NETD_USER: &str = "root";
@@ -745,7 +747,7 @@ pub fn uninstall_preserving_state(root: &Path) -> Result<(), InstallError> {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum InstallError {
-    #[error("unsupported Darwin target triple")]
+    #[error("unsupported Darwin target triple: this build supports only {targets}", targets = DARWIN_TARGETS.join(", "))]
     UnsupportedTarget,
     #[error("release artifact is empty")]
     EmptyArtifact,
@@ -799,7 +801,7 @@ mod tests {
         // serve starts after netd at runtime (socket retry); labels differ.
         assert_ne!(NETD_LABEL, SERVE_LABEL);
         assert!(DARWIN_TARGETS.contains(&"aarch64-apple-darwin"));
-        assert!(DARWIN_TARGETS.contains(&"x86_64-apple-darwin"));
+        assert!(!DARWIN_TARGETS.contains(&"x86_64-apple-darwin"));
     }
 
     #[test]
@@ -990,11 +992,30 @@ mod tests {
             install_to_root(&root, "0.1.0", "x86_64-unknown-linux-gnu", b"b", b"h").unwrap_err(),
             InstallError::UnsupportedTarget
         );
+        // Intel is not a supported target (ADR-009), so it is refused like any
+        // other unsupported triple.
+        assert_eq!(
+            install_to_root(&root, "0.1.0", "x86_64-apple-darwin", b"b", b"h").unwrap_err(),
+            InstallError::UnsupportedTarget
+        );
         assert_eq!(
             install_to_root(&root, "0.1.0", "aarch64-apple-darwin", b"", b"h").unwrap_err(),
             InstallError::EmptyArtifact
         );
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_unsupported_target_refusal_names_the_supported_target() {
+        let refusal = InstallError::UnsupportedTarget.to_string();
+        assert!(
+            refusal.contains("aarch64-apple-darwin"),
+            "the refusal must name the supported target: {refusal}"
+        );
+        assert!(
+            !refusal.contains("x86_64-apple-darwin"),
+            "the refusal must not present a retired target as supported: {refusal}"
+        );
     }
 
     #[test]

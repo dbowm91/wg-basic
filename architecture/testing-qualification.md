@@ -172,8 +172,10 @@ not run it.
 
 ## macOS qualification mapping (`.github/workflows/macos-qualification.yml`)
 
+Apple silicon is the only supported Darwin target (ADR-009), so the
+qualification workflow has one architecture.
+
 | CI job | Test command |
 |---|---|
-| `gates-arm64` (`macos-15`) / `gates-intel` (`macos-15-intel`) | `cargo fmt --all -- --check`, `cargo check --all-targets --locked`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`, both Darwin target triples, MSRV check |
+| `gates-arm64` (`macos-15`) | `cargo fmt --all -- --check`, `cargo check --all-targets --locked`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`, the `aarch64-apple-darwin` target check, MSRV check |
 | `live-arm64` | Pinned-helper build (tag + commit + license verified) then the ignored `wireguard_darwin_live` target as root with `WGB_DARWIN_LIVE=1`: all eight fixtures, evidence artifacts uploaded |
-| `live-intel-tunnel` | Same helper build for `darwin/amd64`, then tunnel/route/platform-probe fixtures only (no launchd job on Intel) |

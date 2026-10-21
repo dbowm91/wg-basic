@@ -18,7 +18,7 @@ use std::collections::BTreeSet;
 const DECLARATION: &str = include_str!("../helper/wireguard-go.provenance.json");
 /// The one builder.
 const BUILDER: &str = include_str!("../scripts/build-wireguard-go-helper.py");
-/// The workflow that qualifies the helper on both architectures.
+/// The workflow that qualifies the helper on the supported architecture.
 const WORKFLOW: &str = include_str!("../.github/workflows/macos-qualification.yml");
 
 /// A minimal reader for the declaration. The suite asserts on the file's
@@ -94,7 +94,7 @@ fn the_declaration_pins_the_license_and_the_toolchain() {
 }
 
 #[test]
-fn the_declaration_names_exactly_the_two_darwin_targets() {
+fn the_declaration_names_exactly_the_supported_darwin_target() {
     let targets: Vec<&str> = DECLARATION
         .lines()
         .skip_while(|line| !line.contains("\"targets\""))
@@ -115,8 +115,24 @@ fn the_declaration_names_exactly_the_two_darwin_targets() {
     );
     assert_eq!(
         targets,
-        vec!["aarch64-apple-darwin", "x86_64-apple-darwin"],
-        "the declared targets must be the two Darwin triples and nothing else"
+        vec!["aarch64-apple-darwin"],
+        "the declared targets must be the one supported Darwin target and nothing else"
+    );
+    assert!(
+        !DECLARATION.contains("x86_64-apple-darwin"),
+        "the helper is built for Apple silicon only (ADR-009); no retired target may be declared"
+    );
+}
+
+#[test]
+fn the_builder_refuses_a_target_outside_the_declaration() {
+    assert!(
+        BUILDER.contains("is not one of the declared targets"),
+        "the builder must refuse any target the declaration does not name"
+    );
+    assert!(
+        !BUILDER.contains("x86_64-apple-darwin"),
+        "the builder's own vocabulary is Apple silicon only (ADR-009)"
     );
 }
 

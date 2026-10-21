@@ -14,7 +14,20 @@ Baseline: main 47c72b0e81d569d48396c615120453bf0cf1d46e (2026-10-11). This plann
 
 Enable wg-basic to run as a native, headless macOS WireGuard *server*, using the existing local management API, embedded UI, SQLite authoritative state, explicit client enrollment/export, typed privileged netd, and safe host-network reconciliation. Linux remains fully functional without runtime/ABI regression. A macOS *client* that imports a generated config is already a standard-WireGuard interoperability question and does not satisfy this roadmap.
 
-Scope includes Apple Silicon and Intel if native support can be qualified, durable tunnel/peer management, telemetry, IPv4 and IPv6 addressing, forwarding, validated gateway/NAT policy, local authentication, start-on-boot, crash recovery, state-preserving uninstall, and release artifacts. DNS resolution/server operation, systemwide kill switch, consumer menu-bar app, third-party VPN import, and general PF configuration editing are out of scope.
+Scope includes Apple Silicon if native support can be qualified, durable tunnel/peer management, telemetry, IPv4 and IPv6 addressing, forwarding, validated gateway/NAT policy, local authentication, start-on-boot, crash recovery, state-preserving uninstall, and release artifacts. DNS resolution/server operation, systemwide kill switch, consumer menu-bar app, third-party VPN import, and general PF configuration editing are out of scope.
+
+### 1.1 Architecture scope amendment (2026-10-21)
+
+ADR-009 makes Apple silicon (`aarch64-apple-darwin`) the only supported Darwin
+target for this line, so the scope statement above narrows to Apple Silicon
+alone. The retired Intel capability is retired by scope, not by new
+measurement: the macOS controlled-host evidence exists for Apple silicon only,
+and no hosted macOS runner can reboot or reach the private-LAN peer, so the
+Intel legs were structurally unreachable rather than merely unattempted. The
+macOS support floor stays macOS 13.0 and Linux is unaffected. This roadmap's
+ownership boundary, invariants, non-goals, dependency graph ordering, and
+milestone statuses are otherwise unchanged: no milestone is closed by this
+amendment, and M007 remains **blocked** with MUST-NOT-release standing.
 
 ## 2. Non-negotiable invariants
 
@@ -57,7 +70,7 @@ M002 and M003 may prototype against M001's stable written interfaces but may not
 | M004 Darwin resources | capability / invariant | address/route apply/observe/verify, no foreign deletion, crash/utun churn tests | M003 | **closed** 2026-10-14 — hosted live qualification arm64+Intel (`plans/closure/macos-native-server/004-status.md`, run `38524007872`); sleep/roaming residual |
 | M005 forwarding/PF/NAT | invariant / capability | approved strategy, opt-in PF if lawful/suitable, observed filter+NAT and real traffic | M004 + explicit PF ADR gate | **blocked** (narrowed 2026-10-14) — TN3165 decision evidence-backed + anchor/forwarding/PF-cycle qualified live (`plans/closure/macos-native-server/005-status.md`, run `38524007872`); effective NAT + v6 egress need admin-integrated host |
 | M006 launchd + distribution | infrastructure / capability | native services, install/reinstall/uninstall, ABI/build/release artifacts, rollback-safe behavior | M005 | **blocked** (narrowed 2026-10-14) — bootstrap/print/bootout/KeepAlive/reinstall qualified live on arm64 (`plans/closure/macos-native-server/006-status.md`, run `38524007872`); reboot needs a rebootable host |
-| M007 security + platform E2E | qualification | Apple Silicon and Intel native hardware/VM real traffic, external-state preservation, release policy | M006 | **blocked** (updated 2026-10-14) — verdict + hosted-evidence update (`plans/closure/macos-native-server/007-status.md`, run `38524007872`): M003–M004 closed, M005–M006 narrowed, MUST-NOT-release stands with enumerated residuals |
+| M007 security + platform E2E | qualification | Apple Silicon native hardware/VM real traffic, external-state preservation, release policy | M006 | **blocked** (updated 2026-10-14; architecture scope amended 2026-10-21) — verdict + hosted-evidence update (`plans/closure/macos-native-server/007-status.md`, run `38524007872`): M003–M004 closed, M005–M006 narrowed, MUST-NOT-release stands with enumerated residuals; ADR-009 narrows the published scope to Apple silicon and does not unblock the milestone |
 
 Plans: plans/implementation/macos-native-server/001 through 007.
 

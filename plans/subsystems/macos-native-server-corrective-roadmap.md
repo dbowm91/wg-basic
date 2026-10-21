@@ -1,8 +1,8 @@
 # macOS Native Server — Post-M007 Integration and Release Corrective Roadmap
 
-Status: active corrective line, 2026-10-21. Source branch `plans/macos-native-support`; corrective handoff recorded at `fc51146e811cabebd042d852449c6e7f4f854265`; **C001 and C002 implemented at `b53ce2d` and dispositioned `blocked (narrowed)`**; **C006 closed at `e37210b`** — the two boot-path defects C002's cold-reboot qualification exposed are corrected and the leg re-run to a pass; **C007 closed at `1bf4bb3`** and **C008 closed at `62337c5`** — the two defects that no environmental condition prevented fixing; C003–C005 remain blocked. The original M007 MUST-NOT-release verdict remains binding and nothing in this line changes it.
+Status: active corrective line, 2026-10-21. Source branch `plans/macos-native-support`; corrective handoff recorded at `fc51146e811cabebd042d852449c6e7f4f854265`; **C001 and C002 implemented at `b53ce2d` and now `closed` (2026-10-21)** on their Apple silicon controlled-host evidence, with the native Intel arch of both retired by scope under **ADR-009**; **C006 closed at `e37210b`** — the two boot-path defects C002's cold-reboot qualification exposed are corrected and the leg re-run to a pass; **C007 closed at `1bf4bb3`** and **C008 closed at `62337c5`** — the two defects that no environmental condition prevented fixing; **C010 active** — the Apple-silicon-only target implementation of ADR-009. C003–C005 remain open: C003 on its own implementation and qualification, C004 on C003 and an administrator-integrated host, C005 on the scoped network gates and the maintainer's release authority. The original M007 MUST-NOT-release verdict remains binding and nothing in this line changes it.
 
-Authority: `plans/000-long-term-specification.md`; `plans/003-planning-process.md`; accepted ADR-008 and ADR-001–007; `plans/subsystems/macos-native-server-roadmap.md`; M003–M007 historical closure records. The original M007 MUST-NOT-release verdict remains binding.
+Authority: `plans/000-long-term-specification.md`; `plans/003-planning-process.md`; accepted ADR-001–009; `plans/subsystems/macos-native-server-roadmap.md`; M003–M007 historical closure records. The original M007 MUST-NOT-release verdict remains binding.
 
 ## 1. Evidence-triggered correction
 
@@ -29,9 +29,12 @@ typed planner over the real Darwin APIs (no `ifconfig`/`route` subprocess), the
 Darwin firewall refuses routed/NAT policies instead of blanket-no-oping, the
 launchd plist sets a restricted service identity, and `src/main.rs` exposes a
 real `system install/status/uninstall` path. The `pf.rs` `attachment_verified`
-weakness is C004's subject and remains open. Both plans are nonetheless
-dispositioned **blocked (narrowed)**, because each plan's own acceptance gate
-requires evidence a hosted macOS runner cannot produce — see §3.
+weakness is C004's subject and remains open. Both plans were dispositioned
+**blocked (narrowed)** because each plan's own acceptance gate requires evidence
+a hosted macOS runner cannot produce — see §3. Both are now **closed** (see
+§3.1 and the scope decision below): their Apple silicon gates are met by
+observed controlled-host evidence, and the native Intel arch of each gate was
+retired by scope under ADR-009.
 
 ## 2. Product mode separation and release authority
 
@@ -41,16 +44,16 @@ Distinct capability levels, each requiring truthful observation:
 2. **Routed LAN:** forwarding to specifically approved LAN prefixes and verified operator-managed upstream return routes; no NAT. C003 is an additional authorization and security gate.
 3. **Internet exit gateway:** explicit administrator-integrated PF filter/NAT for IPv4; IPv6 routed without NAT66. C004; Apple TN3165 restricts this to advanced-administrator opt-in, not general consumer deployment.
 
-C005 governs all distribution decisions. **ADR-008/M007 currently withhold every macOS release.** A separately scoped host-only or routed release requires a *new explicit maintainer decision and ADR/M007 release-criteria addendum* after its own end-to-end security/installation evidence. No implementer may silently remove the M007 IPv4 NAT/reboot/dual-arch gates or reinterpret a green CI job as release authorization. Full gateway release additionally requires C004 evidence and the existing M007 residuals.
+C005 governs all distribution decisions. **ADR-008/M007 currently withhold every macOS release.** A separately scoped host-only or routed release requires a *new explicit maintainer decision and ADR/M007 release-criteria addendum* after its own end-to-end security/installation evidence. No implementer may silently remove the M007 IPv4 NAT/reboot gates or reinterpret a green CI job as release authorization. The **dual-architecture** gate was removed, but only by an explicit maintainer scope decision — ADR-009 (2026-10-21), recorded in the ADRs and in M007's own gate — and never silently. Full gateway release additionally requires C004 evidence and the existing M007 residuals.
 
 ## 3. Dependency graph and active registry
 
-`C001 production host-only integration` (**implemented at `b53ce2d`; disposition blocked (narrowed)** — no unmet hard predecessor; the **arm64** closure gate is met by a controlled-host run against an off-host Linux-kernel peer, and what remains is the native Intel arch of the same path)
-  → `C003 routed-LAN integration` (hard C001 closure, not merely C001 implementation)
+`C001 production host-only integration` (**implemented at `b53ce2d`; closed 2026-10-21** — no unmet hard predecessor; the **Apple silicon** closure gate is met by a controlled-host run against an off-host Linux-kernel peer, and the native Intel arch of the same path was retired by scope under ADR-009)
+  → `C003 routed-LAN integration` (hard C001 closure — **discharged 2026-10-21**; C003's own implementation and qualification remain open)
   → `C004 administrator-integrated PF/NAT` (hard C003 + external controlled host)
 
-`C002 launchd least-privilege/install` (**implemented at `b53ce2d`; disposition blocked (narrowed)** — integrated closure is hard C001, and the plan additionally forbids closure unless reboot persistence is demonstrated; the three-phase cold-reboot qualification has now been **run end to end on a disposable arm64 macOS guest and passes** with the reboot observed, so what remains is the native Intel arch of the same leg)
-  → `C005 native E2E / distribution / release decision` (hard C001 + C002; C003 if routed mode claimed; C004 if gateway claimed; operational external host/authorization gates).
+`C002 launchd least-privilege/install` (**implemented at `b53ce2d`; closed 2026-10-21** — integrated closure is hard C001, and the plan additionally forbids closure unless reboot persistence is demonstrated; the three-phase cold-reboot qualification was run end to end on a disposable arm64 macOS guest and **passes** with the reboot observed, and the native Intel arch of the same leg was retired by scope under ADR-009)
+  → `C005 native E2E / distribution / release decision` (hard C001 + C002 — **discharged 2026-10-21**; C003 if routed mode claimed; C004 if gateway claimed; operational external host/authorization gates; and the maintainer's release authority, which is unchanged).
 
 `C006 boot-time runtime directory and backend readiness` (**closed at `e37210b`** — C002's corrective, raised by the material post-implementation defects the cold-reboot qualification found; no successor depends on it directly, it restores C002's own reboot-persistence gate)
 
@@ -60,15 +63,16 @@ C005 governs all distribution decisions. **ADR-008/M007 currently withhold every
 
 | Corrective | Status | Primary class | Plan | Gate |
 |---|---|---|---|---|
-| C001 — product wiring and host-only convergence | **blocked (narrowed)** 2026-10-20; implemented at `b53ce2d`; closure `plans/closure/macos-native-server-corrective/c001-status.md` | corrective / capability / invariant | `plans/implementation/macos-native-server/c001-production-wiring-host-only.md` | Existing M003/M004/M002 primitives — met. Off-host Linux-kernel peer, dual-stack off-host traffic, and API telemetry through the real authenticated HTTP path — **met on arm64** on a controlled host. Remaining: the **native Intel** arch of the same path |
-| C002 — least-privilege launchd and CLI | **blocked (narrowed)** 2026-10-21; implemented at `b53ce2d`; closure `plans/closure/macos-native-server-corrective/c002-status.md` | corrective / invariant | `plans/implementation/macos-native-server/c002-launchd-privilege-and-install.md` | Verified service identity, no root serve — met and observed at runtime. The cold-reboot leg — install, enroll, record the expectations, `shutdown -r now`, and the verify phase in the new boot — is **met on arm64** on a disposable macOS guest: the reboot observed, both roles back from the system domain, the management daemon still unprivileged, the credential and enrolled client survived, the network reconverged, the uninstall leaving nothing behind. The API-traffic leg is met on arm64 by C001's product path. Remaining: the **native Intel** arch of the same leg |
+| C001 — product wiring and host-only convergence | **closed** 2026-10-21; implemented at `b53ce2d`; closure `plans/closure/macos-native-server-corrective/c001-status.md` | corrective / capability / invariant | `plans/implementation/macos-native-server/c001-production-wiring-host-only.md` | Existing M003/M004/M002 primitives — met. Off-host Linux-kernel peer, dual-stack off-host traffic, and API telemetry through the real authenticated HTTP path — **met on Apple silicon** on a controlled host. The native Intel arch of the same path was retired by scope under ADR-009, not by measurement |
+| C002 — least-privilege launchd and CLI | **closed** 2026-10-21; implemented at `b53ce2d`; closure `plans/closure/macos-native-server-corrective/c002-status.md` | corrective / invariant | `plans/implementation/macos-native-server/c002-launchd-privilege-and-install.md` | Verified service identity, no root serve — met and observed at runtime. The cold-reboot leg — install, enroll, record the expectations, `shutdown -r now`, and the verify phase in the new boot — is **met on Apple silicon** on a disposable macOS guest: the reboot observed, both roles back from the system domain, the management daemon still unprivileged, the credential and enrolled client survived, the network reconverged, the uninstall leaving nothing behind. The API-traffic leg is met by C001's product path. The native Intel arch of the same leg was retired by scope under ADR-009, not by measurement |
 | C006 — boot-time runtime directory and backend readiness (C002's corrective) | **closed** 2026-10-21; implemented at `e37210b`; closure `plans/closure/macos-native-server-corrective/c006-status.md` | corrective / invariant | `plans/implementation/macos-native-server/c006-boot-time-runtime-and-backend-readiness.md` | The privileged daemon creates its own runtime directory when macOS's transient `/var/run` has been recreated; the management daemon waits, bounded, for the privileged daemon to answer before its startup reconciliation; the C002 cold-reboot leg re-run to a pass. **Corrected 2026-10-21 by C009:** the wait reached Linux, where it delayed the listener |
 | C009 — restore the Linux startup path (C006's corrective) | **closed** 2026-10-21; closure `plans/closure/macos-native-server-corrective/c009-status.md` | corrective / invariant | `plans/implementation/macos-native-server/c009-restore-the-linux-startup-path.md` | C006's backend startup wait is Darwin's need; Linux's units already order the two services, so the bound is zero elsewhere and the Linux startup path is what it was before C006. The three Linux CI jobs C006 broke are green again |
 | C007 — effective PF attachment verification (C004's model carve-out) | **closed** 2026-10-21; implemented at `1bf4bb3`; closure `plans/closure/macos-native-server-corrective/c007-status.md` | corrective / invariant | `plans/implementation/macos-native-server/c007-effective-pf-attachment-verification.md` | The attachment verifier is token-exact and per rule class: a filter-table `anchor` rule and a NAT-table `nat-anchor` rule, each naming the managed anchor as a whole token, and a verdict that is a conjunction over the required classes. A colliding name, a comment, another table's keyword, and a reference to the other class verify nothing |
 | C008 — declared helper build input and provenance (C005's repository carve-out) | **closed** 2026-10-21; implemented at `62337c5`; closure `plans/closure/macos-native-server-corrective/c008-status.md` | corrective / infrastructure | `plans/implementation/macos-native-server/c008-declared-helper-build-input.md` | One declared, immutable build input for the `wireguard-go` helper; one builder that refuses a mismatched commit, license, or toolchain and records a provenance receipt; the macOS qualification builds through it on both architectures and keeps the receipt as an artifact |
-| C003 — bounded routed LAN | **blocked on C001 closure** | corrective / capability | `plans/implementation/macos-native-server/c003-routed-lan-no-nat.md` | Routed traffic/return-route/admin firewall evidence |
-| C004 — effective opt-in PF/NAT | **blocked on C003 and admin-integrated host** | corrective / invariant | `plans/implementation/macos-native-server/c004-pf-nat-effective-gateway.md` | TN3165, effective rules and real egress |
-| C005 — integrated release qualification | **blocked on C001/C002 and scoped network gates** | corrective / qualification | `plans/implementation/macos-native-server/c005-release-qualification-and-reconciliation.md` | Native E2E, reboot, architectures, provenance, maintainer authorization |
+| C003 — bounded routed LAN | **open** — hard dependency C001 closed 2026-10-21; not started | corrective / capability | `plans/implementation/macos-native-server/c003-routed-lan-no-nat.md` | Routed traffic/return-route/admin firewall evidence, on the Apple silicon target (ADR-009). Its first package is a typed mode contract in the persisted desired state of the released v0.1.0, with a state-store migration and old-binary-refusal rehearsals |
+| C004 — effective opt-in PF/NAT | **open** — blocked on C003 and an admin-integrated host | corrective / invariant | `plans/implementation/macos-native-server/c004-pf-nat-effective-gateway.md` | TN3165, effective rules and real egress |
+| C005 — integrated release qualification | **open** — C001/C002 closed 2026-10-21; still blocked on the scoped network gates (C003 for routed mode, C004 for gateway mode) and the maintainer's release authority | corrective / qualification | `plans/implementation/macos-native-server/c005-release-qualification-and-reconciliation.md` | Native E2E, reboot, the supported architecture, provenance, maintainer authorization |
+| C010 — Apple silicon only as the Darwin target (ADR-009's implementation) | **active** 2026-10-21; closure `plans/closure/macos-native-server-corrective/c010-status.md` | scope amendment / infrastructure | `plans/implementation/macos-native-server/c010-apple-silicon-only-target.md` | The Darwin target set is Apple silicon only, an Intel Mac is refused with an actionable error, the declared helper build input names one target, and the qualification workflow has one architecture |
 
 ### Unblock assessment (2026-10-21)
 
@@ -119,6 +123,57 @@ they were corrected under their own plan and closure record rather than folded
 into C002's evidence. The leg was then re-run to a pass. C006 does not narrow
 the native Intel residual and does not unblock anything downstream.
 
+#### CI feasibility of the two residuals, and the scope decision (2026-10-21)
+
+The two residuals above were re-assessed against every macOS CI substrate
+available today. The assessment did not change the residuals' existence; it
+changed their *shape*, and it is what the maintainer's scope decision rests on:
+
+- **The native Intel arch is already in hosted CI.** `macos-15-intel` is a real
+  Intel Mac, and this repository's `live-intel-tunnel` job already ran the
+  WireGuard control plane there. What the maintainer does not have on the bench
+  is Intel hardware; what the *project* lacked in CI was not the instruction set
+  but **host lifecycle** and **topology**.
+- **No hosted macOS runner can be rebooted, at any tier.** Each hosted macOS
+  job is a fresh VM that is discarded when the job ends, and GitHub documents
+  that nested virtualization is unsupported on macOS runners. An independent
+  probe of all four hosted macOS images found the Intel image equally unable to
+  start a guest. Booting a macOS guest inside the runner to reboot it is closed
+  by the platform, not by policy, so C002's Intel cold-reboot leg has no hosted
+  CI path.
+- **A rented bare-metal Intel Mac would have satisfied C002's reboot leg**, and
+  C001's peer leg when the peer is a Linux instance in the same cloud network.
+  `mac1.metal` is a 2018 Intel Mac mini offered bare metal on a dedicated host
+  with a 24-hour minimum allocation; `reboot-instances` is an ordinary OS
+  reboot, and the destructive host scrubbing happens on stop or terminate, not
+  on reboot. Registering it as a self-hosted runner with the runner application
+  installed as a boot-scoped service is the documented way to have it return
+  online after the reboot.
+- **C003's topology requirement would have been satisfiable on the same
+  substrate** — a private subnet inside one VPC is a routed, non-NAT domain
+  with two real hosts — but C003 is blocked first by its own implementation
+  package (a typed mode contract in the persisted desired state of the released
+  v0.1.0, with a state-store migration and old-binary-refusal rehearsals),
+  which is an implementation matter, not a CI matter.
+
+**The maintainer's decision (ADR-009, 2026-10-21):** native Intel is dropped as
+a target for this line. Apple silicon is the only supported Darwin target, and
+an Intel Mac is refused at install time rather than running an unqualified
+build. The two residuals are therefore retired **by scope, not by
+measurement**: no Intel product-path run and no Intel cold reboot were
+performed, and none is claimed. The rented-host route above is not funded and
+is not planned; it is recorded because it is the only verified way the Intel
+evidence could have been obtained, and a future maintainer may want to know
+that. The macOS support floor is unchanged at macOS 13.0, and the Linux line is
+untouched.
+
+**C001 and C002 are closed (2026-10-21)** on their Apple silicon
+controlled-host evidence, which was already observed and recorded before this
+decision. Their closure records carry a dated scope-amendment section and keep
+their history period-accurate. **C010** implements the decision: the Darwin
+target set, the install refusal, the declared helper build input, and the
+qualification workflow all become Apple-silicon-only.
+
 **Host-only mode (capability level 1 in §2) is implemented but not releasable.**
 C001 and C002 together deliver the host-only endpoint's mechanics; the
 host-only release still requires C005's release decision and the explicit
@@ -151,23 +206,32 @@ Each corrective creates its own **new** `plans/closure/macos-native-server-corre
 
 Normal gates: `cargo fmt --all -- --check`, `cargo check --all-targets --locked`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`, `cargo +1.89.0 check --all-targets --locked` on supported native targets, plus all pre-existing rootful Linux CI jobs. Run true Mac traffic tests on disposable consented hosts; no silent skips. Distinguish hosted macOS fixtures from controlled/rebootable/admin-integrated host evidence. Do not release, tag, merge as completed support, or create release assets via this planning handoff.
 
-### Applied to C001/C002/C006/C007/C008
+### Applied to C001/C002/C006/C007/C008/C009/C010
 
-Five closure records exist under `plans/closure/macos-native-server-corrective/`:
-`c001-status.md`, `c002-status.md`, `c006-status.md`, `c007-status.md`, and
-`c008-status.md`. All five record the implementation head, the
+Seven closure records exist under `plans/closure/macos-native-server-corrective/`:
+`c001-status.md`, `c002-status.md`, `c006-status.md`, `c007-status.md`,
+`c008-status.md`, `c009-status.md`, and `c010-status.md`. All seven record the
+implementation head, the
 requirement-to-evidence matrix, the exact commands and runs, the
 security/ownership evidence, the docs evidence, the known limitations, the
-findings by severity, and a scope-specific verdict. C001's and C002's verdicts
-are **blocked (narrowed)**; C006's, C007's, and C008's are **closed**.
+findings by severity, and a scope-specific verdict. C006's, C007's, C008's,
+C009's, and C010's are **closed**; C001's and C002's are **closed** as of
+2026-10-21, on their Apple silicon controlled-host evidence, with the native
+Intel arch of each retired by scope under ADR-009 and the scope amendment
+recorded in each record.
 
 Four rules from the qualification protocol shaped those verdicts and shape
 every later corrective in this line:
 
 1. **A hosted macOS runner is not a controlled host.** It has no second kernel
-   to peer with and cannot be cold-rebooted. Evidence produced there is
-   recorded as hosted fixture evidence and is never written up as the
-   controlled-host evidence C001/C002's acceptance requires.
+   to peer with, cannot be cold-rebooted, and carries no stable address or
+   surviving state between jobs. Evidence produced there is recorded as hosted
+   fixture evidence and is never written up as the controlled-host evidence
+   C001/C002's acceptance requires. A self-hosted runner on a bare-metal Mac is
+   a different substrate with different properties, and evidence produced on one
+   is recorded as controlled-host evidence. That distinction is what the
+   CI-feasibility assessment turned on, and ADR-009 resolved the residual by
+   retiring the Intel scope rather than by funding that substrate.
 2. **A green CI job is not release authorization and not closure.** The
    M007 MUST-NOT-release decision and the §2 release-authority rule are
    unchanged by any implementation in this line.
@@ -184,6 +248,7 @@ every later corrective in this line:
 4. **A fix that is unreachable by a gate is not yet evidenced.** C007's
    correction needed a *live* `pfctl` listing to be meaningful, so the live
    fixture gained the positive, collision, and negative controls it never
-   had, and the Intel job was extended to run them too. A correction whose
+   had, and the Intel job was extended to run them too — that job was removed
+   when ADR-009 dropped the Intel target. A correction whose
    evidence could only be produced on one architecture would have left the
    same kind of residual C001 and C002 carry.
