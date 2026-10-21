@@ -330,8 +330,16 @@ fn live_c001_product_path_carries_traffic_to_an_off_host_linux_peer() {
                 None,
                 "",
             );
-            assert_eq!(status, 200);
-            let snapshot: serde_json::Value = serde_json::from_str(&body).expect("the telemetry");
+            // A deployment that is still converging answers the management
+            // surface with `503 unavailable`. That is "not yet", not a
+            // failure, so the wait keeps polling instead of panicking on the
+            // first response it cannot parse.
+            if status != 200 {
+                return false;
+            }
+            let Some(snapshot) = json_body(&body) else {
+                return false;
+            };
             let carried = snapshot["clients"]
                 .as_array()
                 .and_then(|clients| clients.first())
@@ -554,9 +562,35 @@ fn arm_c002_cold_reboot() {
     // The job must not be registered in the running session: a registered
     // `RunAtLoad` job would run the verify phase against a host that has not
     // rebooted. The plist alone is what launchd loads at the next boot.
-    let _ = Command::new("/bin/launchctl")
-        .args(["bootout", "system", REBOOT_JOB_LABEL])
-        .output();
+    //
+    // The service target has to be the qualified `system/<label>` form.
+    // `launchctl bootout system <label>` — a domain target followed by a
+    // bare label — fails with `Boot-out failed: 5: Input/output error`,
+    // because after a domain target launchctl expects a service *path*, not a
+    // label. A silently failing bootout would leave the job registered and
+    // the "not registered" invariant unenforced.
+    //
+    // A job that is still terminating from an earlier run cannot be removed
+    // for a moment, so the removal is retried within a bounded window
+    // before the invariant is asserted.
+    let mut registered = true;
+    for _ in 0..20 {
+        let _ = Command::new("/bin/launchctl")
+            .args(["bootout", "system", &format!("system/{REBOOT_JOB_LABEL}")])
+            .output();
+        registered = Command::new("/bin/launchctl")
+            .args(["print", &format!("system/{REBOOT_JOB_LABEL}")])
+            .output()
+            .is_ok_and(|output| output.status.success());
+        if !registered {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    assert!(
+        !registered,
+        "the boot-time job must not be registered in the running session"
+    );
     // The job's output file is preserved under a name that says what it is,
     // so the next boot's output cannot be confused with an earlier run's.
     let stale_log = Path::new(REBOOT_STATE_DIR).join("reboot-job.log");
@@ -736,7 +770,13 @@ fn arm_c002_cold_reboot() {
                 None,
                 "",
             );
-            let telemetry: serde_json::Value = serde_json::from_str(&body).expect("the telemetry");
+            // A deployment that is still converging answers the management
+            // surface with `503 unavailable`. That is "not yet", not a
+            // failure, so the wait keeps polling instead of panicking on the
+            // first response it cannot parse.
+            let Some(telemetry) = json_body(&body) else {
+                return false;
+            };
             let client = telemetry["clients"]
                 .as_array()
                 .and_then(|clients| clients.first())
@@ -1020,7 +1060,12 @@ fn verify_c002_cold_reboot() {
                 None,
                 "",
             );
-            let snapshot: serde_json::Value = serde_json::from_str(&body).expect("the telemetry");
+            // The deployment reconverges over time. While it has not, the
+            // management surface answers `503 unavailable`, which is "not
+            // yet" and not a failure: the wait keeps polling.
+            let Some(snapshot) = json_body(&body) else {
+                return false;
+            };
             let carried = snapshot["clients"]
                 .as_array()
                 .and_then(|clients| clients.first())
@@ -1067,12 +1112,6 @@ fn verify_c002_cold_reboot() {
     std::fs::remove_dir_all("/usr/local/libexec/wg-basic").ok();
     evidence.log("the uninstall left no job, plist, or binary behind");
 
-    // The boot-time job removes itself: it must not run in a later boot.
-    let _ = Command::new("/bin/launchctl")
-        .args(["bootout", "system", REBOOT_JOB_PLIST])
-        .output();
-    remove_if_exists(Path::new(REBOOT_JOB_PLIST));
-    std::fs::remove_dir_all(Path::new(QUAL_STAGE_DIR)).ok();
     let client = &telemetry["clients"][0];
     assert_eq!(
         client["client_id"].as_str(),
@@ -1088,4 +1127,25 @@ fn verify_c002_cold_reboot() {
         "the enrolled client survived the reboot with the same key {client_public_key} and peer {peer_id}"
     ));
     evidence.write();
+
+    // The boot-time job removes itself: it must not run in a later boot.
+    //
+    // The order matters. `launchctl bootout` **stops the running job**, and
+    // the running job is this process, so anything after the bootout would
+    // not run at all. The evidence is therefore written first, the plist is
+    // removed next — a plist left in `/Library/LaunchDaemons` is loaded
+    // again at the next boot, which is the thing that has to be prevented —
+    // and only then is the job booted out.
+    //
+    // The bootout is **detached into its own process group**: it terminates
+    // this process, and a child that shares this process group is killed
+    // with it, so the unload would never be recorded. A child in its own
+    // group survives and completes the unload.
+    use std::os::unix::process::CommandExt as _;
+    remove_if_exists(Path::new(REBOOT_JOB_PLIST));
+    std::fs::remove_dir_all(Path::new(QUAL_STAGE_DIR)).ok();
+    let _ = Command::new("/bin/launchctl")
+        .args(["bootout", "system", &format!("system/{REBOOT_JOB_LABEL}")])
+        .process_group(0)
+        .spawn();
 }

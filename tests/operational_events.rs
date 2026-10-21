@@ -73,7 +73,11 @@ fn start(state: &Path, socket: &Path, bind: &str, format: &str) -> Child {
 }
 
 fn wait_listening(bind: &str, child: &mut Child) {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    // The management daemon waits, bounded, for the privileged daemon to
+    // answer before its startup reconciliation, so the listener can come up
+    // after that budget when no backend is running. The deadline here is the
+    // harness's own "it hung" bound, not a product contract.
+    let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         if let Ok(addr) = bind.parse() {
             if TcpStream::connect_timeout(&addr, Duration::from_millis(25)).is_ok() {

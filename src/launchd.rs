@@ -374,6 +374,43 @@ fn secure_directory(path: &Path, mode: u32) -> Result<(), InstallError> {
     Ok(())
 }
 
+/// Creates the runtime directory the privileged socket lives in, when it is
+/// missing.
+///
+/// The runtime directory lives under `/var/run`, which **macOS recreates at
+/// every boot**: the copy the installer writes does not survive a reboot. A
+/// daemon that launchd starts at boot therefore has to create it itself, or
+/// it can never bind its socket and the deployment does not come back.
+///
+/// Only a **missing** directory is created, with the installer's exact mode.
+/// A directory that is already there is left exactly as it is: this function
+/// never repairs, widens, or adopts a directory it did not create.
+/// `SocketServer::bind` remains the single place that refuses a symlink, a
+/// foreign owner, or a world/group-writable mode. A symlink or a
+/// non-directory in the path is refused here as well, exactly as
+/// `secure_directory` refuses it at install time.
+pub fn ensure_runtime_directory(path: &Path) -> Result<(), InstallError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err(InstallError::Modified);
+            }
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::create_dir_all(path).map_err(|_| InstallError::Io)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                std::fs::set_permissions(path, std::fs::Permissions::from_mode(RUNTIME_DIR_MODE))
+                    .map_err(|_| InstallError::Io)?;
+            }
+            Ok(())
+        }
+        Err(_) => Err(InstallError::Io),
+    }
+}
+
 /// Writes an owned file with an exact mode, refusing a symlink in its place.
 fn secure_file(path: &Path, bytes: &[u8], mode: u32) -> Result<(), InstallError> {
     if path.symlink_metadata().is_ok() {
@@ -796,6 +833,74 @@ mod tests {
             resolve_service_identity(ServiceRole::Serve).is_err()
                 || resolve_service_identity(ServiceRole::Serve).unwrap().uid >= MIN_SERVICE_UID
         );
+    }
+
+    #[test]
+    fn the_boot_time_runtime_directory_is_created_when_it_is_missing() {
+        // C006: `/var/run` is recreated at every boot on macOS, so the daemon
+        // launchd starts at boot has to create its own runtime directory.
+        let root = temp_root("runtime-missing");
+        let runtime = root.join("run").join("wg-basic");
+        assert!(!runtime.exists());
+        ensure_runtime_directory(&runtime).expect("the missing runtime directory is created");
+        let metadata = std::fs::symlink_metadata(&runtime).unwrap();
+        assert!(metadata.is_dir());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt as _;
+            assert_eq!(
+                metadata.mode() & 0o777,
+                RUNTIME_DIR_MODE,
+                "the runtime directory keeps the installer's exact mode"
+            );
+            assert_eq!(
+                metadata.mode() & 0o022,
+                0,
+                "the runtime directory is never world- or group-writable"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_boot_time_runtime_directory_never_adopts_a_foreign_path() {
+        // C006: only a missing directory is created. A directory that is
+        // already there is left exactly as it is, and a symlink in its place
+        // is refused rather than followed.
+        let root = temp_root("runtime-foreign");
+        let runtime = root.join("wg-basic");
+        std::fs::create_dir_all(&runtime).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o777)).unwrap();
+        }
+        ensure_runtime_directory(&runtime).expect("an existing directory is left alone");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt as _;
+            let metadata = std::fs::symlink_metadata(&runtime).unwrap();
+            assert_eq!(
+                metadata.mode() & 0o777,
+                0o777,
+                "the daemon must not repair or widen a directory it did not create"
+            );
+        }
+        let link = root.join("wg-basic-link");
+        std::os::unix::fs::symlink("/tmp", &link).unwrap();
+        assert_eq!(
+            ensure_runtime_directory(&link).unwrap_err(),
+            InstallError::Modified,
+            "a symlink in the runtime path is refused"
+        );
+        let file = root.join("wg-basic-file");
+        std::fs::write(&file, b"x").unwrap();
+        assert_eq!(
+            ensure_runtime_directory(&file).unwrap_err(),
+            InstallError::Modified,
+            "a file in the runtime path is refused"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

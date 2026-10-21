@@ -75,6 +75,21 @@ pub const DEFAULT_QUEUE_CAPACITY: usize = 32;
 /// Default deadline for one command/reply round trip.
 pub const DEFAULT_REPLY_DEADLINE: Duration = Duration::from_secs(5);
 
+/// How long the management daemon waits for the privileged daemon to answer
+/// before its startup reconciliation.
+///
+/// The privileged daemon is a separate job that starts concurrently with the
+/// management daemon. Linux orders the two units with `After=` and gates the
+/// management daemon on a `doctor` pre-flight; launchd has no such dependency,
+/// so the management daemon waits for the backend itself. Without that wait
+/// the startup reconciliation races the backend's socket, exhausts its short
+/// retry budget, and the deployment comes back **degraded** after a cold
+/// reboot with nothing to retry it.
+pub const BACKEND_STARTUP_WAIT: Duration = Duration::from_secs(10);
+
+/// The interval between two backend readiness probes.
+const BACKEND_PROBE_INTERVAL: Duration = Duration::from_millis(250);
+
 /// The typed commands the worker accepts.
 #[derive(Debug)]
 pub enum WorkerCommand {
@@ -446,6 +461,11 @@ pub struct WorkerConfig {
     pub queue_capacity: usize,
     /// Deadline applied to one command/reply round trip.
     pub reply_deadline: Duration,
+    /// How long the startup waits for the privileged daemon to answer.
+    ///
+    /// Zero means "do not wait": the startup attempt runs immediately and a
+    /// backend that is not there yet is reported as degraded.
+    pub backend_startup_wait: Duration,
 }
 
 impl WorkerConfig {
@@ -457,6 +477,7 @@ impl WorkerConfig {
             socket: socket.as_ref().to_path_buf(),
             queue_capacity: DEFAULT_QUEUE_CAPACITY,
             reply_deadline: DEFAULT_REPLY_DEADLINE,
+            backend_startup_wait: BACKEND_STARTUP_WAIT,
         }
     }
 }
@@ -877,6 +898,32 @@ pub fn spawn(config: WorkerConfig) -> Result<WorkerStartup, ManagementError> {
     }
 }
 
+/// Waits, bounded, for the privileged daemon to answer a capability request.
+///
+/// The probe is read-only and is the same capability request the doctor
+/// makes, so "ready" means the backend is serving **and** admits this peer,
+/// not merely that a socket file exists. A missing socket, a refused
+/// connection, an unanswered request, or a refusal all mean "not yet".
+///
+/// Returns whether the backend answered within the budget. The caller does
+/// not treat a timeout as fatal: the listener must come up either way, and a
+/// backend that never answers is reported as degraded.
+fn wait_for_backend(socket: &Path, budget: Duration) -> bool {
+    use crate::protocol::{request, RequestOperation, ResponseBody};
+    let deadline = std::time::Instant::now() + budget;
+    loop {
+        if request(socket, RequestOperation::InspectCapabilities, u64::MAX)
+            .is_ok_and(|response| matches!(response, ResponseBody::Capabilities(_)))
+        {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(BACKEND_PROBE_INTERVAL);
+    }
+}
+
 /// The worker body: open the runtime, attempt reconciliation, then serve.
 fn run(
     config: WorkerConfig,
@@ -903,6 +950,13 @@ fn run(
         let _ = startup.send(StartupOutcome::Fatal(error.into()));
         return;
     }
+
+    // The privileged daemon is a separate job that starts concurrently with
+    // this one, so the startup reconciliation can reach it before it has bound
+    // its socket. The wait below is bounded: the listener still comes up
+    // either way, and a backend that never appears leaves the startup
+    // attempt degraded, which is what the operator has to see.
+    wait_for_backend(&config.socket, config.backend_startup_wait);
 
     // ADR-002 requires an unconditional startup attempt. It is deliberately not
     // conditional on stored convergence evidence, and a degraded result is
@@ -1383,10 +1437,34 @@ mod tests {
         temp.path.join("no-such-netd.sock")
     }
 
+    /// A worker configuration for a host where no backend is running.
+    ///
+    /// The startup wait is zero: these tests are about the worker's command
+    /// vocabulary and its degraded startup, and a backend that can never
+    /// answer must not make them wait out the production budget.
+    fn config_without_backend(temp: &TempDir) -> WorkerConfig {
+        WorkerConfig {
+            backend_startup_wait: Duration::ZERO,
+            ..WorkerConfig::new(temp.db(), absent_socket(temp))
+        }
+    }
+
+    #[tokio::test]
+    async fn the_startup_wait_gives_up_on_a_backend_that_never_answers() {
+        let temp = TempDir::new();
+        // A backend that cannot exist is never ready, so the wait reports
+        // "not ready" instead of blocking the listener forever.
+        assert!(!wait_for_backend(&absent_socket(&temp), Duration::ZERO));
+        assert!(!wait_for_backend(
+            &absent_socket(&temp),
+            Duration::from_millis(200)
+        ));
+    }
+
     #[tokio::test]
     async fn a_started_worker_answers_health_and_shuts_down() {
         let temp = TempDir::new();
-        let config = WorkerConfig::new(temp.db(), absent_socket(&temp));
+        let config = config_without_backend(&temp);
         let startup = spawn(config).expect("a fresh store and an absent netd still start");
 
         // The installation manages no interface, so there is nothing to apply.
@@ -1415,8 +1493,8 @@ mod tests {
             .unwrap();
         drop(store);
 
-        let startup = spawn(WorkerConfig::new(temp.db(), absent_socket(&temp)))
-            .expect("an absent netd is degraded, not fatal");
+        let startup =
+            spawn(config_without_backend(&temp)).expect("an absent netd is degraded, not fatal");
         assert!(
             startup.reconcile().is_degraded(),
             "{:?}",
@@ -1445,8 +1523,11 @@ mod tests {
         let bogus = temp.path.join("not-a-database");
         fs::create_dir(&bogus).unwrap();
 
-        let error = spawn(WorkerConfig::new(&bogus, absent_socket(&temp)))
-            .expect_err("an unopenable store has no authority to administer");
+        let error = spawn(WorkerConfig {
+            backend_startup_wait: Duration::ZERO,
+            ..WorkerConfig::new(&bogus, absent_socket(&temp))
+        })
+        .expect_err("an unopenable store has no authority to administer");
         assert!(error.is_fatal_without_authority(), "{error}");
     }
 
@@ -1498,7 +1579,7 @@ mod tests {
     #[tokio::test]
     async fn a_closed_queue_reports_a_stopped_worker() {
         let temp = TempDir::new();
-        let startup = spawn(WorkerConfig::new(temp.db(), absent_socket(&temp))).unwrap();
+        let startup = spawn(config_without_backend(&temp)).unwrap();
         let client = startup.client().clone();
         startup.stop().await.expect("a clean shutdown");
 
@@ -1513,7 +1594,7 @@ mod tests {
     #[tokio::test]
     async fn a_missed_reply_deadline_is_overload_not_success() {
         let temp = TempDir::new();
-        let mut config = WorkerConfig::new(temp.db(), absent_socket(&temp));
+        let mut config = config_without_backend(&temp);
         // A deadline this short cannot be met by a healthy round trip, which is
         // the point: the caller is bounded even if the worker misbehaves.
         config.reply_deadline = Duration::ZERO;

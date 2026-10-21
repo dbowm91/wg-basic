@@ -769,6 +769,18 @@ pub fn http(
     )
 }
 
+/// Parses a management-API response body as JSON, or `None` when it is not
+/// JSON.
+///
+/// A deployment that is still converging answers the management surface with
+/// `503 Service Unavailable` and the plain-text body `unavailable`. That is
+/// the expected transient state, not a failure, so a wait that polls for
+/// convergence must treat it as "not yet" and keep waiting instead of
+/// panicking on the first response it cannot parse.
+pub fn json_body(body: &str) -> Option<serde_json::Value> {
+    serde_json::from_str(body).ok()
+}
+
 /// The IPv4 address an interface answers on.
 ///
 /// The interface's own address is what a peer on the same network dials, so
