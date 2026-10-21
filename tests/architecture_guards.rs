@@ -2198,9 +2198,42 @@ fn the_darwin_pf_model_renders_without_executing() {
     for required in [
         "ANCHOR_PREFIX",
         "attachment_verified",
+        "observe_attachments",
+        "RequiredAttachments",
+        "AttachmentObservation",
         "rules_digest",
         "teardown_order",
         "is_ipv4",
+    ] {
+        assert!(
+            pf.contains(required),
+            "src/firewall/pf.rs must model {required}"
+        );
+    }
+}
+
+#[test]
+fn the_darwin_pf_attachment_verifier_is_per_class_and_token_exact() {
+    // C007: the attachment verifier must not fall back to a substring test or
+    // to a disjunction across the rule classes. A name that merely contains
+    // the managed name, and a reference to one class when another is
+    // required, are both not proof.
+    let pf = shippable(source_of("src/firewall/pf.rs"));
+    for forbidden in [
+        ".contains(anchor)",
+        "parent_filter_output.contains",
+        "parent_nat_output.contains",
+    ] {
+        assert!(
+            !pf.contains(forbidden),
+            "src/firewall/pf.rs must not verify attachment by {forbidden}"
+        );
+    }
+    for required in [
+        "fn invokes_anchor",
+        "\"anchor\"",
+        "\"nat-anchor\"",
+        "first == keyword",
     ] {
         assert!(
             pf.contains(required),

@@ -20,6 +20,15 @@
 //! - Global forwarding toggles are shared and sticky: never silently reset.
 //! - Teardown removes the owned anchors before helper teardown and never
 //!   touches foreign anchors, global PF state, or forwarding settings.
+//!
+//! Attachment verification (C007) is **per rule class and token-exact**. The
+//! filter table's parent must invoke the managed anchor with an `anchor`
+//! rule, and the NAT table's parent with a `nat-anchor` rule; each names the
+//! managed anchor as a whole token. A name that merely *contains* the managed
+//! name, a comment naming it, another table's keyword, and the anchor's own
+//! definition are all not invocations. The two classes are verified
+//! independently, and a required class that is not invoked is never excused
+//! by the other one.
 
 use std::collections::BTreeSet;
 
@@ -83,16 +92,130 @@ pub fn render_policy(
     PfRuleSet { filter, nat }
 }
 
-/// Verifies that observed parent filter/NAT output actually invokes the
-/// installation anchor. Mere anchor existence is not effective policy: the
-/// parent must reference it. The live backend supplies real `pfctl -s`
-/// output; fixtures model it here.
+/// The rule classes whose attachment the administrator's parent configuration
+/// must establish.
+///
+/// The filter table and the NAT table hold **independent** anchors that may
+/// share a name, and each is attached by its own parent rule. A policy that
+/// needs both therefore requires both, and a policy that needs only the
+/// filter anchor must not be satisfied by an NAT-only reference.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RequiredAttachments {
+    /// The filter table's parent must invoke the managed anchor.
+    pub filter: bool,
+    /// The NAT table's parent must invoke the managed anchor.
+    pub nat: bool,
+}
+
+impl RequiredAttachments {
+    /// A policy that needs the filter anchor only (host-only, or forwarded
+    /// traffic without masquerade).
+    pub const FILTER_ONLY: RequiredAttachments = RequiredAttachments {
+        filter: true,
+        nat: false,
+    };
+
+    /// A masquerading policy: both anchors are required, independently.
+    pub const FILTER_AND_NAT: RequiredAttachments = RequiredAttachments {
+        filter: true,
+        nat: true,
+    };
+}
+
+/// The observed attachment state of one rule class.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Attachment {
+    /// The parent ruleset invokes the managed anchor.
+    Invoked,
+    /// The parent ruleset does not invoke the managed anchor.
+    Missing,
+}
+
+/// The per-class attachment observation of one installation anchor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AttachmentObservation {
+    /// The filter table's attachment state.
+    pub filter: Attachment,
+    /// The NAT table's attachment state.
+    pub nat: Attachment,
+}
+
+impl AttachmentObservation {
+    /// Whether every required class is observed as invoked.
+    ///
+    /// This is a conjunction over the required classes. A class that is not
+    /// required is not consulted, and a missing class is never excused by an
+    /// invoked one.
+    pub fn verified(self, required: RequiredAttachments) -> bool {
+        (!required.filter || self.filter == Attachment::Invoked)
+            && (!required.nat || self.nat == Attachment::Invoked)
+    }
+}
+
+/// Observes how the observed parent configurations attach the managed anchor,
+/// one rule class at a time.
+///
+/// The live backend supplies real `pfctl -s rules` and `pfctl -s nat` output;
+/// fixtures model it here. The observation is deliberately per class so a
+/// caller can report *which* class is missing instead of only that the
+/// attachment as a whole failed.
+pub fn observe_attachments(
+    parent_filter_output: &str,
+    parent_nat_output: &str,
+    anchor: &str,
+) -> AttachmentObservation {
+    AttachmentObservation {
+        filter: if invokes_anchor(parent_filter_output, "anchor", anchor) {
+            Attachment::Invoked
+        } else {
+            Attachment::Missing
+        },
+        nat: if invokes_anchor(parent_nat_output, "nat-anchor", anchor) {
+            Attachment::Invoked
+        } else {
+            Attachment::Missing
+        },
+    }
+}
+
+/// Whether the observed parent configurations attach the managed anchor in
+/// every required rule class.
+///
+/// The verdict is a conjunction over the required classes. A parent that
+/// invokes only one class never satisfies a requirement for both, and a
+/// parent that mentions the managed name in any other way invokes nothing.
 pub fn attachment_verified(
     parent_filter_output: &str,
     parent_nat_output: &str,
     anchor: &str,
+    required: RequiredAttachments,
 ) -> bool {
-    parent_filter_output.contains(anchor) || parent_nat_output.contains(anchor)
+    observe_attachments(parent_filter_output, parent_nat_output, anchor).verified(required)
+}
+
+/// Whether `ruleset_output` contains a rule that invokes `anchor`.
+///
+/// The rule must **invoke** the anchor, not merely mention it:
+///
+/// - the rule's first token is the keyword of the table the rule belongs to
+///   (`anchor` in the filter table, `nat-anchor` in the NAT table), and
+/// - the rule's second token is the managed anchor's name as a **whole
+///   token**, quoted (`"name"`) or bare.
+///
+/// A name that merely contains the managed name, a comment naming it, another
+/// table's keyword, and the anchor's own definition are all not invocations.
+/// The test is token-exact, so it fails closed on anything ambiguous.
+fn invokes_anchor(ruleset_output: &str, keyword: &str, anchor: &str) -> bool {
+    let quoted = format!("\"{anchor}\"");
+    ruleset_output.lines().any(|line| {
+        let mut tokens = line.split_whitespace();
+        match (tokens.next(), tokens.next()) {
+            (Some(first), Some(second)) => {
+                first == keyword && (second == quoted || second == anchor)
+            }
+            _ => false,
+        }
+    })
 }
 
 /// Digest of the exact rendered rules for drift detection. Any observed
@@ -174,21 +297,196 @@ mod tests {
         assert!(!plain.filter.is_empty());
     }
 
+    /// The real macOS 26.6.2 main filter ruleset, as `pfctl -s rules` printed
+    /// it on a live host. Captured read-only; the host's own rules are
+    /// Apple's.
+    const REAL_MACOS_FILTER_RULESET: &str = "\
+scrub-anchor \"com.apple/*\" all fragment reassemble
+scrub-anchor \"com.apple.internet-sharing\" all fragment reassemble
+anchor \"com.apple/*\" all
+anchor \"com.apple.internet-sharing\" all
+";
+
+    /// The real macOS 26.6.2 main NAT ruleset, as `pfctl -s nat` printed it.
+    const REAL_MACOS_NAT_RULESET: &str = "\
+nat-anchor \"com.apple/*\" all
+nat-anchor \"com.apple.internet-sharing\" all
+rdr-anchor \"com.apple/*\" all
+rdr-anchor \"com.apple.internet-sharing\" all
+";
+
+    /// The real ruleset of a scoped fixture parent anchor that invokes a
+    /// managed anchor, as `pfctl -a <parent> -s rules` printed it.
+    const REAL_MACOS_PARENT_ANCHOR_RULESET: &str = "anchor \"wg-basic-fmt-probe-child\" all\n";
+
     #[test]
-    fn attachment_requires_parent_invocation_not_mere_existence() {
+    fn an_invocation_in_the_filter_table_verifies_the_filter_class() {
         let anchor = "wg-basic-v1-test";
-        assert!(!attachment_verified("", "", anchor));
-        assert!(attachment_verified(
-            "anchor \"wg-basic-v1-test\" all",
+        let observation = observe_attachments("anchor \"wg-basic-v1-test\" all\n", "", anchor);
+        assert_eq!(observation.filter, Attachment::Invoked);
+        assert_eq!(observation.nat, Attachment::Missing);
+        assert!(observation.verified(RequiredAttachments::FILTER_ONLY));
+        assert!(!observation.verified(RequiredAttachments::FILTER_AND_NAT));
+    }
+
+    #[test]
+    fn an_invocation_in_the_nat_table_verifies_the_nat_class() {
+        let anchor = "wg-basic-v1-test";
+        let observation = observe_attachments("", "nat-anchor \"wg-basic-v1-test\" all\n", anchor);
+        assert_eq!(observation.filter, Attachment::Missing);
+        assert_eq!(observation.nat, Attachment::Invoked);
+        assert!(
+            !observation.verified(RequiredAttachments::FILTER_ONLY),
+            "an NAT-only parent does not satisfy a filter-only requirement"
+        );
+        assert!(
+            !observation.verified(RequiredAttachments::FILTER_AND_NAT),
+            "an NAT-only parent does not satisfy a two-class requirement"
+        );
+    }
+
+    #[test]
+    fn the_two_rule_classes_are_verified_independently() {
+        let anchor = "wg-basic-v1-test";
+        // A parent that invokes only the filter anchor does not satisfy a
+        // requirement for both, and neither does an NAT-only parent.
+        let filter_only = "anchor \"wg-basic-v1-test\" all\n";
+        let nat_only = "nat-anchor \"wg-basic-v1-test\" all\n";
+        assert!(!attachment_verified(
+            filter_only,
             "",
-            anchor
+            anchor,
+            RequiredAttachments::FILTER_AND_NAT
+        ));
+        assert!(!attachment_verified(
+            "",
+            nat_only,
+            anchor,
+            RequiredAttachments::FILTER_AND_NAT
         ));
         assert!(attachment_verified(
-            "",
-            "nat-anchor \"wg-basic-v1-test\" all",
-            anchor
+            filter_only,
+            nat_only,
+            anchor,
+            RequiredAttachments::FILTER_AND_NAT
         ));
-        assert!(!attachment_verified("anchor \"other\" all", "", anchor));
+    }
+
+    #[test]
+    fn a_longer_name_that_contains_the_managed_name_is_not_an_invocation() {
+        let anchor = "wg-basic-v1-test";
+        let observation = observe_attachments(
+            "anchor \"wg-basic-v1-test-backup\" all\n",
+            "nat-anchor \"wg-basic-v1-test-backup\" all\n",
+            anchor,
+        );
+        assert_eq!(observation.filter, Attachment::Missing);
+        assert_eq!(observation.nat, Attachment::Missing);
+        assert!(!observation.verified(RequiredAttachments::FILTER_AND_NAT));
+    }
+
+    #[test]
+    fn a_comment_naming_the_managed_anchor_is_not_an_invocation() {
+        let anchor = "wg-basic-v1-test";
+        let observation = observe_attachments(
+            "# anchor \"wg-basic-v1-test\" all\n",
+            "# nat-anchor \"wg-basic-v1-test\" all\n",
+            anchor,
+        );
+        assert_eq!(observation.filter, Attachment::Missing);
+        assert_eq!(observation.nat, Attachment::Missing);
+    }
+
+    #[test]
+    fn another_tables_keyword_is_not_an_invocation() {
+        let anchor = "wg-basic-v1-test";
+        // `scrub-anchor` and `rdr-anchor` are not the filter table's anchor
+        // keyword, and a `nat-anchor` rule is not a filter-table invocation.
+        let observation = observe_attachments(
+            "scrub-anchor \"wg-basic-v1-test\" all fragment reassemble\n\
+             rdr-anchor \"wg-basic-v1-test\" all\n\
+             nat-anchor \"wg-basic-v1-test\" all\n",
+            "anchor \"wg-basic-v1-test\" all\n",
+            anchor,
+        );
+        assert_eq!(observation.filter, Attachment::Missing);
+        assert_eq!(
+            observation.nat,
+            Attachment::Missing,
+            "a filter-table anchor rule is not a NAT-table invocation"
+        );
+    }
+
+    #[test]
+    fn the_anchor_must_be_named_as_a_whole_token() {
+        let anchor = "wg-basic-v1-test";
+        assert_eq!(
+            observe_attachments("anchor wg-basic-v1-test all\n", "", anchor).filter,
+            Attachment::Invoked,
+            "an unquoted whole-token name is still the name"
+        );
+        assert_eq!(
+            observe_attachments("anchor \"wg-basic-v1-test-x\" all\n", "", anchor).filter,
+            Attachment::Missing
+        );
+        assert_eq!(
+            observe_attachments("anchor \"prefix-wg-basic-v1-test\" all\n", "", anchor).filter,
+            Attachment::Missing
+        );
+    }
+
+    #[test]
+    fn the_real_macos_rulesets_are_parsed_without_a_false_attachment() {
+        // Apple's own anchors are invocations of *Apple's* anchors and of
+        // nothing else.
+        let observation = observe_attachments(
+            REAL_MACOS_FILTER_RULESET,
+            REAL_MACOS_NAT_RULESET,
+            "wg-basic-v1-6f1a0f2e-0000-4000-8000-000000000000",
+        );
+        assert_eq!(observation.filter, Attachment::Missing);
+        assert_eq!(observation.nat, Attachment::Missing);
+
+        // The same matcher does find the real invocations the host printed.
+        let apple = observe_attachments(
+            REAL_MACOS_FILTER_RULESET,
+            REAL_MACOS_NAT_RULESET,
+            "com.apple.internet-sharing",
+        );
+        assert_eq!(apple.filter, Attachment::Invoked);
+        assert_eq!(apple.nat, Attachment::Invoked);
+    }
+
+    #[test]
+    fn the_real_parent_anchor_output_is_recognized_as_an_invocation() {
+        // The parent anchor the host printed invokes the child anchor, and
+        // the matcher finds it.
+        let observation = observe_attachments(
+            REAL_MACOS_PARENT_ANCHOR_RULESET,
+            "",
+            "wg-basic-fmt-probe-child",
+        );
+        assert_eq!(observation.filter, Attachment::Invoked);
+        assert_eq!(observation.nat, Attachment::Missing);
+
+        // The shorter prefix of that name is a different anchor: a substring
+        // test would have reported it as attached.
+        let prefix =
+            observe_attachments(REAL_MACOS_PARENT_ANCHOR_RULESET, "", "wg-basic-fmt-probe");
+        assert_eq!(prefix.filter, Attachment::Missing);
+    }
+
+    #[test]
+    fn a_ruleset_carrying_tool_noise_is_still_parsed_exactly() {
+        let anchor = "wg-basic-v1-test";
+        let observation = observe_attachments(
+            "No ALTQ support in kernel\nALTQ related functions disabled\n\
+             anchor \"wg-basic-v1-test\" all\n",
+            "No ALTQ support in kernel\n",
+            anchor,
+        );
+        assert_eq!(observation.filter, Attachment::Invoked);
+        assert_eq!(observation.nat, Attachment::Missing);
     }
 
     #[test]
