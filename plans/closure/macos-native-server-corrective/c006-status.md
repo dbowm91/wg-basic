@@ -351,13 +351,26 @@ recorded above.
    `launchctl bootout` stops the running job before launchd records the
    unload — is therefore not what happens; the helper's own death is.
 
-   Two further variants (a new **session** rather than a new process group,
-   with and without the two-argument bootout form) are under test at
-   `bc88587`. The limitation stands until that result is read: the
-   registration is inert — the plist is gone, so the job cannot run in a
-   later boot, and with `RunAtLoad` and no `KeepAlive` a job that has
-   already run does not run again in this boot — but it is residue, and the
-   plist removal remains the load-bearing part.
+   **The mechanism is conclusive** (run `39566286202`, the same evidence on
+   the Intel runner): two further variants that put the bootout in a new
+   **session** rather than a new process group — with and without the
+   two-argument bootout form — **also** leave the registration behind. A
+   launchd job cannot unload itself while it is running: the unregistration
+   helper is one of the job's descendants, and launchd tears the job's
+   descendants down with the job.
+
+   What **is** load-bearing is the plist removal: without it the job would
+   load again in a later boot, and with it the job cannot run again even
+   though the registration lingers. The residue is inert — the job has
+   already run, it has no `KeepAlive`, and the arm phase of any later run
+   removes the registration from outside the job's tree. The hosted probe
+   now asserts the load-bearing invariant (the plist is gone) and records
+   what each form leaves behind, so the finding is pinned rather than
+   assumed. The controlled fixture's own self-unregistration attempt
+   therefore cannot succeed and is not load-bearing; simplifying it is
+   deferred to the next controlled-host leg, because that leg needs a
+   disposable macOS host and a reboot, and the change could not be verified
+   without one.
 4. **The disposable guest is deleted.** The VM bundle, the IPSW and the
    working directory are removed after the evidence is captured, so the
    evidence lives in this record and in the C002 record, not on a host.

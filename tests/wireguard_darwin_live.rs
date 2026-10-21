@@ -1970,6 +1970,21 @@ fn live_self_removing_job_leaves_no_registration() {
         if let Ok(text) = std::fs::read_to_string(&outcome) {
             evidence.log(&format!("variant {variant}: {text}"));
         }
+        // The load-bearing invariant. A launchd job cannot unload itself
+        // while it is running: the unregistration helper is one of the job's
+        // descendants, and launchd tears those down when the job exits, so
+        // the helper never completes the unload — a new process group, a
+        // new session, and a delayed bootout all leave the registration
+        // behind. What *is* load-bearing is that the job removed its own
+        // plist: without it the job would load again in a later boot, and
+        // with it the job cannot run again even though the registration
+        // lingers. The residue is inert — the job has already run, it has
+        // no `KeepAlive`, and the next arm phase removes the registration
+        // from outside the job's tree.
+        assert!(
+            !Path::new(&plist).exists(),
+            "variant {variant}: the job must remove its own plist, or it would run again in a later boot"
+        );
 
         // Leave nothing behind, whatever the outcome was.
         sh_unchecked(
