@@ -1,17 +1,22 @@
 # macOS Native Server C002 — Least-Privilege LaunchDaemons and Real Installer
 
-Disposition: **blocked** (narrowed 2026-10-20: the service identity, the
+Disposition: **blocked** (narrowed 2026-10-21: the service identity, the
 constrained installer, the bounded launchd control, and the hosted
-bootstrap/KeepAlive/bootout/reinstall cycle are implemented and evidenced; the
-**three-phase cold-reboot qualification is written and armed on a controlled
-arm64 host** — it installs the deployment, enrolls a client through the real
-HTTP surface, records what has to survive, and registers the boot-time job
-that verifies it in the new boot — but the reboot itself has not been taken,
-so the plan's acceptance still needs a **cold reboot on a rebootable host**,
-which hosted macOS runners cannot prove — the same reboot gap M006 already
-records).
+bootstrap/KeepAlive/bootout/reinstall cycle are implemented and evidenced, and
+the **three-phase cold-reboot qualification has now been run end to end on a
+disposable arm64 macOS guest** — it installs the deployment, enrolls a client
+through the real HTTP surface, records what has to survive, takes the host
+down, and checks it in the new boot — where the reboot was **observed** (the
+kernel boot time advanced), both roles came back from the system domain, the
+management daemon was still the unprivileged identity, the credential and the
+enrolled client survived, the network reconverged, and the uninstall left no
+job, plist, or binary behind. The first run of that leg **failed** and
+exposed two boot-path defects; both are fixed and closed in
+`plans/closure/macos-native-server-corrective/c006-status.md`. What remains
+for this plan is the **native Intel arch** of the same leg, which hosted
+macOS runners cannot prove — the same arch gap C001 records).
 
-Date: 2026-10-20.
+Date: 2026-10-21.
 
 ## Implementation revision
 
@@ -27,6 +32,13 @@ Date: 2026-10-20.
   product's own installer from `e4f47d5`.
 - Source plan: `plans/implementation/macos-native-server/c002-launchd-privilege-and-install.md`.
 - Source roadmap: `plans/subsystems/macos-native-server-corrective-roadmap.md` (C002).
+- Corrective: the cold-reboot qualification of this plan found two boot-path
+  defects in this plan's own implementation. Per `plans/003-planning-process.md`
+  §13, they are corrected under their own plan and closure record —
+  `plans/implementation/macos-native-server/c006-boot-time-runtime-and-backend-readiness.md`
+  and `plans/closure/macos-native-server-corrective/c006-status.md` — at
+  implementation head `e37210b`. This record's evidence stands at `b53ce2d`;
+  the passing cold-reboot re-run is recorded in C006.
 - Historical M006 and M007 closures are untouched and remain as recorded.
 
 ## Requirement-to-evidence matrix
@@ -36,11 +48,11 @@ Date: 2026-10-20.
 | §1 Service identity: restricted durable `serve` service account/group and an explicit root `netd` account in the rendered LaunchDaemon plists; document whether the installer creates the account or a verified preprovisioned account is required; stable UID resolution and safe refusal on renamed/reused IDs; `UserName`/`GroupName` in a tightly constrained plist renderer; escape XML or generate structured plists with a fixed schema; forbid arbitrary label, executable, env, working directory, user/group, or log path injection | `src/launchd.rs`: `ServiceRole` owns the label, the account, the group, and the log path; `NETD_USER = "root"`, `NETD_GROUP = "wheel"`, `SERVE_USER = "_wg-basic-serve"`, `SERVE_GROUP = "_wg-basic-serve"`. `render_service_plist(role)` takes **no** caller path at all: the executable, the socket, the state, and the log path are the deployment's own, and every interpolated value is XML-escaped with control characters refused. `resolve_service_identity` resolves the account through the directory service and refuses a missing account, an account below `MIN_SERVICE_UID` (macOS reserves UIDs below 500), and an account whose primary group is not the dedicated group. **The account is preprovisioned**: the installer never creates accounts and never adopts an unknown identity | Passed (code + unit) |
 | §2 Filesystem and IPC: root-controlled executable/helper/plist/receipt directories, management-owned `/var/db/wg-basic` (0700, no root-mode `serve`), root-controlled `/var/run/wg-basic` socket parent (non-world-writable), socket owner/group/mode granting only the intended service identity, verified `getpeereid`, denial of other local/root identities unless explicitly approved; no root/admin session secret leakage to logs, argv, temp files, or process env; refuse symlinks/foreign inode replacement and TOCTOU; no world-writable parent | `src/launchd.rs`: `STATE_DIR_MODE = 0700` (management-owned), `RUNTIME_DIR_MODE = 0755` (root-controlled, never world-writable), `SOCKET_MODE = 0660`, `LOG_DIR_MODE = 0755`, `LOG_FILE_MODE = 0640`, `RECEIPT_MODE = 0600`. `secure_directory`/`secure_file` refuse a symlink in place of an owned path; `verify_installed_root` re-checks the exact modes and refuses a widened runtime directory. `authorize_socket_group` binds the socket to root and the management group. The privileged daemon admits the management UID that the **verified install receipt** records, and the UDS peer identity is the existing `getpeereid`/`SO_PEERCRED` path in `src/protocol/auth.rs`. The CLI is stdin-only, so no secret reaches argv, a log, a temp file, or the process environment | Passed (code + unit) |
 | §3 Installer CLI: Darwin `system install/status/uninstall` wired to the verified exact-target install contracts; validate artifact/helper hashes, source/target names, and ownership receipts before writing; bootstrap `netd` then `serve`; verify the actual EUID/EGID, effective socket permissions, health, and convergence; handle partial `launchctl` failures transactionally without touching foreign labels; never silently edit PF or enable systemwide forwarding; preserve SQLite/client keys and admin sessions on state-preserving uninstall/reinstall, with the purge guarded separately | `src/main.rs` wires `system install --helper PATH`, `system status`, and `system uninstall` on Darwin to `src/launchd_install.rs`. The installer requires effective root, refuses a symlinked or non-regular binary or helper, pins the exact Darwin target triple, writes and verifies the owned layout, resolves and binds the management identity, applies the management ownership, bootstraps `netd` then `serve`, and **rolls back the first registration** if the second fails. It never touches PF or forwarding, and `uninstall_preserving_state` keeps the state directory and the receipt. The purge stays the separate guarded `state purge` | Passed (code + unit); live EUID proof in the hosted run |
-| §4 Recovery and reboot: SIGTERM drains, KeepAlive restarts both roles with bounded backoff, stale socket and helper ownership resolved through C001 rather than a blind helper kill; prove system-domain boot after a cold reboot, service user identity, DB preservation, complete network reconvergence, and uninstall with no leaked jobs; test native ARM64 and Intel (hosted temporary bootstrap alone does not prove reboot) | `RunAtLoad` + `KeepAlive` + `ThrottleInterval` remain in the rendered plists; both roles already drain on SIGTERM. The hosted live cycle proves bootstrap, `launchctl print` with a running pid, KeepAlive re-supervision under a **new pid** after SIGTERM, bootout with the job gone from the system domain, and a reinstall cycle that serves again from the same receipt with a byte-identical helper. Stale socket and helper ownership are resolved through the C001 receipt and joint ownership proof, never a blind kill. The **cold reboot** qualification is written as three phases — `arm` installs the deployment, enrolls a client through the real HTTP surface, records the client, the peer, the interface, and the management identity, and installs the boot-time job; `reboot` takes the host down; `verify` runs in the new boot and checks that both roles came back from the system domain, that the management daemon still runs as the unprivileged identity, that the state database still authenticates the same credential and still holds the same client and peer, that the network reconverged, and that the uninstall leaves no job, plist, or binary behind. The arm phase is **observed and passing** on a controlled arm64 host (see *Verification* below); the reboot has not been taken, so the system-domain boot after a cold reboot, the database preservation across it, and the post-reboot reconvergence remain unqualified | Partially passed (hosted restart cycle; armed cold-reboot arm phase); **blocked** on the cold reboot |
+| §4 Recovery and reboot: SIGTERM drains, KeepAlive restarts both roles with bounded backoff, stale socket and helper ownership resolved through C001 rather than a blind helper kill; prove system-domain boot after a cold reboot, service user identity, DB preservation, complete network reconvergence, and uninstall with no leaked jobs; test native ARM64 and Intel (hosted temporary bootstrap alone does not prove reboot) | `RunAtLoad` + `KeepAlive` + `ThrottleInterval` remain in the rendered plists; both roles already drain on SIGTERM. The hosted live cycle proves bootstrap, `launchctl print` with a running pid, KeepAlive re-supervision under a **new pid** after SIGTERM, bootout with the job gone from the system domain, and a reinstall cycle that serves again from the same receipt with a byte-identical helper. Stale socket and helper ownership are resolved through the C001 receipt and joint ownership proof, never a blind kill. The **cold reboot** qualification is written as three phases — `arm` installs the deployment, enrolls a client through the real HTTP surface, records the client, the peer, the interface, and the management identity, and installs the boot-time job; `reboot` takes the host down; `verify` runs in the new boot and checks that both roles came back from the system domain, that the management daemon still runs as the unprivileged identity, that the state database still authenticates the same credential and still holds the same client and peer, that the network reconverged, and that the uninstall leaves no job, plist, or binary behind. **The cold reboot was taken and observed on a disposable arm64 macOS guest**, and the leg now passes end to end: the kernel boot time advanced, both roles came back from the system domain, the management daemon was still the unprivileged identity, the credential and the enrolled client survived, the network reconverged, and the uninstall left no job, plist, or binary behind (see *Arm64 controlled-host cold-reboot qualification* below). The first run of that leg **failed** and exposed two boot-path defects in this plan's own implementation — the transient `/var/run` runtime directory and the boot-time race against the privileged daemon — both corrected and closed in `plans/closure/macos-native-server-corrective/c006-status.md` | Passed (hosted restart cycle; **cold-reboot leg observed and passing on a controlled arm64 host**); **blocked (narrowed)** on the native Intel arch of the same leg |
 | §5 Packaging truth: install both the pinned `wg-basic` binary and the pinned `wireguard-go` helper from immutable exact-target metadata; prohibit execution of unverified downloaded bytes as root; no production signature or automatic updater claims; `update run/check` stays fail closed | `install_to_root` takes the exact bytes of both artifacts, hashes them, records both digests in the owner-only receipt, and refuses an unsupported target triple or an empty artifact. The helper netd later executes is hash-verified against the receipt **at execution time** (`verify_helper_sha256` runs before every spawn), so unverified bytes are never executed as root. The module contains no signing claim and no updater enablement, and the existing guard `no_production_signing_claim_exists` still holds | Passed (code + unit) |
 | Static tests: refuse a missing/invalid service identity and dangerous plist characters; verify the exact XML entries and the trusted paths/labels; require effective UIDs; deny a root management service launch; refuse a foreign plist/helper/receipt, a symlink swap, a socket unauthorized peer, a wrong hash, and a wrong architecture | `src/launchd.rs` unit tests cover the fixed keys and identity in the rendered XML, the refusal of a control character, the symlink refusal in place of an owned directory, the non-world-writable runtime directory, the wrong target triple, and the empty artifact. New architecture guards `the_darwin_launchd_control_is_a_closed_verb_and_target_set`, `the_darwin_management_daemon_is_never_root`, `the_darwin_netd_always_sets_the_privileged_socket_ownership`, and `the_management_identity_owns_the_receipt_it_reads` pin the bounded `launchctl` boundary, the non-root management account, the socket's ownership, and the receipt's owner. The native live test `live_c002_management_daemon_runs_unprivileged` runs the product's own transactional installer, reads the **real** effective UID and GID of each running daemon with `ps`, and the **real** socket owner, group, and mode with `stat` | Passed (code + unit); live runtime UID proof in the hosted run |
-| Controlled host: initial install → health → API traffic from C001 → kill both roles → supervise → reboot → same keys/traffic → uninstall preserving DB → reinstall → identical identity, with foreign launchd jobs and route state preserved; capture `launchctl print`, `id`/EUID, `stat` perms, process ownership, helper hashes, and the pre/post host inventory; repeat Intel natively | The hosted ARM64 and Intel runs capture `launchctl print`, the effective UIDs, the socket permissions, and the helper digests, and prove the install → bootstrap → SIGTERM → supervise → bootout → reinstall cycle with the layout verified against its receipt. The API-traffic leg is **met on arm64** by C001's controlled-host product path (real installer, real daemons, real handshake, dual-stack traffic, API telemetry) — see `c001-status.md`. The **cold-reboot** leg is written and armed on a controlled arm64 host; the reboot itself has not been taken, and the Intel leg beyond the hosted restart cycle remains unqualified | Partially passed (hosted ARM64 + Intel; arm64 API-traffic leg; armed cold-reboot arm phase); **blocked** on the reboot |
-| Blockers: never close if `serve` runs as root, if the privilege identity is only inferred from plist text, if helper provenance is not checked at execution time, if Linux paths change, or if reboot persistence cannot be demonstrated | `serve` is declared and, in the live qualification, **observed** as the dedicated unprivileged account; the identity is read from the running process, not from the plist text. The helper digest is checked before every spawn. No Linux path, unit, service, or schema changed: the Linux reconciliation service now shares the same portable apply module with byte-identical plan and failure mapping, and the Linux build and clippy are clean. Reboot persistence is **not** demonstrated | **Blocked** on the reboot condition |
+| Controlled host: initial install → health → API traffic from C001 → kill both roles → supervise → reboot → same keys/traffic → uninstall preserving DB → reinstall → identical identity, with foreign launchd jobs and route state preserved; capture `launchctl print`, `id`/EUID, `stat` perms, process ownership, helper hashes, and the pre/post host inventory; repeat Intel natively | The hosted ARM64 and Intel runs capture `launchctl print`, the effective UIDs, the socket permissions, and the helper digests, and prove the install → bootstrap → SIGTERM → supervise → bootout → reinstall cycle with the layout verified against its receipt. The API-traffic leg is **met on arm64** by C001's controlled-host product path (real installer, real daemons, real handshake, dual-stack traffic, API telemetry) — see `c001-status.md`. The **cold-reboot** leg is now **met on arm64**: it was run end to end on a disposable arm64 macOS guest — install, enroll, record the expectations, `shutdown -r now`, and the verify phase in the new boot — and it passed with the reboot observed. The Intel leg beyond the hosted restart cycle remains unqualified | Partially passed (hosted ARM64 + Intel; arm64 API-traffic leg; **arm64 cold-reboot leg observed and passing**); **blocked (narrowed)** on the native Intel arch of the same leg |
+| Blockers: never close if `serve` runs as root, if the privilege identity is only inferred from plist text, if helper provenance is not checked at execution time, if Linux paths change, or if reboot persistence cannot be demonstrated | `serve` is declared and, in the live qualification, **observed** as the dedicated unprivileged account; the identity is read from the running process, not from the plist text. The helper digest is checked before every spawn. No Linux path, unit, service, or schema changed: the Linux reconciliation service now shares the same portable apply module with byte-identical plan and failure mapping, and the Linux build and clippy are clean. Reboot persistence is **demonstrated** — observed on a controlled arm64 macOS host, after the two boot-path defects it first exposed were corrected in C006 | **Blocked (narrowed)** on the native Intel arch of the same leg |
 
 ## Verification
 
@@ -92,54 +104,113 @@ and the daemon did not release its socket when it was stopped during
 startup). The root causes are recorded under *Unresolved findings by severity*
 below.
 
-### Arm64 controlled-host cold-reboot qualification (arm phase)
+### Arm64 controlled-host cold-reboot qualification
 
-The cold-reboot leg was run as root on a disposable arm64 Mac (macOS 26.6.2,
-rustc 1.89.0). The **arm phase** is observed and passing. The fixture is
-`live_c002_cold_reboot_persists_the_deployment` in
+The cold-reboot leg was run as root on a **disposable arm64 macOS 26.6.2
+guest** (UTM 5.0.8, Apple Virtualization.framework backend) — a macOS guest,
+so the leg has a real launchd system domain, a real `utun`, and a real
+reboot. The fixture is `live_c002_cold_reboot_persists_the_deployment` in
 `tests/wireguard_darwin_controlled.rs` — the controlled-host target, kept
 apart from the hosted-runner suite so a hosted runner never executes a
-fixture that needs a host it cannot be:
+fixture that needs a host it cannot be.
+
+**The first run failed, and it found two boot-path defects in this plan's own
+implementation.** The reboot was taken and observed, and everything that does
+not depend on the privileged daemon was proven — but the deployment did not
+reconverge:
 
 ```
-the transactional installer completed the deployment
-the administrator was provisioned as the management identity
-the product enrolled client 305967a6-839d-4e52-8c65-013769e52628 with public key 8uRcoYKPwNrFJYDjn457QuI8BJYieRAkbHpQlaAVlwo=
-the kernel boot time is 1791353209
-recorded the expectations that must survive the reboot at /var/db/wg-basic-qual/reboot-expectations.json
-the boot-time job is installed and will run in the next boot, not now
+the kernel boot time is 1792556479
+the host really rebooted: the kernel boot time advanced
+both roles came back from the system domain after the reboot
+the management daemon runs as uid=8998 pid=546
+the management daemon still runs unprivileged
+the administrator credential survived the reboot
+the authenticated session is available in the new boot
 ```
 
-The recorded expectations are:
+```
+HTTP/1.1 503 Service Unavailable
+content-type: text/plain; charset=utf-8
+content-length: 11
+
+unavailable
+```
+
+```
+wg-basic: could not safely bind the configured netd socket path
+```
+
+1. **`/var/run` is transient on macOS.** It is `/private/var/run`, and macOS
+   recreates it at every boot — in the guest, after the reboot every entry
+   under `/private/var/run` carried the new boot's timestamp while
+   `/var/db/wg-basic` kept the install's. The privileged daemon's runtime
+   directory was gone in the new boot, so it could never bind its socket.
+2. **The management daemon raced the privileged daemon at boot.** `launchd`
+   spawns the two jobs concurrently — measured in the guest's unified log,
+   `netd` at `21:51:37.424` and `serve` at `21:51:37.598`, 174 ms apart —
+   and the startup attempt's retry budget is short, so the race was lost and
+   the deployment stayed degraded.
+
+Both are corrected, and the leg re-run to completion, in
+`plans/closure/macos-native-server-corrective/c006-status.md`. The **passing**
+run is recorded there. The evidence the passing run produced:
+
+```
+the kernel boot time is 1792560319
+the host really rebooted: the kernel boot time advanced
+both roles came back from the system domain after the reboot
+the management daemon runs as uid=8998 pid=525
+the management daemon still runs unprivileged
+the administrator credential survived the reboot
+the authenticated session is available in the new boot
+the network reconverged after the reboot: {"client_id":"87d6e2b4-d770-4079-97c2-33b7852c577c","drift":false,"enabled":true,"observation":"present","peer_id":"a4b557b3-c0b7-4b2a-8ba8-1ce8d3cdba20",...}
+the uninstall left no job, plist, or binary behind
+the enrolled client survived the reboot with the same key lEAN+GJREY9d85dC1pwLtrAAoMSW6MGequ6cwDfmigI= and peer a4b557b3-c0b7-4b2a-8ba8-1ce8d3cdba20
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 3.04s
+```
+
+The expectations recorded before the reboot were:
 
 ```
 {
-  "boot_time_seconds": 1791353209,
-  "client_id": "305967a6-839d-4e52-8c65-013769e52628",
-  "client_public_key": "8uRcoYKPwNrFJYDjn457QuI8BJYieRAkbHpQlaAVlwo=",
-  "interface_id": "4f59603d-5c90-493d-b22f-35a6af4e2f93",
+  "boot_time_seconds": 1792560151,
+  "client_id": "87d6e2b4-d770-4079-97c2-33b7852c577c",
+  "client_public_key": "lEAN+GJREY9d85dC1pwLtrAAoMSW6MGequ6cwDfmigI=",
+  "interface_id": "9062ddff-33bc-47c6-8c1d-cc69b72ad33c",
   "management_gid": 8998,
   "management_uid": 8998,
-  "peer_id": "4a7dc58d-0d60-4bbd-9732-205f87d75732"
+  "peer_id": "a4b557b3-c0b7-4b2a-8ba8-1ce8d3cdba20"
 }
 ```
 
-The host was left in that state: `netd` running as `root` (pid 61433), `serve`
-running as `_wg-basic-serve` (pid 61435), the managed tunnel's helper running
-as root (pid 61624), the state database owned by the management identity, and
-the boot-time job **installed but not registered** — `launchctl print
-system/com.wg-basic.qual-reboot` reports that the service is not in the
-domain, so the job can only run at the next boot. The staged test binary is
-the build of the pushed head.
+and the state before the reboot was observed, not assumed:
 
-The **reboot has not been taken**: the maintainer deferred it, because it
-takes down the machine the qualification runs on. The reboot leg therefore
-remains unqualified, and this record does not claim it. The boot-time job
-runs the verify phase at the next boot of that host, which first observes that
-the kernel's boot time advanced, then checks the system-domain boot, the
-unprivileged identity, the preserved database and client, the reconvergence,
-and the clean uninstall — and writes its evidence to
-`/tmp/wgb-qual/evidence/c002-cold-reboot-verify.txt`.
+```
+--- qual job registered? (expect: not found) ---
+Could not find service "com.wg-basic.qual-reboot" in domain for system
+--- netd ---  state = running  pid = 819
+--- serve --- state = running  pid = 821
+--- serve process --- 8998 _wg-basic-serve 821 /usr/local/bin/wg-basic
+--- runtime dir ---
+drwxr-xr-x  4 root  daemon  128 /var/run/wg-basic
+srw-rw----  1 root  _wg-basic-serve 0 /var/run/wg-basic/netd.sock
+--- tunnel ---
+utun0: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1420
+	inet 10.77.0.1 --> 10.77.0.1 netmask 0xffffffff
+```
+
+The **reboot was requested by the fixture's own phase**, not by the harness:
+`/sbin/shutdown -r now` → `Shutdown NOW!`. The reboot was then **observed**
+by the kernel boot time advancing from the recorded `1792560151` to the
+observed `1792560319`, which is the assertion the verify phase makes first.
+
+An earlier, **abandoned** attempt ran the arm phase on the maintainer's own
+working Mac and left that host armed with the product installed, a client
+enrolled, and the boot-time job installed but unregistered. The maintainer
+deferred that host's reboot, and the leg was moved to the disposable guest
+instead; the working host still carries that deployment and its boot-time
+job, and the job will run its verify phase at that host's next boot.
 
 ## Security and ownership evidence
 
@@ -171,14 +242,15 @@ and the clean uninstall — and writes its evidence to
 
 ## Known limitations
 
-1. **Cold-reboot persistence is unqualified.** Hosted macOS runners are
-   discarded after the job, so a system-domain boot after a reboot, the
-   database preservation across it, and the post-reboot reconvergence cannot
-   be observed there. The three-phase qualification is written and its arm
-   phase is observed and passing on a controlled arm64 host; the reboot
-   itself has not been taken, so the leg is not claimed. The hosted restart
-   cycle (SIGTERM → KeepAlive re-supervision → bootout → reinstall) is
-   proven; the reboot is not.
+1. **The cold-reboot leg is proven on arm64 only.** Hosted macOS runners are
+   discarded after the job, so a system-domain boot after a reboot cannot be
+   observed there. The three-phase qualification was run end to end on a
+   disposable arm64 macOS guest and **passes**, with the reboot observed and the
+   network reconverged; the **native Intel** arch of the same leg is
+   unqualified, because no native Intel host is available that can be rebooted.
+   The hosted restart cycle (SIGTERM → KeepAlive re-supervision → bootout →
+   reinstall) is proven on both architectures; the reboot is proven on arm64
+   only.
 2. **The management account must be provisioned out of band.** The installer
    deliberately does not create accounts, so a deployment needs a
    preprovisioned `_wg-basic-serve` account and group first. This is
@@ -189,15 +261,31 @@ and the clean uninstall — and writes its evidence to
    authenticated HTTP surface, and an off-host peer. The native Intel arch of
    that pairing is still unqualified, because a hosted runner cannot reach
    the off-host peer.
-4. **The controlled host is left armed.** The product is installed on it, a
-   client is enrolled, and the boot-time job is in place: at the next boot of
-   that host the verify phase runs, checks the deployment, uninstalls it, and
-   writes its evidence. Until that happens the host carries the deployment.
+4. **The maintainer's own working Mac is still armed.** An earlier, abandoned
+   attempt ran the arm phase on the maintainer's own working Mac and left that
+   host armed with the product installed, a client enrolled, and the boot-time
+   job installed but unregistered. The maintainer deferred that host's reboot
+   and the leg was moved to a disposable guest instead, so the working host
+   still carries that deployment and its boot-time job, and the job will run
+   its verify phase at that host's next boot. The guest used for the evidence
+   was disposable and is deleted.
 5. **No release claim exists.** ADR-008/M007 still withhold every macOS
    release; this record changes nothing about that.
 
 ## Unresolved findings by severity
 
+- **High (introduced by this plan's implementation, found by its own cold-reboot
+  qualification, corrected in C006):** the deployment did not survive a cold
+  reboot on macOS. `/var/run` is `/private/var/run`, which macOS recreates at
+  every boot, so the privileged daemon's runtime directory was gone in the new
+  boot and it could never bind its socket. The privileged daemon now creates
+  its own runtime directory when it is missing.
+- **High (introduced by this plan's implementation, found by its own cold-reboot
+  qualification, corrected in C006):** the management daemon's startup
+  reconciliation raced the privileged daemon at boot — launchd starts the two
+  jobs concurrently, measured 174 ms apart — and with no background reconcile
+  the deployment stayed degraded. The management daemon now waits, bounded, for
+  the privileged daemon to answer before its startup attempt.
 - **Medium (pre-existing, out of scope):** the `dependency-audit` CI job fails
   on three upstream `zip 6.0.0` advisories reached through `eggup-archive =
   "=0.1.3"`. Not resolvable in this repository without an upstream release.
@@ -257,19 +345,33 @@ and the clean uninstall — and writes its evidence to
 
 ## Disposition
 
-**Blocked.** The implementation is complete: the management daemon is a
-dedicated unprivileged principal, the plist renderer is fully constrained, the
-filesystem and IPC layout is exact, the installer is transactional, and the
-helper's provenance is checked at execution time. The hosted qualification
-run `39427791794` is green and the C002 claim itself is observed there: the
-privileged daemon runs as root, the management daemon runs as the dedicated
-unprivileged account, and the privileged socket is root-owned and reachable
-only by the management group. The API-traffic leg is met on the arm64
-controlled host by C001's product path, and the cold-reboot qualification is
-written with its arm phase observed and passing.
+**Blocked (narrowed).** The implementation is complete: the management daemon
+is a dedicated unprivileged principal, the plist renderer is fully
+constrained, the filesystem and IPC layout is exact, the installer is
+transactional, and the helper's provenance is checked at execution time. The
+hosted qualification run `39427791794` is green and the C002 claim itself is
+observed there: the privileged daemon runs as root, the management daemon runs
+as the dedicated unprivileged account, and the privileged socket is root-owned
+and reachable only by the management group. The API-traffic leg is met on the
+arm64 controlled host by C001's product path, and the **cold-reboot leg is now
+met on arm64**: it was run end to end on a disposable arm64 macOS guest, the
+reboot was observed rather than inferred, both roles came back from the
+system domain, the management daemon was still unprivileged, the credential
+and the enrolled client survived, the network reconverged, and the uninstall
+left no job, plist, or binary behind.
 
-What is still open is the reboot itself: the plan's acceptance explicitly
-blocks closure when "reboot persistence cannot be demonstrated", and the
-reboot has not been taken on the armed controlled host. Closure is therefore
-not claimed from expected evidence. C005's hard dependency on C002 stays
-**blocked**.
+The plan's acceptance blocks closure when "reboot persistence cannot be
+demonstrated". It **can** now, on arm64. The first run of the leg failed and
+exposed two boot-path defects in this plan's own implementation; per the
+planning process's §13 a material post-implementation defect receives its own
+corrective, so both are fixed and closed in
+`plans/closure/macos-native-server-corrective/c006-status.md` rather than
+papered over here. This record's own evidence therefore stands at the
+implementation head `b53ce2d`, with the boot-path corrections and the passing
+re-run recorded in C006.
+
+What is still open is the **native Intel** arch of the same leg: a hosted
+Intel macOS runner cannot be rebooted, and no native Intel host is available
+that can be. That residual is environmental, not a code defect, and it is the
+same residual C001 records for its own leg. Closure is therefore not claimed
+from expected evidence. C005's hard dependency on C002 stays **blocked**.
