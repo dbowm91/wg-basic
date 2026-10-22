@@ -21,6 +21,26 @@ cargo +1.89.0 check --all-targets --locked
 The ordinary suite (`cargo test --locked`) needs no privilege: no root,
 no namespaces, loopback sockets only.
 
+## Linux-gated code (the cross-clippy)
+
+The rootful suites are `#![cfg(all(target_os = "linux", feature =
+"linux-integration"))]`, so **nothing in the gate order above type-checks
+them** when it runs on a Darwin host: there they compile to nothing. A change
+to a shared type can therefore break every Linux job without any local gate
+failing. The cross-clippy with the feature does type-check them, so it is
+part of the gate order:
+
+```sh
+CC_x86_64_unknown_linux_gnu=$HOME/wg-toolchain/zigcc \
+  AR_x86_64_unknown_linux_gnu="zig ar" \
+  cargo clippy --locked --target x86_64-unknown-linux-gnu --all-targets \
+  --features linux-integration -- -D warnings
+```
+
+Run it for any change to a shared model, type, or public API — not only for
+Linux work. It is a compilation check, not a substitute for the rootful
+suites.
+
 ## Rootful suites (real kernel, disposable namespaces)
 
 Prerequisites: root, `CAP_NET_ADMIN`, kernel WireGuard support,
