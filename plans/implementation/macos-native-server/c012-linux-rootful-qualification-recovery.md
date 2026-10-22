@@ -52,8 +52,24 @@ and the optional masquerade. The Linux-only fixtures that ask for forwarding
 and masquerade therefore cannot be host-only, and saying so is what C003's
 validation requires.
 
+C003 also moved the schema to version 8, and three rehearsals asserted the
+version a migrated state carries by writing the number down:
+
+| File | Assertion | Correct value |
+|---|---|---|
+| `tests/upgrade_rehearsal.rs` | the migrated and re-upgraded status text names schema 7 | the version a current binary writes |
+| `tests/upgrade_rehearsal_rootful.rs` | the migrated snapshot's schema version is 7 | the version a current binary writes |
+| `tests/update_transaction_rootful.rs` | the candidate's health message names schema 7 | the version a current binary writes |
+
+The candidate in the update transaction is built from the current source with
+a strictly newer package version, so it writes the current schema. The
+update-fixture override that pins a binary to schema 4 applies to the *old*
+fixture, whose package version the marker file names, and not to the
+candidate.
+
 The product's behaviour is unchanged: the fixtures state the same routing
-intent they always had, and no product code changes.
+intent they always had, and the rehearsals assert the same migration they
+always rehearsed.
 
 ## Why the previous evidence missed it
 
@@ -73,15 +89,25 @@ this, but it is not in the gate order, so it was not run for C003.
 
 The CI shows the break exactly. At `92af9f5` — the C010 baseline — every Linux
 job was green and the only failure was `dependency-audit`. At `5238816` — C003's
-closure commit — ten jobs failed, and every one of them is a Linux job that
-compiles a policy initializer.
+closure commit — ten jobs failed: the nine that compile a policy initializer
+or assert a schema version, and the three rehearsals whose expectation was a
+version C003 moved.
+
+A version written into an assertion is the same hazard as a type the fixtures
+did not learn about: it is correct until the next migration, and when it goes
+stale it takes a job red for a reason that has nothing to do with the change
+under test.
 
 ## Implementation work
 
 1. **The fixtures state their mode.** Every affected initializer names the
    mode its own settings require, and the approved destinations are empty
    where the mode forbids them.
-2. **The gate order type-checks the Linux-gated code.** The canonical gate
+2. **The rehearsals ask for the version, not for a number.** The schema's
+   public contract reports the version a current binary writes, and the
+   rehearsals use it instead of a literal, so the next migration does not take
+   a job red for a reason that has nothing to do with it.
+3. **The gate order type-checks the Linux-gated code.** The canonical gate
    order gains the Linux cross-clippy with `--features linux-integration`, so
    a change that breaks Linux-only code fails on the Mac instead of in CI.
 

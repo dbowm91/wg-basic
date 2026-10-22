@@ -73,6 +73,16 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
     },
 ];
 
+/// The schema version a current binary writes.
+///
+/// This is the head of the migration list, without the update-fixture
+/// override: that override exists so an *old* fixture binary refuses a
+/// newer state, while a rehearsal that asserts the version a migrated
+/// state carries needs the version a *current* binary writes.
+pub fn current_schema_version() -> i64 {
+    MIGRATIONS.last().map_or(0, |m| m.version)
+}
+
 /// The highest schema version this binary understands.
 pub(crate) fn supported_version() -> i64 {
     #[cfg(feature = "update-test-fixtures")]
@@ -81,7 +91,7 @@ pub(crate) fn supported_version() -> i64 {
             return 4;
         }
     }
-    MIGRATIONS.last().map_or(0, |m| m.version)
+    current_schema_version()
 }
 /// Creates a recovery snapshot before a schema-changing migration runs.
 ///

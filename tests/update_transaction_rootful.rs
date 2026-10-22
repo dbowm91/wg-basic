@@ -899,7 +899,10 @@ fn fail_candidate_after_health_and_restore(
     }
     assert!(!result.status.success(), "{failure}");
     assert!(
-        failure.contains("candidate health passed with state schema 7"),
+        failure.contains(&format!(
+            "candidate health passed with state schema {}",
+            wg_basic::state::current_schema_version()
+        )),
         "candidate must reach healthy migrated state before the forced failure: {failure}"
     );
     assert!(
@@ -1344,7 +1347,7 @@ fn signed_systemd_update_rolls_back_and_retries() {
 
     // Force a post-health failure after the real candidate serve process has
     // opened and migrated the v4 database. The fixture receipt proves that the
-    // candidate was healthy on schema 7 before rollback restores schema 4.
+    // candidate was healthy on the current schema before rollback restores schema 4.
     fail_candidate_after_health_and_restore(&before, &typed_before, Some(client_private_key));
     traffic.require_handshake_and_traffic();
     assert_enabled_product_healthy(traffic.admin_cookie.as_deref().unwrap());
