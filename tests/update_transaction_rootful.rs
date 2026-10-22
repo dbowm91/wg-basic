@@ -1426,7 +1426,7 @@ fn signed_systemd_update_rolls_back_and_retries() {
     let committed = command(&["update", "recover"]);
     assert!(committed.status.success(), "{}", output_text(&committed));
     let after_retry = database_identity();
-    assert_eq!(after_retry.0, 7);
+    assert_eq!(after_retry.0, wg_basic::state::current_schema_version());
     assert_eq!(after_retry.1, before.1);
     assert_eq!(after_retry.2, before.2);
     assert_eq!(after_retry.3, before.3);
@@ -1447,7 +1447,7 @@ fn signed_systemd_update_rolls_back_and_retries() {
         typed_after_retry
             .get("schema_version")
             .and_then(serde_json::Value::as_i64),
-        Some(7)
+        Some(wg_basic::state::current_schema_version())
     );
     traffic.require_handshake_and_traffic();
     assert_enabled_product_healthy(traffic.admin_cookie.as_deref().unwrap());
