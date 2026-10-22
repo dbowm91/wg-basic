@@ -16,6 +16,8 @@ use std::time::{Duration, Instant};
 
 use wg_basic::launchd;
 use wg_basic::wireguard::darwin as wg_darwin;
+use wg_basic::wireguard::darwin::HelperError;
+use wg_basic::wireguard::darwin_backend::{self, HelperIdentity, ManagedTunnel};
 
 /// Opt-in gate: without it (or without root) the test fails loudly instead
 /// of silently passing. There is no silent skip in live mode.
@@ -59,6 +61,7 @@ pub fn epoch_now() -> u64 {
 pub struct Evidence {
     pub name: &'static str,
     pub lines: Vec<String>,
+    written: bool,
 }
 
 impl Evidence {
@@ -66,6 +69,7 @@ impl Evidence {
         let mut evidence = Self {
             name,
             lines: Vec::new(),
+            written: false,
         };
         evidence.log(&format!("live test: {name}"));
         evidence
@@ -76,7 +80,17 @@ impl Evidence {
         self.lines.push(line.to_owned());
     }
 
-    pub fn write(self) {
+    /// Writes the evidence file.
+    ///
+    /// The file is written again when the test ends, including when it ends
+    /// in a panic: a qualification that failed must leave the transcript
+    /// that explains the failure, not only the assertion message.
+    pub fn write(&mut self) {
+        self.write_file();
+        self.written = true;
+    }
+
+    fn write_file(&self) {
         let dir = std::env::var("WGB_EVIDENCE_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| {
@@ -91,6 +105,14 @@ impl Evidence {
         }
         std::fs::write(&file, text).expect("evidence file");
         eprintln!("[live-evidence:{}] wrote {}", self.name, file.display());
+    }
+}
+
+impl Drop for Evidence {
+    fn drop(&mut self) {
+        if !self.written {
+            self.write_file();
+        }
     }
 }
 
@@ -128,6 +150,228 @@ pub fn utun_names() -> Vec<String> {
         })
         .map(str::to_owned)
         .collect()
+}
+
+/// The host's `utun` inventory, as the **product** observes it.
+///
+/// The product identifies its managed device by diffing the inventory it read
+/// immediately before the helper started against the inventory it reads after.
+/// Anything that compares itself with that decision has to use the same
+/// observation, taken at the same moment, or it proves nothing about it.
+pub fn product_utun_names() -> Vec<String> {
+    darwin_backend::utun_interface_names()
+}
+
+/// Waits until the host's `utun` inventory stops changing.
+///
+/// macOS creates and destroys `utun` devices on its own, and it **recycles
+/// the index** when one goes away. A device can only be identified by
+/// diffing the inventory while the inventory is quiescent: a device that
+/// existed at one observation and is gone at the next may have had its index
+/// handed to a device that appeared afterwards.
+pub fn wait_for_quiescent_utun_inventory(
+    evidence: &mut Evidence,
+    timeout: Duration,
+) -> Vec<String> {
+    let start = Instant::now();
+    let mut previous = product_utun_names();
+    loop {
+        std::thread::sleep(Duration::from_millis(250));
+        let current = product_utun_names();
+        if current == previous {
+            evidence.log(&format!("utun inventory quiescent: {current:?}"));
+            return current;
+        }
+        evidence.log(&format!(
+            "utun inventory still moving: {previous:?} -> {current:?}"
+        ));
+        previous = current;
+        assert!(
+            start.elapsed() < timeout,
+            "the host's utun inventory never became quiescent within {timeout:?}"
+        );
+    }
+}
+
+/// Whether a refusal of a managed-tunnel spawn is worth retrying.
+///
+/// A refusal about the host's device namespace is a fact about the host: it
+/// may pass, and the qualification retries it on a quiescent namespace. A
+/// refusal about the helper's identity, its path, or its executability is a
+/// fact about the product, and retrying it would hide a defect behind a
+/// timeout.
+pub fn refusal_is_retryable(error: &HelperError) -> bool {
+    match error {
+        // The host's device namespace was not quiescent, or its inventory
+        // could not be read: both are about the host, and both may pass.
+        HelperError::DeviceAmbiguous | HelperError::ObservationFailed => true,
+        // The helper published no device in time. Under load that is a slow
+        // helper rather than a broken one, and the retry is bounded.
+        HelperError::StartupFailed => true,
+        // The helper's identity, path, or executability. Retrying hides a
+        // defect.
+        HelperError::RelativePath
+        | HelperError::NotFound
+        | HelperError::Symlink
+        | HelperError::NotRegularFile
+        | HelperError::NotExecutable
+        | HelperError::IdentityMismatch => false,
+        // The UAPI failures are not spawn failures at all.
+        HelperError::UapiTransport | HelperError::UapiMalformed | HelperError::UapiRefused => false,
+    }
+}
+
+/// Spawns the managed tunnel, retrying a refusal that is about the host.
+///
+/// The product refuses to identify its device when the host's device
+/// namespace is not quiescent, and that refusal is correct: it will not
+/// adopt a device by number. The qualification retries it — on a quiescent
+/// namespace, so the retry is meaningful — and records every attempt with
+/// the inventory it saw. A refusal that persists is fatal, and it is
+/// reported with the product's own reason.
+pub fn spawn_managed_tunnel_with_retries(
+    evidence: &mut Evidence,
+    identity: &HelperIdentity,
+    attempts: usize,
+) -> ManagedTunnel {
+    let mut last_error: Option<HelperError> = None;
+    for attempt in 1..=attempts {
+        let inventory = wait_for_quiescent_utun_inventory(evidence, Duration::from_secs(30));
+        evidence.log(&format!(
+            "attempt {attempt}: the product will identify its device against {inventory:?}"
+        ));
+        match darwin_backend::spawn_managed_tunnel(identity) {
+            Ok(tunnel) => {
+                evidence.log(&format!(
+                    "attempt {attempt}: the product created {} from an inventory of {:?}",
+                    tunnel.utun, tunnel.devices_before_spawn
+                ));
+                return tunnel;
+            }
+            Err(error) => {
+                evidence.log(&format!("attempt {attempt}: the product refused: {error}"));
+                if !refusal_is_retryable(&error) {
+                    panic!(
+                        "the product refused to create a managed tunnel for a reason \
+                         that retrying cannot fix: {error}"
+                    );
+                }
+                last_error = Some(error);
+            }
+        }
+    }
+    panic!(
+        "the product refused to create a managed tunnel on {attempts} attempts: {}",
+        last_error.expect("at least one attempt was made")
+    );
+}
+
+/// The control sockets the pinned helper publishes, by file name.
+pub fn uapi_socket_names() -> Vec<String> {
+    let dir = Path::new(wg_darwin::UAPI_SOCKET_DIR);
+    let mut names: Vec<String> = match std::fs::read_dir(dir) {
+        Ok(entries) => entries
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    names.sort();
+    names
+}
+
+/// Waits until the helper publishes exactly one new control socket, and names
+/// the device it belongs to.
+///
+/// The socket is the link between the helper that was just spawned and the
+/// device name it was given: the helper owns that socket and publishes it
+/// under the device's name. A device *diff* cannot make that link on a busy
+/// host — macOS creates and destroys `utun` devices on its own — while the
+/// socket the helper itself publishes is unambiguous.
+pub fn wait_for_new_uapi_socket(
+    evidence: &mut Evidence,
+    before: &[String],
+    timeout: Duration,
+) -> String {
+    let start = Instant::now();
+    loop {
+        let after = uapi_socket_names();
+        let new: Vec<&String> = after.iter().filter(|name| !before.contains(name)).collect();
+        match new.as_slice() {
+            [single] => {
+                let name = single
+                    .strip_suffix(".sock")
+                    .unwrap_or(single.as_str())
+                    .to_owned();
+                evidence.log(&format!("the helper published {single} for device {name}"));
+                return name;
+            }
+            [] => {}
+            several => {
+                evidence.log(&format!(
+                    "several control sockets appeared at once: {several:?}"
+                ));
+            }
+        }
+        assert!(
+            start.elapsed() < timeout,
+            "the helper published no control socket within {timeout:?}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// Whether the managed device is new, by the product's own evidence.
+///
+/// The product identifies its device by diffing the inventory it read
+/// immediately before the helper started against the inventory it read after.
+/// The managed device is absent from the first one, and that is the proof.
+/// It is the only proof available: macOS recycles `utun` indices, so an
+/// inventory snapshotted at some other moment can name the very same device
+/// and prove nothing about it.
+pub fn managed_device_is_new(devices_before_spawn: &[String], device: &str) -> bool {
+    !devices_before_spawn.iter().any(|name| name == device)
+}
+
+/// Whether a process is still running.
+pub fn process_is_alive(pid: u32) -> bool {
+    Command::new("kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// Asserts that the fixture left nothing of its own behind.
+///
+/// A device's lifetime is its helper's lifetime: the helper owns the `utun`
+/// and the kernel removes the device when the helper exits. What can outlive
+/// the helper is the control socket, and that is the fixture's to remove.
+/// A set difference against an inventory snapshot taken earlier is *not* this
+/// claim: the host creates and destroys `utun` devices on its own, so the
+/// difference reports the host's churn as a leak, and it hides a real leak
+/// whose index the kernel recycled.
+pub fn assert_fixture_left_nothing(
+    evidence: &mut Evidence,
+    helper_pids: &[u32],
+    sockets: &[&Path],
+) {
+    for pid in helper_pids {
+        assert!(
+            !process_is_alive(*pid),
+            "the fixture's helper {pid} is still running"
+        );
+    }
+    for socket in sockets {
+        assert!(
+            !socket.exists(),
+            "the fixture left its control socket behind: {}",
+            socket.display()
+        );
+    }
+    evidence.log("the fixture left no helper, socket, or device behind");
 }
 
 pub fn wait_until(what: &str, timeout: Duration, mut ready: impl FnMut() -> bool) {
@@ -210,24 +454,22 @@ pub struct LiveEndpoint {
 }
 
 impl LiveEndpoint {
-    pub fn spawn(
-        evidence: &mut Evidence,
-        helper_path: &Path,
-        baseline: &[String],
-        tag: &str,
-    ) -> Self {
+    /// Spawns a fixture-owned helper and identifies the device it created.
+    ///
+    /// The device is identified by the control socket the helper itself
+    /// publishes, not by diffing the host's device inventory against a
+    /// snapshot taken earlier in the test: the host creates and destroys
+    /// `utun` devices on its own and recycles their indices, so a diff can
+    /// be ambiguous — or name the wrong device — exactly when the host is
+    /// busy.
+    pub fn spawn(evidence: &mut Evidence, helper_path: &Path, tag: &str) -> Self {
+        let before_sockets = uapi_socket_names();
         let argv =
             wg_darwin::HelperArgv::new(helper_path.to_owned()).expect("helper argv must validate");
         let helper =
             wg_darwin::SupervisedHelper::spawn(&argv).expect("helper must spawn (needs root)");
         evidence.log(&format!("{tag}: helper pid={}", helper.pid));
-        wait_until(&format!("{tag} utun"), Duration::from_secs(15), || {
-            utun_names().len() > baseline.len()
-        });
-        let after = utun_names();
-        evidence.log(&format!("{tag}: utun inventory now {after:?}"));
-        let utun = wg_darwin::interface_delta(baseline, &after).expect("exactly one new utun");
-        evidence.log(&format!("{tag}: mapped to {utun}"));
+        let utun = wait_for_new_uapi_socket(evidence, &before_sockets, Duration::from_secs(15));
         let socket = wg_darwin::uapi_socket_path(&utun);
         wait_until(
             &format!("{tag} UAPI socket"),
@@ -864,5 +1106,50 @@ impl Drop for FirewallAllowance {
         let _ = Command::new(FIREWALL_TOOL)
             .args(["--remove", &self.path])
             .output();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_managed_device_is_proved_new_by_the_products_own_observation() {
+        // The device the product created is absent from the inventory it read
+        // immediately before the helper started.
+        let before = vec!["utun0".to_owned(), "utun3".to_owned()];
+        assert!(managed_device_is_new(&before, "utun4"));
+        // A device that was already in that inventory is not new.
+        assert!(!managed_device_is_new(&before, "utun3"));
+    }
+
+    #[test]
+    fn a_recycled_index_is_not_an_adopted_foreign_device() {
+        // macOS recycles `utun` indices. The index the helper was given was
+        // bound to a device that existed in a snapshot taken earlier in the
+        // test and was destroyed before the product looked. The product's own
+        // observation does not contain it, so the device it created is new —
+        // while a comparison against the earlier snapshot would have called
+        // it an adopted foreign device and failed the qualification on
+        // correct product behaviour.
+        let stale_snapshot = ["utun0".to_owned(), "utun4".to_owned()];
+        let product_observation = vec!["utun0".to_owned()];
+        assert!(stale_snapshot.contains(&"utun4".to_owned()));
+        assert!(managed_device_is_new(&product_observation, "utun4"));
+    }
+
+    #[test]
+    fn a_contention_refusal_is_retried_and_an_identity_refusal_is_not() {
+        // A refusal about the host's device namespace may pass, so it is
+        // retried.
+        assert!(refusal_is_retryable(&HelperError::DeviceAmbiguous));
+        assert!(refusal_is_retryable(&HelperError::ObservationFailed));
+        assert!(refusal_is_retryable(&HelperError::StartupFailed));
+        // A refusal about the helper's identity is a defect, and retrying it
+        // would hide the defect behind a timeout.
+        assert!(!refusal_is_retryable(&HelperError::IdentityMismatch));
+        assert!(!refusal_is_retryable(&HelperError::NotExecutable));
+        assert!(!refusal_is_retryable(&HelperError::RelativePath));
+        assert!(!refusal_is_retryable(&HelperError::Symlink));
     }
 }

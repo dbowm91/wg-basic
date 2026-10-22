@@ -145,6 +145,12 @@ pub enum OwnerClaim {
     Live,
     /// A receipt claims it, but the live host does not prove it.
     Stale(ManagedRuntime),
+    /// A receipt claims it and the host's device inventory could not be
+    /// read, so the claim is neither proven nor disproven. It is not stale
+    /// either, and a stale claim is dropped: dropping a receipt because of a
+    /// transient read failure would destroy a valid proof. The caller
+    /// refuses to act and retries instead.
+    Unreadable,
 }
 
 impl RuntimeRegistry {
@@ -185,11 +191,19 @@ impl RuntimeRegistry {
         let Some(runtime) = self.find_by_owner_tag(owner_tag) else {
             return OwnerClaim::Absent;
         };
-        let device_present = utun_interface_names().contains(&runtime.utun_name);
-        if prove_ownership(&runtime, device_present).is_proven() {
-            OwnerClaim::Live
-        } else {
-            OwnerClaim::Stale(runtime)
+        match classify_device_observation(observe_utun_interfaces(), &runtime.utun_name) {
+            DeviceObservation::Present => {
+                if prove_ownership(&runtime, true).is_proven() {
+                    OwnerClaim::Live
+                } else {
+                    OwnerClaim::Stale(runtime)
+                }
+            }
+            DeviceObservation::Absent => OwnerClaim::Stale(runtime),
+            // The inventory could not be read. The claim is not proven, and it
+            // is not disproven either, so it is not stale and it is not
+            // dropped: the caller refuses to act and retries.
+            DeviceObservation::Unreadable => OwnerClaim::Unreadable,
         }
     }
 
@@ -328,12 +342,43 @@ pub enum OwnershipOutcome {
     SocketMismatch,
     /// The kernel no longer exposes the recorded device.
     InterfaceAbsent,
+    /// The host's interface inventory could not be read, so the device's
+    /// presence is unknown. This is not the same as absence: an unreadable
+    /// inventory never proves anything, in either direction.
+    InterfaceUnreadable,
 }
 
 impl OwnershipOutcome {
     /// Whether the outcome proves ownership.
     pub fn is_proven(self) -> bool {
         matches!(self, OwnershipOutcome::Proven)
+    }
+}
+
+/// What one observation of the host's device inventory said about a device.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DeviceObservation {
+    /// The inventory was read and the device is in it.
+    Present,
+    /// The inventory was read and the device is not in it.
+    Absent,
+    /// The inventory could not be read at all.
+    Unreadable,
+}
+
+/// Classifies one observation of the host's device inventory.
+///
+/// The three outcomes are kept apart on purpose. A caller that cannot look
+/// must not conclude that what it would have found is absent: on this path
+/// that conclusion destroys a receipt for a device that is still there.
+pub fn classify_device_observation(
+    observation: Result<Vec<String>, HelperError>,
+    device: &str,
+) -> DeviceObservation {
+    match observation {
+        Ok(names) if names.iter().any(|name| name == device) => DeviceObservation::Present,
+        Ok(_) => DeviceObservation::Absent,
+        Err(_) => DeviceObservation::Unreadable,
     }
 }
 
@@ -397,28 +442,57 @@ fn owned_uapi_socket(path: &str) -> Result<PathBuf, OwnershipOutcome> {
     Ok(path)
 }
 
+/// A managed tunnel the product just created, with the observation it was
+/// identified from.
+#[derive(Debug)]
+pub struct ManagedTunnel {
+    /// The supervised helper that owns the device.
+    pub helper: SupervisedHelper,
+    /// The kernel-assigned device name.
+    pub utun: String,
+    /// The `utun` inventory observed immediately before the helper was spawned.
+    ///
+    /// The managed device is absent from this set. That is the product's own
+    /// evidence that it created the device rather than adopting one that was
+    /// already there, and it is the only observation the decision was made
+    /// from. A caller proves "not an adopted foreign device" against *this*
+    /// set: macOS recycles `utun` indices, so an inventory snapshotted at
+    /// some other moment can name the very same device and prove nothing.
+    pub devices_before_spawn: Vec<String>,
+}
+
 /// Spawns the pinned helper and returns the supervised child with the
 /// kernel-assigned device it created.
 ///
 /// Exactly one new `utunN` must appear: zero or several is a fail-closed
-/// conflict, never an adoption by numeric guess.
-pub fn spawn_managed_tunnel(
-    helper: &HelperIdentity,
-) -> Result<(SupervisedHelper, String), HelperError> {
+/// conflict, never an adoption by numeric guess. The two are reported
+/// differently, because they are different facts: zero means the helper
+/// never published a device, while several means the host's device namespace
+/// was not quiescent, which the caller may retry.
+pub fn spawn_managed_tunnel(helper: &HelperIdentity) -> Result<ManagedTunnel, HelperError> {
     super::darwin::validate_helper_path(&helper.path)?;
     super::darwin::verify_helper_sha256(&helper.path, &helper.sha256)?;
-    let before = utun_interface_names();
+    // The inventory the identification is made from. If it cannot be read,
+    // the managed device cannot be identified at all, and saying so is the
+    // honest answer.
+    let before = observe_utun_interfaces()?;
     let argv = HelperArgv::new(helper.path.clone())?;
     let child = SupervisedHelper::spawn(&argv)?;
     let deadline = std::time::Instant::now() + HELPER_DEVICE_TIMEOUT;
     let name = loop {
-        if let Ok(name) = super::darwin::interface_delta(&before, &utun_interface_names()) {
-            break name;
+        let outcome = match observe_utun_interfaces() {
+            Ok(after) => super::darwin::interface_delta(&before, &after),
+            Err(error) => Err(error),
+        };
+        match outcome {
+            Ok(name) => break name,
+            Err(error) => {
+                if std::time::Instant::now() >= deadline {
+                    return Err(error);
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
         }
-        if std::time::Instant::now() >= deadline {
-            return Err(HelperError::StartupFailed);
-        }
-        std::thread::sleep(Duration::from_millis(100));
     };
     // The helper publishes its UAPI socket a moment after the kernel hands it
     // the device. A tunnel is not usable until that control socket exists, so
@@ -434,20 +508,37 @@ pub fn spawn_managed_tunnel(
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    Ok((child, name))
+    Ok(ManagedTunnel {
+        helper: child,
+        utun: name,
+        devices_before_spawn: before,
+    })
+}
+
+/// The host's `utun` inventory, or the failure that stopped it being read.
+///
+/// An unreadable inventory is not an empty one. A caller that must tell
+/// "the device is gone" from "I could not look" uses this form; the
+/// best-effort [`utun_interface_names`] is for the presence checks that fail
+/// closed either way.
+pub fn observe_utun_interfaces() -> Result<Vec<String>, HelperError> {
+    let interfaces =
+        wg_basic_darwin_sys::interfaces().map_err(|_| HelperError::ObservationFailed)?;
+    Ok(interfaces
+        .into_iter()
+        .map(|interface| interface.name)
+        .filter(|name| is_utun_name(name))
+        .collect())
 }
 
 /// Every `utunN` interface currently present in the kernel.
+///
+/// Best-effort: a host whose interface inventory cannot be read reports no
+/// interfaces. Use [`observe_utun_interfaces`] where the *reason* matters —
+/// a teardown that concluded "the device is gone" from an unreadable
+/// inventory would destroy a receipt for a device that is still there.
 pub fn utun_interface_names() -> Vec<String> {
-    wg_basic_darwin_sys::interfaces()
-        .map(|interfaces| {
-            interfaces
-                .into_iter()
-                .map(|interface| interface.name)
-                .filter(|name| is_utun_name(name))
-                .collect()
-        })
-        .unwrap_or_default()
+    observe_utun_interfaces().unwrap_or_default()
 }
 
 /// The production Darwin WireGuard backend.
@@ -976,6 +1067,33 @@ mod tests {
                 .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
                 .collect(),
         }
+    }
+
+    #[test]
+    fn an_unreadable_inventory_is_not_an_absent_device() {
+        // The observation failed. It did not come back empty, and the two
+        // must never be the same value: a teardown that concluded "the
+        // device is gone" from an unreadable inventory would drop a receipt
+        // for a device that is still there.
+        let unreadable = Err(HelperError::ObservationFailed);
+        assert_eq!(
+            classify_device_observation(unreadable.clone(), "utun4"),
+            DeviceObservation::Unreadable
+        );
+        assert_eq!(
+            classify_device_observation(Ok(vec!["utun4".to_owned()]), "utun4"),
+            DeviceObservation::Present
+        );
+        assert_eq!(
+            classify_device_observation(Ok(vec!["utun0".to_owned()]), "utun4"),
+            DeviceObservation::Absent
+        );
+        // And the two absent-ish outcomes are not the same claim.
+        assert_ne!(
+            DeviceObservation::Unreadable,
+            DeviceObservation::Absent,
+            "an unreadable inventory proves nothing about the device"
+        );
     }
 
     #[test]
