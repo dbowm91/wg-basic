@@ -44,6 +44,17 @@ pub struct StateIdentity {
 /// Reads the update identity from a live database without applying migrations
 /// or changing SQLite pragmas. A read-only connection observes committed WAL
 /// data when the service is running.
+/// Whether a write-ahead log still carries committed transactions.
+///
+/// An empty log carries nothing, so an immutable read of the main database
+/// file misses nothing. A log with content carries transactions that an
+/// immutable read would not see.
+fn wal_carries_content(path: &Path) -> bool {
+    fs::metadata(path)
+        .map(|metadata| metadata.len() > 0)
+        .unwrap_or(false)
+}
+
 pub fn inspect_identity_readonly(path: &Path) -> Result<StateIdentity, StateError> {
     use sha2::Digest;
 
@@ -119,7 +130,14 @@ pub fn inspect_readonly(path: &Path) -> Result<StateDiagnostic, StateError> {
     // Portable (M001): see `inspect_identity_readonly`.
     let path = fs::canonicalize(path).map_err(|_| StateError::DatabaseOpenFailed)?;
     verify_path_readonly(&path)?;
-    if sidecar(&path, "-wal").exists() || sidecar(&path, "-shm").exists() {
+    // Immutable mode ignores WAL data, so a WAL that still holds committed
+    // transactions would be read as if they did not exist, and the inspection
+    // has to refuse it. An *empty* WAL holds none, and the shared-memory index
+    // that may be left beside it is meaningless without it: a database that
+    // was closed cleanly leaves the index behind, and that is not a writer.
+    // The same rule is applied again after the read, where it catches a writer
+    // that arrived while the inspection was in progress.
+    if wal_carries_content(&sidecar(&path, "-wal")) {
         return Err(StateError::Busy);
     }
     let uri = immutable_uri(&path)?;
@@ -189,9 +207,14 @@ pub fn inspect_readonly(path: &Path) -> Result<StateDiagnostic, StateError> {
             })
         })?;
 
-    // Immutable mode intentionally ignores WAL data. Refuse a result if a
-    // writer created sidecars while inspection was in progress.
-    if sidecar(&path, "-wal").exists() || sidecar(&path, "-shm").exists() {
+    // Immutable mode intentionally ignores WAL data, so a WAL that still
+    // holds committed transactions would be read as if they did not exist.
+    // An *empty* WAL holds none, and the shared-memory index that may be
+    // left beside it is meaningless without it: a database that was closed
+    // cleanly leaves the index behind, and that is not a writer. A writer
+    // that arrives during the inspection puts its transactions in the WAL,
+    // which the length check below still catches.
+    if wal_carries_content(&sidecar(&path, "-wal")) {
         return Err(StateError::Busy);
     }
     let recovery_artifacts = (1..schema_version)
@@ -370,6 +393,47 @@ mod tests {
             .map(|entry| entry.unwrap().file_name())
             .collect::<Vec<_>>();
         assert_eq!(entries_after, entries_before);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// A cleanly closed database leaves an empty write-ahead log behind.
+    ///
+    /// The immutable inspection ignores WAL data, so it must refuse a log that
+    /// still holds committed transactions — but an *empty* log holds none, and
+    /// the shared-memory index that a clean close leaves beside it is
+    /// meaningless without it. Refusing that state makes the doctor's
+    /// immutable inspection unusable on a host whose service was stopped
+    /// cleanly, which is exactly how an operator reads it.
+    #[test]
+    fn immutable_inspection_accepts_a_cleanly_closed_database_with_an_empty_log() {
+        let directory = scratch_directory("wg-basic-state-diagnostic-clean");
+        fs::create_dir(&directory).unwrap();
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+        let database = directory.join("state.db");
+        drop(crate::state::StateStore::initialize(&database).unwrap());
+
+        // An empty write-ahead log and the shared-memory index a clean close
+        // leaves behind.
+        let wal = directory.join("state.db-wal");
+        let shm = directory.join("state.db-shm");
+        fs::write(&wal, b"").unwrap();
+        fs::write(&shm, [0u8; 32]).unwrap();
+
+        let inspected = inspect_readonly(&database);
+        assert!(
+            inspected.is_ok(),
+            "a cleanly closed database must be inspectable: {:?}",
+            inspected.err()
+        );
+
+        // A log that carries committed transactions is still refused: the
+        // immutable read would miss them.
+        fs::write(&wal, [7u8; 64]).unwrap();
+        assert!(
+            matches!(inspect_readonly(&database), Err(StateError::Busy)),
+            "a log with content must still be refused"
+        );
+
         fs::remove_dir_all(directory).unwrap();
     }
 

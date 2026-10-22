@@ -488,23 +488,66 @@ impl DarwinWireGuardBackend {
         interface: &InterfaceName,
         patch: WireGuardDevicePatch,
     ) -> Result<WireGuardApplyReceipt, WireGuardValidationError> {
-        crate::wireguard::validate_device_patch(&patch)?;
-        let registry = self
-            .registry
-            .as_ref()
-            .map_err(|_| WireGuardValidationError::BackendFailure)?;
-        let runtime = registry
-            .get(interface)
-            .ok_or(WireGuardValidationError::InterfaceUnavailable)?;
-        let before = read_managed_device(&runtime, interface).map_err(classify_helper_error)?;
-        let command = render_uapi_patch(&patch).map_err(classify_helper_error)?;
-        let mut stream = std::os::unix::net::UnixStream::connect(&runtime.uapi_socket)
-            .map_err(|_| WireGuardValidationError::InterfaceUnavailable)?;
-        let response = uapi_round_trip(&mut stream, &command).map_err(classify_helper_error)?;
+        crate::operational::emit(
+            "netd.device_patch_started",
+            crate::operational::Severity::Info,
+            "netd",
+            "wireguard",
+            "started",
+            Some(("interface", interface.as_str())),
+            None,
+            Some("patch"),
+        );
+        crate::wireguard::validate_device_patch(&patch).inspect_err(|error| {
+            report_validation_failure(interface, error);
+        })?;
+        let registry = self.registry.as_ref().map_err(|_| {
+            report_helper_failure(interface, &HelperError::StartupFailed);
+            WireGuardValidationError::BackendFailure
+        })?;
+        let runtime = registry.get(interface).ok_or_else(|| {
+            report_helper_failure(interface, &HelperError::NotFound);
+            WireGuardValidationError::InterfaceUnavailable
+        })?;
+        let before = read_managed_device(&runtime, interface).map_err(|error| {
+            report_helper_failure(interface, &error);
+            classify_helper_error(error)
+        })?;
+        let command = render_uapi_patch(&patch).map_err(|error| {
+            report_helper_failure(interface, &error);
+            classify_helper_error(error)
+        })?;
+        let mut stream =
+            std::os::unix::net::UnixStream::connect(&runtime.uapi_socket).map_err(|error| {
+                report_helper_failure(interface, &HelperError::UapiTransport);
+                let _ = error;
+                WireGuardValidationError::InterfaceUnavailable
+            })?;
+        let response = uapi_round_trip(&mut stream, &command).map_err(|error| {
+            report_helper_failure(interface, &error);
+            classify_helper_error(error)
+        })?;
         if response.errno != 0 {
+            // The helper's own errno is the only thing that says *why* the
+            // helper refused: a port that is already bound reads as
+            // `EADDRINUSE` and nothing else names the port.
+            let errno = response.errno.to_string();
+            crate::operational::emit(
+                "netd.device_patch_refused",
+                crate::operational::Severity::Warn,
+                "netd",
+                "wireguard",
+                "kernel_rejected",
+                Some(("errno", errno.as_str())),
+                None,
+                Some("patch"),
+            );
             return Err(WireGuardValidationError::KernelRejected);
         }
-        let after = read_managed_device(&runtime, interface).map_err(classify_helper_error)?;
+        let after = read_managed_device(&runtime, interface).map_err(|error| {
+            report_helper_failure(interface, &error);
+            classify_helper_error(error)
+        })?;
         Ok(WireGuardApplyReceipt {
             interface: interface.clone(),
             disposition: if after == before {
@@ -537,8 +580,65 @@ fn classify_helper_error(error: HelperError) -> WireGuardValidationError {
     }
 }
 
-/// Maps one helper `get=1` dump onto the portable observed device.
+/// Reports the helper failure that made a device configuration fail.
 ///
+/// The helper failure is otherwise folded into a category, which leaves an
+/// operator with a refusal they cannot act on. The event names the failure.
+fn report_helper_failure(interface: &InterfaceName, error: &HelperError) {
+    crate::operational::emit(
+        "netd.helper_call_failed",
+        crate::operational::Severity::Warn,
+        "netd",
+        "wireguard",
+        error.as_str(),
+        Some(("interface", interface.as_str())),
+        None,
+        Some("uapi"),
+    );
+}
+
+/// Reports a patch that the product itself rejected before it reached the
+/// helper.
+///
+/// The rejection is otherwise folded into a category, which leaves an
+/// operator with a refusal they cannot act on. The event names the rejection.
+fn report_validation_failure(interface: &InterfaceName, error: &WireGuardValidationError) {
+    crate::operational::emit(
+        "netd.device_patch_rejected",
+        crate::operational::Severity::Warn,
+        "netd",
+        "wireguard",
+        validation_failure_name(error),
+        Some(("interface", interface.as_str())),
+        None,
+        Some("patch"),
+    );
+}
+
+/// The stable, lowercase name of a patch rejection.
+fn validation_failure_name(error: &WireGuardValidationError) -> &'static str {
+    match error {
+        WireGuardValidationError::EmptyPatch => "empty_patch",
+        WireGuardValidationError::InvalidListenPort => "invalid_listen_port",
+        WireGuardValidationError::InvalidKeepalive => "invalid_keepalive",
+        WireGuardValidationError::EmptyPeerPatch => "empty_peer_patch",
+        WireGuardValidationError::TooManyAllowedIps => "too_many_allowed_ips",
+        WireGuardValidationError::DuplicateAllowedIp => "duplicate_allowed_ip",
+        WireGuardValidationError::ConflictingAllowedIps => "conflicting_allowed_ips",
+        WireGuardValidationError::InvalidEndpoint => "invalid_endpoint",
+        WireGuardValidationError::PeerAlreadyExists => "peer_already_exists",
+        WireGuardValidationError::PeerNotFound => "peer_not_found",
+        WireGuardValidationError::InterfaceUnavailable => "interface_unavailable",
+        WireGuardValidationError::InvalidKey => "invalid_key",
+        WireGuardValidationError::KernelRejected => "kernel_rejected",
+        WireGuardValidationError::PermissionDenied => "permission_denied",
+        WireGuardValidationError::UnsupportedBackend => "unsupported_backend",
+        WireGuardValidationError::InvalidBackendInput => "invalid_backend_input",
+        WireGuardValidationError::BackendFailure => "backend_failure",
+    }
+}
+
+/// Maps one helper `get=1` dump onto the portable observed device.
 /// The helper reports the device private key; it is a secret. It is converted
 /// to the device public key and dropped immediately. The per-peer preshared
 /// key is never read at all.

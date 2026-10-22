@@ -126,6 +126,15 @@ fn map_firewall_error(error: FirewallError) -> ProtocolError {
         FirewallError::PermissionDenied => ProtocolError::PermissionDenied,
         FirewallError::Unsupported => ProtocolError::UnsupportedBackend,
         FirewallError::BackendFailure => ProtocolError::BackendFailure,
+        // The host is not in a state that can carry the requested forwarding.
+        // That is a host-state precondition, not a malformed request, and the
+        // operator has to change the host rather than the request.
+        FirewallError::ForwardingDisabled
+        | FirewallError::FilterMissing
+        | FirewallError::FilterDrift
+        | FirewallError::MissingReturnRoute
+        | FirewallError::RouteConflict
+        | FirewallError::UnsupportedTopology => ProtocolError::UnsupportedBackend,
     }
 }
 

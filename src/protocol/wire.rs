@@ -305,10 +305,12 @@ mod tests {
                 installation_id: InstallationId::new(),
                 wireguard_interface: "wg0".parse().unwrap(),
                 policy: Some(DesiredNetworkPolicy {
+                    mode: crate::domain::NetworkPolicyMode::Gateway,
                     ipv4_forwarding: crate::firewall::Ipv4Forwarding::Required,
                     ipv6_forwarding: crate::firewall::Ipv6Forwarding::NotRequired,
                     egress_interface: "eth0".parse().unwrap(),
                     source_prefixes: vec!["10.8.0.0/24".parse().unwrap()],
+                    destination_prefixes: Vec::new(),
                     nat: crate::firewall::NatMode::Masquerade,
                 }),
             },

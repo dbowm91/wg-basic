@@ -1339,6 +1339,8 @@ fn append_network_plan_checks(
     ) {
         Ok(ResponseBody::InstallationNetworkPlanned(plan)) => {
             append_plan_outcome(checks, &plan);
+            #[cfg(target_os = "macos")]
+            append_routed_lan_check(checks, &plan);
             checks.push(DoctorCheck::new(
                 Id::Rtnetlink,
                 D::Pass,
@@ -1462,6 +1464,95 @@ fn append_plan_outcome(
             "none"
         },
     ));
+}
+
+/// Renders the routed-LAN prerequisite verdict.
+///
+/// The verdict is the whole point of the routed-LAN contract: each reason
+/// names a different missing prerequisite, so the operator is told what to
+/// fix rather than that "routed LAN" is unavailable.
+#[cfg(target_os = "macos")]
+fn append_routed_lan_check(
+    checks: &mut Vec<wg_basic::doctor::DoctorCheck>,
+    plan: &wg_basic::protocol::InstallationNetworkPlanBody,
+) {
+    use wg_basic::doctor::{DoctorCheck, DoctorCheckId as Id, DoctorDisposition as D};
+    use wg_basic::firewall::RoutedLanVerdict;
+
+    let Some(verdict) = plan.firewall_plan.routed_lan else {
+        return;
+    };
+    // The rules travel as structured data on the check, not inside the
+    // bounded evidence string: a routed LAN's rule set outgrows the bound,
+    // and a truncated rule is not a rule an operator can install.
+    let rules = plan.firewall_plan.required_filter_rules.clone();
+    let rule_count = rules.len();
+    let (disposition, summary, evidence, remediation) = match verdict {
+        RoutedLanVerdict::Ready => (
+            D::Pass,
+            "the routed-LAN prerequisites are in place".to_owned(),
+            "host forwarding is enabled, the operator filter is attached and matches, and the routes are proven"
+                .to_owned(),
+            "none".to_owned(),
+        ),
+        RoutedLanVerdict::ForwardingDisabled => (
+            D::Fail,
+            "host forwarding is not enabled for a family this policy requires".to_owned(),
+            "read-only host forwarding observation did not show the required family as enabled"
+                .to_owned(),
+            "enable the host's global IPv4 or IPv6 forwarding through host configuration; wg-basic never writes it"
+                .to_owned(),
+        ),
+        RoutedLanVerdict::FilterMissing => (
+            D::Fail,
+            "the operator-managed filter is absent or is not attached".to_owned(),
+            format!(
+                "the installation anchor was not observed as attached to the main filter ruleset; {rule_count} rules must be installed"
+            ),
+            "install the rules shown above in the installation anchor and attach that anchor from your own pf configuration"
+                .to_owned(),
+        ),
+        RoutedLanVerdict::FilterDrift => (
+            D::Fail,
+            "the operator-managed filter does not match the rendered policy".to_owned(),
+            format!("the filter does not match the {rule_count} rules that must be installed"),
+            "reinstall the rules shown above in the installation anchor; wg-basic never repairs a drifted filter"
+                .to_owned(),
+        ),
+        RoutedLanVerdict::MissingReturnRoute => (
+            D::Fail,
+            "no observed route carries traffic back to the tunnel pool".to_owned(),
+            "the managed tunnel's pool has no route scoped to the managed device".to_owned(),
+            "restore the managed pool route, and make sure the upstream router routes the pool back to this host"
+                .to_owned(),
+        ),
+        RoutedLanVerdict::RouteConflict => (
+            D::Fail,
+            "a foreign or ambiguous route covers an approved destination".to_owned(),
+            "more than one route claims an approved destination prefix".to_owned(),
+            "remove the competing route, or narrow the approved destinations to the prefix this host routes"
+                .to_owned(),
+        ),
+        RoutedLanVerdict::UnsupportedTopology => (
+            D::Fail,
+            "the approved destinations are not reachable through the declared egress interface"
+                .to_owned(),
+            "no specific route reaches an approved destination, or only the default route does"
+                .to_owned(),
+            "install a specific route for each approved destination through the declared egress interface; wg-basic never takes over the default route"
+                .to_owned(),
+        ),
+        RoutedLanVerdict::TunnelUnavailable => (
+            D::Warn,
+            "the managed tunnel is not up, so its filter cannot be proven".to_owned(),
+            "no managed tunnel device is registered for this installation".to_owned(),
+            "start the managed network, then rerun doctor".to_owned(),
+        ),
+    };
+    checks.push(
+        DoctorCheck::new(Id::RoutedLan, disposition, summary, evidence, remediation)
+            .with_required_filter_rules(rules),
+    );
 }
 
 /// Portable (M001): listen-port comparison is backend-agnostic.

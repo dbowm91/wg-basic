@@ -11,8 +11,11 @@
 //!   module's owner-table claims);
 //! - [`service`] serializes application and reports the receipt (Linux
 //!   backend);
-//! - [`service_darwin`] owns the Darwin host-only contract (C001): it refuses
-//!   any policy that needs forwarding or NAT and never writes PF state.
+//! - [`pfctl`] reads the host's packet filter without changing it (Darwin
+//!   only, strictly read-only);
+//! - [`service_darwin`] owns the Darwin host-only (C001) and routed-LAN (C003)
+//!   contracts: it refuses any policy it cannot prove, and never writes PF
+//!   state, forwarding sysctls, or host routes.
 //!
 //! On Linux `nft` is invoked directly with internally rendered input. No caller
 //! can supply nft source, and the sole owned table is `inet wg_basic`. Do not
@@ -24,6 +27,8 @@ mod nft;
 /// Darwin PF/NAT anchor model and advanced-admin policy (M005 policy scope;
 /// pure rendering/verification, no `pfctl` execution yet).
 mod pf;
+#[cfg(target_os = "macos")]
+mod pfctl;
 mod planner;
 mod policy;
 #[cfg(target_os = "linux")]
@@ -34,14 +39,15 @@ mod service_darwin;
 mod service_other;
 
 pub use pf::{
-    anchor_name, attachment_verified, observe_attachments, render_policy, rules_digest,
-    teardown_order, Attachment, AttachmentObservation, PfError, PfRuleSet, RequiredAttachments,
-    ANCHOR_PREFIX, IPV4_FORWARDING_SYSCTL, IPV6_FORWARDING_SYSCTL,
+    anchor_content_matches, anchor_name, attachment_verified, observe_attachments, render_policy,
+    render_routed_policy, rules_digest, teardown_order, Attachment, AttachmentObservation, PfError,
+    PfRuleSet, RequiredAttachments, ANCHOR_PREFIX, IPV4_FORWARDING_SYSCTL, IPV6_FORWARDING_SYSCTL,
 };
 
 pub use policy::{
     DesiredNetworkPolicy, FirewallActionKind, FirewallApplyReceipt, FirewallError, FirewallFailure,
     FirewallPlanSummary, FirewallWarning, Ipv4Forwarding, Ipv6Forwarding, NatMode,
+    RoutedLanVerdict,
 };
 #[cfg(target_os = "linux")]
 pub use service::FirewallService;

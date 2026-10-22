@@ -163,6 +163,27 @@ pub enum HelperError {
     UapiRefused,
 }
 
+impl HelperError {
+    /// The stable, lowercase name of the helper failure.
+    ///
+    /// The name is what a diagnostic event carries, so that a refused helper
+    /// call says which failure it was rather than only that the call failed.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            HelperError::RelativePath => "helper_path_not_absolute",
+            HelperError::NotFound => "helper_not_found",
+            HelperError::Symlink => "helper_path_is_a_symlink",
+            HelperError::NotRegularFile => "helper_not_a_regular_file",
+            HelperError::NotExecutable => "helper_not_executable",
+            HelperError::IdentityMismatch => "helper_identity_mismatch",
+            HelperError::StartupFailed => "helper_startup_failed",
+            HelperError::UapiTransport => "uapi_transport_failed",
+            HelperError::UapiMalformed => "uapi_malformed",
+            HelperError::UapiRefused => "uapi_refused",
+        }
+    }
+}
+
 /// A supervised foreground helper child. Killed on drop if still running.
 #[derive(Debug)]
 pub struct SupervisedHelper {

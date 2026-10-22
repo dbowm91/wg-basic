@@ -92,8 +92,184 @@ pub fn render_policy(
     PfRuleSet { filter, nat }
 }
 
-/// The rule classes whose attachment the administrator's parent configuration
-/// must establish.
+/// Renders the dedicated anchor for a routed-LAN policy.
+///
+/// A routed-LAN policy forwards only to an explicit allowlist of downstream
+/// prefixes, so every rule names **both** ends: the source prefix inside the
+/// tunnel and the approved destination. There is deliberately no `to any`
+/// rule, and there is no NAT rule, because a routed LAN is a routing decision
+/// and not a masquerade.
+///
+/// The ingress rule names the tunnel device, which is the dynamic `utun` the
+/// helper currently holds. That is what rejects a spoofed source arriving on
+/// some other interface, and it is also why the rendered rules have to be
+/// re-installed when the helper is renumbered.
+///
+/// The policy is **bidirectional**: the return leg is rendered as well, from the
+/// approved destination back to the tunnel pool. A routed LAN is a routing
+/// decision, and a route that only carries traffic one way is not a route: the
+/// approved host's own traffic has to reach the pool, and the reply to a
+/// forwarded packet must not depend on a state entry that the operator's
+/// filter never created. The return rules are bounded exactly like the
+/// forward ones — only the approved destination may originate towards the
+/// pool, and only towards the pool — so they widen nothing.
+///
+/// A PF rule matches a single address family: an IPv4 source with an IPv6
+/// destination can never match a packet, and PF refuses to load a rule that
+/// expands to no valid combination. The pairs are therefore rendered per
+/// family, which is also what the routing means — carrying traffic between
+/// the two families would need a translation, and a routed LAN never
+/// translates.
+pub fn render_routed_policy(
+    source_prefixes: &[crate::domain::NetworkPrefix],
+    destination_prefixes: &[crate::domain::NetworkPrefix],
+    egress: &crate::domain::InterfaceName,
+    tunnel_interface: &crate::domain::InterfaceName,
+) -> PfRuleSet {
+    let mut filter = Vec::new();
+    for source in source_prefixes {
+        for destination in destination_prefixes {
+            if source.network().addr().is_ipv4() != destination.network().addr().is_ipv4() {
+                continue;
+            }
+            // The forward leg: the pool's traffic towards the approved
+            // destination, in through the tunnel and out through the egress.
+            filter.push(format!(
+                "pass in on {tunnel_interface} from {source} to {destination} keep state"
+            ));
+            filter.push(format!(
+                "pass out on {egress} from {source} to {destination} keep state"
+            ));
+            // The return leg: the approved destination's own traffic towards
+            // the pool, in through the egress and out through the tunnel.
+            filter.push(format!(
+                "pass in on {egress} from {destination} to {source} keep state"
+            ));
+            filter.push(format!(
+                "pass out on {tunnel_interface} from {destination} to {source} keep state"
+            ));
+        }
+    }
+    PfRuleSet {
+        filter,
+        nat: Vec::new(),
+    }
+}
+
+/// One normalized filter rule.
+///
+/// The product renders a deliberately small rule grammar, so the observed
+/// anchor content is normalized into the same shape before it is compared.
+/// Normalizing rather than comparing raw text keeps the comparison stable
+/// across the whitespace and annotations `pfctl` adds when it prints a
+/// ruleset.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct FilterRule {
+    direction: String,
+    interface: String,
+    source: String,
+    destination: String,
+    keep_state: bool,
+}
+
+/// Parses one line of observed anchor content into a normalized rule.
+///
+/// The observed content is PF's own canonical rendering of the rule, not the
+/// text the operator wrote. PF resolves the address family it matched and
+/// prints it (`inet`, `inet6`), and it resolves `keep state` into the state
+/// flags it applied and prints those (`flags S/SA keep state`). The parser
+/// therefore accepts the family keyword and the flags as optional, so that a
+/// rule the product rendered and an operator installed compare equal.
+///
+/// Returns `None` for anything the product's grammar does not cover, which
+/// makes the comparison fail closed: an anchor carrying a rule the product
+/// did not render is drift, not a near miss.
+fn parse_filter_rule(line: &str) -> Option<FilterRule> {
+    let tokens: Vec<&str> = line.split_whitespace().collect();
+    if tokens.len() < 8 || tokens[0] != "pass" {
+        return None;
+    }
+    let direction = match tokens[1] {
+        "in" => "in",
+        "out" => "out",
+        _ => return None,
+    };
+    if tokens[2] != "on" {
+        return None;
+    }
+    let interface = tokens[3].to_owned();
+    let mut index = 4;
+    // PF prints the address family the rule resolved to.
+    if matches!(tokens.get(index), Some(&"inet") | Some(&"inet6")) {
+        index += 1;
+    }
+    if tokens.get(index) != Some(&"from") {
+        return None;
+    }
+    let source = (*tokens.get(index + 1)?).to_owned();
+    if tokens.get(index + 2) != Some(&"to") {
+        return None;
+    }
+    let destination = (*tokens.get(index + 3)?).to_owned();
+    index += 4;
+    // PF prints the state flags the rule resolved to, before the `keep state`
+    // it resolved them from.
+    if tokens.get(index) == Some(&"flags") {
+        index += 1;
+        while index < tokens.len() && tokens[index] != "keep" && tokens[index] != "state" {
+            index += 1;
+        }
+    }
+    let tail = &tokens[index..];
+    Some(FilterRule {
+        direction: direction.to_owned(),
+        interface,
+        source,
+        destination,
+        // A stateful rule is what lets the return traffic come back, so
+        // `keep` and `state` are both required.
+        keep_state: tail.contains(&"keep") && tail.contains(&"state"),
+    })
+}
+
+/// Normalizes a rendered or observed rule list.
+fn normalize_rules(rules: &[String]) -> Option<Vec<FilterRule>> {
+    rules
+        .iter()
+        .map(|rule| parse_filter_rule(rule))
+        .collect::<Option<Vec<_>>>()
+}
+
+/// Whether the observed anchor content is exactly the rendered filter policy.
+///
+/// The comparison is a multiset equality over the normalized rules: a missing
+/// rule, an extra rule, a different interface, a different prefix, or a rule
+/// that is not stateful all make the observed content drift. Nothing is
+/// repaired by guessing.
+pub fn anchor_content_matches(observed: &str, expected: &PfRuleSet) -> bool {
+    let mut observed_rules = Vec::new();
+    for line in observed.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some(rule) = parse_filter_rule(line) else {
+            return false;
+        };
+        observed_rules.push(rule);
+    }
+    let Some(expected_rules) = normalize_rules(&expected.filter) else {
+        return false;
+    };
+    if observed_rules.len() != expected_rules.len() {
+        return false;
+    }
+    observed_rules.sort();
+    let mut expected_rules = expected_rules;
+    expected_rules.sort();
+    observed_rules == expected_rules
+}
+
 ///
 /// The filter table and the NAT table hold **independent** anchors that may
 /// share a name, and each is attached by its own parent rule. A policy that
@@ -509,5 +685,246 @@ rdr-anchor \"com.apple.internet-sharing\" all
     fn sysctl_paths_are_fixed_constants() {
         assert_eq!(IPV4_FORWARDING_SYSCTL, "net.inet.ip.forwarding");
         assert_eq!(IPV6_FORWARDING_SYSCTL, "net.inet6.ip6.forwarding");
+    }
+
+    /// A routed-LAN source and destination pair.
+    fn routed() -> (
+        Vec<crate::domain::NetworkPrefix>,
+        Vec<crate::domain::NetworkPrefix>,
+    ) {
+        (
+            vec!["10.77.0.0/24".parse().unwrap()],
+            vec!["192.168.9.0/24".parse().unwrap()],
+        )
+    }
+
+    #[test]
+    fn a_routed_policy_names_both_ends_and_never_any() {
+        let egress: crate::domain::InterfaceName = "en0".parse().unwrap();
+        let tunnel: crate::domain::InterfaceName = "utun7".parse().unwrap();
+        let (sources, destinations) = routed();
+        let rendered = render_routed_policy(&sources, &destinations, &egress, &tunnel);
+        assert!(rendered.nat.is_empty(), "a routed LAN never NATs");
+        assert_eq!(rendered.filter.len(), 4);
+        assert!(rendered
+            .filter
+            .iter()
+            .any(|rule| rule.contains("from 10.77.0.0/24 to 192.168.9.0/24")));
+        assert!(rendered.filter.iter().all(|rule| !rule.contains(" to any")));
+        // The ingress rule is bound to the tunnel device, which is what
+        // rejects a spoofed source arriving on some other interface.
+        assert!(rendered
+            .filter
+            .iter()
+            .any(|rule| rule.starts_with("pass in on utun7")));
+    }
+
+    /// A routed LAN carries traffic both ways.
+    ///
+    /// The forward rules alone leave the approved host unable to reach the
+    /// pool, and leave the reply to a forwarded packet resting on a state
+    /// entry the operator's own filter never created. The return leg is
+    /// rendered, and it is bounded exactly like the forward one.
+    #[test]
+    fn a_routed_policy_carries_the_return_leg_as_well() {
+        let egress: crate::domain::InterfaceName = "en0".parse().unwrap();
+        let tunnel: crate::domain::InterfaceName = "utun7".parse().unwrap();
+        let (sources, destinations) = routed();
+        let rendered = render_routed_policy(&sources, &destinations, &egress, &tunnel);
+        assert!(rendered
+            .filter
+            .iter()
+            .any(|rule| rule == "pass in on en0 from 192.168.9.0/24 to 10.77.0.0/24 keep state"));
+        assert!(
+            rendered
+                .filter
+                .iter()
+                .any(|rule| rule
+                    == "pass out on utun7 from 192.168.9.0/24 to 10.77.0.0/24 keep state")
+        );
+        // The return leg reaches the pool and nothing else: there is still no
+        // `to any`, and the destination is still an approved one.
+        assert!(rendered.filter.iter().all(|rule| !rule.contains(" to any")));
+        assert!(rendered
+            .filter
+            .iter()
+            .all(|rule| rule.contains("to 10.77.0.0/24") || rule.contains("to 192.168.9.0/24")));
+    }
+
+    /// A routed-LAN policy that carries both families.
+    ///
+    /// The tunnel pool holds an IPv4 and an IPv6 prefix, and the approved
+    /// destinations may too. PF refuses to load a rule that mixes the two
+    /// families, and carrying traffic between them would need a translation
+    /// that a routed LAN never performs, so the rules are rendered per family.
+    #[test]
+    fn a_routed_policy_pairs_each_destination_with_its_own_family() {
+        let egress: crate::domain::InterfaceName = "en0".parse().unwrap();
+        let tunnel: crate::domain::InterfaceName = "utun7".parse().unwrap();
+        let sources = vec![
+            "10.77.0.0/24".parse().unwrap(),
+            "2001:db8:77::/64".parse().unwrap(),
+        ];
+        let destinations = vec![
+            "10.20.20.0/24".parse().unwrap(),
+            "2001:db8:20::/64".parse().unwrap(),
+        ];
+        let rendered = render_routed_policy(&sources, &destinations, &egress, &tunnel);
+        // Two legs, an ingress and an egress rule each, per family: eight
+        // rules in all.
+        assert_eq!(rendered.filter.len(), 8);
+        for rule in &rendered.filter {
+            // Both ends of a rule belong to the same family: the forward leg
+            // carries the pool to the destination, the return leg carries the
+            // destination back to the pool, and neither crosses the families.
+            let ipv4_ends =
+                rule.contains("from 10.77.0.0/24") || rule.contains("from 10.20.20.0/24");
+            let ipv6_ends =
+                rule.contains("from 2001:db8:77::/64") || rule.contains("from 2001:db8:20::/64");
+            assert!(
+                ipv4_ends ^ ipv6_ends,
+                "a rule may not mix the address families: {rule}"
+            );
+            let ipv4_pair = rule.contains("to 10.77.0.0/24") || rule.contains("to 10.20.20.0/24");
+            let ipv6_pair =
+                rule.contains("to 2001:db8:77::/64") || rule.contains("to 2001:db8:20::/64");
+            assert!(
+                ipv4_pair ^ ipv6_pair,
+                "a rule may not mix the address families: {rule}"
+            );
+            assert!(
+                ipv4_ends == ipv4_pair,
+                "a rule's two ends belong to one family: {rule}"
+            );
+        }
+        assert!(rendered
+            .filter
+            .iter()
+            .any(|rule| rule == "pass in on utun7 from 10.77.0.0/24 to 10.20.20.0/24 keep state"));
+        assert!(rendered
+            .filter
+            .iter()
+            .any(|rule| rule
+                == "pass out on en0 from 2001:db8:77::/64 to 2001:db8:20::/64 keep state"));
+    }
+
+    /// The real macOS 26.6.2 rendering of a routed-LAN anchor, as
+    /// `pfctl -a <anchor> -s rules` printed it on a live host after the
+    /// operator installed the rules the product reported.
+    ///
+    /// PF resolves the address family it matched and the state flags it
+    /// applied, and prints both. The comparison has to survive that
+    /// canonicalization: an operator who installed exactly the reported rules
+    /// must not be told the filter drifted.
+    const REAL_MACOS_ROUTED_ANCHOR_RULESET: &str = "\
+pass in on utun0 inet from 10.77.0.0/24 to 10.20.20.0/24 flags S/SA keep state
+pass in on utun0 inet6 from 2001:db8:77::/64 to 2001:db8:20::/64 flags S/SA keep state
+pass out on en0 inet from 10.77.0.0/24 to 10.20.20.0/24 flags S/SA keep state
+pass out on en0 inet6 from 2001:db8:77::/64 to 2001:db8:20::/64 flags S/SA keep state
+pass in on en0 inet from 10.20.20.0/24 to 10.77.0.0/24 flags S/SA keep state
+pass in on en0 inet6 from 2001:db8:20::/64 to 2001:db8:77::/64 flags S/SA keep state
+pass out on utun0 inet from 10.20.20.0/24 to 10.77.0.0/24 flags S/SA keep state
+pass out on utun0 inet6 from 2001:db8:20::/64 to 2001:db8:77::/64 flags S/SA keep state
+";
+
+    #[test]
+    fn the_pf_canonical_rendering_of_the_reported_rules_is_not_drift() {
+        let egress: crate::domain::InterfaceName = "en0".parse().unwrap();
+        let tunnel: crate::domain::InterfaceName = "utun0".parse().unwrap();
+        let sources = vec![
+            "10.77.0.0/24".parse().unwrap(),
+            "2001:db8:77::/64".parse().unwrap(),
+        ];
+        let destinations = vec![
+            "10.20.20.0/24".parse().unwrap(),
+            "2001:db8:20::/64".parse().unwrap(),
+        ];
+        let rendered = render_routed_policy(&sources, &destinations, &egress, &tunnel);
+        assert!(
+            anchor_content_matches(REAL_MACOS_ROUTED_ANCHOR_RULESET, &rendered),
+            "the rules PF prints back are the rules the product rendered"
+        );
+    }
+
+    /// A rule that PF would print without the state flags is not stateful, and
+    /// a rule that lost its state is not an accepted near miss.
+    #[test]
+    fn a_canonical_rule_without_state_is_drift() {
+        let egress: crate::domain::InterfaceName = "en0".parse().unwrap();
+        let tunnel: crate::domain::InterfaceName = "utun0".parse().unwrap();
+        let sources = vec![
+            "10.77.0.0/24".parse().unwrap(),
+            "2001:db8:77::/64".parse().unwrap(),
+        ];
+        let destinations = vec![
+            "10.20.20.0/24".parse().unwrap(),
+            "2001:db8:20::/64".parse().unwrap(),
+        ];
+        let rendered = render_routed_policy(&sources, &destinations, &egress, &tunnel);
+        let stateless = "\
+pass in on utun0 inet from 10.77.0.0/24 to 10.20.20.0/24
+pass in on utun0 inet6 from 2001:db8:77::/64 to 2001:db8:20::/64 flags S/SA keep state
+pass out on en0 inet from 10.77.0.0/24 to 10.20.20.0/24 flags S/SA keep state
+pass out on en0 inet6 from 2001:db8:77::/64 to 2001:db8:20::/64 flags S/SA keep state
+";
+        assert!(!anchor_content_matches(stateless, &rendered));
+    }
+
+    #[test]
+    fn an_anchor_that_matches_the_rendered_policy_is_accepted() {
+        let egress: crate::domain::InterfaceName = "en0".parse().unwrap();
+        let tunnel: crate::domain::InterfaceName = "utun7".parse().unwrap();
+        let (sources, destinations) = routed();
+        let rendered = render_routed_policy(&sources, &destinations, &egress, &tunnel);
+        let observed = format!("{}\n", rendered.filter.join("\n"));
+        assert!(anchor_content_matches(&observed, &rendered));
+    }
+
+    #[test]
+    fn an_anchor_that_differs_from_the_rendered_policy_is_drift() {
+        let egress: crate::domain::InterfaceName = "en0".parse().unwrap();
+        let tunnel: crate::domain::InterfaceName = "utun7".parse().unwrap();
+        let (sources, destinations) = routed();
+        let rendered = render_routed_policy(&sources, &destinations, &egress, &tunnel);
+
+        // An extra rule widens the policy and is never accepted.
+        let mut widened = rendered.filter.clone();
+        widened.push("pass in on utun7 from any to any keep state".into());
+        assert!(!anchor_content_matches(
+            &format!("{}\n", widened.join("\n")),
+            &rendered
+        ));
+
+        // A missing rule is drift too.
+        let mut narrowed = rendered.filter.clone();
+        narrowed.pop();
+        assert!(!anchor_content_matches(
+            &format!("{}\n", narrowed.join("\n")),
+            &rendered
+        ));
+
+        // A different tunnel device is drift: the filter has to name the
+        // device that actually holds the tunnel.
+        let mut renamed = rendered.filter.clone();
+        renamed[0] = renamed[0].replace("utun7", "utun9");
+        assert!(!anchor_content_matches(
+            &format!("{}\n", renamed.join("\n")),
+            &rendered
+        ));
+
+        // A rule that is not stateful does not allow the return traffic, so
+        // it is drift rather than an accepted near miss.
+        let mut stateless = rendered.filter.clone();
+        stateless[0] = stateless[0].replace(" keep state", "");
+        assert!(!anchor_content_matches(
+            &format!("{}\n", stateless.join("\n")),
+            &rendered
+        ));
+
+        // A rule the product's grammar does not cover is never accepted.
+        assert!(!anchor_content_matches(
+            "pass in on utun7 from 10.77.0.0/24 to 192.168.9.0/24\n",
+            &rendered
+        ));
     }
 }

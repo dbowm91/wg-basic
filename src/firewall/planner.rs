@@ -115,6 +115,8 @@ pub(crate) fn plan_firewall(
             } else {
                 vec![FirewallWarning::IndependentFirewallMayStillBlockForwardedTraffic]
             },
+            required_filter_rules: Vec::new(),
+            routed_lan: None,
         },
         desired_hash,
     })
@@ -322,10 +324,12 @@ mod tests {
         (
             "wg0".parse().unwrap(),
             DesiredNetworkPolicy {
+                mode: crate::domain::NetworkPolicyMode::Gateway,
                 ipv4_forwarding: Ipv4Forwarding::Required,
                 ipv6_forwarding: Ipv6Forwarding::NotRequired,
                 egress_interface: "eth0".parse().unwrap(),
                 source_prefixes: vec!["10.8.0.0/24".parse().unwrap()],
+                destination_prefixes: Vec::new(),
                 nat: NatMode::Masquerade,
             },
         )

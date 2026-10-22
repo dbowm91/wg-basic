@@ -144,6 +144,28 @@ pub fn wait_until(what: &str, timeout: Duration, mut ready: impl FnMut() -> bool
     }
 }
 
+/// Waits for a condition, and reports whether it became true.
+///
+/// This is the bounded variant of [`wait_until`]: a caller that can recover
+/// from a condition that never arrives uses this one, so the timeout becomes
+/// evidence rather than the end of the run.
+pub fn wait_until_or_false(
+    _what: &str,
+    timeout: Duration,
+    mut ready: impl FnMut() -> bool,
+) -> bool {
+    let start = Instant::now();
+    loop {
+        if ready() {
+            return true;
+        }
+        if start.elapsed() >= timeout {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
 pub fn uapi(socket: &Path, command: &str) -> wg_darwin::UapiDevice {
     let mut stream = UnixStream::connect(socket)
         .unwrap_or_else(|error| panic!("UAPI connect {}: {error}", socket.display()));
@@ -711,7 +733,22 @@ pub fn http(
     body: &str,
 ) -> (u16, String, Vec<(String, String)>) {
     use std::io::{BufRead, BufReader, Read, Write};
-    let mut stream = std::net::TcpStream::connect(addr).expect("management listener");
+    // The management listener is started by launchd, so a request that
+    // arrives right after the service is kicked off can be refused before the
+    // listener is bound. The request waits for the listener rather than
+    // failing on the first refusal.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut connection = None;
+    while Instant::now() < deadline {
+        match std::net::TcpStream::connect(addr) {
+            Ok(stream) => {
+                connection = Some(stream);
+                break;
+            }
+            Err(_) => std::thread::sleep(Duration::from_millis(100)),
+        }
+    }
+    let mut stream = connection.expect("management listener");
     stream
         .set_read_timeout(Some(Duration::from_secs(30)))
         .expect("read timeout");

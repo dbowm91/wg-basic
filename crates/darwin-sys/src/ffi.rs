@@ -989,6 +989,37 @@ fn parse_route_dump(buffer: &[u8]) -> Vec<RouteInfo> {
     routes
 }
 
+/// Resolves a kernel interface index to the interface's name.
+///
+/// A route whose next hop is an IP address carries no link-level address, so
+/// the kernel names its interface by index alone. An administrator's own
+/// `route add` produces exactly that shape, so the observation has to resolve
+/// the index: a route whose interface cannot be named is a route the product
+/// cannot say which interface it leaves through, and it must not claim to
+/// have proven it.
+fn interface_name(index: u32) -> Option<String> {
+    if index == 0 {
+        return None;
+    }
+    let mut buffer = [0 as libc::c_char; libc::IF_NAMESIZE];
+    // SAFETY: `if_indextoname` writes a NUL-terminated interface name of at
+    // most `IF_NAMESIZE` bytes into the buffer, which is exactly the size the
+    // kernel expects.
+    let written = unsafe { libc::if_indextoname(index, buffer.as_mut_ptr()) };
+    if written.is_null() {
+        return None;
+    }
+    // SAFETY: on success the kernel wrote a NUL-terminated name into the
+    // buffer, so the string is valid up to the terminator.
+    let name = unsafe { std::ffi::CStr::from_ptr(buffer.as_ptr()) };
+    let name = name.to_str().ok()?.trim();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_owned())
+    }
+}
+
 pub(crate) fn list_routes() -> Result<Vec<RouteInfo>, SysError> {
     let mut mib: [c_int; 6] = [CTL_NET, PF_ROUTE, 0, 0, NET_RT_DUMP, 0];
     let mut needed: usize = 0;
@@ -1027,7 +1058,18 @@ pub(crate) fn list_routes() -> Result<Vec<RouteInfo>, SysError> {
         return Err(last_error("sysctl route dump"));
     }
     let length = needed.min(buffer.len());
-    Ok(parse_route_dump(&buffer[..length]))
+    let mut routes = parse_route_dump(&buffer[..length]);
+    // A route that leaves through an interface named by an IP next hop carries
+    // no link-level address, so its interface is only known by index. The
+    // index is resolved here, because the routed-LAN contract compares a
+    // route's interface against the declared egress interface and an unnamed
+    // interface would compare as a foreign route.
+    for route in &mut routes {
+        if route.interface_name.is_empty() {
+            route.interface_name = interface_name(route.interface_index).unwrap_or_default();
+        }
+    }
+    Ok(routes)
 }
 
 /// Assembles one routing message for the `AF_ROUTE` socket.
@@ -1156,6 +1198,21 @@ pub(crate) fn remove_route(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A route that leaves through an interface named by an IP next hop
+    /// carries no link-level address, so its interface is only known by
+    /// index. The observation has to name it, or it cannot say which
+    /// interface the route leaves through.
+    #[test]
+    fn an_interface_index_resolves_to_its_name() {
+        let index = interface_index("lo0").expect("lo0 always has an index");
+        assert_eq!(interface_name(index).as_deref(), Some("lo0"));
+        // Index zero names no interface.
+        assert_eq!(interface_name(0), None);
+        // An index that names no interface resolves to nothing rather than to
+        // a made-up name.
+        assert_eq!(interface_name(u32::MAX), None);
+    }
 
     /// The NUL-terminated name in a fixed-size kernel name field.
     fn name_bytes(slot: &[c_char]) -> Vec<u8> {

@@ -4,7 +4,7 @@
 //! bounded set of source prefixes, and the NAT mode. Nothing else is expressible.
 
 use crate::{
-    domain::{InterfaceName, NetworkPrefix},
+    domain::{InterfaceName, NetworkPolicyMode, NetworkPrefix},
     reconcile::ApplyStatus,
 };
 use serde::{Deserialize, Serialize};
@@ -12,6 +12,11 @@ use std::collections::BTreeSet;
 
 /// Upper bound on caller-supplied source prefixes.
 pub(crate) const MAX_PREFIXES: usize = 64;
+/// Upper bound on the downstream prefixes a routed-LAN policy may approve.
+///
+/// The allowlist becomes one filter rule per source and destination pair, so
+/// it is bounded rather than open-ended.
+pub(crate) const MAX_DESTINATION_PREFIXES: usize = 16;
 /// The single nftables table this subsystem is allowed to own.
 pub(crate) const TABLE_NAME: &str = "wg_basic";
 /// The historical pre-Phase-6 product-only marker.
@@ -75,10 +80,22 @@ pub enum Ipv6Forwarding {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DesiredNetworkPolicy {
+    /// The routing intent this policy declares.
+    ///
+    /// The mode is the contract: it says whether the tunnel carries only this
+    /// host's traffic, forwards to an explicit downstream allowlist, or acts
+    /// as a gateway. Each mode is validated against its own rules.
+    #[serde(default)]
+    pub mode: NetworkPolicyMode,
     pub ipv4_forwarding: Ipv4Forwarding,
     pub ipv6_forwarding: Ipv6Forwarding,
     pub egress_interface: InterfaceName,
     pub source_prefixes: Vec<NetworkPrefix>,
+    /// The approved downstream prefixes.
+    ///
+    /// Only a routed-LAN policy may name any.
+    #[serde(default)]
+    pub destination_prefixes: Vec<NetworkPrefix>,
     pub nat: NatMode,
 }
 
@@ -113,6 +130,77 @@ impl DesiredNetworkPolicy {
                 .any(|prefix| prefix.network().addr().is_ipv4())
         {
             return Err(FirewallError::InvalidPolicy);
+        }
+        self.validate_mode()
+    }
+
+    /// Validates the mode-specific contract.
+    ///
+    /// A host-only policy carries no forwarding obligation and no destination
+    /// allowlist. A gateway policy carries no allowlist either: it forwards
+    /// anywhere, which is the shape that already existed. A routed-LAN policy
+    /// carries exactly one bounded allowlist and never masquerades, because
+    /// its whole security argument rests on the approved destinations.
+    fn validate_mode(&self) -> Result<(), FirewallError> {
+        match self.mode {
+            NetworkPolicyMode::HostOnly => {
+                if self.ipv4_forwarding != Ipv4Forwarding::NotRequired
+                    || self.ipv6_forwarding != Ipv6Forwarding::NotRequired
+                    || self.nat != NatMode::Disabled
+                    || !self.destination_prefixes.is_empty()
+                {
+                    return Err(FirewallError::InvalidPolicy);
+                }
+            }
+            NetworkPolicyMode::Gateway => {
+                if !self.destination_prefixes.is_empty() {
+                    return Err(FirewallError::InvalidPolicy);
+                }
+            }
+            NetworkPolicyMode::RoutedLan => {
+                if self.nat != NatMode::Disabled
+                    || self.destination_prefixes.is_empty()
+                    || self.destination_prefixes.len() > MAX_DESTINATION_PREFIXES
+                {
+                    return Err(FirewallError::InvalidPolicy);
+                }
+                let mut destinations = BTreeSet::new();
+                let mut has_v4 = false;
+                let mut has_v6 = false;
+                for destination in &self.destination_prefixes {
+                    let network = destination.network();
+                    let addr = network.addr();
+                    let ipv6_link_local = match addr {
+                        std::net::IpAddr::V6(address) => address.is_unicast_link_local(),
+                        std::net::IpAddr::V4(_) => false,
+                    };
+                    if !destinations.insert(destination.to_string())
+                        || addr.is_unspecified()
+                        || addr.is_multicast()
+                        || addr.is_loopback()
+                        || ipv6_link_local
+                        || network.prefix_len() == 0
+                    {
+                        return Err(FirewallError::InvalidPolicy);
+                    }
+                    if self.source_prefixes.iter().any(|source| {
+                        let source = source.network();
+                        source.contains(&network.addr()) || network.contains(&source.addr())
+                    }) {
+                        return Err(FirewallError::InvalidPolicy);
+                    }
+                    if addr.is_ipv4() {
+                        has_v4 = true;
+                    } else {
+                        has_v6 = true;
+                    }
+                }
+                if (has_v4 && self.ipv4_forwarding != Ipv4Forwarding::Required)
+                    || (has_v6 && self.ipv6_forwarding != Ipv6Forwarding::Required)
+                {
+                    return Err(FirewallError::InvalidPolicy);
+                }
+            }
         }
         Ok(())
     }
@@ -178,6 +266,42 @@ pub enum FirewallActionKind {
 pub enum FirewallWarning {
     IndependentFirewallMayStillBlockForwardedTraffic,
     Ipv6ForwardingIsHostGlobalAndRemainsEnabled,
+    /// The routed-LAN filter is operator-managed: the product observes it and
+    /// never installs, edits, or removes it.
+    RoutedLanFilterIsOperatorManaged,
+    /// The operator-managed filter still references the managed tunnel.
+    ///
+    /// The product does not own that filter, so it reports the residue
+    /// instead of removing it. Removing it is the operator's action.
+    RoutedLanFilterResidueObserved,
+}
+
+/// The verdict of a routed-LAN prerequisite check.
+///
+/// The verdict is what turns "a routed LAN is not available here" into an
+/// actionable statement. Each reason names a different operator action, so
+/// they are never collapsed into one.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RoutedLanVerdict {
+    /// Every prerequisite is in place.
+    Ready,
+    /// The host's global forwarding is not enabled for a family the policy
+    /// requires.
+    ForwardingDisabled,
+    /// The operator-managed filter is absent or is not attached.
+    FilterMissing,
+    /// The operator-managed filter does not match the rendered policy.
+    FilterDrift,
+    /// No observed route carries traffic back to the tunnel pool.
+    MissingReturnRoute,
+    /// A foreign or ambiguous route covers an approved destination.
+    RouteConflict,
+    /// The approved destinations are not reachable through the declared egress
+    /// interface.
+    UnsupportedTopology,
+    /// The managed tunnel is not up, so its device cannot be bound.
+    TunnelUnavailable,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -186,6 +310,22 @@ pub struct FirewallPlanSummary {
     pub wireguard_interface: InterfaceName,
     pub actions: Vec<FirewallActionKind>,
     pub warnings: Vec<FirewallWarning>,
+    /// The filter rules an operator has to install for this policy.
+    ///
+    /// This is populated only for a routed-LAN policy, whose filter is
+    /// operator-managed: the product observes the installed rules and refuses
+    /// to claim convergence when they differ, so it has to say what the
+    /// correct rules are. It is empty for every policy whose filter the
+    /// product owns.
+    #[serde(default)]
+    pub required_filter_rules: Vec<String>,
+    /// The routed-LAN prerequisite verdict, when the policy is a routed LAN.
+    ///
+    /// A plan reports what it observed; the apply is what refuses. That
+    /// split is what lets the diagnostics name the exact missing
+    /// prerequisite instead of reporting a bare failure.
+    #[serde(default)]
+    pub routed_lan: Option<RoutedLanVerdict>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -195,6 +335,18 @@ pub enum FirewallFailure {
     Unsupported,
     Conflict,
     BackendFailure,
+    /// The host's global forwarding is not enabled for a family the policy needs.
+    ForwardingDisabled,
+    /// The operator-managed filter policy is absent or not attached.
+    FilterMissing,
+    /// The operator-managed filter policy no longer matches the rendered policy.
+    FilterDrift,
+    /// No observed route carries traffic back to the tunnel pool.
+    MissingReturnRoute,
+    /// A foreign or ambiguous route covers an approved destination.
+    RouteConflict,
+    /// The approved destinations are not reachable through the declared egress.
+    UnsupportedTopology,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -225,6 +377,18 @@ pub enum FirewallError {
     PermissionDenied,
     #[error("nftables command output or desired policy exceeds its bound")]
     ResourceLimitExceeded,
+    #[error("the host's global forwarding is not enabled for a family this policy requires")]
+    ForwardingDisabled,
+    #[error("the operator-managed filter policy is absent or is not attached")]
+    FilterMissing,
+    #[error("the operator-managed filter policy does not match the rendered policy")]
+    FilterDrift,
+    #[error("no observed route carries traffic back to the tunnel pool")]
+    MissingReturnRoute,
+    #[error("a foreign or ambiguous route covers an approved destination")]
+    RouteConflict,
+    #[error("the approved destinations are not reachable through the declared egress interface")]
+    UnsupportedTopology,
 }
 
 #[cfg(test)]
@@ -236,10 +400,12 @@ mod tests {
         (
             "wg0".parse().unwrap(),
             DesiredNetworkPolicy {
+                mode: crate::domain::NetworkPolicyMode::Gateway,
                 ipv4_forwarding: Ipv4Forwarding::Required,
                 ipv6_forwarding: Ipv6Forwarding::NotRequired,
                 egress_interface: "eth0".parse().unwrap(),
                 source_prefixes: vec!["10.8.0.0/24".parse().unwrap()],
+                destination_prefixes: Vec::new(),
                 nat: NatMode::Masquerade,
             },
         )
@@ -288,6 +454,89 @@ mod tests {
         );
         let mut invalid = policy;
         invalid.source_prefixes = vec!["0.0.0.0/0".parse().unwrap()];
+        assert_eq!(
+            invalid.validate(&interface),
+            Err(FirewallError::InvalidPolicy)
+        );
+    }
+
+    /// A routed-LAN policy with one source and one approved destination.
+    fn routed_lan() -> (InterfaceName, DesiredNetworkPolicy) {
+        (
+            "wg0".parse().unwrap(),
+            DesiredNetworkPolicy {
+                mode: NetworkPolicyMode::RoutedLan,
+                ipv4_forwarding: Ipv4Forwarding::Required,
+                ipv6_forwarding: Ipv6Forwarding::NotRequired,
+                egress_interface: "eth0".parse().unwrap(),
+                source_prefixes: vec!["10.77.0.0/24".parse().unwrap()],
+                destination_prefixes: vec!["192.168.9.0/24".parse().unwrap()],
+                nat: NatMode::Disabled,
+            },
+        )
+    }
+
+    #[test]
+    fn a_routed_lan_policy_needs_one_allowlist_and_never_masquerades() {
+        let (interface, policy) = routed_lan();
+        assert!(policy.validate(&interface).is_ok());
+
+        let mut invalid = policy.clone();
+        invalid.destination_prefixes.clear();
+        assert_eq!(
+            invalid.validate(&interface),
+            Err(FirewallError::InvalidPolicy)
+        );
+
+        let mut invalid = policy.clone();
+        invalid.nat = NatMode::Masquerade;
+        assert_eq!(
+            invalid.validate(&interface),
+            Err(FirewallError::InvalidPolicy)
+        );
+
+        // A default route is never an approved destination.
+        let mut invalid = policy.clone();
+        invalid.destination_prefixes = vec!["0.0.0.0/0".parse().unwrap()];
+        assert_eq!(
+            invalid.validate(&interface),
+            Err(FirewallError::InvalidPolicy)
+        );
+
+        // A destination that overlaps the tunnel pool is never approved.
+        let mut invalid = policy.clone();
+        invalid.destination_prefixes = vec!["10.77.0.0/16".parse().unwrap()];
+        assert_eq!(
+            invalid.validate(&interface),
+            Err(FirewallError::InvalidPolicy)
+        );
+
+        // A destination family the policy does not forward for is refused.
+        let mut invalid = policy;
+        invalid.destination_prefixes = vec!["2001:db8:9::/64".parse().unwrap()];
+        assert_eq!(
+            invalid.validate(&interface),
+            Err(FirewallError::InvalidPolicy)
+        );
+    }
+
+    #[test]
+    fn a_host_only_policy_carries_no_forwarding_and_no_allowlist() {
+        let (interface, mut policy) = fixture();
+        policy.mode = NetworkPolicyMode::HostOnly;
+        policy.ipv4_forwarding = Ipv4Forwarding::NotRequired;
+        policy.nat = NatMode::Disabled;
+        assert!(policy.validate(&interface).is_ok());
+
+        let mut invalid = policy.clone();
+        invalid.ipv4_forwarding = Ipv4Forwarding::Required;
+        assert_eq!(
+            invalid.validate(&interface),
+            Err(FirewallError::InvalidPolicy)
+        );
+
+        let mut invalid = policy.clone();
+        invalid.destination_prefixes = vec!["192.168.9.0/24".parse().unwrap()];
         assert_eq!(
             invalid.validate(&interface),
             Err(FirewallError::InvalidPolicy)

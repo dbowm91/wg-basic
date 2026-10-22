@@ -16,8 +16,8 @@ use std::{
 };
 use wg_basic::{
     domain::{
-        ClientId, ClientRoutePolicy, DesiredGeneration, InterfaceId, InterfaceName, NetworkPrefix,
-        PeerId, PrincipalId,
+        ClientId, ClientRoutePolicy, DesiredGeneration, InterfaceId, InterfaceName,
+        NetworkPolicyMode, NetworkPrefix, PeerId, PrincipalId,
     },
     management::set_password_at,
     product::{
@@ -94,6 +94,8 @@ fn setup(command_overrides: impl FnOnce(&mut ServerSetupCommand)) -> Setup {
         ipv4_forwarding_required: true,
         ipv6_forwarding_required: false,
         masquerade: true,
+        mode: None,
+        destination_prefixes: Vec::new(),
         default_client_route_policy: ClientRoutePolicy::default(),
     };
     command_overrides(&mut command);
@@ -114,6 +116,111 @@ struct Setup {
     scratch: Scratch,
     store: Arc<StateStore>,
     principal: PrincipalId,
+}
+
+/// Builds a setup command without running it, so a test can see the refusal.
+fn setup_command(
+    scratch: &Scratch,
+    overrides: impl FnOnce(&mut ServerSetupCommand),
+) -> ServerSetupCommand {
+    let principal = admin_at(scratch);
+    let mut command = ServerSetupCommand {
+        principal_id: principal,
+        expected_generation: DesiredGeneration::default(),
+        interface_name: "wg0".parse().unwrap(),
+        tunnel_prefix: NetworkPrefix::new("10.8.0.0/24".parse().unwrap()),
+        ipv6_tunnel_prefix: None,
+        server_address: None,
+        ipv6_server_address: None,
+        listen_port: 51820,
+        advertised_endpoint: wg_basic::product::AdvertisedEndpoint::new("vpn.example.com", 51820)
+            .unwrap(),
+        egress_interface: "eth0".parse().unwrap(),
+        ipv4_forwarding_required: true,
+        ipv6_forwarding_required: false,
+        masquerade: true,
+        mode: None,
+        destination_prefixes: Vec::new(),
+        default_client_route_policy: ClientRoutePolicy::default(),
+    };
+    overrides(&mut command);
+    command
+}
+
+#[test]
+fn the_routing_mode_is_stated_explicitly_and_checked_for_consistency() {
+    // A host-only policy that also asks for forwarding contradicts itself,
+    // and the contradiction is refused rather than resolved silently.
+    let scratch = Scratch::new("mode-host-only");
+    let store = store_at(&scratch);
+    let command = setup_command(&scratch, |command| {
+        command.mode = Some(NetworkPolicyMode::HostOnly);
+    });
+    let error = service(&store).setup_server(command).unwrap_err();
+    assert!(
+        matches!(error, ProductError::InvalidNetworkPolicyMode(_)),
+        "{error:?}"
+    );
+
+    // A routed-LAN policy without an allowlist names no destination, which
+    // would be a routed LAN to everywhere.
+    let scratch = Scratch::new("mode-routed-lan-empty");
+    let store = store_at(&scratch);
+    let command = setup_command(&scratch, |command| {
+        command.mode = Some(NetworkPolicyMode::RoutedLan);
+        command.masquerade = false;
+    });
+    let error = service(&store).setup_server(command).unwrap_err();
+    assert!(
+        matches!(error, ProductError::InvalidNetworkPolicyMode(_)),
+        "{error:?}"
+    );
+
+    // A routed-LAN policy never masquerades.
+    let scratch = Scratch::new("mode-routed-lan-masquerade");
+    let store = store_at(&scratch);
+    let command = setup_command(&scratch, |command| {
+        command.mode = Some(NetworkPolicyMode::RoutedLan);
+        command.masquerade = true;
+        command.destination_prefixes = vec![NetworkPrefix::new("192.168.9.0/24".parse().unwrap())];
+    });
+    let error = service(&store).setup_server(command).unwrap_err();
+    assert!(
+        matches!(error, ProductError::InvalidNetworkPolicyMode(_)),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn a_routed_lan_policy_is_accepted_only_where_it_is_implemented() {
+    let scratch = Scratch::new("mode-routed-lan");
+    let store = store_at(&scratch);
+    let command = setup_command(&scratch, |command| {
+        command.mode = Some(NetworkPolicyMode::RoutedLan);
+        command.masquerade = false;
+        command.destination_prefixes = vec![NetworkPrefix::new("192.168.9.0/24".parse().unwrap())];
+    });
+    let result = service(&store).setup_server(command);
+    if cfg!(target_os = "macos") {
+        let (_, receipt) = result.expect("a routed LAN is implemented on macOS");
+        assert!(receipt.generation.to_storage() >= 1);
+        let loaded = store.load().expect("the desired state reads back");
+        let policy = loaded
+            .state
+            .network_policy
+            .expect("the policy is persisted");
+        assert_eq!(policy.mode, NetworkPolicyMode::RoutedLan);
+        assert_eq!(
+            policy.destination_prefixes,
+            vec![NetworkPrefix::new("192.168.9.0/24".parse().unwrap())]
+        );
+    } else {
+        let error = result.unwrap_err();
+        assert!(
+            matches!(error, ProductError::InvalidNetworkPolicyMode(_)),
+            "{error:?}"
+        );
+    }
 }
 
 impl Setup {
@@ -278,6 +385,8 @@ fn setup_is_one_time() {
         ipv4_forwarding_required: true,
         ipv6_forwarding_required: false,
         masquerade: true,
+        mode: None,
+        destination_prefixes: Vec::new(),
         default_client_route_policy: ClientRoutePolicy::default(),
     });
     assert!(matches!(
