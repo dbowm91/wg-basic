@@ -193,10 +193,16 @@ Linux job was green.
   0.1.3 requires `zip = "^6.0.0"` and `eggup-eggpack` is pinned to `=0.1.3`
   here, so the fix needs a new upstream release:
   `cargo update -p zip --precise 9.0.0` fails with "candidate versions found
-  which didn't match: 9.0.0". This condition predates C003 — it was the only
-  red job at the C010 baseline — and the product's install and update path is
-  Phase 10 work that is not implemented, so the advisory is in a path that
-  does not yet run. It belongs to the release-authority line (C005, M007).
+  which didn't match: 9.0.0". Checked against the registry on 2026-10-22,
+  `eggup-archive`'s newest published version is still 0.1.3 and it requires
+  `zip ^6.0.0` non-optionally, and `eggup-eggpack`'s newest is 0.1.3, so
+  there is no upstream release this repository could move to. This condition
+  predates C003 — it was the only red job at the C010 baseline — and the
+  product's install and update path is Phase 10 work that is not implemented,
+  so the advisory is in a path that does not yet run. It belongs to the
+  release-authority line (C005, M007), and clearing it needs either a new
+  `eggup-archive` release or a maintainer's decision about how to carry a
+  patched dependency.
 - **The Linux cross-clippy is a compilation check.** It proves the
   Linux-gated code type-checks on a Darwin host; it does not run it. The
   rootful suites still need Linux, root, and the kernel, and their evidence
