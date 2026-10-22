@@ -83,6 +83,30 @@ above, and the closure record carries the requirement-to-evidence matrix.
   closure record, and both belong to C001/C002's service-lifecycle matrix
   rather than to this contract.
 
+## Amendment (2026-10-22): the two findings are corrected under C011
+
+The two findings above are corrected under **C011**
+(`plans/implementation/macos-native-server/c011-service-lifecycle-and-helper-recovery.md`),
+with the recovery decision recorded in **ADR-010**
+(`plans/adr/010-privileged-helper-supervision.md`). Re-reading them against
+the code and against a fresh reproduction changed what they are:
+
+- The `SIGTERM` finding was a **misreading**. The service does act on the term
+  and exits in under a second; what the run observed afterwards was launchd's
+  `KeepAlive` successor, not a hung process. The run's own evidence shows three
+  different process identifiers after three successive stops. The code-level
+  claim underneath the finding was true, though — the stop request could be
+  refused by a saturated queue, and the join that followed was unbounded — and
+  both are fixed.
+- The helper finding was **worse than recorded**: the recovery path was broken
+  as well as absent, because a receipt naming a dead helper refused every
+  attempt to recreate the tunnel. It is fixed by re-proving the receipt before
+  it can refuse, and by the privileged authority replacing the helper it lost.
+
+This amendment does not reopen this plan's scope and does not change what this
+milestone proved. The closure record stays a period-accurate historical
+record; the findings are corrected there, by C011's closure record.
+
 The Darwin Internet-exit gateway mode remains refused, the supported Darwin
 target remains Apple silicon alone under ADR-009, and installation and
 transactional self-update remain unimplemented.

@@ -122,3 +122,19 @@ The receipt lives in `/var/run/wg-basic/managed`, an owner-only directory
 inside the root-controlled runtime directory. A receipt that is a symlink, is
 not a regular file, is owned by another user, or carries group or other
 permissions is refused rather than read.
+
+### A receipt's existence is not a claim
+
+A receipt names the helper that owns a tunnel. The file's existence says
+nothing on its own: it is re-proved against the live host before anything is
+changed.
+
+That applies to creating a tunnel as well as to observing one. A receipt whose
+helper is gone describes nothing that exists, so the tunnel may be recreated
+over it and the stale receipt is dropped. A receipt that *does* re-prove is a
+live tunnel carrying that owner tag, and a second tunnel over it is refused:
+two devices must never carry the same durable proof.
+
+The asymmetry is deliberate. Failing closed is right when a resource might
+belong to somebody else, and refusing to recreate a tunnel whose helper died
+would leave the installation unable to bring it back at all.

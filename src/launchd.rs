@@ -256,6 +256,8 @@ pub fn render_service_plist(role: ServiceRole) -> Result<String, InstallError> {
     <true/>
     <key>ThrottleInterval</key>
     <integer>5</integer>
+    <key>ExitTimeOut</key>
+    <integer>{exit_timeout}</integer>
     <key>StandardOutPath</key>
     <string>{log}</string>
     <key>StandardErrorPath</key>
@@ -268,6 +270,7 @@ pub fn render_service_plist(role: ServiceRole) -> Result<String, InstallError> {
         user = escape_xml(role.user())?,
         group = escape_xml(role.group())?,
         log = escape_xml(role.log_path())?,
+        exit_timeout = EXIT_TIMEOUT_SECONDS,
     ))
 }
 
@@ -326,6 +329,14 @@ pub struct DarwinInstallReceipt {
     #[serde(default)]
     pub management_identity: Option<ServiceIdentity>,
 }
+
+/// How long launchd waits for a stopped service to exit before it kills it.
+///
+/// The service stops itself: it drains its listener and stops its worker
+/// within its own bounded budget. The timeout is the backstop for a service
+/// that wedges, so an operator's offline diagnosis (`launchctl bootout`) is
+/// bounded rather than waiting on a process that will not leave.
+pub const EXIT_TIMEOUT_SECONDS: u32 = 30;
 
 /// The exact mode of the management state directory.
 pub const STATE_DIR_MODE: u32 = 0o700;
@@ -790,6 +801,10 @@ mod tests {
         assert!(plist.contains(NETD_LABEL));
         assert!(plist.contains("<key>KeepAlive</key>"));
         assert!(plist.contains("<key>ThrottleInterval</key>"));
+        // The exit timeout is the backstop that bounds an operator's offline
+        // diagnosis when a service wedges instead of stopping itself.
+        assert!(plist.contains("<key>ExitTimeOut</key>"));
+        assert!(plist.contains(&format!("<integer>{EXIT_TIMEOUT_SECONDS}</integer>")));
         assert!(!plist.contains("password"));
         // The privileged daemon is explicitly root and the management daemon
         // is explicitly not.

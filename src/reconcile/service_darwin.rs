@@ -8,7 +8,7 @@
 //! kernel boundary and [`crate::wireguard::darwin_backend`] for the ownership
 //! contract.
 
-use super::apply::{apply_with_backend, plan_with_backend};
+use super::apply::plan_with_backend;
 use super::backend_darwin::DarwinNetworkBackend;
 use super::model::{ApplyReceipt, DesiredManagedInterface, ReconcileError, ReconcilePlanSummary};
 use std::sync::Mutex;
@@ -57,12 +57,15 @@ impl ReconciliationService {
     }
 
     /// Applies the plan and verifies the result.
+    ///
+    /// The applied desired state is retained by the backend, so a helper that
+    /// dies can be replaced with exactly this state.
     pub fn apply(&self, desired: &DesiredManagedInterface) -> Result<ApplyReceipt, ReconcileError> {
         desired.validate()?;
         let _guard = self
             .mutation_lock
             .lock()
             .map_err(|_| ReconcileError::BackendFailure)?;
-        apply_with_backend(desired, &self.backend)
+        self.backend.apply_desired(desired)
     }
 }

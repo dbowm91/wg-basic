@@ -376,7 +376,27 @@ pub async fn run_publishing(
 
     // 7. Stop the worker and release the store. Done last and unconditionally, so
     //    a database close always follows a successful bind.
-    worker.stop().await?;
+    //
+    //    The stop is bounded. A worker that will not exit must not keep the
+    //    service alive holding the state lease and the write-ahead log: the
+    //    process exits instead, the lease is released with it, and the
+    //    write-ahead log is crash-safe, so the next start recovers it.
+    match worker.stop().await {
+        Ok(()) => {}
+        Err(error) => {
+            crate::operational::emit(
+                "serve.stopping",
+                crate::operational::Severity::Warn,
+                "serve",
+                "shutdown",
+                "worker_stuck",
+                None,
+                report.reconcile.generation().map(|g| g.to_storage() as u64),
+                Some("worker"),
+            );
+            let _ = error;
+        }
+    }
 
     Ok(report)
 }

@@ -206,6 +206,19 @@ host's tunnel device — so the router caches a rejection and the return path
 never leaves the router. The IPv6 equivalent has the same shape and must name
 this host's link-local address on that interface.
 
+The failure is silent, so check the shape rather than discovering it as a
+missing return path:
+
+```sh
+# on the upstream router: the pool route must name this host's LAN address
+netstat -rn -f inet | grep 10.77
+```
+
+A line that ends in an interface (`link#3`, `en0`) is the wrong shape. The
+route must name an address, and that address must be this host's address on
+the LAN. wg-basic cannot check this for you: it can only observe the routes on
+the host it runs on, never the routing table of the router upstream.
+
 Install the filter and attach the anchor. The filter that bounds a routed LAN
 is operator-managed: the rules go into the installation's own anchor, and the
 anchor is attached from your own pf configuration. wg-basic writes neither the
@@ -244,8 +257,6 @@ On macOS the management service is a bootstrapped system service, and
 cleanly, run the doctor, and register the job again:
 
 ```sh
-sudo launchctl kill SIGTERM system/com.wg-basic.serve
-sudo launchctl kill SIGKILL system/com.wg-basic.serve
 sudo launchctl bootout system/com.wg-basic.serve
 sudo -u _wg-basic-serve wg-basic state status --state /var/db/wg-basic/state.db
 sudo -u _wg-basic-serve wg-basic doctor --state /var/db/wg-basic/state.db \
@@ -261,10 +272,18 @@ scheduled still runs after the job is disabled. Do **not** disable the job
 instead — a disabled job is registered but never starts, which is the wrong
 shape for a service that has to come back afterwards.
 
-A management service that does not act on `SIGTERM` may need the `SIGKILL`.
-On a host where the service is draining a long request, that is the expected
-shape: the service holds the state lease and the write-ahead log until it
-exits, and the doctor's lease check reports it as held.
+Unloading also stops the service: the service acts on `SIGTERM`, drains its
+listener, and stops its worker within its own bounded budget. The job carries
+an exit timeout as well, so a service that wedges is killed rather than
+waiting. If the process is still there after the unload, kill it outright:
+
+```sh
+sudo launchctl kill SIGKILL system/com.wg-basic.serve
+```
+
+A management service that does not act on `SIGTERM` is not expected any more.
+The service holds the state lease and the write-ahead log until it exits, so
+the doctor's lease check reports it as held while it is still draining.
 
 The anchor is named after the installation, and `wg-basic state status` prints
 that installation id:
@@ -313,3 +332,29 @@ verdict names a different missing prerequisite:
 The rendered rules name the tunnel device and the egress interface explicitly,
 so they have to be reinstalled when the helper is renumbered and its `utun`
 device changes.
+
+## When the helper dies
+
+The managed tunnel is carried by a helper process that the privileged daemon
+spawns and supervises. If that helper exits on its own, the kernel releases
+its device and the tunnel goes down with it.
+
+The privileged daemon replaces the helper it lost. The replacement re-applies
+the configuration, addresses, and routes that belonged to the tunnel, and the
+kernel may assign a different `utun` number to the new device. The recovery
+is reported in the privileged daemon's log:
+
+```sh
+sudo tail -f /var/log/wg-basic/netd.log
+```
+
+`netd.helper_recovery_started` marks the replacement, and
+`netd.helper_recovery_completed` or `netd.helper_recovery_failed` ends it.
+
+A renumbered device means the rendered filter rules no longer match: the
+rules name the device, so reinstall the rules the doctor reports after the
+recovery, exactly as you would after any device change.
+
+If the recovery fails, the doctor reports `tunnel_unavailable` and the
+remediation is to start the managed network again. The privileged daemon
+refuses to adopt a device it cannot prove, so nothing is left half-owned.
