@@ -259,6 +259,14 @@ on both `gates-arm64` and `live-arm64`, the `Distribution foundation`
 workflow (`39862772950`) is **success**, and the `CI` workflow
 (`39862772879`) is green on every job except the same `dependency-audit`.
 
+The head that carries **F8** as well, `4423671`, is qualified the same way:
+the macOS qualification workflow (`39865061526`) is **success** on both
+`gates-arm64` and `live-arm64`, the `Distribution foundation` workflow
+(`39865067063`) is **success**, and the `CI` workflow (`39865067046`) is
+green on every job except `dependency-audit`. The commit that adds this line
+changes only this record, so it carries the same product code and the same
+gate results.
+
 The hosted run's own evidence is what the new fixture is for:
 
 ```
