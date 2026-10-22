@@ -355,6 +355,43 @@ A renumbered device means the rendered filter rules no longer match: the
 rules name the device, so reinstall the rules the doctor reports after the
 recovery, exactly as you would after any device change.
 
+### The tunnel comes back before the sessions do
+
+The device, its address, the routes, and the peer policy are back as soon as
+the recovery completes. The *sessions* are not, and that is not a fault in the
+recovery.
+
+A WireGuard session is negotiated between the two peers, and it lives in the
+helper's memory. The replacement helper is a new process, so it starts with no
+session with any peer. A peer whose own session is still valid keeps sending
+packets the replacement cannot decrypt, and those packets are dropped until
+the peer re-keys — 120 s after its last handshake by default. The traffic is
+down for that window even though the tunnel itself is already back.
+
+The peer drives that handshake, not the product: the address a peer is reached
+at is learned from its handshake initiations, and the store keeps desired state
+rather than live telemetry, so the replacement helper has no learned endpoint
+to send one to.
+
+To see where a peer stands, read the client telemetry. It reports each client's
+observed endpoint, last handshake, and handshake age:
+
+```sh
+# log in first: the telemetry route needs the session cookie
+curl -s -c cookies.txt http://127.0.0.1:8000/api/v1/login \
+  -H 'Host: 127.0.0.1:8000' \
+  -H 'Origin: http://127.0.0.1:8000' \
+  -H 'Content-Type: application/json' \
+  --data '{"username":"admin","password":"a strong administrator password"}'
+curl -s http://127.0.0.1:8000/api/v1/clients/telemetry -b cookies.txt \
+  -H 'Host: 127.0.0.1:8000' \
+  -H 'Origin: http://127.0.0.1:8000'
+```
+
+A client with no endpoint and a handshake that predates the recovery is a peer
+that has not re-keyed yet. A client whose handshake age stops growing is a peer
+that is back.
+
 If the recovery fails, the doctor reports `tunnel_unavailable` and the
 remediation is to start the managed network again. The privileged daemon
 refuses to adopt a device it cannot prove, so nothing is left half-owned.

@@ -101,6 +101,20 @@ That rule applies to *creating* a tunnel as well as to observing one. A receipt 
 
 A receipt that *does* re-prove is a live tunnel carrying that owner tag, and a create over it is refused: two devices must never carry the same durable proof.
 
+### The recovery restores the tunnel, not the sessions
+
+A WireGuard session is not a property of the interface. It is a negotiated keypair between two peers, and it lives in the helper's memory, so a replacement helper starts with no session with any peer.
+
+What the recovery restores is everything the product owns: the device, its address, the routes, the peer policy, and the helper that carries them. The *sessions* come back on the peer's own schedule:
+
+- a peer whose session is still valid keeps sending packets that the replacement helper cannot decrypt, and those packets are dropped;
+- the peer re-keys on the protocol's own interval after its last handshake, and the handshake that follows is answered by the replacement helper, because it holds the peer's public key;
+- the outage is therefore bounded by the peer's rekey interval, not by the recovery. The recovery itself is immediate.
+
+The product cannot shorten that window on its own. The address a peer is reached at is learned from its handshake initiations, which is live telemetry, and the store does not persist live telemetry: the schema has no column for an observed endpoint or an observed handshake. A replacement helper therefore starts without a learned peer endpoint, and a peer behind a roaming address is a peer that waits for its own rekey.
+
+The client's own view of this is available without any new surface: `GET /api/v1/clients/telemetry` reports each client's observed endpoint, last handshake, and handshake age, so an operator can see a peer with no endpoint and a handshake that predates the replacement.
+
 ## Health projection
 
 `ManagementHealth` is the safe surface a future Phase 7 endpoint may render:
