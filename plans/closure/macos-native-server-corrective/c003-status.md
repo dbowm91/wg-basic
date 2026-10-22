@@ -249,9 +249,11 @@ This record's §2 carries one row:
 
 §3 does not contain the Linux rootful suites. It contains the
 development-host gates, and those gates ran on the developer's Darwin machine,
-where the rootful suites compile to nothing: every one of them is
-`#![cfg(all(target_os = "linux", feature = "linux-integration"))]`. The row
-pointed at evidence that was not in §3.
+where no rootful test executes: ten of the eleven files are
+`#![cfg(all(target_os = "linux", feature = "linux-integration"))]` at the top
+of the file, and `doctor_readonly.rs` gates each of its rootful cases with
+`#[cfg(feature = "linux-integration")]`. The row pointed at evidence that was
+not in §3.
 
 That is a defect in **this record**, not in the product. §13 of the planning
 process is about material post-implementation defects in an implementation,
