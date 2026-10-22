@@ -50,15 +50,33 @@ suites with `--test-threads=1`. `sudo` resets `HOME`, so use the
 `-E env ... CARGO_HOME=...` form or Cargo cannot resolve its toolchain:
 
 ```sh
-sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo \
+sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo CI=true \
   cargo test --locked --features linux-integration --test <target> -- --test-threads=1
 ```
+
+`CI=true` is load-bearing: with it set, a suite whose namespace or kernel
+prerequisites are missing **fails** instead of skipping the kernel evidence.
+A rootful run that silently skipped its kernel proof is not evidence.
 
 Rootful targets: `wireguard_kernel`, `network_reconcile`,
 `network_control_e2e`, `durable_owner`, `durable_restart`,
 `durable_backup`, `product_management_rootful`, `maintenance_rootful`,
 `doctor_readonly`, `service_rootful_e2e`. `durable_restart` needs a
 built `wg-basic` binary (real `netd` + `reconcile` child processes).
+
+Two tests are **not** in that list and must not be run on a working host:
+`system_installation`'s
+`systemd_installation_ownership_reinstall_and_service_credentials` and
+`update_transaction_rootful`'s `signed_systemd_update_rolls_back_and_retries`.
+Both mutate the canonical installation paths (`/usr/local/bin/wg-basic`,
+`/etc/wg-basic`) and the host's systemd units, and their own annotations mark
+them "disposable systemd VM only". Run them on a disposable runner.
+
+On a controlled Linux host, point `CARGO_HOME` at a directory of its own so a
+root-owned file never lands in a developer's `~/.cargo`, and inventory the
+host's unrelated state (namespaces, links, routes, nftables, units, canonical
+paths) before and after so preservation can be proven. See
+`docs/development.md`.
 
 ## Upgrade rehearsal (Phase 9 old/new pair, ignored by default)
 

@@ -445,6 +445,73 @@ sudo -E cargo test --locked --features linux-integration --test wireguard_kernel
 
 The test starts its netd workers inside the two temporary network namespaces so each typed request controls the device in that namespace. CI runs this target on a rootful Linux runner; when `CI` is set, unavailable namespace/kernel prerequisites fail the test instead of silently skipping kernel evidence.
 
+## Running the rootful qualification on a controlled Linux host
+
+The hosted Linux CI runners are ephemeral and disposable. A **controlled Linux
+host** — a real machine the maintainer controls, under a real kernel — is the
+other place the rootful qualification runs, and it is the only place the
+canonical platform's own gate order has been run natively rather than
+cross-compiled.
+
+The controlled host used for the macOS native-server line is
+`sugarwookie@192.168.182.143` (Ubuntu 24.04.5, kernel 6.8, nftables, kernel
+WireGuard present). Two rules matter more than anything else there.
+
+**Use a dedicated `CARGO_HOME`.** `sudo` resets `HOME`, so the rootful
+invocation needs an explicit `CARGO_HOME`; point it at a directory of its own
+rather than the developer's `~/.cargo`, so that a root-owned file never lands
+in a Cargo home a person or another process is using:
+
+```sh
+export CARGO_HOME=/tmp/wg-basic-root-cargo
+```
+
+**Set `CI=true`.** With `CI` set, a suite whose namespace or kernel
+prerequisites are missing **fails** instead of skipping the kernel evidence.
+A green rootful run that silently skipped its kernel evidence is not evidence.
+
+The full set, each run as:
+
+```sh
+sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo CI=true \
+  cargo test --locked --features linux-integration --test <target> \
+  -- --test-threads=1 --nocapture
+```
+
+| Target | What it qualifies |
+|---|---|
+| `wireguard_kernel` | real kernel WireGuard handshake, telemetry, peer update, peer preservation |
+| `network_reconcile` | link, address, route, and reconciliation in a namespace |
+| `network_control_e2e` | forwarding, NAT, firewall ownership, foreign-state preservation |
+| `durable_owner` | owner tags and the generation-aware aggregate reconcile |
+| `durable_restart` | startup recovery against real processes, SQLite, and the kernel |
+| `durable_backup` | backup, restore, and a restored database driving real traffic |
+| `product_management_rootful` | the authenticated product surface against a real WireGuard device |
+| `maintenance_rootful` | CLI disable/re-enable through a real handshake, fail-closed purge |
+| `doctor_readonly` | doctor plan-only diagnostics and host-state preservation |
+| `service_rootful_e2e` | the privileged daemon and the management surface in a namespace |
+
+Serialize them: each creates disposable network namespaces with fixed names.
+`upgrade_rehearsal_rootful` is the rootful upgrade rehearsal and needs its two
+release binaries (see [Phase 9 old/new upgrade rehearsal](#phase-9-oldnew-upgrade-rehearsal)).
+
+**Two system-level destructive tests must not be run on a working host.**
+`tests/system_installation.rs`'s
+`systemd_installation_ownership_reinstall_and_service_credentials` and
+`tests/update_transaction_rootful.rs`'s
+`signed_systemd_update_rolls_back_and_retries` mutate the canonical
+installation paths (`/usr/local/bin/wg-basic`, `/etc/wg-basic`) and the host's
+systemd units. Their own annotations say *"disposable systemd VM only"*. Run
+them on a disposable runner, not on the controlled host.
+
+**Prove the host's unrelated state survived.** Capture the namespace list, the
+links, the IPv4 and IPv6 route tables, the nftables ruleset and table list,
+the systemd units matching `wg-basic*`, the canonical installation paths, and
+`wg show`, before and after, and diff them. On a machine with other workloads
+running, expect *some* ambient movement — a router advertisement's expiry
+counter counting down, another workload's packet counter — and read the diff
+rather than assuming it is empty.
+
 ## Durable ownership and restart fixtures
 
 Three rootful suites qualify the durable-state milestones against the real kernel. All need root, `iproute2`, `nftables`, and kernel WireGuard support, and all serialize with `--test-threads=1` because each creates disposable network namespaces with fixed names.
