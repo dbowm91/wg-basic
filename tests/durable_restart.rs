@@ -465,10 +465,12 @@ fn desired_state_with_policy(interface_id: InterfaceId) -> DesiredState {
     let mut state = desired_state(interface_id);
     state.network_policy = Some(wg_basic::domain::DesiredNetworkPolicy {
         wireguard_interface: "wg-restart".parse().unwrap(),
+        mode: wg_basic::domain::NetworkPolicyMode::Gateway,
         ipv4_forwarding_required: true,
         ipv6_forwarding_required: false,
         egress_interface: "lo".parse().unwrap(),
         source_prefixes: vec![NetworkPrefix::new("10.55.0.0/24".parse().unwrap())],
+        destination_prefixes: Vec::new(),
         masquerade: true,
     });
     state

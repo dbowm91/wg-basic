@@ -14,7 +14,10 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use wg_basic::{
-    domain::{InstallationId, InterfaceId, InterfaceName, NetworkPrefix, OwnerTag, PrivateKey},
+    domain::{
+        InstallationId, InterfaceId, InterfaceName, NetworkPolicyMode, NetworkPrefix, OwnerTag,
+        PrivateKey,
+    },
     firewall::{DesiredNetworkPolicy, FirewallApplyReceipt, Ipv4Forwarding, NatMode},
     protocol::{request, AuthorizationPolicy, RequestOperation, ResponseBody, SocketServer},
     reconcile::{
@@ -288,10 +291,12 @@ fn managed_interface(
 
 fn policy(nat: NatMode) -> DesiredNetworkPolicy {
     DesiredNetworkPolicy {
+        mode: NetworkPolicyMode::Gateway,
         ipv4_forwarding: Ipv4Forwarding::Required,
         ipv6_forwarding: wg_basic::firewall::Ipv6Forwarding::NotRequired,
         egress_interface: "veth-egress".parse().unwrap(),
         source_prefixes: vec!["10.8.0.0/24".parse::<NetworkPrefix>().unwrap()],
+        destination_prefixes: Vec::new(),
         nat,
     }
 }

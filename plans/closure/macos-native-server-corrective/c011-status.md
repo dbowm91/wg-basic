@@ -138,7 +138,7 @@ records the measurement; §9 records the limitation.
 | R13 | A recovery that did not converge is not reported as one | only a converged receipt ends the recovery | unit: `only_a_reached_desired_state_counts_as_converged`; `src/reconcile/backend_darwin.rs` |
 | R14 | The route to the approved prefix names a gateway | the leg asserts the gateway, not just that traffic flowed | controlled host: `gateway: 192.168.64.1` |
 | R15 | The management role keeps no reconciliation loop | the monitor lives in the privileged authority and restores only what it applied | `architecture/startup-recovery.md`, ADR-010 |
-| R16 | Linux does not regress | the full gate set, including the Linux cross-build and clippy | §5 |
+| R16 | Linux does not regress | the Linux cross-build and the Linux cross-clippy pass; the Linux-gated test fixtures are compiled by neither, and C003's breakage of them is corrected by C012 | §5 |
 
 ## 4. What changed
 
@@ -173,6 +173,17 @@ cargo zigbuild --locked --target x86_64-unknown-linux-gnu --all-targets   clean
 CC_x86_64_unknown_linux_gnu=$HOME/wg-toolchain/zigcc AR_x86_64_unknown_linux_gnu="zig ar" \
   cargo clippy --locked --target x86_64-unknown-linux-gnu --all-targets -- -D warnings   clean
 ```
+
+**What that Linux evidence does and does not cover.** The rootful suites are
+`#![cfg(all(target_os = "linux", feature = "linux-integration"))]`, so neither
+the cross-build nor the cross-clippy above type-checks them from a Darwin
+host: there they compile to nothing. The Linux CI is the evidence that covers
+them, and it showed that **C003's** policy-model change had left every Linux
+job uncompilable since `5238816`. That defect is C003's, it predates this
+corrective, and it is corrected by C012
+(`plans/implementation/macos-native-server/c012-linux-rootful-qualification-recovery.md`),
+which also puts the feature-bearing Linux cross-clippy in the gate order so a
+Darwin host type-checks the Linux-gated code from now on.
 
 The controlled-host leg, in the disposable macOS guest, as root:
 

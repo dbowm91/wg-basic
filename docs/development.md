@@ -50,6 +50,14 @@ CC_x86_64_unknown_linux_gnu=/tmp/zig-cc AR_x86_64_unknown_linux_gnu="zig ar" \
   --features linux-integration -- -D warnings
 ```
 
+The variant **with** `--features linux-integration` is the load-bearing one.
+The rootful suites are `#![cfg(all(target_os = "linux", feature =
+"linux-integration"))]`, so on a Darwin host they compile to nothing and no
+ordinary gate type-checks them: a change to a shared model can break every
+Linux job without any local gate failing. The feature variant does type-check
+them. Run it for any change to a shared model, type, or public API. It is a
+compilation check, not a substitute for the rootful suites.
+
 ## macOS (Darwin) portability workflow (M001)
 
 The portable control-plane, product, authentication, state, and HTTP layers
