@@ -225,10 +225,14 @@ ordinary-suite run at this head failed `service_session_restart`:
   and passed (664 passed, 0 failed), and that target was then run **five more
   times in a row**, each green (19.6 s, 16.1 s, 9.1 s, 13.3 s, 16.6 s).
 
-The 503 is the credential store's "unavailable" answer rather than a refusal,
-and the host this ran on is shared with another live session's build load.
-The gate is recorded here as **green on re-run**, with the red run and its
-resolution stated, rather than as green.
+The 503 is the HTTP surface's `unavailable` answer. That surface deliberately
+maps a refusal-or-storage failure and an overload to the same status, so the
+test's 503 does not by itself distinguish a credential-store that was
+unavailable from a worker that was saturated or missed a deadline; what it
+does establish is that the request was answered as "unavailable" rather than
+as a refusal. The host this ran on is shared with another live session's
+build load. The gate is recorded here as **green on re-run**, with the red run
+and its resolution stated, rather than as green.
 
 The host's unrelated state was inventoried before and after: the network
 namespace list, the links, the IPv4 and IPv6 route tables, the nftables
@@ -239,13 +243,21 @@ tables differ only in the host's own IPv6 router-advertisement expiry counters
 counting down, and the ruleset only in docker's own packet counters. No route,
 rule, unit, or path was added or removed.
 
-### 5.3 In hosted CI at the final head
+### 5.3 In hosted CI
 
-The macOS qualification workflow on `f4bf28d` (run `39857083983`):
-`gates-arm64` **success**, `live-arm64` **success**. The `CI` workflow
-(run `39857091088`) is green on every job except `dependency-audit`, which is
-red for the upstream reason already recorded and is not claimed as green; the
-`Distribution foundation` workflow (`39857090970`) is green.
+On the implementation head `f4bf28d`, the macOS qualification workflow
+(run `39857083983`): `gates-arm64` **success**, `live-arm64` **success**. The
+`CI` workflow (run `39857091088`) is green on every job except
+`dependency-audit`, which is red for the upstream reason already recorded and
+is not claimed as green; the `Distribution foundation` workflow
+(`39857090970`) is green.
+
+The closure head `a91a91f` — the closure record, the registry, the roadmap,
+and the documentation, with no change to the product — is qualified in hosted
+CI as well: the macOS qualification workflow (`39862764048`) is **success**
+on both `gates-arm64` and `live-arm64`, the `Distribution foundation`
+workflow (`39862772950`) is **success**, and the `CI` workflow
+(`39862772879`) is green on every job except the same `dependency-audit`.
 
 The hosted run's own evidence is what the new fixture is for:
 
