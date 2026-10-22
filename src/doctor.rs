@@ -49,6 +49,7 @@ pub enum DoctorCheckId {
     Forwarding,
     Ipv6Forwarding,
     NetworkOwnership,
+    RoutedLan,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -59,6 +60,16 @@ pub struct DoctorCheck {
     pub summary: String,
     pub evidence: String,
     pub remediation: String,
+    /// The exact packet-filter rules the operator has to install.
+    ///
+    /// The summary, evidence and remediation strings are bounded, and a
+    /// routed LAN's rule set outgrows that bound: a policy with more than
+    /// one source and destination renders more rules than fit in a bounded
+    /// string, and a truncated rule is not a rule an operator can install.
+    /// The rules therefore travel as structured data, bounded by the policy's
+    /// own destination limit rather than by a text length.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_filter_rules: Vec<String>,
 }
 
 impl DoctorCheck {
@@ -75,7 +86,14 @@ impl DoctorCheck {
             summary: bounded(summary.into()),
             evidence: bounded(evidence.into()),
             remediation: bounded(remediation.into()),
+            required_filter_rules: Vec::new(),
         }
+    }
+
+    /// Attaches the exact rules the operator has to install.
+    pub fn with_required_filter_rules(mut self, rules: Vec<String>) -> Self {
+        self.required_filter_rules = rules;
+        self
     }
 }
 
@@ -127,6 +145,12 @@ impl DoctorReport {
                 "{:?} {:?}: {}\n  evidence: {}\n  next: {}\n",
                 check.disposition, check.id, check.summary, check.evidence, check.remediation
             ));
+            if !check.required_filter_rules.is_empty() {
+                output.push_str("  required rules:\n");
+                for rule in &check.required_filter_rules {
+                    output.push_str(&format!("    {rule}\n"));
+                }
+            }
         }
         output
     }

@@ -18,8 +18,8 @@ use crate::{
     domain::{
         validate_desired_state, ClientRoutePolicy, DesiredAddress, DesiredClient,
         DesiredGeneration, DesiredInterface, DesiredNetworkPolicy, DesiredPeer, DesiredState,
-        InterfaceId, InterfaceName, ManagedRoute, NetworkPrefix, PresharedKey, PrivateKey,
-        PublicKey,
+        InterfaceId, InterfaceName, ManagedRoute, NetworkPolicyMode, NetworkPrefix, PresharedKey,
+        PrivateKey, PublicKey,
     },
     state::{
         error::StateError,
@@ -385,8 +385,18 @@ fn read_network_policy(
     } else {
         "0"
     };
+    // A database written before the mode existed is classified by what it
+    // actually asked for, which is exactly what it did. The expression names
+    // the same columns the row has, so it works on every schema version.
+    let mode_column = if schema_version >= 8 {
+        "mode"
+    } else {
+        "CASE WHEN masquerade = 1 OR ipv4_forwarding_required = 1 OR {ipv6_column} = 1 \
+         THEN 'gateway' ELSE 'host_only' END"
+    };
+    let mode_column = mode_column.replace("{ipv6_column}", ipv6_column);
     let query = format!(
-        "SELECT wireguard_interface, ipv4_forwarding_required, egress_interface, masquerade, {ipv6_column}
+        "SELECT wireguard_interface, ipv4_forwarding_required, egress_interface, masquerade, {ipv6_column}, {mode_column}
          FROM network_policy WHERE singleton = 1"
     );
     let row = connection
@@ -397,12 +407,14 @@ fn read_network_policy(
                 r.get::<_, String>(2)?,
                 r.get::<_, i64>(3)?,
                 r.get::<_, i64>(4)?,
+                r.get::<_, String>(5)?,
             ))
         })
         .optional()
         .map_err(StateError::database)?;
 
-    let Some((interface, forwarding_required, egress, masquerade, ipv6_forwarding_required)) = row
+    let Some((interface, forwarding_required, egress, masquerade, ipv6_forwarding_required, mode)) =
+        row
     else {
         return Ok(None);
     };
@@ -414,8 +426,17 @@ fn read_network_policy(
             "policy references an unmanaged interface",
         ));
     }
+    let destination_prefixes = if schema_version >= 8 {
+        parse_prefix_column(query_prefixes(
+            connection,
+            "SELECT prefix FROM network_policy_destination_prefixes ORDER BY position",
+        )?)?
+    } else {
+        Vec::new()
+    };
     Ok(Some(DesiredNetworkPolicy {
         wireguard_interface,
+        mode: parse_policy_mode(&mode)?,
         ipv4_forwarding_required: forwarding_required == 1,
         ipv6_forwarding_required: ipv6_forwarding_required == 1,
         egress_interface: egress
@@ -425,8 +446,19 @@ fn read_network_policy(
             connection,
             "SELECT prefix FROM network_policy_source_prefixes ORDER BY position",
         )?)?,
+        destination_prefixes,
         masquerade: masquerade == 1,
     }))
+}
+
+/// Parses a persisted policy mode.
+fn parse_policy_mode(value: &str) -> Result<NetworkPolicyMode, StateError> {
+    match value {
+        "host_only" => Ok(NetworkPolicyMode::HostOnly),
+        "routed_lan" => Ok(NetworkPolicyMode::RoutedLan),
+        "gateway" => Ok(NetworkPolicyMode::Gateway),
+        _ => Err(StateError::Corrupt("invalid network policy mode")),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -453,6 +485,14 @@ fn write_desired(transaction: &Transaction<'_>, state: &DesiredState) -> Result<
     transaction
         .execute("DELETE FROM network_policy_source_prefixes", [])
         .map_err(StateError::database)?;
+    let schema_version: i64 = transaction
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(StateError::database)?;
+    if schema_version >= 8 {
+        transaction
+            .execute("DELETE FROM network_policy_destination_prefixes", [])
+            .map_err(StateError::database)?;
+    }
     transaction
         .execute("DELETE FROM network_policy", [])
         .map_err(StateError::database)?;
@@ -589,21 +629,47 @@ fn write_desired(transaction: &Transaction<'_>, state: &DesiredState) -> Result<
     )?;
 
     if let Some(policy) = &state.network_policy {
-        transaction
-            .execute(
-                "INSERT INTO network_policy
-                     (singleton, wireguard_interface, ipv4_forwarding_required, egress_interface, masquerade,
-                      ipv6_forwarding_required)
-                 VALUES (1, ?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![
-                    policy.wireguard_interface.as_str(),
-                    i64::from(policy.ipv4_forwarding_required),
-                    policy.egress_interface.as_str(),
-                    i64::from(policy.masquerade),
-                    i64::from(policy.ipv6_forwarding_required),
-                ],
-            )
-            .map_err(StateError::database)?;
+        if schema_version >= 8 {
+            transaction
+                .execute(
+                    "INSERT INTO network_policy
+                         (singleton, wireguard_interface, mode, ipv4_forwarding_required, egress_interface, masquerade,
+                          ipv6_forwarding_required)
+                     VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)",
+                    rusqlite::params![
+                        policy.wireguard_interface.as_str(),
+                        policy_mode_label(policy.mode),
+                        i64::from(policy.ipv4_forwarding_required),
+                        policy.egress_interface.as_str(),
+                        i64::from(policy.masquerade),
+                        i64::from(policy.ipv6_forwarding_required),
+                    ],
+                )
+                .map_err(StateError::database)?;
+            insert_prefixes(
+                transaction,
+                None,
+                &prefix_strings(&policy.destination_prefixes),
+                "",
+                "INSERT INTO network_policy_destination_prefixes (position, prefix) VALUES (?1, ?2)",
+            )?;
+        } else {
+            transaction
+                .execute(
+                    "INSERT INTO network_policy
+                         (singleton, wireguard_interface, ipv4_forwarding_required, egress_interface, masquerade,
+                          ipv6_forwarding_required)
+                     VALUES (1, ?1, ?2, ?3, ?4, ?5)",
+                    rusqlite::params![
+                        policy.wireguard_interface.as_str(),
+                        i64::from(policy.ipv4_forwarding_required),
+                        policy.egress_interface.as_str(),
+                        i64::from(policy.masquerade),
+                        i64::from(policy.ipv6_forwarding_required),
+                    ],
+                )
+                .map_err(StateError::database)?;
+        }
         insert_prefixes(
             transaction,
             None,
@@ -614,6 +680,15 @@ fn write_desired(transaction: &Transaction<'_>, state: &DesiredState) -> Result<
     }
 
     Ok(())
+}
+
+/// The persisted label for one policy mode.
+fn policy_mode_label(mode: NetworkPolicyMode) -> &'static str {
+    match mode {
+        NetworkPolicyMode::HostOnly => "host_only",
+        NetworkPolicyMode::RoutedLan => "routed_lan",
+        NetworkPolicyMode::Gateway => "gateway",
+    }
 }
 
 /// Inserts an ordered, optionally foreign-key-scoped prefix list.

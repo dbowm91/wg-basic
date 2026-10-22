@@ -306,6 +306,7 @@ impl ProductFailure {
             }
             ProductError::Key(_) => Self::Invalid,
             ProductError::Allocation(_) => Self::AddressUnavailable,
+            ProductError::InvalidNetworkPolicyMode(_) => Self::Invalid,
             ProductError::State(crate::state::StateError::StaleGeneration { .. }) => {
                 Self::StaleGeneration
             }

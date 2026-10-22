@@ -49,7 +49,7 @@ Two invariants shape everything:
 | `src/state/` | hardened SQLite store, ordered migrations, installation identity, CAS generations, projection, convergence evidence, backup/restore, service/maintenance leases | [state-store](state-store.md) |
 | `src/protocol/` | versioned UDS protocol: framing, peer-credential auth, capability inspection, dispatch, typed client | [privilege-boundary](privilege-boundary.md) |
 | `src/wireguard/` | kernel WireGuard backend over Generic Netlink (device/peer observe/patch, telemetry); on Darwin the userspace helper backend with its durable ownership receipt | [wireguard-control](wireguard-control.md) |
-| `src/firewall/` | typed IPv4 forwarding/NAT policy, planner, bounded `nft` service, owned-table model; on Darwin the host-only contract that refuses routed policies | [firewall](firewall.md) |
+| `src/firewall/` | typed IPv4 forwarding/NAT policy, planner, bounded `nft` service, owned-table model; on Darwin the host-only contract plus the observed routed-LAN contract that reports its prerequisites and refuses what it cannot prove | [firewall](firewall.md) |
 | `src/reconcile/` + `src/aggregate.rs` | deterministic link/address/route planner, shared portable apply/verify sequence, Linux applier, Darwin applier, aggregate coordinator, receipts | [reconciliation](reconciliation.md) |
 | ownership markers | `IFLA_IFALIAS` owner tags, `inet wg_basic` table markers, aggregate generation monotonicity, fail-closed rules | [ownership](ownership.md) |
 | `src/management/` | runtime lifecycle, bounded worker, reconcile coordinator, health projection, credential/session operations | [startup-recovery](startup-recovery.md), [management-http](management-http.md), [authentication](authentication.md) |

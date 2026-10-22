@@ -208,7 +208,7 @@ pub(crate) fn now_seconds() -> i64 {
 mod tests {
     use super::migrations::{
         apply_migrations, initialize_at_version, recovery_snapshot, recovery_snapshot_path,
-        MIGRATIONS,
+        Migration, MIGRATIONS,
     };
     use super::validation::DATABASE_MODE;
     use super::*;
@@ -371,7 +371,7 @@ mod tests {
             .unwrap();
         assert_eq!(user_version, migrations::supported_version());
         assert_eq!(
-            user_version, 7,
+            user_version, 8,
             "a fresh database is created at the current head, never behind it"
         );
 
@@ -421,7 +421,7 @@ mod tests {
             StateStore::open(temp.db()),
             Err(StateError::SchemaTooNew {
                 found: 9999,
-                supported: 7
+                supported: 8
             })
         ));
     }
@@ -699,7 +699,7 @@ mod tests {
         );
 
         migrations::apply_migrations(&mut connection, MIGRATIONS).unwrap();
-        assert_eq!(user_version_of(&connection), 7);
+        assert_eq!(user_version_of(&connection), 8);
 
         // Every version the upgrade ran through must actually have created its
         // schema.
@@ -772,7 +772,7 @@ mod tests {
         connection.close().unwrap();
 
         let store = StateStore::open(temp.db()).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 7);
+        assert_eq!(store.schema_version().unwrap(), 8);
         let metadata = store.installation_metadata().unwrap();
         assert_eq!(metadata.installation_id, identity);
         assert_eq!(metadata.desired_generation.to_storage(), before_generation);
@@ -916,14 +916,43 @@ mod tests {
         let temp = TempDir::new();
         historical_v1(&temp);
 
-        // The production list stops at version 7, so a database stamped 8 comes
+        // The production list stops at version 8, so a database stamped 9 comes
         // from a future binary.
         let connection = Connection::open(temp.db()).unwrap();
-        connection.execute("PRAGMA user_version = 8", []).unwrap();
+        connection.execute("PRAGMA user_version = 9", []).unwrap();
         drop(connection);
 
         let mut connection = Connection::open(temp.db()).unwrap();
         let error = apply_migrations(&mut connection, MIGRATIONS).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                StateError::SchemaTooNew {
+                    found: 9,
+                    supported: 8
+                }
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn a_version_8_database_is_refused_by_a_version_7_binary() {
+        // C003's old-binary refusal rehearsal. The typed routing mode is a
+        // schema change, so a binary that predates it has to refuse a
+        // database that carries it rather than read a mode it does not
+        // understand and act on the wrong contract.
+        let temp = TempDir::new();
+        let store = StateStore::initialize(temp.db()).unwrap();
+        drop(store);
+
+        let mut connection = Connection::open(temp.db()).unwrap();
+        let older: Vec<Migration> = MIGRATIONS
+            .iter()
+            .filter(|migration| migration.version <= 7)
+            .cloned()
+            .collect();
+        let error = apply_migrations(&mut connection, &older).unwrap_err();
         assert!(
             matches!(
                 error,

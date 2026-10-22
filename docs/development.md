@@ -161,11 +161,13 @@ global forwarding change left behind, no `pfctl -e` left enabled, no
 provide (no reboot, no v6 uplink, main-ruleset attachment OS-refused) stays
 recorded as blocked in the milestone closures, not worked around.
 
-Two controlled-host legs need a host that is not a hosted runner. They live in
-a **separate test target** (`tests/wireguard_darwin_controlled.rs`), because
-the hosted job runs every `#[ignore]`d test in the `wireguard_darwin_live`
-target and a controlled-host fixture must never be picked up there. The two
-targets share their helpers through `tests/darwin_live_common/mod.rs`.
+Three controlled-host legs need a host that is not a hosted runner. Two of them
+live in a **separate test target** (`tests/wireguard_darwin_controlled.rs`),
+because the hosted job runs every `#[ignore]`d test in the
+`wireguard_darwin_live` target and a controlled-host fixture must never be
+picked up there. The routed-LAN leg has a target of its own
+(`tests/wireguard_darwin_routed.rs`) for the same reason. The targets share
+their helpers through `tests/darwin_live_common/mod.rs`.
 
 The **off-host peer** leg proves the product path against an independent
 Linux-kernel WireGuard implementation. The peer is reached through a driver
@@ -230,9 +232,68 @@ WGB_C002_REBOOT_PHASE=reboot sudo ./target/debug/deps/wireguard_darwin_controlle
 # the host reboots; the boot-time job runs the verify phase and writes the evidence
 ```
 
-Both legs are destructive to the host they run on: they install the product,
+The **routed LAN** leg proves the C003 contract: the off-host Linux-kernel peer
+sends traffic through the product's tunnel to an approved downstream LAN
+prefix, and the traffic comes back through the same tunnel. It is the third
+controlled-host leg and has a test target of its own
+(`tests/wireguard_darwin_routed.rs`). The test is `#[ignore]`d and needs
+`WGB_DARWIN_LIVE=1` as root, `WGB_BINARY` for the launchd cycle, and
+`WGB_PEER_COMMAND` for the peer driver, on a disposable macOS host:
+
+```sh
+cargo test --locked --no-run --test wireguard_darwin_routed
+sudo WGB_DARWIN_LIVE=1 WGB_WIREGUARD_GO=/path/to/wireguard-go \
+  WGB_HELPER_SHA256=<expected> WGB_BINARY=$PWD/target/debug/wg-basic \
+  WGB_EVIDENCE_DIR=/tmp/wgb-evidence \
+  WGB_PEER_COMMAND=$PWD/tests/fixtures/darwin-routed-peer/wg-basic-routed-peer.sh \
+  WGB_PEER_SSH_HOST=<peer> WGB_PEER_SSH_USER=<user> WGB_PEER_SSH_KEY=<key> \
+  WGB_UPSTREAM_GATEWAY=<the server host's address on the peer's network> \
+  WGB_LAN_PREFIX=10.20.20.0/24 WGB_LAN_ADDRESS=10.20.20.2 \
+  ./target/debug/deps/wireguard_darwin_routed-* \
+  live_c003_routed_lan_forwards_to_an_approved_downstream_prefix \
+  --ignored --exact --test-threads=1 --nocapture
+```
+
+The peer driver is `tests/fixtures/darwin-routed-peer/wg-basic-routed-peer.sh`.
+It gives the peer host three isolated roles — the `wgbpeer` namespace holding
+the Linux-kernel WireGuard peer, the `wgblan` namespace holding the downstream
+LAN host, and the root namespace acting as the upstream router that carries the
+administrator-installed route back to the tunnel pool — so the downstream
+traffic cannot take a shortcut around the routing path under test.
+
+Its subcommand contract is:
+
+| Subcommand | What it returns or does |
+|---|---|
+| `peer-address` | the peer host's address on the shared network |
+| `peer-tunnel-address` | the peer's outer address on the tunnel's LAN |
+| `lan-address` | the downstream LAN host's IPv4 address |
+| `lan-route` | the LAN host's routing table |
+| `lan-ping <address>` | ping from the LAN host to an address |
+| `ping-lan <address>` | ping from the peer to the downstream address |
+| `spoof <address>` | ping from the peer with a source that does not arrive through the tunnel |
+| `apply <config> <srv-v4> <srv-v6> <lan-prefix>` | install the config and bring the tunnel up |
+| `status` | the peer's `wg show` dump |
+| `handshake` | the peer's last handshake, in unix seconds |
+| `teardown` | bring the tunnel down and drop the config |
+
+The fixture needs `WGB_PEER_SSH_HOST` and `WGB_PEER_SSH_USER`, and the account
+has to be able to `sudo`. `WGB_PEER_SSH_KEY` selects the identity file,
+`WGB_UPSTREAM_GATEWAY` is the server host's address on the peer's network —
+the address the upstream route back to the tunnel pool points at — and
+`WGB_LAN_PREFIX` and `WGB_LAN_ADDRESS` name the approved downstream prefix and
+the LAN host's address (they default to `10.20.20.0/24` and `10.20.20.2`).
+
+This leg is the destructive one: it installs the product, creates real `utun`
+interfaces, assigns tunnel addresses, bootstraps launchd jobs, and — as the
+administrator, not as the product — enables the host's forwarding, installs the
+rules the product reported into the installation's anchor, and attaches that
+anchor.
+
+All three legs are destructive to the host they run on: they install the product,
 create real `utun` interfaces, assign tunnel addresses, and bootstrap launchd
-jobs. Use a disposable host.
+jobs. Use a disposable host. The C003 qualification is still being executed;
+the commands above are how to run it, not a record that it passed.
 
 The default unit/protocol suite does not require root or network namespace setup. The Linux WireGuard backend mutates only through typed requests to an existing device; real-kernel integration suites create temporary namespaces and fixture links and require root, `CAP_NET_ADMIN`, `iproute2`, `iputils-ping`, and kernel WireGuard support. Dual-stack tunnel addressing and explicit family-correct client route config are qualified by product and export tests. Hosted `product-management-rootful` exercises the authenticated full-tunnel export, real client handshake and dual-family tunnel traffic, disable/re-enable, and restart/reapply. The `network-control-e2e` fixture carries IPv4 and IPv6 full-tunnel traffic, then changes to split prefixes and proves selected destinations pass while destinations outside those prefixes do not. It also qualifies routed IPv6 forwarding, upstream return routing, foreign-state preservation, sticky forwarding, and absence of NAT66.
 

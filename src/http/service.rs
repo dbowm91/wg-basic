@@ -46,7 +46,10 @@ use super::{
     response::{self, Liveness},
 };
 use crate::{
-    domain::{ClientId, ClientRoutePolicy, DesiredGeneration, InterfaceName, NetworkPrefix},
+    domain::{
+        ClientId, ClientRoutePolicy, DesiredGeneration, InterfaceName, NetworkPolicyMode,
+        NetworkPrefix, MAX_ROUTED_LAN_DESTINATIONS,
+    },
     management::{ProductFailure, WorkerError},
     product::{
         AdvertisedEndpoint, ClientCreateCommand, ClientDeleteCommand, ClientEnabled, ClientLabel,
@@ -623,6 +626,23 @@ impl ManagementService {
                     },
                     None => None,
                 };
+                let mode = match input.mode.as_deref() {
+                    None => None,
+                    Some("host_only") => Some(NetworkPolicyMode::HostOnly),
+                    Some("routed_lan") => Some(NetworkPolicyMode::RoutedLan),
+                    Some("gateway") => Some(NetworkPolicyMode::Gateway),
+                    Some(_) => return product_status(422, "invalid request"),
+                };
+                let mut destination_prefixes = Vec::new();
+                for value in &input.destination_prefixes {
+                    let Ok(prefix) = value.parse::<NetworkPrefix>() else {
+                        return product_status(422, "invalid request");
+                    };
+                    destination_prefixes.push(prefix);
+                }
+                if destination_prefixes.len() > MAX_ROUTED_LAN_DESTINATIONS {
+                    return product_status(422, "invalid request");
+                }
                 let command = ServerSetupCommand {
                     principal_id,
                     expected_generation: generation,
@@ -647,6 +667,8 @@ impl ManagementService {
                     ipv4_forwarding_required: input.ipv4_forwarding_required,
                     ipv6_forwarding_required: input.ipv6_forwarding_required,
                     masquerade: input.masquerade,
+                    mode,
+                    destination_prefixes,
                     default_client_route_policy: input.default_client_route_policy,
                 };
                 match self.api.worker().setup_server(command).await {
@@ -1011,6 +1033,14 @@ struct SetupBody {
     #[serde(default)]
     ipv6_forwarding_required: bool,
     masquerade: bool,
+    /// The routing intent. Absent means "derive it from the forwarding and
+    /// masquerade settings", which is what every pre-routed-LAN client meant.
+    #[serde(default)]
+    mode: Option<String>,
+    /// The approved downstream LAN prefixes. Only a routed-LAN policy may name
+    /// any.
+    #[serde(default)]
+    destination_prefixes: Vec<String>,
     #[serde(default)]
     default_client_route_policy: ClientRoutePolicy,
 }

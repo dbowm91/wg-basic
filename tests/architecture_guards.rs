@@ -280,6 +280,11 @@ const PRODUCTION_SOURCES: &[(&str, &str)] = &[
     ),
     // M005 Darwin PF anchor model: pure rendering/verification, no pfctl yet.
     ("src/firewall/pf.rs", include_str!("../src/firewall/pf.rs")),
+    // C003 Darwin PF observation: read-only, bounded, fixed-argument.
+    (
+        "src/firewall/pfctl.rs",
+        include_str!("../src/firewall/pfctl.rs"),
+    ),
     // M006 Darwin launchd installer: pure layout/receipt logic, no install.
     ("src/launchd.rs", include_str!("../src/launchd.rs")),
     // C001 Darwin production backends: the durable ownership registry, the
@@ -475,11 +480,12 @@ fn minisign_fixture_private_key_is_not_embedded_in_shipped_sources() {
 
 /// Production modules permitted to spawn a process. M003 adds the bounded
 /// Darwin helper supervisor next to the Linux nft backend; C002 adds the
-/// bounded launchd control. All three are audited fixed-argv boundaries, never
-/// shells or generic exec.
+/// bounded launchd control; C003 adds the bounded, read-only PF observation.
+/// All four are audited fixed-argv boundaries, never shells or generic exec.
 const PROCESS_MODULES: &[&str] = &[
     "src/firewall/nft.rs",
     "src/wireguard/darwin.rs",
+    "src/firewall/pfctl.rs",
     "src/launchd_install.rs",
 ];
 
@@ -497,7 +503,7 @@ fn process_execution_is_isolated_to_audited_backends() {
     assert_eq!(
         sites,
         PROCESS_MODULES,
-        "process execution must stay isolated to the bounded nft backend and the bounded Darwin helper supervisor"
+        "process execution must stay isolated to the bounded nft backend, the bounded Darwin helper supervisor, the bounded read-only PF observation, and the bounded launchd control"
     );
 }
 
@@ -2140,8 +2146,9 @@ fn darwin_stubs_fail_closed_without_process_or_shell() {
     }
     // Process execution stays isolated to audited backends: the Linux nft
     // backend plus, since M003, the bounded Darwin helper supervisor (pinned
-    // separately by `process_execution_is_isolated_to_audited_backends`).
-    // The reconcile/firewall Darwin *stubs* below still spawn nothing.
+    // separately by `process_execution_is_isolated_to_audited_backends`), the
+    // bounded launchd control (C002), and the bounded read-only PF observation
+    // (C003). The reconcile/firewall Darwin *stubs* below still spawn nothing.
     let mut sites = Vec::new();
     for (path, source) in PRODUCTION_SOURCES {
         if source.contains("std::process::Command")
@@ -2397,26 +2404,80 @@ fn the_darwin_reconciler_proves_ownership_before_it_mutates() {
 }
 
 #[test]
-fn the_darwin_firewall_refuses_routed_policies_rather_than_ignoring_them() {
-    // C001 host-only contract: a policy that needs forwarding or NAT is
-    // refused, never silently ignored and reported as a success.
+fn the_darwin_firewall_refuses_what_it_cannot_prove() {
+    // C003: the Darwin firewall proves a routed LAN rather than assuming one.
+    // Each precondition has its own refusal, because "routed LAN is not
+    // available here" and "the upstream route back to the pool is missing"
+    // call for different operator actions.
     let firewall = shippable(source_of("src/firewall/service_darwin.rs"));
-    assert!(
-        firewall.contains("FirewallError::Unsupported"),
-        "a routed policy must be refused on Darwin"
-    );
-    assert!(
-        firewall.contains("Ipv4Forwarding::Required")
-            && firewall.contains("Ipv6Forwarding::Required")
-            && firewall.contains("NatMode::Masquerade"),
-        "the Darwin refusal must cover forwarding and NAT"
-    );
-    for forbidden in ["pfctl", "Command::new", "/etc/pf.conf", "ip_forwarding"] {
+    for refusal in [
+        "FirewallError::ForwardingDisabled",
+        "FirewallError::FilterMissing",
+        "FirewallError::FilterDrift",
+        "FirewallError::MissingReturnRoute",
+        "FirewallError::RouteConflict",
+        "FirewallError::UnsupportedTopology",
+    ] {
         assert!(
-            !firewall.contains(forbidden),
-            "the Darwin host-only firewall must not contain {forbidden}"
+            firewall.contains(refusal),
+            "the Darwin firewall must be able to report {refusal}"
         );
     }
+    // The internet exit gateway is a different contract with a different
+    // filter and NAT surface, so it stays refused rather than half-applied.
+    assert!(
+        firewall.contains("NetworkPolicyMode::Gateway => Err(FirewallError::Unsupported)"),
+        "the gateway mode must stay refused on Darwin"
+    );
+    // The host's global forwarding is read, never written, and the product
+    // never edits the host's packet-filter configuration.
+    for forbidden in ["/etc/pf.conf", "ip_forwarding", "sysctl -w", "Command::new"] {
+        assert!(
+            !firewall.contains(forbidden),
+            "the Darwin firewall must not contain {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn the_darwin_pf_observation_is_read_only_and_bounded() {
+    // C003: the product observes the operator-managed filter. It never loads a
+    // ruleset, never flushes an anchor, never edits the main ruleset, and
+    // never enables or disables PF.
+    let pfctl = shippable(source_of("src/firewall/pfctl.rs"));
+    assert!(
+        pfctl.contains("const PFCTL: &str = \"/sbin/pfctl\""),
+        "pfctl must be addressed by absolute path, never by name"
+    );
+    for required in [
+        "&[\"-s\", \"rules\"]",
+        "&[\"-s\", \"nat\"]",
+        "&[\"-a\", anchor, \"-s\", \"rules\"]",
+    ] {
+        assert!(
+            pfctl.contains(required),
+            "the PF observation must read the filter state with {required}"
+        );
+    }
+    for forbidden in [
+        "\"-f\"",
+        "\"-F\"",
+        "\"-e\"",
+        "\"-d\"",
+        "\"-X\"",
+        "\"-t\"",
+        "Command::new(\"sh\")",
+        "Command::new(\"bash\")",
+        "Command::new(\"sudo\")",
+    ] {
+        assert!(
+            !pfctl.contains(forbidden),
+            "the PF observation must not contain {forbidden}"
+        );
+    }
+    // The observation is bounded in both output and runtime.
+    assert!(pfctl.contains("MAX_PFCTL_OUTPUT"));
+    assert!(pfctl.contains("PFCTL_TIMEOUT"));
 }
 
 #[test]

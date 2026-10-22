@@ -142,6 +142,40 @@ impl DesiredInterface {
     }
 }
 
+/// The routing intent a managed network policy declares.
+///
+/// The mode is part of the persisted contract, not an implementation detail.
+/// A policy that declares a routed LAN is held to a different security
+/// contract than one that declares a host-only endpoint, and that difference
+/// is visible in the persisted state, on the wire, and in the diagnostics.
+///
+/// The variants are deliberately exhaustive. `HostOnly` and `Gateway` describe
+/// the two shapes that already existed; `RoutedLan` is the shape that forwards
+/// authorized client traffic to an explicit allowlist of downstream LAN
+/// prefixes without NAT.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NetworkPolicyMode {
+    /// The managed tunnel carries only this host's own traffic.
+    ///
+    /// No forwarding is required, no NAT is performed, and no downstream
+    /// destination is approved.
+    #[default]
+    HostOnly,
+    /// The managed tunnel forwards authorized client traffic to an explicit
+    /// allowlist of downstream LAN prefixes, without NAT.
+    RoutedLan,
+    /// The managed tunnel forwards authorized client traffic to any
+    /// destination, optionally with IPv4 masquerade.
+    Gateway,
+}
+
+/// The largest number of downstream prefixes a routed-LAN policy may name.
+///
+/// The allowlist is rendered into one filter rule per source and destination
+/// pair, so it is bounded rather than open-ended.
+pub const MAX_ROUTED_LAN_DESTINATIONS: usize = 16;
+
 /// Desired IPv4/IPv6 forwarding and IPv4 NAT policy for one managed interface.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -149,6 +183,9 @@ pub struct DesiredNetworkPolicy {
     /// The managed interface this policy protects. It must reference an
     /// interface present in the same snapshot.
     pub wireguard_interface: InterfaceName,
+    /// The routing intent this policy declares.
+    #[serde(default)]
+    pub mode: NetworkPolicyMode,
     /// Whether host IPv4 forwarding is required.
     pub ipv4_forwarding_required: bool,
     /// Whether host IPv6 forwarding is required. This is independent of merely
@@ -157,6 +194,13 @@ pub struct DesiredNetworkPolicy {
     pub ipv6_forwarding_required: bool,
     pub egress_interface: InterfaceName,
     pub source_prefixes: Vec<NetworkPrefix>,
+    /// The approved downstream LAN prefixes.
+    ///
+    /// Only a `RoutedLan` policy may name any. A host-only or gateway policy
+    /// carries none, so a stale allowlist cannot outlive the mode that
+    /// justified it.
+    #[serde(default)]
+    pub destination_prefixes: Vec<NetworkPrefix>,
     pub masquerade: bool,
 }
 
@@ -217,6 +261,34 @@ pub enum StateValidationError {
     NetworkPolicyIpv6PrefixNotManaged,
     #[error("network policy requires at least one source prefix")]
     NetworkPolicyEmptySourcePrefixes,
+    #[error("a host-only network policy must not require forwarding")]
+    NetworkPolicyHostOnlyForwarding,
+    #[error("the network policy mode is not valid for the rest of the policy")]
+    NetworkPolicyModeInvalid,
+    #[error("a host-only network policy must not masquerade")]
+    NetworkPolicyHostOnlyMasquerade,
+    #[error("a gateway network policy must not name destination prefixes")]
+    NetworkPolicyGatewayDestinations,
+    #[error("a routed-LAN network policy must not masquerade")]
+    NetworkPolicyRoutedLanMasquerade,
+    #[error("a routed-LAN network policy must name at least one destination prefix")]
+    NetworkPolicyRoutedLanEmptyDestinations,
+    #[error("a routed-LAN network policy may name at most {MAX_ROUTED_LAN_DESTINATIONS} destination prefixes")]
+    NetworkPolicyRoutedLanTooManyDestinations,
+    #[error("a routed-LAN destination prefix must be a valid unicast prefix")]
+    NetworkPolicyRoutedLanInvalidDestination,
+    #[error("a routed-LAN destination prefix must not be a default route")]
+    NetworkPolicyRoutedLanDefaultRoute,
+    #[error("a routed-LAN destination prefix overlaps a source prefix")]
+    NetworkPolicyRoutedLanDestinationOverlap,
+    #[error("a routed-LAN destination prefix appears more than once")]
+    NetworkPolicyRoutedLanDuplicateDestination,
+    #[error("a routed-LAN policy with {family} destinations requires {family} forwarding")]
+    NetworkPolicyRoutedLanForwardingRequired { family: &'static str },
+    #[error("a routed-LAN policy has {family} destinations but its tunnel pool carries no {family} source")]
+    NetworkPolicyRoutedLanDestinationFamilyUnreachable { family: &'static str },
+    #[error("a routed-LAN network policy source prefix is outside its managed tunnel prefix")]
+    NetworkPolicyRoutedLanSourceNotManaged,
     #[error("peer identifier {0} is declared more than once")]
     DuplicatePeerId(String),
     #[error("client identifier {0} is declared more than once")]
@@ -300,8 +372,143 @@ pub fn validate_desired_state(state: &DesiredState) -> Result<(), StateValidatio
         {
             return Err(StateValidationError::NetworkPolicyIpv6PrefixNotManaged);
         }
+        validate_policy_mode(policy, interface)?;
     }
     Ok(())
+}
+
+/// Validates the mode-specific contract of one network policy.
+///
+/// The mode is what makes the rest of the policy meaningful, so the mode's own
+/// rules are checked together: a host-only policy carries no forwarding
+/// obligation, a gateway policy carries no destination allowlist, and a
+/// routed-LAN policy carries exactly one bounded allowlist and never
+/// masquerades.
+fn validate_policy_mode(
+    policy: &DesiredNetworkPolicy,
+    interface: &DesiredInterface,
+) -> Result<(), StateValidationError> {
+    match policy.mode {
+        NetworkPolicyMode::HostOnly => {
+            if policy.ipv4_forwarding_required || policy.ipv6_forwarding_required {
+                return Err(StateValidationError::NetworkPolicyHostOnlyForwarding);
+            }
+            if policy.masquerade {
+                return Err(StateValidationError::NetworkPolicyHostOnlyMasquerade);
+            }
+            if !policy.destination_prefixes.is_empty() {
+                return Err(StateValidationError::NetworkPolicyGatewayDestinations);
+            }
+        }
+        NetworkPolicyMode::Gateway => {
+            if !policy.destination_prefixes.is_empty() {
+                return Err(StateValidationError::NetworkPolicyGatewayDestinations);
+            }
+        }
+        NetworkPolicyMode::RoutedLan => {
+            if policy.masquerade {
+                return Err(StateValidationError::NetworkPolicyRoutedLanMasquerade);
+            }
+            if policy.destination_prefixes.is_empty() {
+                return Err(StateValidationError::NetworkPolicyRoutedLanEmptyDestinations);
+            }
+            if policy.destination_prefixes.len() > MAX_ROUTED_LAN_DESTINATIONS {
+                return Err(StateValidationError::NetworkPolicyRoutedLanTooManyDestinations);
+            }
+            let mut seen = std::collections::HashSet::new();
+            let mut has_v4 = false;
+            let mut has_v6 = false;
+            for destination in &policy.destination_prefixes {
+                let network = destination.network();
+                let addr = network.addr();
+                if network.prefix_len() == 0 {
+                    // The default route is the one destination a routed LAN
+                    // must never be built on.
+                    return Err(StateValidationError::NetworkPolicyRoutedLanDefaultRoute);
+                }
+                if addr.is_unspecified()
+                    || addr.is_multicast()
+                    || addr.is_loopback()
+                    || is_link_local(addr)
+                {
+                    return Err(StateValidationError::NetworkPolicyRoutedLanInvalidDestination);
+                }
+                if !seen.insert(network) {
+                    return Err(StateValidationError::NetworkPolicyRoutedLanDuplicateDestination);
+                }
+                if policy
+                    .source_prefixes
+                    .iter()
+                    .any(|source| prefixes_overlap(source.network(), network))
+                {
+                    return Err(StateValidationError::NetworkPolicyRoutedLanDestinationOverlap);
+                }
+                if addr.is_ipv4() {
+                    has_v4 = true;
+                } else {
+                    has_v6 = true;
+                }
+            }
+            if has_v4 && !policy.ipv4_forwarding_required {
+                return Err(
+                    StateValidationError::NetworkPolicyRoutedLanForwardingRequired {
+                        family: "IPv4",
+                    },
+                );
+            }
+            if has_v6 && !policy.ipv6_forwarding_required {
+                return Err(
+                    StateValidationError::NetworkPolicyRoutedLanForwardingRequired {
+                        family: "IPv6",
+                    },
+                );
+            }
+            // A routed LAN forwards traffic that claims to come from the tunnel
+            // pool, so every source prefix must stay inside that pool.
+            if policy
+                .source_prefixes
+                .iter()
+                .any(|source| !interface.tunnel_prefixes.contains(source))
+            {
+                return Err(StateValidationError::NetworkPolicyRoutedLanSourceNotManaged);
+            }
+            // A routed LAN forwards within one address family: carrying traffic
+            // between the families would need a translation, and a routed LAN
+            // never translates. An approved destination whose family the pool
+            // does not carry could never be delivered, so it is refused rather
+            // than approved and then silently unreachable.
+            for (destination, family) in [(has_v4, "IPv4"), (has_v6, "IPv6")] {
+                if !destination {
+                    continue;
+                }
+                let carried = policy
+                    .source_prefixes
+                    .iter()
+                    .any(|source| source.network().addr().is_ipv4() == (family == "IPv4"));
+                if !carried {
+                    return Err(
+                        StateValidationError::NetworkPolicyRoutedLanDestinationFamilyUnreachable {
+                            family,
+                        },
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Whether an address is link-local in either family.
+fn is_link_local(addr: IpAddr) -> bool {
+    match addr {
+        IpAddr::V4(v4) => v4.is_link_local(),
+        IpAddr::V6(v6) => v6.is_unicast_link_local(),
+    }
+}
+
+/// Whether two prefixes overlap, in either direction.
+fn prefixes_overlap(left: IpNet, right: IpNet) -> bool {
+    left.contains(&right.addr()) || right.contains(&left.addr())
 }
 
 #[cfg(test)]
@@ -388,5 +595,205 @@ mod tests {
             .tunnel_prefixes
             .push(NetworkPrefix::new("fd77::/64".parse().unwrap()));
         assert_eq!(validate_desired_state(&desired), Ok(()));
+    }
+
+    /// A state with one managed interface and one policy in the given mode.
+    fn policy_state(mode: NetworkPolicyMode) -> DesiredState {
+        DesiredState {
+            interfaces: vec![interface()],
+            client_routes: ClientRoutePolicy::default(),
+            network_policy: Some(DesiredNetworkPolicy {
+                wireguard_interface: "wg0".parse().unwrap(),
+                mode,
+                ipv4_forwarding_required: false,
+                ipv6_forwarding_required: false,
+                egress_interface: "eth0".parse().unwrap(),
+                source_prefixes: vec![NetworkPrefix::new("10.8.0.0/24".parse().unwrap())],
+                destination_prefixes: Vec::new(),
+                masquerade: false,
+            }),
+        }
+    }
+
+    #[test]
+    fn a_host_only_policy_carries_no_forwarding_and_no_destinations() {
+        let mut desired = policy_state(NetworkPolicyMode::HostOnly);
+        assert_eq!(validate_desired_state(&desired), Ok(()));
+        desired
+            .network_policy
+            .as_mut()
+            .unwrap()
+            .ipv4_forwarding_required = true;
+        assert_eq!(
+            validate_desired_state(&desired),
+            Err(StateValidationError::NetworkPolicyHostOnlyForwarding)
+        );
+        let mut desired = policy_state(NetworkPolicyMode::HostOnly);
+        desired.network_policy.as_mut().unwrap().masquerade = true;
+        assert_eq!(
+            validate_desired_state(&desired),
+            Err(StateValidationError::NetworkPolicyHostOnlyMasquerade)
+        );
+        let mut desired = policy_state(NetworkPolicyMode::HostOnly);
+        desired
+            .network_policy
+            .as_mut()
+            .unwrap()
+            .destination_prefixes
+            .push(NetworkPrefix::new("192.168.9.0/24".parse().unwrap()));
+        assert_eq!(
+            validate_desired_state(&desired),
+            Err(StateValidationError::NetworkPolicyGatewayDestinations)
+        );
+    }
+
+    #[test]
+    fn a_routed_lan_policy_needs_destinations_forwarding_and_a_managed_source() {
+        let mut desired = policy_state(NetworkPolicyMode::RoutedLan);
+        assert_eq!(
+            validate_desired_state(&desired),
+            Err(StateValidationError::NetworkPolicyRoutedLanEmptyDestinations)
+        );
+
+        let policy = desired.network_policy.as_mut().unwrap();
+        policy.ipv4_forwarding_required = true;
+        policy
+            .destination_prefixes
+            .push(NetworkPrefix::new("192.168.9.0/24".parse().unwrap()));
+        assert_eq!(validate_desired_state(&desired), Ok(()));
+
+        // A destination that needs a family the policy does not forward for.
+        let mut ipv6 = desired.clone();
+        ipv6.network_policy.as_mut().unwrap().destination_prefixes = vec![
+            NetworkPrefix::new("192.168.9.0/24".parse().unwrap()),
+            NetworkPrefix::new("2001:db8:9::/64".parse().unwrap()),
+        ];
+        assert_eq!(
+            validate_desired_state(&ipv6),
+            Err(StateValidationError::NetworkPolicyRoutedLanForwardingRequired { family: "IPv6" })
+        );
+
+        // A destination that is a default route.
+        let mut default = desired.clone();
+        default
+            .network_policy
+            .as_mut()
+            .unwrap()
+            .destination_prefixes = vec![NetworkPrefix::new("0.0.0.0/0".parse().unwrap())];
+        assert_eq!(
+            validate_desired_state(&default),
+            Err(StateValidationError::NetworkPolicyRoutedLanDefaultRoute)
+        );
+
+        // A destination that overlaps the tunnel pool.
+        let mut overlap = desired.clone();
+        overlap
+            .network_policy
+            .as_mut()
+            .unwrap()
+            .destination_prefixes = vec![NetworkPrefix::new("10.8.0.0/16".parse().unwrap())];
+        assert_eq!(
+            validate_desired_state(&overlap),
+            Err(StateValidationError::NetworkPolicyRoutedLanDestinationOverlap)
+        );
+
+        // A source prefix that is outside the managed tunnel pool.
+        let mut unmanaged = desired.clone();
+        unmanaged
+            .network_policy
+            .as_mut()
+            .unwrap()
+            .source_prefixes
+            .push(NetworkPrefix::new("10.9.0.0/24".parse().unwrap()));
+        assert_eq!(
+            validate_desired_state(&unmanaged),
+            Err(StateValidationError::NetworkPolicyRoutedLanSourceNotManaged)
+        );
+
+        // A routed LAN never masquerades.
+        let mut masquerading = desired.clone();
+        masquerading.network_policy.as_mut().unwrap().masquerade = true;
+        assert_eq!(
+            validate_desired_state(&masquerading),
+            Err(StateValidationError::NetworkPolicyRoutedLanMasquerade)
+        );
+    }
+
+    /// A routed LAN forwards within one address family, so a destination
+    /// whose family the tunnel pool does not carry could never be delivered.
+    #[test]
+    fn a_routed_lan_destination_must_be_carried_by_the_tunnel_pool() {
+        let mut desired = policy_state(NetworkPolicyMode::RoutedLan);
+        let policy = desired.network_policy.as_mut().unwrap();
+        policy.ipv4_forwarding_required = true;
+        policy
+            .destination_prefixes
+            .push(NetworkPrefix::new("192.168.9.0/24".parse().unwrap()));
+        // The pool carries IPv4 only, so the IPv4 destination is fine.
+        assert_eq!(validate_desired_state(&desired), Ok(()));
+
+        // An IPv6 destination with an IPv4-only pool is refused: IPv6
+        // forwarding requires an IPv6 source prefix.
+        let mut ipv6 = desired.clone();
+        let policy = ipv6.network_policy.as_mut().unwrap();
+        policy.ipv6_forwarding_required = true;
+        policy.destination_prefixes = vec![
+            NetworkPrefix::new("192.168.9.0/24".parse().unwrap()),
+            NetworkPrefix::new("2001:db8:9::/64".parse().unwrap()),
+        ];
+        assert_eq!(
+            validate_desired_state(&ipv6),
+            Err(StateValidationError::NetworkPolicyIpv6PrefixRequired)
+        );
+
+        // An IPv4 destination with an IPv6-only pool is refused too.
+        let mut ipv4 = desired.clone();
+        ipv4.interfaces[0]
+            .tunnel_prefixes
+            .push(NetworkPrefix::new("2001:db8::/64".parse().unwrap()));
+        let policy = ipv4.network_policy.as_mut().unwrap();
+        policy.source_prefixes = vec![NetworkPrefix::new("2001:db8::/64".parse().unwrap())];
+        policy.ipv6_forwarding_required = true;
+        assert_eq!(
+            validate_desired_state(&ipv4),
+            Err(
+                StateValidationError::NetworkPolicyRoutedLanDestinationFamilyUnreachable {
+                    family: "IPv4",
+                }
+            )
+        );
+
+        // A pool that carries both families reaches both destinations.
+        let mut both = desired.clone();
+        both.interfaces[0]
+            .tunnel_prefixes
+            .push(NetworkPrefix::new("2001:db8::/64".parse().unwrap()));
+        let policy = both.network_policy.as_mut().unwrap();
+        policy.source_prefixes = vec![
+            NetworkPrefix::new("10.8.0.0/24".parse().unwrap()),
+            NetworkPrefix::new("2001:db8::/64".parse().unwrap()),
+        ];
+        policy.ipv6_forwarding_required = true;
+        policy.destination_prefixes = vec![
+            NetworkPrefix::new("192.168.9.0/24".parse().unwrap()),
+            NetworkPrefix::new("2001:db8:9::/64".parse().unwrap()),
+        ];
+        assert_eq!(validate_desired_state(&both), Ok(()));
+    }
+
+    #[test]
+    fn the_routed_lan_allowlist_is_bounded() {
+        let mut desired = policy_state(NetworkPolicyMode::RoutedLan);
+        let policy = desired.network_policy.as_mut().unwrap();
+        policy.ipv4_forwarding_required = true;
+        for index in 0..=MAX_ROUTED_LAN_DESTINATIONS {
+            policy.destination_prefixes.push(NetworkPrefix::new(
+                format!("192.168.{index}.0/24").parse::<IpNet>().unwrap(),
+            ));
+        }
+        assert_eq!(
+            validate_desired_state(&desired),
+            Err(StateValidationError::NetworkPolicyRoutedLanTooManyDestinations)
+        );
     }
 }

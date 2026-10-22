@@ -151,3 +151,165 @@ The detailed current behavior and exact CLI options are in
 [development](development.md). Release health and binary/database rollback
 ordering are specified in the
 [update and rollback contract](../architecture/update-rollback-contract.md).
+
+## Routed LAN on macOS
+
+A routed LAN lets clients reach administrator-approved downstream LAN prefixes
+through the managed tunnel, and the traffic comes back through the same
+tunnel. It is selected in the server setup — `mode` is `routed_lan` and
+`destination_prefixes` names the approved prefixes, in the management UI's
+"Network policy mode" and "Routed LAN destinations" fields, or in the
+`POST /api/v1/setup` body — and it is implemented on macOS only. A routed-LAN
+policy never masquerades. The internet-exit gateway mode is refused on macOS.
+
+The product does not configure the host for a routed LAN. It observes the host,
+reports what it observed, and refuses to converge while a prerequisite is
+missing. Three things belong to the operator.
+
+Enable host forwarding. The host's global IPv4 and IPv6 forwarding must be on
+for every family the policy needs. Those switches are shared with everything
+else that routes packets on the machine, so wg-basic reads them
+(`net.inet.ip.forwarding`, `net.inet6.ip6.forwarding`) and never writes them.
+Enable them in the host's own configuration — `/etc/sysctl.conf` for a setting
+that must survive a reboot, or `sysctl -w` for the current boot:
+
+```sh
+sudo sysctl -w net.inet.ip.forwarding=1
+sudo sysctl -w net.inet6.ip6.forwarding=1
+```
+
+Install the routes for the approved prefixes. Each approved downstream prefix
+must be reached by a specific route through the declared egress interface. A
+routed LAN never depends on the default route, and wg-basic never takes the
+default route over:
+
+```sh
+sudo route -n add -net 192.168.9.0/24 -interface en0
+```
+
+The return path is the upstream router's job: it must route the tunnel pool
+back to this host's address on the LAN. wg-basic does not configure the
+upstream router. The pool's own route on this host must be scoped to the
+managed `utun` device.
+
+Route the pool back through **this host's LAN address**, not as a link-level
+route on the router's own interface:
+
+```sh
+# on the upstream router, where 192.168.9.3 is this host's LAN address
+sudo route -n add -net 10.77.0.0/24 192.168.9.3
+```
+
+A link-level route on the router's own interface makes it look for the pool
+address on that interface, where it does not exist — the pool lives on this
+host's tunnel device — so the router caches a rejection and the return path
+never leaves the router. The IPv6 equivalent has the same shape and must name
+this host's link-local address on that interface.
+
+Install the filter and attach the anchor. The filter that bounds a routed LAN
+is operator-managed: the rules go into the installation's own anchor, and the
+anchor is attached from your own pf configuration. wg-basic writes neither the
+rules nor `/etc/pf.conf`, and it never enables or disables PF. The doctor
+reports the exact rules to install:
+
+```sh
+wg-basic doctor --state /var/db/wg-basic/state.db \
+  --socket /var/run/wg-basic/netd.sock --json
+```
+
+The doctor reaches netd over the authorized socket, so run it as an account
+netd admits; on Darwin that is the management service account, and root is not
+a universal bypass there. The `routed_lan` check appears only when that plan
+succeeded.
+
+The rules travel as structured data, not as prose. The doctor's evidence is
+bounded, and a routed LAN's rule set outgrows that bound, so the exact rules
+are carried in the check's `required_filter_rules` array and the bounded
+evidence only reports how many rules there are. Read them out with:
+
+```sh
+wg-basic doctor --state /var/db/wg-basic/state.db \
+  --socket /var/run/wg-basic/netd.sock --json \
+  | jq -r '.checks[] | select(.id == "routed_lan") | .required_filter_rules[]'
+```
+
+Diagnosing offline. The doctor inspects the state database without writing to
+it, and it refuses a database that still has live write-ahead sidecars. The
+management service is what holds them, so a diagnosis that has to run with the
+service down is done in this order: stop the management service, close the
+database cleanly, run the doctor, then start the service again.
+
+On macOS the management service is a bootstrapped system service, and
+`launchctl stop` is not accepted for one. Unload the job, close the database
+cleanly, run the doctor, and register the job again:
+
+```sh
+sudo launchctl kill SIGTERM system/com.wg-basic.serve
+sudo launchctl kill SIGKILL system/com.wg-basic.serve
+sudo launchctl bootout system/com.wg-basic.serve
+sudo -u _wg-basic-serve wg-basic state status --state /var/db/wg-basic/state.db
+sudo -u _wg-basic-serve wg-basic doctor --state /var/db/wg-basic/state.db \
+  --socket /var/run/wg-basic/netd.sock --json
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.wg-basic.serve.plist
+```
+
+The `state status` command in the middle is what closes the database cleanly,
+so the sidecars are gone before the doctor opens it. Unloading the job is what
+keeps launchd from bringing the service back: the job carries `KeepAlive`, so
+a process that exits is started again, and a restart that was already
+scheduled still runs after the job is disabled. Do **not** disable the job
+instead — a disabled job is registered but never starts, which is the wrong
+shape for a service that has to come back afterwards.
+
+A management service that does not act on `SIGTERM` may need the `SIGKILL`.
+On a host where the service is draining a long request, that is the expected
+shape: the service holds the state lease and the write-ahead log until it
+exits, and the doctor's lease check reports it as held.
+
+The anchor is named after the installation, and `wg-basic state status` prints
+that installation id:
+
+```sh
+wg-basic state status --state /var/db/wg-basic/state.db
+```
+
+Put the reported rules into an anchor file and load them into that anchor,
+whose name is `wg-basic-v1-<installation-id>`:
+
+```sh
+sudo pfctl -a wg-basic-v1-<installation-id> -f /etc/pf.anchors/wg-basic-routed
+```
+
+The anchor file has to end with a newline. PF rejects a file whose last rule
+is not terminated, and it reports that as a syntax error in the `load anchor`
+line that pulled the file in, not in the file itself.
+
+Attach that anchor from your own `/etc/pf.conf`, then load the configuration
+and enable the filter:
+
+```text
+anchor "wg-basic-v1-<installation-id>"
+```
+
+```sh
+sudo pfctl -f /etc/pf.conf
+sudo pfctl -e
+```
+
+Reading the verdict. The `routed_lan` check reports one verdict, and each
+verdict names a different missing prerequisite:
+
+| Verdict | What doctor reports | What to do |
+|---|---|---|
+| `ready` | the routed-LAN prerequisites are in place | none |
+| `forwarding_disabled` | host forwarding is not enabled for a family this policy requires | enable it through host configuration |
+| `filter_missing` | the operator-managed filter is absent or is not attached | install the reported rules and attach the anchor |
+| `filter_drift` | the operator-managed filter does not match the rendered policy | reinstall the reported rules; wg-basic never repairs a drifted filter |
+| `missing_return_route` | no observed route carries traffic back to the tunnel pool | restore the pool route, and make sure the upstream router routes the pool back to this host |
+| `route_conflict` | a foreign or ambiguous route covers an approved destination | remove the competing route, or narrow the approved destinations |
+| `unsupported_topology` | the approved destinations are not reachable through the declared egress interface | install a specific route for each approved destination through the egress interface |
+| `tunnel_unavailable` | the managed tunnel is not up, so its filter cannot be proven | start the managed network, then rerun doctor |
+
+The rendered rules name the tunnel device and the egress interface explicitly,
+so they have to be reinstalled when the helper is renumbered and its `utun`
+device changes.

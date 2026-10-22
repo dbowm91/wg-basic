@@ -336,6 +336,7 @@ impl AggregateCoordinator {
         if interface.status != ApplyStatus::Applied && interface.status != ApplyStatus::NoChange {
             // The interface layer did not verify, so no firewall policy is
             // installed for a link that is not in the desired state.
+            emit_failed_action(&interface);
             return Err(ApplyRejection::InterfaceLayerIncomplete {
                 receipt: Box::new(interface),
             });
@@ -348,10 +349,11 @@ impl AggregateCoordinator {
         ) {
             Ok(receipt) => receipt,
             Err(error) => {
+                emit_failed_action(&interface);
                 return Err(ApplyRejection::FirewallDuringApply {
                     interface: Box::new(interface),
                     error,
-                })
+                });
             }
         };
 
@@ -506,6 +508,32 @@ pub enum ApplyRejection {
     FirewallLayerIncomplete { firewall: Box<FirewallApplyReceipt> },
 }
 
+/// Emits the operational event that names the action a refused apply stopped
+/// at.
+///
+/// The receipt already knows which action failed. Without this the operator
+/// sees only that the apply was refused, and a refusal that does not name
+/// its cause is a refusal the operator cannot act on.
+fn emit_failed_action(receipt: &ApplyReceipt) {
+    let Some(action) = receipt.failed_action.as_ref() else {
+        return;
+    };
+    crate::operational::emit(
+        "netd.apply_action_failed",
+        crate::operational::Severity::Warn,
+        "netd",
+        "apply",
+        receipt
+            .failure
+            .as_ref()
+            .map(|failure| failure.as_str())
+            .unwrap_or("failed"),
+        Some((action.kind.as_str(), action.target.as_str())),
+        None,
+        Some("aggregate_apply"),
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -557,10 +585,12 @@ mod tests {
                 routes: Vec::new(),
             },
             Some(DesiredNetworkPolicy {
+                mode: crate::domain::NetworkPolicyMode::Gateway,
                 ipv4_forwarding: Ipv4Forwarding::Required,
                 ipv6_forwarding: Ipv6Forwarding::NotRequired,
                 egress_interface: "eth0".parse().unwrap(),
                 source_prefixes: vec![NetworkPrefix::new("10.8.0.0/24".parse().unwrap())],
+                destination_prefixes: Vec::new(),
                 nat: NatMode::Masquerade,
             }),
         )
