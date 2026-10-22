@@ -10,7 +10,13 @@ Corrective roadmap: `plans/subsystems/macos-native-server-corrective-roadmap.md`
 Corrects: `plans/closure/macos-native-server-corrective/c003-status.md` (findings F1, F2, F3).
 
 Baseline: `plans/macos-native-support@5238816`.
-Implementation head: `ae153e3` — *macos(c011): bound the service shutdown and recover a lost helper*, on top of `5238816`.
+Implementation head: `ae153e3` — *macos(c011): bound the service shutdown and
+recover a lost helper*, on top of `5238816`.
+Qualification correction and this record: `08053c3` — *macos(c011): record the
+helper-recovery closure and correct the qualification*. That commit carries the
+correction of the qualification's post-recovery assertions (F4 in §10) and the
+`ApplyStatus::converged` change, and it is the head the controlled-host run
+below was produced against.
 
 C003's closure record is **not** rewritten. It is a period-accurate record of what
 that run observed; this record corrects the findings it left open.
