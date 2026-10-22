@@ -403,6 +403,7 @@ runtime configuration.
 | Requests per connection     | 256       |
 | Worker queue capacity       | 32        |
 | Worker reply deadline       | 5 s       |
+| Worker stop deadline        | 10 s      |
 | Login global bucket         | 20 / 2 s  |
 | Login per-peer bucket       | 8 / 1 s   |
 | Login tracked peers         | 1024      |
@@ -465,10 +466,27 @@ signal with status `-1` and never drained. `tests/service_e2e.rs` and
 `tests/service_rootful_e2e.rs` now assert exit status `0` on `SIGTERM`, and an
 architecture guard pins the dependency feature that makes it work.
 
-`Shutdown` is an ordinary queue entry, so after a saturated burst it waits behind
-the backlog. Its *confirmation* can miss the five-second reply deadline; the
-thread is joined either way. The wait is bounded by the queue draining, not by
-the deadline.
+### The stop request cannot be refused
+
+The stop request does **not** ride the bounded queue. A queue entry is refused
+exactly when the service is busiest, and a refused stop request leaves the
+worker running with the state store open, holding the lease and the
+write-ahead log for as long as the process lives.
+
+The stop request closes the queue instead: the worker wakes, discards the
+backlog, and exits. Discarding the backlog is deliberate — every queued
+command would otherwise hold the store open for as long as it took to answer
+them, and the service is leaving.
+
+The wait for the thread is bounded as well. A worker that will not exit is
+reported as `worker_stuck` and the service still exits: the lease is released
+with the process, and the write-ahead log is crash-safe, so the next start
+recovers it. The wait polls the thread's completion rather than moving it onto
+the blocking pool, so it never escapes the worker's bounds.
+
+On Darwin the launchd job also carries `ExitTimeOut`, so an operator's
+`launchctl bootout` escalates to a kill if the service wedges rather than
+waiting on a process that will not leave.
 
 ## Command line
 

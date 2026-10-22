@@ -22,10 +22,13 @@
 //!   same tunnel;
 //! - a destination outside the approved prefix is not delivered, and a
 //!   spoofed source is not delivered;
-//! - removing the filter, drifting the filter, turning forwarding off, adding
-//!   a competing route, losing the route to an approved destination, and
-//!   restarting the helper each produce their own refusal, or a refusal that
-//!   follows the device the helper now holds.
+//! - removing the filter, drifting the filter, turning forwarding off, and
+//!   adding a competing route each produce their own refusal;
+//! - losing the route to an approved destination produces a refusal, and the
+//!   operator's route restores it;
+//! - killing the helper is recovered: the privileged authority replaces the
+//!   helper it lost, and the tunnel carries the policy again, on whichever
+//!   device the kernel assigns.
 //!
 //! Private keys are generated fresh per run and never enter evidence output.
 
@@ -73,6 +76,21 @@ const CLIENT_TUNNEL_ADDRESS: &str = "10.77.0.2";
 /// The listing is a shell pipeline rather than a bare `ps`, so the harness's
 /// own pipeline does not match its own pattern.
 const SERVE_PROCESS_LISTING: &str = "ps -o pid,ppid,stat,command -ax | grep '[w]g-basic serve'";
+
+/// The process identifiers of the running management-service processes.
+fn serve_process_ids() -> Vec<u32> {
+    Command::new("sh")
+        .args(["-c", SERVE_PROCESS_LISTING])
+        .output()
+        .map(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter_map(|line| line.split_whitespace().next())
+                .filter_map(|field| field.parse::<u32>().ok())
+                .collect()
+        })
+        .unwrap_or_default()
+}
 
 /// Whether no management-service process is left running.
 ///
@@ -122,9 +140,22 @@ fn diagnose(evidence: &mut Evidence, reconcile: bool) -> Verdict {
         "the state directory before the stop:\n{state_listing}"
     ));
     // `launchctl stop` is not accepted for a bootstrapped system service, so
-    // the job is disabled and its process is asked to terminate. Disabling
-    // first is what keeps launchd from restarting it immediately: the
-    // service must stay down for the diagnosis to be honest.
+    // the job's process is asked to terminate.
+    //
+    // Disabling the job first does **not** keep launchd from restarting it:
+    // the job carries `KeepAlive`, so launchd brings the daemon back when its
+    // process exits, and a disabled job is registered but never starts. The
+    // disable is therefore only part of the sequence, and the *unload* below
+    // is what actually keeps the service down for the diagnosis.
+    //
+    // The term is sent first and its outcome is asserted against the process
+    // that was running before it. A process that is still there afterwards is
+    // either the same process that ignored the term, or a successor that
+    // launchd started because the term worked: only the identifier tells the
+    // two apart, and reading "a process is running" as "the service did not
+    // stop" is exactly the misreading this assertion exists to prevent.
+    let before = serve_process_ids();
+    evidence.log(&format!("the serve processes before the term: {before:?}"));
     sh(evidence, "launchctl", &["disable", &serve_job]);
     sh(evidence, "launchctl", &["kill", "SIGTERM", &serve_job]);
     // The service has to actually be gone. Launchd's job state is not a
@@ -141,15 +172,23 @@ fn diagnose(evidence: &mut Evidence, reconcile: bool) -> Verdict {
     // job is disabled. The job is therefore *unloaded*, which is the same
     // operation the product's own uninstall performs, and it is registered
     // again once the diagnosis is done.
-    //
-    // The term is what the product's service contract uses, so it is sent
-    // first and its outcome is recorded: a management service that does not
-    // act on it is an operability finding in its own right.
-    // The term is what the product's service contract uses. It is not
-    // asserted: a job that is between runs has no process to signal, and the
-    // unload below is what actually stops the service.
     sh_unchecked(evidence, "launchctl", &["kill", "SIGTERM", &serve_job]);
-    std::thread::sleep(Duration::from_secs(5));
+    let mut honoured = false;
+    for _ in 0..30 {
+        std::thread::sleep(Duration::from_secs(1));
+        let after = serve_process_ids();
+        if !after.iter().any(|pid| before.contains(pid)) {
+            honoured = true;
+            evidence.log(&format!(
+                "the term was honoured: the process {before:?} is gone, {after:?} remain"
+            ));
+            break;
+        }
+    }
+    assert!(
+        honoured,
+        "the management service did not act on SIGTERM within 30s: {before:?} is still running"
+    );
     let processes = sh_unchecked(evidence, "sh", &["-c", SERVE_PROCESS_LISTING]);
     evidence.log(&format!(
         "the serve processes after the term:\n{}",
@@ -885,6 +924,18 @@ fn live_c003_routed_lan_forwards_to_an_approved_downstream_prefix() {
     evidence.log(&format!(
         "routes with the downstream prefixes:\n{routes_installed}\n{routes6_installed}"
     ));
+    // The route to the approved prefix has to name a *gateway*. A link-level
+    // route on the router's own interface makes it look for the address on
+    // that interface, where it does not exist, so it caches a rejection and
+    // the return path never leaves the router. The failure is silent, so the
+    // shape is asserted rather than inferred from traffic that happened to
+    // flow.
+    let route_to_lan = sh(&mut evidence, "route", &["-n", "get", LAN_HOST]);
+    assert!(
+        route_to_lan.contains(&format!("gateway: {ipv4_gateway}")),
+        "the approved prefix must be reached through a gateway, not a link: {}",
+        route_to_lan
+    );
 
     // The rules go into the installation's own anchor and the anchor is
     // attached from the host's own pf configuration. Neither is written by
@@ -1205,14 +1256,20 @@ fn live_c003_routed_lan_forwards_to_an_approved_downstream_prefix() {
         &["-n", "add", "-net", LAN_PREFIX, &ipv4_gateway],
     );
 
-    // The helper is killed. The product has to refuse rather than report the
-    // convergence it proved for the previous device: a helper that is gone
-    // leaves the managed tunnel gone, the pool route with it, and the
-    // operator's filter naming a device that no longer carries the tunnel.
-    // Whether the helper comes back and is renumbered is the helper-crash
-    // recovery matrix, which this milestone does not claim; what this
-    // milestone does claim is that a killed helper never leaves a stale
-    // convergence asserted.
+    // The helper is killed. The managed tunnel goes with it: the kernel
+    // releases the device, the pool route with it, and the operator's filter
+    // names a device that no longer carries the tunnel.
+    //
+    // The privileged authority that owns the helper replaces it: the helper is
+    // its own child process, and a child that dies is replaced with the state
+    // that was already applied, not left down until an operator intervenes.
+    // The product never reports the convergence it proved for the *previous*
+    // device in the meantime: the observation re-proves the receipt, so a
+    // tunnel that is gone is never a tunnel that is available.
+    //
+    // The device may come back renumbered, because the kernel assigns the
+    // `utunN` name. The contract is that the tunnel is there and carries the
+    // policy again, not that it kept its number.
     let device_before = managed_device(&verdict.rules);
     evidence.log(&format!(
         "the managed device before the helper restart: {device_before:?}"
@@ -1221,6 +1278,26 @@ fn live_c003_routed_lan_forwards_to_an_approved_downstream_prefix() {
         &mut evidence,
         "sudo",
         &["pkill", "-f", "libexec/wg-basic/wireguard-go"],
+    );
+    let mut recovered = false;
+    for _ in 0..60 {
+        std::thread::sleep(Duration::from_secs(1));
+        let helpers = sh_unchecked(
+            &mut evidence,
+            "sh",
+            &["-c", "ps -o pid,command -ax | grep '[w]ireguard-go'"],
+        )
+        .1;
+        if !helpers.trim().is_empty() {
+            recovered = true;
+            evidence.log(&format!("the helper was replaced: {}", helpers.trim()));
+            break;
+        }
+    }
+    assert!(
+        recovered,
+        "the privileged authority must replace the helper it lost: {}",
+        verdict.summary
     );
     let verdict = diagnose(&mut evidence, true);
     let device_after = managed_device(&verdict.rules);
@@ -1232,8 +1309,13 @@ fn live_c003_routed_lan_forwards_to_an_approved_downstream_prefix() {
         verdict.summary
     ));
     assert!(
-        !verdict.summary.contains("in place"),
-        "a killed helper must not leave a stale convergence claimed: {}",
+        device_after.is_some(),
+        "the helper's replacement must carry the tunnel again: {}",
+        verdict.summary
+    );
+    assert!(
+        verdict.summary.contains("in place"),
+        "the recovered tunnel must carry the routed LAN again: {}",
         verdict.summary
     );
 

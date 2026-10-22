@@ -72,7 +72,34 @@ Retryable failures get at most `MAX_TRANSIENT_RETRIES` attempts with a short fix
 
 The `netd` reply is preserved across the transport boundary. The protocol client stores the wire `ProtocolError` as the payload of the returned `io::Error` and keeps the historical `io::ErrorKind` mapping, so management classifies on what `netd` actually said instead of guessing from a lossy transport kind. This is why a foreign owner tag is diagnosed as a conflict rather than being retried as if `netd` were merely absent.
 
-There is deliberately **no** permanent high-frequency reconciliation loop. A future service manager may restart the process; that is the recovery mechanism, and it must not be built here.
+There is deliberately **no** permanent high-frequency reconciliation loop in the management role. A future service manager may restart the process; that is the recovery mechanism, and it must not be built here.
+
+The privileged authority has one narrower exception, described below: it supervises the helper process it spawned. That is supervision of a child it owns, not a loop that decides whether the desired state changed.
+
+## The helper is supervised by the authority that spawned it
+
+On Darwin the managed tunnel is carried by a helper process that `netd` spawns. A helper that exits on its own takes the managed device with it: the kernel releases the `utunN` device, and the receipt that named the helper becomes a claim about something that is gone.
+
+`netd` supervises that helper the way it supervises any child it owns:
+
+- a monitor thread notices that the helper it spawned is no longer running;
+- the desired interface that was applied for it is re-applied, which recreates the helper, re-adopts exactly one new device, and restores the configuration, addresses, and routes that belonged to the tunnel.
+
+Three properties bound this:
+
+- **It restores, it does not decide.** The re-apply uses the desired state `netd` already applied for that interface. The monitor never consults the store, never compares generations, and never changes what the desired state is.
+- **It is scoped to a child `netd` owns.** The monitor only looks at helpers in its own supervision map. A device it cannot prove is not touched.
+- **It is not a reconciliation loop.** It runs at a fixed, slow interval, only does work when a supervised child died, and does not observe the host for drift.
+
+A helper that dies is therefore recovered without an operator, and the recovery is bounded: the re-apply is attempted a small number of times and its outcome is reported as an operational event.
+
+### A receipt that cannot be re-proven is not a claim
+
+The receipt names the helper that owns the tunnel. It is never sufficient on its own: the live host must re-prove it before anything is changed.
+
+That rule applies to *creating* a tunnel as well as to observing one. A receipt whose helper is gone describes nothing that exists, so a create over it is allowed: the stale receipt is dropped and the tunnel is recreated. Refusing the create instead would leave the installation unable to bring its tunnel back at all, which is a worse failure than the one the refusal would have avoided.
+
+A receipt that *does* re-prove is a live tunnel carrying that owner tag, and a create over it is refused: two devices must never carry the same durable proof.
 
 ## Health projection
 
@@ -104,6 +131,7 @@ The kernel is derivative state, so anything can change while the product is not 
 | owned table contents drifted | replaced from the desired policy |
 | link owner tag removed or changed | **fails closed**; never re-adopted |
 | nftables owner marker changed | **fails closed**; never re-adopted |
+| the managed helper died while the product was running | replaced by the authority that spawned it, without an operator |
 
 Failing closed is the important half. If ownership proof is lost, the correct action is to refuse and leave the state for an operator, not to adopt a resource on the strength of its name.
 

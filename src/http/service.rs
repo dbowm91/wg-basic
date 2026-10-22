@@ -910,9 +910,10 @@ fn refusal(rejection: RequestRejection) -> Response {
 /// rather than that a command succeeded.
 fn response_for_worker_error(error: WorkerError) -> Response {
     match error {
-        WorkerError::Saturated | WorkerError::TimedOut | WorkerError::Stopped => {
-            response::unavailable()
-        }
+        WorkerError::Saturated
+        | WorkerError::TimedOut
+        | WorkerError::Stopped
+        | WorkerError::StopTimeout => response::unavailable(),
         WorkerError::Failed(_) => response::internal_error(),
         // A refusal or a storage failure that reached a *read-only* route. The
         // login route renders these itself, because it must distinguish a wrong

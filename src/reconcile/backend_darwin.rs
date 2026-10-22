@@ -18,21 +18,23 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::domain::{InterfaceName, OwnerTag};
+use crate::domain::{InterfaceName, LinkLifecycle, OwnerTag};
 use crate::reconcile::model::{
-    DesiredManagedInterface, ObservedLinkKind, ObservedManagedInterface, ObservedRoute,
-    ReconcileError,
+    ApplyReceipt, DesiredManagedInterface, ObservedLinkKind, ObservedManagedInterface,
+    ObservedRoute, ReconcileError,
 };
 use crate::reconcile::planner::Mutation;
 use crate::wireguard::darwin_backend::{
-    prove_ownership, spawn_managed_tunnel, HelperIdentity, ManagedRuntime, OwnershipOutcome,
-    RegistryError, RuntimeRegistry,
+    prove_ownership, spawn_managed_tunnel, HelperIdentity, ManagedRuntime, OwnerClaim,
+    OwnershipOutcome, RegistryError, RuntimeRegistry, SupervisedHelper,
 };
 use crate::wireguard::WireGuardBackend;
 
+use super::apply::apply_with_backend;
 use super::ReconcileBackend;
 
 /// The maximum number of observed addresses on one managed interface.
@@ -44,12 +46,38 @@ const MAX_OBSERVED_ROUTES: usize = 256;
 /// How long the backend waits for a deleted helper's device to disappear.
 const DEVICE_TEARDOWN_TIMEOUT: Duration = Duration::from_secs(3);
 
+/// How often the helper monitor checks whether a supervised helper is alive.
+const HELPER_MONITOR_INTERVAL: Duration = Duration::from_secs(1);
+
+/// How many times a recovery re-apply is attempted before it is given up on.
+///
+/// The first attempt can lose a race with the kernel releasing the dead
+/// helper's device, so the recovery is not a single shot.
+const HELPER_RECOVERY_ATTEMPTS: usize = 3;
+
 /// Darwin route flags that are not managed unicast routes.
 const RTF_REJECT: u32 = 0x8;
 const RTF_BLACKHOLE: u32 = 0x1000;
 const RTF_LOCAL: u32 = 0x200_000;
 const RTF_BROADCAST: u32 = 0x400_000;
 const RTF_MULTICAST: u32 = 0x800_000;
+
+/// The state a Darwin backend shares with its helper monitor.
+///
+/// The monitor thread owns a copy of the backend, so the supervised helpers,
+/// the retained desired state, and the apply lock are shared rather than
+/// copied.
+struct Supervision {
+    /// The supervised helper children, keyed by the logical interface.
+    helpers: Mutex<HashMap<String, SupervisedHelper>>,
+    /// The last desired interface successfully applied, keyed by the logical
+    /// interface. A recovery re-applies exactly this and nothing else.
+    retained: Mutex<HashMap<String, DesiredManagedInterface>>,
+    /// Serializes whole apply sequences, including a recovery re-apply.
+    apply_lock: Mutex<()>,
+    /// Whether the helper monitor has been started.
+    monitor_started: AtomicBool,
+}
 
 /// The Darwin network backend.
 ///
@@ -59,8 +87,17 @@ const RTF_MULTICAST: u32 = 0x800_000;
 pub struct DarwinNetworkBackend {
     registry: Result<Arc<RuntimeRegistry>, RegistryError>,
     helper: Result<HelperIdentity, RegistryError>,
-    supervisor: Mutex<HashMap<String, crate::wireguard::darwin_backend::SupervisedHelper>>,
+    supervision: Arc<Supervision>,
     wireguard: WireGuardBackend,
+    /// The flag that tells the helper monitor to stop.
+    stopping: Arc<AtomicBool>,
+}
+
+impl Drop for DarwinNetworkBackend {
+    /// Stops the helper monitor when the last backend copy is gone.
+    fn drop(&mut self) {
+        self.stopping.store(true, Ordering::Release);
+    }
 }
 
 impl DarwinNetworkBackend {
@@ -76,8 +113,14 @@ impl DarwinNetworkBackend {
         Self {
             registry,
             helper,
-            supervisor: Mutex::new(HashMap::new()),
+            supervision: Arc::new(Supervision {
+                helpers: Mutex::new(HashMap::new()),
+                retained: Mutex::new(HashMap::new()),
+                apply_lock: Mutex::new(()),
+                monitor_started: AtomicBool::new(false),
+            }),
             wireguard,
+            stopping: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -91,6 +134,183 @@ impl DarwinNetworkBackend {
     /// The WireGuard backend this network backend configures devices through.
     pub fn wireguard(&self) -> &WireGuardBackend {
         &self.wireguard
+    }
+
+    /// Applies one desired interface and remembers it for a helper recovery.
+    ///
+    /// The whole sequence is serialized against a recovery re-apply, so the
+    /// two can never interleave their mutations.
+    pub fn apply_desired(
+        &self,
+        desired: &DesiredManagedInterface,
+    ) -> Result<ApplyReceipt, ReconcileError> {
+        let _guard = self
+            .supervision
+            .apply_lock
+            .lock()
+            .map_err(|_| ReconcileError::BackendFailure)?;
+        let receipt = apply_with_backend(desired, self)?;
+        self.remember(desired);
+        Ok(receipt)
+    }
+
+    /// Remembers the desired state a recovery would restore.
+    ///
+    /// A present interface is retained so a helper that dies can be replaced.
+    /// An absent interface drops the retained state: the operator asked for
+    /// the tunnel to go away, and a recovery must not bring it back.
+    fn remember(&self, desired: &DesiredManagedInterface) {
+        let Ok(mut retained) = self.supervision.retained.lock() else {
+            return;
+        };
+        match desired.lifecycle {
+            LinkLifecycle::Present => {
+                retained.insert(desired.interface.as_str().to_owned(), desired.clone());
+            }
+            LinkLifecycle::Absent => {
+                retained.remove(desired.interface.as_str());
+            }
+        }
+    }
+
+    /// The desired state retained for one logical interface.
+    fn retained_desired(&self, interface: &str) -> Option<DesiredManagedInterface> {
+        self.supervision
+            .retained
+            .lock()
+            .ok()
+            .and_then(|retained| retained.get(interface).cloned())
+    }
+
+    /// Stops supervising the helper of one logical interface.
+    ///
+    /// Dropping the child kills it when it is still running.
+    fn stop_supervised(&self, interface: &str) {
+        if let Ok(mut helpers) = self.supervision.helpers.lock() {
+            helpers.remove(interface);
+        }
+    }
+
+    /// Starts the helper monitor, once.
+    ///
+    /// The monitor is the only automatic recovery this backend performs: it
+    /// watches the helpers it owns and recreates a tunnel whose helper died.
+    fn ensure_monitor(&self) {
+        // The flag is shared, so the monitor's own copy of the backend never
+        // starts a second monitor when a recovery re-applies the tunnel.
+        if self
+            .supervision
+            .monitor_started
+            .swap(true, Ordering::AcqRel)
+        {
+            return;
+        }
+        let backend = self.for_monitor();
+        let stopping = Arc::clone(&self.stopping);
+        let started = std::thread::Builder::new()
+            .name("wg-basic-helper-monitor".to_owned())
+            .spawn(move || monitor_loop(backend, stopping));
+        if started.is_err() {
+            self.supervision
+                .monitor_started
+                .store(false, Ordering::Release);
+        }
+    }
+
+    /// Builds the copy of this backend that the helper monitor drives.
+    ///
+    /// The copy shares the registry, the supervised helpers, the retained
+    /// desired state, and the apply lock. It is not a public clone: an
+    /// unrelated caller dropping a copy must not stop the monitor.
+    fn for_monitor(&self) -> Self {
+        Self {
+            registry: self.registry.clone(),
+            helper: self.helper.clone(),
+            supervision: Arc::clone(&self.supervision),
+            wireguard: self.wireguard.clone(),
+            stopping: Arc::clone(&self.stopping),
+        }
+    }
+
+    /// Recreates the managed tunnels whose helper is gone.
+    ///
+    /// A helper that exits on its own leaves the managed tunnel gone: the
+    /// kernel releases its device, and the receipt that named it becomes a
+    /// claim about nothing. The recovery re-applies the retained desired
+    /// state, which recreates the tunnel and its configuration.
+    fn recover_dead_helpers(&self) {
+        let dead: Vec<String> = {
+            let Ok(mut helpers) = self.supervision.helpers.lock() else {
+                return;
+            };
+            let mut dead = Vec::new();
+            for (name, helper) in helpers.iter_mut() {
+                if !helper.is_alive() {
+                    dead.push(name.clone());
+                }
+            }
+            dead
+        };
+        for interface in dead {
+            self.recover_helper(&interface);
+        }
+    }
+
+    /// Recreates one managed tunnel whose helper died.
+    fn recover_helper(&self, interface: &str) {
+        let Some(desired) = self.retained_desired(interface) else {
+            // Nothing was retained for this interface, so there is no desired
+            // state to restore: the helper is simply forgotten.
+            self.stop_supervised(interface);
+            return;
+        };
+        crate::operational::emit(
+            "netd.helper_recovery_started",
+            crate::operational::Severity::Warn,
+            "netd",
+            "helper_recovery",
+            "started",
+            Some(("interface", interface)),
+            None,
+            Some("helper"),
+        );
+        // The helper is gone, so it is no longer supervised. The stale claim
+        // is dropped by the create path, which re-proves it before refusing.
+        self.stop_supervised(interface);
+        for attempt in 1..=HELPER_RECOVERY_ATTEMPTS {
+            match self.apply_desired(&desired) {
+                Ok(_) => {
+                    crate::operational::emit(
+                        "netd.helper_recovery_completed",
+                        crate::operational::Severity::Warn,
+                        "netd",
+                        "helper_recovery",
+                        "recovered",
+                        Some(("interface", interface)),
+                        None,
+                        Some("helper"),
+                    );
+                    return;
+                }
+                Err(error) => {
+                    if attempt == HELPER_RECOVERY_ATTEMPTS {
+                        crate::operational::emit(
+                            "netd.helper_recovery_failed",
+                            crate::operational::Severity::Error,
+                            "netd",
+                            "helper_recovery",
+                            "failed",
+                            Some(("interface", interface)),
+                            None,
+                            Some("helper"),
+                        );
+                        let _ = error;
+                        return;
+                    }
+                    std::thread::sleep(HELPER_MONITOR_INTERVAL);
+                }
+            }
+        }
     }
 
     /// The registry this backend records ownership claims in.
@@ -232,9 +452,11 @@ impl DarwinNetworkBackend {
     ) -> Result<(), ReconcileError> {
         let registry = self.registry()?;
         let helper = self.helper()?;
-        if registry.find_by_owner_tag(owner_tag).is_some() {
-            return Err(ReconcileError::Conflict);
-        }
+        self.resolve_owner_claim(owner_tag)?;
+        // A helper that is still supervised for this interface is stopped
+        // first: the tunnel it backed is gone, and a second helper would
+        // leak the first one.
+        self.stop_supervised(interface.as_str());
         let (child, utun_name) =
             spawn_managed_tunnel(helper).map_err(|_| ReconcileError::BackendFailure)?;
         let runtime = ManagedRuntime {
@@ -256,11 +478,38 @@ impl DarwinNetworkBackend {
         registry
             .insert(runtime)
             .map_err(|_| ReconcileError::BackendFailure)?;
-        self.supervisor
+        self.supervision
+            .helpers
             .lock()
             .map_err(|_| ReconcileError::BackendFailure)?
             .insert(interface.as_str().to_owned(), child);
+        // From here the backend owns a live helper, so the monitor that
+        // replaces a helper that dies must be running.
+        self.ensure_monitor();
         Ok(())
+    }
+
+    /// Resolves the receipt that claims the owner tag.
+    ///
+    /// A live claim refuses the create: two devices must never carry the same
+    /// durable proof. A stale claim is dropped instead of refused: it names a
+    /// helper that is gone, so the tunnel may be recreated over it. Refusing
+    /// a stale claim would leave the installation unable to bring its tunnel
+    /// back at all.
+    fn resolve_owner_claim(&self, owner_tag: &OwnerTag) -> Result<(), ReconcileError> {
+        let registry = self.registry()?;
+        match registry.claim(owner_tag) {
+            OwnerClaim::Absent => Ok(()),
+            OwnerClaim::Live => Err(ReconcileError::Conflict),
+            OwnerClaim::Stale(runtime) => {
+                let stale = runtime
+                    .interface_name()
+                    .ok_or(ReconcileError::BackendFailure)?;
+                registry
+                    .remove(&stale)
+                    .map_err(|_| ReconcileError::BackendFailure)
+            }
+        }
     }
 
     /// Removes the managed tunnel: stop the helper, wait for the kernel
@@ -276,11 +525,13 @@ impl DarwinNetworkBackend {
             registry
                 .remove(interface)
                 .map_err(|_| ReconcileError::BackendFailure)?;
+            self.forget(interface.as_str());
             return Ok(());
         }
         {
             let mut supervisor = self
-                .supervisor
+                .supervision
+                .helpers
                 .lock()
                 .map_err(|_| ReconcileError::BackendFailure)?;
             supervisor.remove(interface.as_str());
@@ -293,11 +544,21 @@ impl DarwinNetworkBackend {
                 registry
                     .remove(interface)
                     .map_err(|_| ReconcileError::BackendFailure)?;
+                self.forget(interface.as_str());
                 return Ok(());
             }
             std::thread::sleep(Duration::from_millis(50));
         }
         Err(ReconcileError::BackendFailure)
+    }
+
+    /// Forgets the retained desired state of one logical interface.
+    ///
+    /// The tunnel is gone, so a recovery must not bring it back.
+    fn forget(&self, interface: &str) {
+        if let Ok(mut retained) = self.supervision.retained.lock() {
+            retained.remove(interface);
+        }
     }
 }
 
@@ -312,6 +573,22 @@ impl ReconcileBackend for DarwinNetworkBackend {
 
     fn apply(&self, interface: &InterfaceName, mutation: Mutation) -> Result<(), ReconcileError> {
         self.apply_mutation(interface, mutation)
+    }
+}
+
+/// Watches the supervised helpers and recovers the tunnels they backed.
+///
+/// The monitor is the privileged authority's own supervision of a process it
+/// spawned: it does not poll the host for desired-state drift, and it never
+/// decides that the desired state changed. It only notices that a helper it
+/// owns is gone and re-applies the state it already applied.
+fn monitor_loop(backend: DarwinNetworkBackend, stopping: Arc<AtomicBool>) {
+    while !stopping.load(Ordering::Acquire) {
+        std::thread::sleep(HELPER_MONITOR_INTERVAL);
+        if stopping.load(Ordering::Acquire) {
+            break;
+        }
+        backend.recover_dead_helpers();
     }
 }
 
@@ -417,6 +694,98 @@ pub fn supports(desired: &DesiredManagedInterface) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::{InstallationId, InterfaceId};
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    /// A protected directory that only this test's owner may enter.
+    fn protected_root(name: &str) -> PathBuf {
+        static COUNTER: AtomicU32 = AtomicU32::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "wg-basic-{name}-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).expect("the registry root");
+        std::fs::set_permissions(
+            &path,
+            <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o700),
+        )
+        .expect("an owner-only registry root");
+        path
+    }
+
+    /// A receipt that names a helper that is not running.
+    fn stale_runtime(owner: &OwnerTag, interface: &InterfaceName) -> ManagedRuntime {
+        ManagedRuntime {
+            installation_id: owner.installation_id(),
+            interface_id: owner.interface_id(),
+            interface: interface.as_str().to_owned(),
+            utun_name: "utun9999".to_owned(),
+            helper_pid: 0,
+            helper_path: "/nonexistent/wireguard-go".to_owned(),
+            helper_sha256: "0".repeat(64),
+            uapi_socket: "/nonexistent/utun9999.sock".to_owned(),
+            created_unix_ms: 0,
+        }
+    }
+
+    #[test]
+    fn a_stale_claim_is_dropped_so_the_tunnel_can_be_recreated() {
+        // The claim is re-proved before it can refuse a create. A receipt that
+        // names a helper that is gone describes nothing that exists, and
+        // refusing to recreate the tunnel would leave the installation unable
+        // to bring it back at all.
+        let root = protected_root("stale-claim");
+        let registry = Arc::new(RuntimeRegistry::open(&root).expect("open the registry"));
+        let backend = DarwinNetworkBackend::new(Ok(Arc::clone(&registry)), Err(RegistryError::Io));
+        let owner = OwnerTag::new(InstallationId::new(), InterfaceId::new());
+        let interface = InterfaceName::new("wg-stale").expect("interface name");
+        registry
+            .insert(stale_runtime(&owner, &interface))
+            .expect("record the stale receipt");
+
+        backend
+            .resolve_owner_claim(&owner)
+            .expect("a stale claim is dropped, not refused");
+        assert!(
+            registry.get(&interface).is_none(),
+            "the stale claim is gone, so a create may proceed"
+        );
+    }
+
+    #[test]
+    fn a_present_interface_is_retained_for_a_recovery() {
+        let root = protected_root("retained");
+        let registry = Arc::new(RuntimeRegistry::open(&root).expect("open the registry"));
+        let backend = DarwinNetworkBackend::new(Ok(registry), Err(RegistryError::Io));
+        let interface = InterfaceName::new("wg-retained").expect("interface name");
+        let desired = DesiredManagedInterface {
+            interface: interface.clone(),
+            ownership: crate::domain::OwnershipDeclaration::Managed,
+            lifecycle: LinkLifecycle::Present,
+            admin_up: Some(true),
+            owner_tag: OwnerTag::new(InstallationId::new(), InterfaceId::new()),
+            wireguard: None,
+            addresses: Vec::new(),
+            routes: Vec::new(),
+        };
+
+        backend.remember(&desired);
+        assert!(
+            backend.retained_desired(interface.as_str()).is_some(),
+            "a present interface is retained so a dead helper can be replaced"
+        );
+
+        let mut removed = desired.clone();
+        removed.lifecycle = LinkLifecycle::Absent;
+        removed.admin_up = None;
+        backend.remember(&removed);
+        assert!(
+            backend.retained_desired(interface.as_str()).is_none(),
+            "an absent interface is not retained: a recovery must not bring it back"
+        );
+    }
 
     #[test]
     fn an_interface_with_no_receipt_is_observed_as_absent() {

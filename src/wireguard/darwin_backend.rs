@@ -131,6 +131,22 @@ pub struct RuntimeRegistry {
     entries: Mutex<BTreeMap<String, ManagedRuntime>>,
 }
 
+/// What a receipt that claims one owner tag means.
+///
+/// A receipt is a claim about a helper that is expected to still exist. Only
+/// a claim the live host still proves is a claim; one it does not prove names
+/// something that is gone, and a tunnel may be recreated over it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OwnerClaim {
+    /// No receipt claims the owner tag.
+    Absent,
+    /// A receipt claims it and the live host still proves it: a tunnel is
+    /// already carrying this owner tag.
+    Live,
+    /// A receipt claims it, but the live host does not prove it.
+    Stale(ManagedRuntime),
+}
+
 impl RuntimeRegistry {
     /// Opens the protected managed-runtime directory and loads every receipt.
     ///
@@ -159,6 +175,22 @@ impl RuntimeRegistry {
     /// The directory the receipts live in.
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// The receipt that claims one owner tag, re-proved against the live host.
+    ///
+    /// This is the only way to decide whether a claim may be refused: a
+    /// receipt's existence says nothing on its own.
+    pub fn claim(&self, owner_tag: &OwnerTag) -> OwnerClaim {
+        let Some(runtime) = self.find_by_owner_tag(owner_tag) else {
+            return OwnerClaim::Absent;
+        };
+        let device_present = utun_interface_names().contains(&runtime.utun_name);
+        if prove_ownership(&runtime, device_present).is_proven() {
+            OwnerClaim::Live
+        } else {
+            OwnerClaim::Stale(runtime)
+        }
     }
 
     /// The receipt for one logical managed interface, if it has one.

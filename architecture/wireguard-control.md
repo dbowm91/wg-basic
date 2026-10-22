@@ -98,3 +98,27 @@ the same one), the helper executable's digest, the UAPI socket's owner and
 type, and the kernel device, and only a joint proof authorizes a mutation. A
 receipt that cannot be re-proven is treated as absent, not as a foreign
 device to destroy.
+
+A receipt that cannot be re-proven is also not a reason to refuse a create.
+The tunnel is recreated over it and the stale receipt is dropped; a receipt
+that *does* re-prove is a live tunnel, and a second tunnel over it is refused.
+See [ownership](ownership.md) and
+[startup recovery](startup-recovery.md).
+
+### The helper is replaced when it dies
+
+`netd` spawns the helper as a supervised foreground child, and it supervises
+it: a helper that exits on its own takes the kernel device with it, so the
+authority that spawned it replaces it rather than leaving the tunnel down
+until an operator intervenes.
+
+The replacement re-applies the desired interface that was applied for that
+helper, which recreates the child, re-adopts exactly one new `utunN` device,
+and restores the configuration, addresses, and routes that belonged to the
+tunnel. The device may be renumbered by the kernel, and the receipt is
+rewritten for the new one.
+
+The replacement restores; it never decides. It uses the desired state that was
+already applied, does not consult the durable store, and does not observe the
+host for drift. The monitoring interval is fixed and slow, and it only does
+work when a supervised child died.
