@@ -1,6 +1,13 @@
 # macOS Native Server C003 — Explicit Routed-LAN Mode Without NAT
 
-Status: **implemented and qualified; conditionally closed 2026-10-22**. The hard dependency on C001 was discharged 2026-10-21; the native controlled-host proof this plan required was produced on 2026-10-22 and is recorded in `plans/closure/macos-native-server-corrective/c003-status.md`. The two findings that remain are recorded there and are routed to C001/C002's service-lifecycle matrix.
+Status: **implemented and qualified; closed 2026-10-22** — the same day's
+conditional closure is amended by §11 of the closure record. The hard
+dependency on C001 was discharged 2026-10-21; the native controlled-host proof
+this plan required was produced on 2026-10-22 and is recorded in
+`plans/closure/macos-native-server-corrective/c003-status.md`. The two
+findings that were recorded there are corrected under C011, C003's own Linux
+breakage under C012, and this plan's "routine/MSRV + all Linux rootful suites"
+gate is evidenced natively on a controlled Linux host.
 Baseline: `plans/macos-native-support@fc51146e811cabebd042d852449c6e7f4f854265`.
 Source: corrective roadmap C003; M004/M005 (`plans/closure/macos-native-server/{004,005}-status.md`), ADR-008 and ADR-007.
 Primary class: corrective / capability / invariant.
@@ -110,3 +117,33 @@ record; the findings are corrected there, by C011's closure record.
 The Darwin Internet-exit gateway mode remains refused, the supported Darwin
 target remains Apple silicon alone under ADR-009, and installation and
 transactional self-update remain unimplemented.
+
+## Amendment (2026-10-22): closure, and the Linux rootful half
+
+This milestone is **closed**. The two findings above are discharged by C011,
+C003's own Linux breakage — the policy-model change that left every Linux job
+uncompilable from `5238816` — is discharged by C012, and §11 of the closure
+record is the dated amendment that says so while leaving the record's history
+period-accurate.
+
+The amendment also supplies the half of this plan's gate that the closure
+record's own matrix row pointed at and did not contain. The plan requires
+"routine/MSRV + all Linux rootful suites"; the record's §3 holds the
+development-host gates, which ran on the Darwin host where the rootful suites
+compile to nothing. The Linux half is now run natively on a controlled Linux
+host at the final head: the ordinary gate order clean, forty rootful tests
+across eleven targets executed with `CI=true` so that no suite could silently
+skip its kernel evidence, the Phase 8 → current schema migration rehearsed
+with real traffic, and the host's namespaces, links, nftables tables, units,
+and canonical installation paths unchanged before and after.
+
+Two canonical-path systemd tests were deliberately not run on that host:
+their own annotations mark them "disposable systemd VM only", and that host is
+the maintainer's working machine rather than a disposable VM. The CI
+qualifies them on a disposable runner, and no claim is made here that they ran.
+
+Nothing in this amendment widens what C004 may claim: the Darwin
+Internet-exit gateway mode remains refused, the supported Darwin target
+remains Apple silicon alone under ADR-009, installation and transactional
+self-update remain unimplemented, and M007's MUST-NOT-release standing is
+unchanged.

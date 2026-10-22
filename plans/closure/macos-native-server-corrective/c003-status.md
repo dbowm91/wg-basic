@@ -1,12 +1,16 @@
 # macOS Native Server C003 — Explicit routed-LAN mode without NAT
 
-Disposition: **conditionally closed** (2026-10-22) — the routed-LAN contract is
+Disposition: **closed** (amended 2026-10-22). The disposition written earlier
+the same day was **conditionally closed**: the routed-LAN contract is
 implemented and qualified on a controlled host with real IPv4 and IPv6 traffic
 in both directions through the tunnel, the operator-managed filter is observed
 rather than written, and every missing prerequisite has its own named refusal.
-The two conditions are the two findings below that belong to the service
+The two conditions were the two findings below that belong to the service
 lifecycle line (C001/C002) rather than to the routed-LAN contract, and the
-third is an operational prerequisite that is now documented.
+third is an operational prerequisite that is now documented. Both conditions
+are discharged by **C011**, C003's own Linux breakage by **C012**, and the
+Linux rootful half this record's §2 row pointed at but §3 never contained is
+evidenced on a controlled Linux host in §11.
 
 Date: 2026-10-22.
 
@@ -234,3 +238,165 @@ evidence, and both are routed to the line that owns them — C001/C002's
 service-lifecycle and helper-crash matrices. C003 does not claim them as
 closed, and this record does not treat the routed-LAN contract as anything
 other than what the evidence shows.
+
+## 11. Amendment and closure (2026-10-22)
+
+### 11.1 Why this amendment exists
+
+This record's §2 carries one row:
+
+> | Routine/MSRV and all Linux rootful suites | §3 below |
+
+§3 does not contain the Linux rootful suites. It contains the
+development-host gates, and those gates ran on the developer's Darwin machine,
+where the rootful suites compile to nothing: every one of them is
+`#![cfg(all(target_os = "linux", feature = "linux-integration"))]`. The row
+pointed at evidence that was not in §3.
+
+That is a defect in **this record**, not in the product. §13 of the planning
+process is about material post-implementation defects in an implementation,
+and no implementation defect is involved here: the product's Linux behaviour
+was not wrong, the record's pointer was. The correction is therefore to
+produce the evidence that was missing, to say plainly what §3 did and did not
+show, and to leave the text above as it was written. Everything in §1–§10 is
+unchanged; this section is the amendment.
+
+### 11.2 Where each condition went
+
+| Condition recorded above | Discharged by |
+|---|---|
+| **F1** — the management service does not terminate within the qualification's bound after `SIGTERM` | **C011** (`ae153e3`), closed conditionally on 2026-10-22. C011 re-read the finding against the code and against a fresh reproduction: the *observation* was a misreading — the service does act on the term, and what the run saw afterwards was launchd's `KeepAlive` successor rather than a hung process, which is why the run's own evidence shows three different process identifiers after three successive stops. The code-level claim underneath it was nevertheless true, and it is fixed: the stop request could be refused by a saturated queue, and the join that followed had no bound. |
+| **F2** — a killed WireGuard helper is not recovered automatically | **C011**. The refusal half was met; the recovery half was broken as well as absent, because a receipt naming a dead helper was treated as an ownership claim and refused every attempt to recreate the tunnel. It is fixed by re-proving the receipt before it can refuse, and by **ADR-010**'s decision that the privileged authority supervises the helper it spawned and re-applies only what it applied. |
+| **F3** — the upstream route back to the tunnel pool must be a gateway route | An operator prerequisite, not a product defect. It is documented with a check in `docs/operations-runbook.md` and asserted by the qualification (`gateway: 192.168.64.1`). It is not C003's to close. |
+| C003's own Linux breakage — the policy-model change left every Linux job uncompilable from `5238816` | **C012** (`66c078e`), **closed** 2026-10-22. The fixtures state their mode, the rehearsals ask the schema contract for its version instead of writing one down, and the gate order gained the feature-bearing Linux cross-clippy so the next occurrence fails on the Mac. |
+
+### 11.3 The Linux rootful evidence, on a controlled Linux host
+
+The controlled host is a second, independent machine from the macOS guest that
+carried the routed-LAN leg. It is a **real Linux kernel host under the
+maintainer's own control**, not a hosted CI runner, which is what C012's §9
+recorded as missing ("the Linux qualification has no equivalent, and this
+milestone does not add one").
+
+| Fact | Value |
+|---|---|
+| Host | `sugarwookie@192.168.182.143` |
+| Kernel / OS | Linux `6.8.0-147-generic` x86_64, Ubuntu 24.04.5 LTS |
+| Firewall / WireGuard | nftables v1.0.9; kernel WireGuard module loaded; `iproute2`, `iputils-ping` present |
+| systemd | 255 (255.4-1ubuntu8.18) |
+| Source | a detached worktree at `4a772e759696e7a5430aec9d65310dd951b42abd` (`plans/macos-native-support`), built from scratch |
+| Isolation | `CARGO_HOME=/tmp/wg-basic-root-cargo`, a dedicated Cargo home. The developer's own `~/.cargo` was not written by root, and the host's own Cargo activity was not disturbed. |
+| No silent skips | every rootful run carried `CI=true`, so a missing namespace or kernel prerequisite **fails** the suite instead of skipping the kernel evidence |
+
+**The ordinary gate order, natively on Linux** (this repository's gate order,
+run natively on the canonical platform at this head):
+
+```
+cargo fmt --all -- --check                                   clean
+cargo check --all-targets --locked                           clean
+cargo clippy --all-targets --locked -- -D warnings           clean
+cargo test --locked                                          43 test binaries, 664 tests, 0 failed
+cargo +1.89.0 check --all-targets --locked                   clean
+```
+
+**Every rootful suite**, each run as:
+
+```
+sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo CI=true \
+  cargo test --locked --features linux-integration --test <target> \
+  -- --test-threads=1 --nocapture
+```
+
+| Target | Result |
+|---|---|
+| `wireguard_kernel` | ok — 2 passed, 0 failed |
+| `network_reconcile` | ok — 2 passed, 0 failed |
+| `network_control_e2e` | ok — 2 passed, 0 failed |
+| `durable_owner` | ok — 10 passed, 0 failed |
+| `durable_restart` | ok — 9 passed, 0 failed |
+| `durable_backup` | ok — 2 passed, 0 failed |
+| `product_management_rootful` | ok — 6 passed, 0 failed |
+| `maintenance_rootful` | ok — 1 passed, 0 failed |
+| `doctor_readonly` | ok — 2 passed, 0 failed |
+| `service_rootful_e2e` | ok — 3 passed, 0 failed |
+| `upgrade_rehearsal_rootful` | ok — 1 passed, 0 failed (`v4_product_traffic_rolls_back_and_reupgrades_as_one_transaction`) |
+
+Forty rootful tests across eleven targets, every one executed: **no suite
+skipped, no test ignored, no test filtered out.** The rehearsal carried the
+Phase 8 baseline built from the pinned commit `e8fd6b1`
+(`sha256 f14d9289bf553ab4d67b04f29cf94424b72a8a3b0738ab967de4b043a07ccc64`)
+and this head's candidate
+(`sha256 f09d2090b2b007f3614d9ed8409800fffbeab37d0a10586eadb38fc3e775ce99`),
+and it exercised the v4 → current schema migration that C003's schema-8 change
+sits inside.
+
+The kernel evidence is real: `wireguard_kernel` completed a real kernel
+WireGuard handshake, telemetry, peer update, and peer preservation in a
+namespace; `product_management_rootful` created a client that became a real
+kernel peer (`wg0`) and established a real kernel handshake, and read live
+telemetry back through the authenticated HTTP surface.
+
+### 11.4 The host's unrelated state is preserved
+
+The run captured the host's network namespace list, links, IPv4 and IPv6 route
+tables, the whole nftables ruleset, the nftables table list, the systemd units
+matching `wg-basic*`, the canonical installation paths, and `wg show`, before
+and after.
+
+| Inventory | Before vs after |
+|---|---|
+| network namespaces | identical |
+| links | identical |
+| nftables **table list** | identical |
+| systemd units matching `wg-basic*` | identical (none) |
+| `/etc/wg-basic`, `/var/lib/wg-basic`, `/usr/local/bin/wg-basic` | identical (none present before, none present after) |
+| `wg show` | identical (no host WireGuard interface) |
+| IPv4/IPv6 route tables | differ **only** in the host's own IPv6 router-advertisement expiry counters counting down (`expires 3587sec` → `expires 3169sec`); every route itself is byte-identical, and no route was added or removed |
+| the nftables ruleset | differs **only** in docker's own `DOCKER` jump packet counter (`packets 177` → `packets 209`) on this host's docker bridge; no rule was added, removed, or changed, and no `wg-basic` table was created |
+
+The suites clean up after themselves: they work in disposable namespaces and
+temporary state directories, and this run left nothing behind on the host.
+
+### 11.5 What this amendment does not claim
+
+- **Two system-level destructive tests were not run on this host, by choice.**
+  `tests/system_installation.rs`'s
+  `systemd_installation_ownership_reinstall_and_service_credentials` and
+  `tests/update_transaction_rootful.rs`'s
+  `signed_systemd_update_rolls_back_and_retries` mutate the canonical
+  installation paths (`/usr/local/bin/wg-basic`, `/etc/wg-basic`) and the
+  host's systemd units. Their own annotations say so — *"mutates canonical
+  installation paths and systemd; disposable systemd VM only"* — and this host
+  is the maintainer's working machine, not a disposable VM. They are qualified
+  by the CI instead, on a disposable runner. They are not part of the ten
+  rootful targets the gate order enumerates, and no claim is made here that
+  they were run.
+- **This is the canonical platform, not the macOS target.** Nothing in this
+  amendment adds macOS evidence. The routed-LAN evidence above is C003's own
+  controlled-host run on the disposable arm64 macOS guest, and C011's re-run of
+  that same leg on the later code; the macOS supported target remains Apple
+  silicon alone under ADR-009.
+- **The Darwin Internet-exit gateway mode is still refused.** `gateway` is
+  C004's subject and is not claimed here.
+- **Installation and transactional self-update are still not implemented.**
+  Phase 10 remains planned and M001 is ready. Nothing in this amendment
+  changes M007's MUST-NOT-release standing, and no release, tag, or artifact
+  is authorized by it.
+
+### 11.6 Disposition after this amendment
+
+**Closed.** The routed-LAN contract is implemented and qualified: real IPv4 and
+IPv6 traffic traversed the tunnel in both directions to an approved prefix and
+back on a controlled host, a destination outside the approved prefix and a
+spoofed source were refused, every missing prerequisite produced its own named
+refusal, the product wrote no PF state, no forwarding sysctl, and no route,
+and the two conditions this record carried are corrected by C011 and C012.
+
+The Linux half of this milestone's own gate — "routine/MSRV + all Linux rootful
+suites" — is now evidenced natively on a controlled Linux host at this head,
+with the ordinary gate order clean, forty rootful tests across eleven targets
+executed with no skips, and the host's unrelated state preserved.
+
+C004's dependency on C003 was already discharged by the conditional closure;
+nothing in this amendment widens what C004 may claim, and C005 remains open on
+its own gates and on the maintainer's release authority.
