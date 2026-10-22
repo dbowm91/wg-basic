@@ -382,6 +382,26 @@ pub fn classify_device_observation(
     }
 }
 
+/// Whether two paths name the same file.
+///
+/// The kernel reports the **canonical** path of a running executable, while
+/// the receipt records the path the helper was installed at. Those are two
+/// spellings of one file whenever a directory on the way is a symlink, and on
+/// macOS `/tmp` is `/private/tmp` on every host. Comparing the strings would
+/// report a live, correct helper as a mismatch, and an installation whose
+/// helper lives under such a directory could never hold a managed tunnel: the
+/// claim would read as stale, the receipt would be dropped, and the tunnel
+/// would be recreated into the same verdict. The two are therefore compared
+/// as the files they name.
+///
+/// A path that cannot be resolved names nothing, so it matches nothing.
+fn same_file(left: &Path, right: &Path) -> bool {
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
 /// Proves that a recorded tunnel still exists and is still ours.
 ///
 /// The proof is joint: the recorded helper pid must still be alive *and* still
@@ -397,7 +417,7 @@ pub fn prove_ownership(runtime: &ManagedRuntime, device_present: bool) -> Owners
         Some(path) => path,
         None => return OwnershipOutcome::HelperMismatch,
     };
-    if executable != Path::new(&runtime.helper_path) {
+    if !same_file(&executable, Path::new(&runtime.helper_path)) {
         return OwnershipOutcome::HelperMismatch;
     }
     if super::darwin::verify_helper_sha256(Path::new(&runtime.helper_path), &runtime.helper_sha256)
@@ -1067,6 +1087,35 @@ mod tests {
                 .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
                 .collect(),
         }
+    }
+
+    #[test]
+    fn a_helper_under_a_symlinked_directory_is_still_the_pinned_executable() {
+        // The kernel reports the canonical path of a running executable, and
+        // the receipt records the path the helper was installed at. On macOS
+        // `/tmp` is `/private/tmp` on every host, so a helper installed there
+        // would be reported as a mismatch: the claim would read as stale, the
+        // receipt would be dropped, and the tunnel would be recreated into
+        // the same verdict. The two are compared as the files they name.
+        let dir = std::env::temp_dir().join(format!("wg-same-file-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let real = dir.join("helper");
+        std::fs::write(&real, b"helper").expect("helper file");
+        let link = dir.join("link");
+        std::os::unix::fs::symlink(&real, &link).expect("symlink");
+        assert!(
+            same_file(&link, &real),
+            "a symlinked path names the same file"
+        );
+        assert!(
+            !same_file(&link, &dir.join("other")),
+            "a different file is not the same file"
+        );
+        assert!(
+            !same_file(&link, &dir.join("missing")),
+            "an unresolvable path names nothing"
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
