@@ -1,8 +1,8 @@
 # macOS Native Server C011 — Service Lifecycle and Helper-Recovery Correctives
 
-Status: **in implementation**. The three findings this plan corrects were
-recorded in `plans/closure/macos-native-server-corrective/c003-status.md`; the
-implementation and the controlled-host evidence are recorded in
+Status: **conditionally closed** (2026-10-22). The three findings this plan
+corrects were recorded in `plans/closure/macos-native-server-corrective/c003-status.md`;
+the implementation and the controlled-host evidence are recorded in
 `plans/closure/macos-native-server-corrective/c011-status.md`.
 
 Baseline: `plans/macos-native-support@5238816`.
@@ -137,10 +137,19 @@ It must show:
   lost return route;
 - the route to the approved prefix names a gateway.
 
+The post-recovery traffic assertion waits for a **new** handshake. A handshake
+the peer still holds from before the kill is not a session the replacement
+helper shares, so a check that only asks for a non-zero handshake would be
+satisfied by the stale value and would prove nothing about the replacement.
+The window the wait allows is the peer's rekey interval, because the session
+is the peer's to re-establish.
+
 Unit coverage must fail without each fix: a saturated queue must not refuse
 the stop request; the stopped worker must not work through the backlog; a
 receipt naming a dead helper must be dropped rather than refused; a present
-interface must be retained for a recovery and an absent one must not be.
+interface must be retained for a recovery and an absent one must not be; a
+receipt that did not reach the desired state must not be reported as a
+converged recovery.
 
 ## Known limitations
 
@@ -149,6 +158,16 @@ interface must be retained for a recovery and an absent one must not be.
   not reinstall the operator's filter: the rendered rules name the device, so
   a renumbered device means the rules have to be reinstalled, exactly as after
   any device change.
+- The recovery restores the **tunnel**, not the **sessions**. A WireGuard
+  session lives in the helper's memory, so a replacement helper starts with no
+  session with any peer, and a peer whose own session is still valid keeps
+  sending packets the replacement cannot decrypt. The peer re-keys on the
+  protocol's own interval (120 s by default) and the handshake that follows is
+  answered by the replacement, so the traffic is down for that window even
+  though the device, the address, the routes, and the peer policy are already
+  back. The product cannot shorten it: the address a peer is reached at is
+  learned from its handshake initiations, which is live telemetry the store
+  does not persist.
 - The upstream route shape is the upstream router's, and the product cannot
   observe it. It stays an operator prerequisite with a documented check.
 - The privileged authority retains the applied desired interface, and with it

@@ -244,6 +244,21 @@ pub enum ApplyStatus {
     VerificationFailed,
 }
 
+impl ApplyStatus {
+    /// Whether the apply reached the desired state.
+    ///
+    /// The absence of an error is not the same thing: an apply that stopped at
+    /// a failed mutation, or that failed its verification, returns a receipt
+    /// rather than an error, and a caller that treats the receipt as success
+    /// would claim a convergence that was never observed.
+    pub fn converged(self) -> bool {
+        matches!(
+            self,
+            ApplyStatus::NoChange | ApplyStatus::Applied | ApplyStatus::AlreadyConverged
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SafeFailureCategory {
@@ -309,4 +324,19 @@ pub enum ReconcileError {
     BackendFailure,
     #[error("wireguard configuration is invalid")]
     WireGuard(#[from] WireGuardValidationError),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ApplyStatus;
+
+    #[test]
+    fn only_a_reached_desired_state_counts_as_converged() {
+        assert!(ApplyStatus::NoChange.converged());
+        assert!(ApplyStatus::Applied.converged());
+        assert!(ApplyStatus::AlreadyConverged.converged());
+        assert!(!ApplyStatus::FailedBeforeMutation.converged());
+        assert!(!ApplyStatus::PartialFailure.converged());
+        assert!(!ApplyStatus::VerificationFailed.converged());
+    }
 }

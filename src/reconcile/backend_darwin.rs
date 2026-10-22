@@ -279,7 +279,10 @@ impl DarwinNetworkBackend {
         self.stop_supervised(interface);
         for attempt in 1..=HELPER_RECOVERY_ATTEMPTS {
             match self.apply_desired(&desired) {
-                Ok(_) => {
+                // The receipt carries the outcome, not just the absence of an
+                // error: an apply that stopped at a failed mutation or failed
+                // its verification is not a recovery.
+                Ok(receipt) if receipt.status.converged() => {
                     crate::operational::emit(
                         "netd.helper_recovery_completed",
                         crate::operational::Severity::Warn,
@@ -291,6 +294,23 @@ impl DarwinNetworkBackend {
                         Some("helper"),
                     );
                     return;
+                }
+                Ok(receipt) => {
+                    if attempt == HELPER_RECOVERY_ATTEMPTS {
+                        crate::operational::emit(
+                            "netd.helper_recovery_failed",
+                            crate::operational::Severity::Error,
+                            "netd",
+                            "helper_recovery",
+                            "failed",
+                            Some(("interface", interface)),
+                            None,
+                            Some("helper"),
+                        );
+                        let _ = receipt;
+                        return;
+                    }
+                    std::thread::sleep(HELPER_MONITOR_INTERVAL);
                 }
                 Err(error) => {
                     if attempt == HELPER_RECOVERY_ATTEMPTS {

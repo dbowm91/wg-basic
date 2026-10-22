@@ -27,8 +27,9 @@
 //! - losing the route to an approved destination produces a refusal, and the
 //!   operator's route restores it;
 //! - killing the helper is recovered: the privileged authority replaces the
-//!   helper it lost, and the tunnel carries the policy again, on whichever
-//!   device the kernel assigns.
+//!   helper it lost, the tunnel carries the policy again, on whichever device
+//!   the kernel assigns, and the peer establishes a new session with the
+//!   replacement and its traffic flows again.
 //!
 //! Private keys are generated fresh per run and never enter evidence output.
 
@@ -36,7 +37,7 @@
 
 use std::path::Path;
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use wg_basic::launchd;
 
@@ -70,6 +71,17 @@ const ATTEMPTED_PREFIX6: &str = "2001:db8::/32";
 /// return-path probe locally instead of through the tunnel, which would make
 /// that probe pass for the wrong reason.
 const CLIENT_TUNNEL_ADDRESS: &str = "10.77.0.2";
+
+/// The window a peer needs to re-key after the server's helper is replaced.
+///
+/// A WireGuard session is not restored by recreating a helper: the
+/// replacement helper holds no session, and a peer whose own session is
+/// still valid keeps sending packets the replacement cannot decrypt. The
+/// peer re-keys 120 s after its last handshake and rejects its session
+/// 180 s after it, so the window below covers both with margin. A shorter
+/// wait would fail on the protocol's own schedule and say nothing about
+/// the recovery.
+const PEER_REKEY_WINDOW: Duration = Duration::from_secs(210);
 
 /// The shell listing of the management-service processes.
 ///
@@ -571,7 +583,7 @@ fn install_operator_filter(evidence: &mut Evidence, anchor: &str, rules: &[Strin
     let path = format!("/etc/pf.anchors/{anchor}");
     sh(evidence, "sudo", &["mkdir", "-p", "/etc/pf.anchors"]);
     let mut tee = Command::new("sudo")
-        .args(["tee", &path])
+        .args(["tee", path.as_str()])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -627,6 +639,77 @@ fn remove_operator_filter(evidence: &mut Evidence, anchor: &str, path: &str) {
         ],
     );
     sh(evidence, "sudo", &["rm", "-f", path]);
+}
+
+/// Reloads the operator-managed filter after the managed device was replaced.
+///
+/// The rendered rules name the tunnel device, and PF binds an interface name
+/// to its index when the ruleset is loaded. A replacement device has a new
+/// index, and the state table still holds the flows of the device that is
+/// gone. Loading the ruleset again is what an operator does after any device
+/// change, and it is what makes the rules apply to the live device.
+fn refresh_operator_filter(evidence: &mut Evidence, path: &str, rules: &[String]) {
+    let mut tee = Command::new("sudo")
+        .args(["tee", path])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("refresh the filter rules");
+    {
+        use std::io::Write as _;
+        tee.stdin
+            .as_mut()
+            .expect("the rules pipe")
+            .write_all(format!("{}\n", rules.join("\n")).as_bytes())
+            .expect("write the rules");
+    }
+    let _ = tee.wait_with_output();
+    sh(evidence, "sudo", &["chmod", "644", path]);
+    sh(evidence, "sudo", &["pfctl", "-f", "/etc/pf.conf"]);
+    let ruleset = sh(evidence, "/sbin/pfctl", &["-s", "rules"]);
+    evidence.log(&format!(
+        "the packet filter ruleset after the refresh:\n{ruleset}"
+    ));
+}
+
+/// Collects what the host's forwarding path looks like when the routed LAN
+/// does not carry traffic.
+///
+/// The evidence has to say where the packets stopped: the routes, the managed
+/// device's addresses and index, the filter's rules and state, the neighbour
+/// cache, and the host's own reachability of the approved destination. A
+/// verdict that says the prerequisites are in place does not say any of that.
+fn forwarding_diagnostics(evidence: &mut Evidence, device: Option<&str>) {
+    let Some(device) = device else {
+        evidence.log("there is no managed device to diagnose");
+        return;
+    };
+    for (label, args) in [
+        ("the routes", vec!["netstat", "-rn", "-f", "inet"]),
+        ("the managed device", vec!["ifconfig", device]),
+        ("the filter rules", vec!["pfctl", "-s", "rules", "-v"]),
+        ("the filter state", vec!["pfctl", "-s", "state"]),
+        ("the neighbour cache", vec!["arp", "-an"]),
+        (
+            "the forwarding setting",
+            vec!["sysctl", "-n", "net.inet.ip.forwarding"],
+        ),
+    ] {
+        let (_ok, output) = sh_unchecked(evidence, "sudo", &args);
+        evidence.log(&format!("{label}:\n{output}"));
+    }
+    // The host's own reachability of the approved destination: if this fails,
+    // the tunnel was never the thing that was broken.
+    let direct = sh_unchecked(
+        evidence,
+        "sudo",
+        &["ping", "-c", "2", "-W", "2000", LAN_HOST],
+    );
+    evidence.log(&format!(
+        "the host's own probe of the approved destination: {}",
+        direct.1
+    ));
 }
 
 /// Whether a ping transcript shows that the target answered.
@@ -1274,6 +1357,31 @@ fn live_c003_routed_lan_forwards_to_an_approved_downstream_prefix() {
     evidence.log(&format!(
         "the managed device before the helper restart: {device_before:?}"
     ));
+    // The peer's handshake as it stands immediately before the kill. A
+    // handshake the peer still holds from before the kill is not a session
+    // the replacement helper shares, so the recovery has to be shown to
+    // produce a *new* one.
+    let handshake_before = peer_run(&mut evidence, &driver, &["handshake"])
+        .trim()
+        .parse::<u64>()
+        .unwrap_or(0);
+    evidence.log(&format!(
+        "the off-host peer's handshake before the kill: {handshake_before}"
+    ));
+    // The capture runs across the whole recovery, so the evidence says where
+    // the packets stopped rather than only that they did. The filter keeps
+    // the tunnel's own transport and the inner traffic, and leaves the
+    // host's unrelated background traffic out.
+    sh_unchecked(
+        &mut evidence,
+        "sudo",
+        &[
+            "sh",
+            "-c",
+            "rm -f /tmp/c011-capture.pcap; nohup tcpdump -i any -n -w /tmp/c011-capture.pcap 'udp port 51820 or icmp' >/dev/null 2>&1 & sleep 1",
+        ],
+    );
+    let killed_at = Instant::now();
     sh(
         &mut evidence,
         "sudo",
@@ -1318,6 +1426,111 @@ fn live_c003_routed_lan_forwards_to_an_approved_downstream_prefix() {
         "the recovered tunnel must carry the routed LAN again: {}",
         verdict.summary
     );
+
+    // The product's own account of the peer, right after the recovery.
+    //
+    // The replacement helper is a new process: it holds no session with any
+    // peer, and it has never seen a handshake initiation, so it has no
+    // endpoint to send one to. The product observes exactly that, and the
+    // observation is the product's own rather than the harness's inference.
+    let (telemetry_status, telemetry_body, _) = http(
+        addr,
+        "GET",
+        "/api/v1/clients/telemetry",
+        None,
+        Some(&cookie),
+        None,
+        "",
+    );
+    evidence.log(&format!(
+        "the client telemetry after the recovery (HTTP {telemetry_status}): {telemetry_body}"
+    ));
+
+    // The operator's filter names the tunnel device, and PF binds an
+    // interface name to its index when the ruleset is loaded. A replacement
+    // device carries a new index even when the kernel hands back the same
+    // name, so the rules have to be loaded again. Reloading the ruleset is
+    // the operator's step after any device change, and the leg takes it here
+    // for the same reason an operator would.
+    refresh_operator_filter(&mut evidence, &rules_path, &verdict.rules);
+
+    // A WireGuard session is not restored by recreating a helper.
+    //
+    // The replacement helper holds no session, and a peer whose own session
+    // is still valid keeps sending packets the replacement cannot decrypt.
+    // The peer re-keys on its own schedule, and the handshake that follows is
+    // the proof that the two sides share a session again.
+    //
+    // The handshake has to be a NEW one. A check that only asks for a
+    // non-zero handshake is satisfied by the value the peer reported before
+    // the kill, and would say the recovered tunnel works while proving
+    // nothing at all about the replacement helper.
+    let mut handshake_after = 0u64;
+    wait_until(
+        "a new off-host handshake after the recovery",
+        PEER_REKEY_WINDOW,
+        || {
+            let reported = peer_run(&mut evidence, &driver, &["handshake"]);
+            handshake_after = reported.trim().parse().unwrap_or(0);
+            handshake_after > handshake_before
+        },
+    );
+    evidence.log(&format!(
+        "the off-host peer completed a new handshake at {handshake_after} (the handshake before the kill was {handshake_before}), {:?} after the helper was killed",
+        killed_at.elapsed()
+    ));
+
+    // The traffic says the recovered tunnel is the same tunnel: the approved
+    // downstream host answers through it again. A verdict alone would not show
+    // that the replacement carries packets.
+    let downstream_after = peer_run(&mut evidence, &driver, &["ping-lan", LAN_HOST]);
+    evidence.log(&format!(
+        "the downstream probe after the recovery: {downstream_after}"
+    ));
+    assert!(
+        answered(&downstream_after),
+        "the recovered tunnel must carry traffic to the approved prefix again: {downstream_after}"
+    );
+    let downstream6_after = peer_run(&mut evidence, &driver, &["ping-lan6", LAN_HOST6]);
+    evidence.log(&format!(
+        "the IPv6 downstream probe after the recovery: {downstream6_after}"
+    ));
+    assert!(
+        answered(&downstream6_after),
+        "the recovered tunnel must carry IPv6 traffic to the approved prefix again: {downstream6_after}"
+    );
+    let returning_after = peer_run(&mut evidence, &driver, &["lan-host-ping", &client_address]);
+    evidence.log(&format!(
+        "the return probe after the recovery: {returning_after}"
+    ));
+    assert!(
+        answered(&returning_after),
+        "the downstream host must reach the recovered tunnel through the upstream route: {returning_after}"
+    );
+    // The negative still holds after the recovery: the replacement is bound by
+    // the same policy, not by a looser one.
+    let refused_after = peer_run(&mut evidence, &driver, &["ping-lan", "10.20.21.2"]);
+    evidence.log(&format!(
+        "the unapproved destination probe after the recovery: {refused_after}"
+    ));
+    assert!(
+        !answered(&refused_after),
+        "the recovered tunnel must still refuse an unapproved destination: {refused_after}"
+    );
+    let capture = sh_unchecked(
+        &mut evidence,
+        "sudo",
+        &[
+            "sh",
+            "-c",
+            "pkill -f 'tcpdump -i any' ; sleep 1; tcpdump -r /tmp/c011-capture.pcap -n 'udp port 51820 or icmp' 2>/dev/null | head -60",
+        ],
+    );
+    evidence.log(&format!(
+        "the packets captured across the recovery:\n{}",
+        capture.1
+    ));
+    forwarding_diagnostics(&mut evidence, device_after.as_deref());
 
     // The inventory after: the host's routes and the filter's rulesets.
     let routes_after = sh(&mut evidence, "netstat", &["-rn", "-f", "inet"]);
