@@ -25,7 +25,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-pub use migrations::recovery_snapshot_path;
+pub use migrations::{current_schema_version, recovery_snapshot_path};
+
 /// The highest schema version this binary understands.
 ///
 /// Re-exported so a caller outside this module reads the version through the
