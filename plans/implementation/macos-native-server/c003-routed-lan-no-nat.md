@@ -1,6 +1,6 @@
 # macOS Native Server C003 — Explicit Routed-LAN Mode Without NAT
 
-Status: **blocked, hard dependency C001**. Interface exploration can proceed; no networking claim before native controlled-host proof.
+Status: **implemented and qualified; conditionally closed 2026-10-22**. The hard dependency on C001 was discharged 2026-10-21; the native controlled-host proof this plan required was produced on 2026-10-22 and is recorded in `plans/closure/macos-native-server-corrective/c003-status.md`. The two findings that remain are recorded there and are routed to C001/C002's service-lifecycle matrix.
 Baseline: `plans/macos-native-support@fc51146e811cabebd042d852449c6e7f4f854265`.
 Source: corrective roadmap C003; M004/M005 (`plans/closure/macos-native-server/{004,005}-status.md`), ADR-008 and ADR-007.
 Primary class: corrective / capability / invariant.
@@ -43,3 +43,46 @@ the separate LAN host, the real Linux peer, the real-traffic proof,
 written. C003 remains unimplemented and unqualified on its own implementation
 and qualification, the published scope still means a qualified and
 demonstrated configuration, and the macOS support floor stays macOS 13.0.
+
+## Implementation and qualification (2026-10-22)
+
+The plan is implemented and qualified, and its closure record is
+`plans/closure/macos-native-server-corrective/c003-status.md`. This section
+records what the implementation became; it does not replace the requirements
+above, and the closure record carries the requirement-to-evidence matrix.
+
+- **Typed mode contract.** `host_only`, `routed_lan`, and `gateway` are three
+  variants of one typed contract, persisted in the desired state with a
+  schema-8 migration. `routed_lan` carries the approved destination prefixes
+  and the observed egress interface; `gateway` is refused on Darwin (C004's
+  subject) and `routed_lan` is refused on Linux.
+- **Forwarding prerequisites.** The product reads both forwarding sysctls and
+  writes neither. A missing family is a refusal, not a fallback.
+- **Return-path proof.** The approved destinations need a specific route
+  through the declared egress interface — never the default route — and the
+  tunnel pool needs an observed route scoped to the managed device.
+- **Operator-managed filter.** The product observes a bounded read-only view
+  of the operator's PF anchor, renders the rules the operator has to install
+  (both directions, both address families, no `to any`, no NAT), reports them
+  on the doctor check as structured data, and refuses on absence or drift.
+- **Qualification.** A disposable macOS guest ran the product's own managed
+  deployment as the server, a real WireGuard peer in a Linux namespace on a
+  second guest was the peer, and the LAN host lived in its own namespace
+  behind the upstream router. Real IPv4 and IPv6 traffic traversed the tunnel
+  to an approved prefix and back; a destination outside the approved prefix
+  and a spoofed source were refused; every missing prerequisite produced its
+  own named refusal.
+- **Defects.** The qualification exposed twelve defects, all corrected, each
+  covered by a test that fails without the fix. Two of them — the routed-LAN
+  filter carrying only its forward leg, and the traffic probes' assertions
+  being satisfied by `100% packet loss` — would have let a leg that carried
+  no traffic at all report a pass.
+- **Findings that remain.** The management service does not terminate within
+  the qualification's bound after `SIGTERM`, and a killed WireGuard helper is
+  not recovered automatically. Both are classified, with evidence, in the
+  closure record, and both belong to C001/C002's service-lifecycle matrix
+  rather than to this contract.
+
+The Darwin Internet-exit gateway mode remains refused, the supported Darwin
+target remains Apple silicon alone under ADR-009, and installation and
+transactional self-update remain unimplemented.
