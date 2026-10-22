@@ -1,6 +1,6 @@
 # macOS Native Server C012 — the Linux rootful qualification compiles again
 
-Status: **in implementation**. The defect this plan corrects was found in the
+Status: **closed** (2026-10-22). The defect this plan corrects was found in the
 Linux CI runs of the C011 branch; the implementation and the evidence are
 recorded in `plans/closure/macos-native-server-corrective/c012-status.md`.
 
