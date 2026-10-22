@@ -169,6 +169,34 @@ global forwarding change left behind, no `pfctl -e` left enabled, no
 provide (no reboot, no v6 uplink, main-ruleset attachment OS-refused) stays
 recorded as blocked in the milestone closures, not worked around.
 
+The host's `utun` namespace is not under the fixture's control: the host
+creates and destroys `utun` devices on its own and **recycles the indices**, so
+a device that existed when the fixture started may be gone before the product's
+own observation and the kernel may hand that same index to the helper the
+product spawns. Two host requirements follow.
+
+- **A device is identified only during a quiescent window.** The fixture waits
+  for the `utun` inventory to stop moving before it asks the product to
+  identify its device, and it retries a *contention* refusal — the product
+  finding more than one new device — a bounded number of times, recording
+  every attempt and every inventory. A refusal that is about identity or
+  executability is not retried.
+- **The managed device is proved new from the product's own observation**, not
+  from an inventory snapshot the fixture took at some other moment. The spawn
+  returns the inventory it read immediately before the helper started, and the
+  fixture compares against that.
+
+The ownership proof resolves the helper's path and the receipt's path to the
+files they name before comparing them, so a helper installed under a
+symlinked directory — `/tmp` is `/private/tmp` on every macOS host — still
+proves ownership. A path that cannot be resolved names nothing and fails the
+proof closed.
+
+The fixture identifies **its own** helper by the control socket the helper
+published, and it identifies that socket by its **device and inode** rather
+than by its path, because a respawned helper replaces the previous socket at
+exactly the same path with a new inode.
+
 Three controlled-host legs need a host that is not a hosted runner. Two of them
 live in a **separate test target** (`tests/wireguard_darwin_controlled.rs`),
 because the hosted job runs every `#[ignore]`d test in the

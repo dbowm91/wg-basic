@@ -99,11 +99,57 @@ type, and the kernel device, and only a joint proof authorizes a mutation. A
 receipt that cannot be re-proven is treated as absent, not as a foreign
 device to destroy.
 
+The executable the proof compares against the receipt is compared **as the
+file it names**, not as the string it was spelled. The kernel reports the
+canonical path of a running executable, while the receipt records the path the
+helper was installed at, and on macOS `/tmp` is `/private/tmp` on every host:
+`lsof` reports a helper started as `/tmp/wireguard-go` running as
+`/private/tmp/wireguard-go`. Comparing the two spellings reported a live,
+correct helper as a mismatch, so the claim read as stale, the receipt was
+dropped, and the tunnel was recreated into the same verdict — an installation
+whose helper lived under a symlinked directory could never hold a managed
+tunnel. Both sides are now resolved to the files they name and compared as
+those files; a path that cannot be resolved names nothing and therefore
+matches nothing, so the proof still fails closed. The receipt's stored path is
+unchanged, so a receipt written before this correction is proved correctly too.
+
 A receipt that cannot be re-proven is also not a reason to refuse a create.
 The tunnel is recreated over it and the stale receipt is dropped; a receipt
 that *does* re-prove is a live tunnel, and a second tunnel over it is refused.
 See [ownership](ownership.md) and
 [startup recovery](startup-recovery.md).
+
+### The device observation is fallible, and says so
+
+Reading the host's `utun` inventory can fail, and a failed read is not an empty
+host. `observe_utun_interfaces` returns the inventory or an error;
+`utun_interface_names` is the best-effort wrapper for the callers that only
+need a name list, and no caller that reasons about ownership uses it.
+
+An unreadable inventory is carried as its own value, never as an absence:
+
+- `DeviceObservation::Unreadable` is what `classify_device_observation`
+  returns when the inventory could not be read.
+- `OwnershipOutcome::InterfaceUnreadable` is what the ownership proof returns
+  in that case. It is neither a proof nor a refutation, and it is never a
+  licence to mutate.
+- `OwnerClaim::Unreadable` is what the runtime registry returns for a receipt
+  whose claim could not be read. It is **refused and retried**, and the receipt
+  is **not** dropped: a claim that could not be read is neither live nor
+  stale, and treating a failed read as a stale claim tore down tunnels whose
+  devices were still there.
+
+The helper's spawn is observed the same way. `spawn_managed_tunnel` returns a
+`ManagedTunnel` carrying the helper, the device it chose, and
+`devices_before_spawn` — the inventory it read **immediately before** the
+helper started. The spawn's own evidence travels with its result, so a caller
+can check the product's observation instead of taking a second one of its own
+at a different moment. The device is identified by diffing the inventory
+around the spawn, and a diff that finds **more than one** new device is
+`HelperError::DeviceAmbiguous` (`managed_device_ambiguous`): the namespace was
+contended, and the product refuses to identify its own device by number. A
+failed observation is `HelperError::ObservationFailed`
+(`interface_inventory_unreadable`).
 
 ### The helper is replaced when it dies
 

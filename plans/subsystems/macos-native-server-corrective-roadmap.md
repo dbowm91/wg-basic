@@ -1,6 +1,6 @@
 # macOS Native Server — Post-M007 Integration and Release Corrective Roadmap
 
-Status: active corrective line, 2026-10-21. Source branch `plans/macos-native-support`; corrective handoff recorded at `fc51146e811cabebd042d852449c6e7f4f854265`; **C001 and C002 implemented at `b53ce2d` and now `closed` (2026-10-21)** on their Apple silicon controlled-host evidence, with the native Intel arch of both retired by scope under **ADR-009**; **C006 closed at `e37210b`** — the two boot-path defects C002's cold-reboot qualification exposed are corrected and the leg re-run to a pass; **C007 closed at `1bf4bb3`** and **C008 closed at `62337c5`** — the two defects that no environmental condition prevented fixing; **C010 active** — the Apple-silicon-only target implementation of ADR-009. C003 is **closed** (2026-10-22; its same-day conditional closure is amended by §11 of its closure record, which discharges both conditions through C011 and C012 and evidences the Linux rootful half on a controlled Linux host). C004 and C005 remain open: C004 on C003 and an administrator-integrated host, C005 on the scoped network gates and the maintainer's release authority. The original M007 MUST-NOT-release verdict remains binding and nothing in this line changes it.
+Status: active corrective line, 2026-10-21. Source branch `plans/macos-native-support`; corrective handoff recorded at `fc51146e811cabebd042d852449c6e7f4f854265`; **C001 and C002 implemented at `b53ce2d` and now `closed` (2026-10-21)** on their Apple silicon controlled-host evidence, with the native Intel arch of both retired by scope under **ADR-009**; **C006 closed at `e37210b`** — the two boot-path defects C002's cold-reboot qualification exposed are corrected and the leg re-run to a pass; **C007 closed at `1bf4bb3`** and **C008 closed at `62337c5`** — the two defects that no environmental condition prevented fixing; **C010 active** — the Apple-silicon-only target implementation of ADR-009. C003 is **closed** (2026-10-22; its same-day conditional closure is amended by §11 of its closure record, which discharges both conditions through C011 and C012 and evidences the Linux rootful half on a controlled Linux host). **C013 is closed** (2026-10-22) — the hosted live qualification asserted what it could not measure, and the product reported two observations it had not made; the qualification now proves the managed device from the product's own observation, and the product's interface observation is fallible and named. C004 and C005 remain open: C004 on C003 and an administrator-integrated host, C005 on the scoped network gates and the maintainer's release authority. The original M007 MUST-NOT-release verdict remains binding and nothing in this line changes it.
 
 Authority: `plans/000-long-term-specification.md`; `plans/003-planning-process.md`; accepted ADR-001–009; `plans/subsystems/macos-native-server-roadmap.md`; M003–M007 historical closure records. The original M007 MUST-NOT-release verdict remains binding.
 
@@ -75,6 +75,7 @@ C005 governs all distribution decisions. **ADR-008/M007 currently withhold every
 | C010 — Apple silicon only as the Darwin target (ADR-009's implementation) | **closed** 2026-10-21; closure `plans/closure/macos-native-server-corrective/c010-status.md` | scope amendment / infrastructure | `plans/implementation/macos-native-server/c010-apple-silicon-only-target.md` | The Darwin target set is Apple silicon only, an Intel Mac is refused with an actionable error, the declared helper build input names one target, and the qualification workflow has one architecture |
 | C011 — service-lifecycle and helper-recovery correctives (C003's corrective) | **conditionally closed** 2026-10-22 | corrective / invariant | `plans/implementation/macos-native-server/c011-service-lifecycle-and-helper-recovery.md` | The three findings C003's controlled-host run left open: the management service's shutdown is bounded and its stop request cannot be refused; a helper that dies is replaced by the privileged authority that spawned it (ADR-010), and a receipt naming a dead helper no longer wedges the installation; the upstream route shape is verifiable. F1's observation was a misreading of a launchd-restarted successor and is corrected by assertion, not by a rewrite of C003's record. Closure: `plans/closure/macos-native-server-corrective/c011-status.md` |
 | C012 — the Linux rootful qualification compiles again (C003's corrective) | **closed** 2026-10-22 | corrective / invariant | `plans/implementation/macos-native-server/c012-linux-rootful-qualification-recovery.md` | C003's policy-model change left the Linux-only fixtures uncompilable, so the Linux CI has been red on every job since `5238816`; the fixtures state their mode and the gate order type-checks the Linux-gated code from a Darwin host. Closure: `plans/closure/macos-native-server-corrective/c012-status.md` |
+| C013 — live-qualification observation integrity | **closed** 2026-10-22 | corrective / invariant | `plans/implementation/macos-native-server/c013-live-qualification-observation-integrity.md` | The hosted live job was red on two of twenty runs of the same code and its own evidence for the failing test was lost, so the flake could not be diagnosed from its artifact. The qualification compared the product's chosen device against an inventory snapshot taken at a different moment, which fires on correct product behaviour because macOS recycles `utun` indices; it now proves the device from the product's own pre-spawn observation, waits for a quiescent namespace, retries a contention refusal with every attempt and inventory recorded, identifies its own helper's socket by device and inode, claims only what it created, and keeps its evidence when it fails. The product's interface observation is fallible with its failures named, an unreadable inventory is refused and retried rather than treated as an absent device, and the ownership proof compares the helper's path as the file it names. The product's fail-closed adoption rule is unchanged. Closure: `plans/closure/macos-native-server-corrective/c013-status.md` |
 
 ### Unblock assessment (2026-10-21)
 
@@ -208,12 +209,12 @@ Each corrective creates its own **new** `plans/closure/macos-native-server-corre
 
 Normal gates: `cargo fmt --all -- --check`, `cargo check --all-targets --locked`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`, `cargo +1.89.0 check --all-targets --locked` on supported native targets, plus all pre-existing rootful Linux CI jobs. Run true Mac traffic tests on disposable consented hosts; no silent skips. Distinguish hosted macOS fixtures from controlled/rebootable/admin-integrated host evidence. The Linux rootful half is additionally run natively on a controlled Linux host with `CI=true`, so a missing namespace or kernel prerequisite fails the suite instead of skipping the kernel evidence, and with the host's unrelated state inventoried before and after — see `docs/development.md`. Do not release, tag, merge as completed support, or create release assets via this planning handoff.
 
-### Applied to C001/C002/C003/C006/C007/C008/C009/C010/C011/C012
+### Applied to C001/C002/C003/C006/C007/C008/C009/C010/C011/C012/C013
 
-Ten closure records exist under `plans/closure/macos-native-server-corrective/`:
+Eleven closure records exist under `plans/closure/macos-native-server-corrective/`:
 `c001-status.md`, `c002-status.md`, `c003-status.md`, `c006-status.md`,
 `c007-status.md`, `c008-status.md`, `c009-status.md`, `c010-status.md`,
-`c011-status.md`, and `c012-status.md`. All ten record the
+`c011-status.md`, `c012-status.md`, and `c013-status.md`. All eleven record the
 implementation head, the
 requirement-to-evidence matrix, the exact commands and runs, the
 security/ownership evidence, the docs evidence, the known limitations, the
@@ -225,7 +226,10 @@ recorded in each record. C003's is **closed** as of 2026-10-22 by a dated
 amendment that discharges its two conditions through C011 and its own Linux
 breakage through C012, and that adds the controlled-host Linux rootful
 evidence its §2 row pointed at but §3 did not contain. C011's is
-**conditionally closed**, on the two conditions stated in its §9.
+**conditionally closed**, on the two conditions stated in its §9. C013's is
+**closed** as of 2026-10-22: the hosted live qualification asserts only what
+it can measure, and the product's own interface observation is fallible,
+named, and never mistaken for an empty host.
 
 Four rules from the qualification protocol shaped those verdicts and shape
 every later corrective in this line:
