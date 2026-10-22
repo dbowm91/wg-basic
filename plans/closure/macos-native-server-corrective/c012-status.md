@@ -14,7 +14,7 @@ compile again*, on top of `ae98728`.
 Follow-ups: `3aeae59` — *linux(c012): rehearse the migration against the
 schema a current binary writes*; `b302e74` — *linux(c012): assert the migrated
 schema against the schema contract too*. The Linux CI run below is the one on
-`b302e74`.
+the final head; `39812428119` is the same code on `b302e74`.
 
 C003's own closure record is **not** rewritten. It records what that run
 observed; the silence in the Linux CI afterwards is recorded here.
@@ -162,7 +162,8 @@ a key, a secret, or a host resource.
 ## 8. Controlled-host evidence
 
 The evidence is the Linux CI on the final head, which is the only place the
-rootful qualification can run: run `39812428119`, on `b302e74`.
+rootful qualification can run: run `39813848250`, on the final head `b84cb8c`
+(`39812428119` is the same code on `b302e74`).
 
 | Job | `5238816` (C003's closure) | Final head |
 |---|---|---|
