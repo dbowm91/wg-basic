@@ -1,7 +1,8 @@
 # C013 — Live-qualification observation integrity
 
-Status: **planned** (2026-10-22). The defect is reproduced from CI history and
-diagnosed; the implementation has not started.
+Status: **closed** (2026-10-22). The defect is reproduced from CI history and
+diagnosed; the implementation and the evidence are recorded in
+`plans/closure/macos-native-server-corrective/c013-status.md`.
 
 Repository baseline: `c1d3d7d` (`plans/macos-native-support`).
 
@@ -326,5 +327,54 @@ evidence; the known limitations; the unresolved findings by severity; and a
 disposition.
 
 The closure record states plainly that the hosted runner is a hosted fixture
-and not controlled-host evidence, and that the Linux rootful suites were not
-re-qualified for this milestone.
+and not controlled-host evidence.
+
+## Amendment (2026-10-22): closure
+
+This milestone is **closed**. The three defects are corrected, the
+requirement-to-evidence matrix, the exact commands, the findings by severity,
+and the known limitations are in
+`plans/closure/macos-native-server-corrective/c013-status.md`, and the
+implementation heads are `120b1e2` and `f4bf28d` on
+`plans/macos-native-support`.
+
+Two of this plan's acceptance criteria need their exact reading, because the
+evidence is narrower than the criterion's wording allows it to be.
+
+**Criterion 3 — the live fixture on a disposable macOS host.** The live suite
+was run on the disposable guest at the final head with the final head's
+binaries (the digests compared on both sides before the run): **eight of the
+nine tests pass.** The one that does not is
+`live_forwarding_and_unattached_anchor_probe`, and it fails on the lab, not on
+the code — the lab's `wg-qual` anchor carries `no nat` for the lab prefixes,
+so the guest has no ICMP egress by design, and the test's own message says
+exactly that. The hosted runner answers `8.8.8.8` and the test passes there.
+This is **not** a run-count large enough to show the flake is gone: the
+change removes the two mechanisms the flake was made of, and the hosted job
+is where a recurrence would show up. "No red run observed" is not "no red run
+possible", and the closure record says so.
+
+**Criterion 5 — the Linux gate order.** The gate order is green at the final
+head on the maintainer's Mac **and** natively on the controlled Linux host,
+and the feature-bearing cross-clippy is green on the Mac. The controlled
+host's ordinary suite produced **one** red run at this head — an unrelated
+`service_session_restart` asserting 401 and receiving 503 — which did not
+reproduce: the suite passed on re-run and that target passed five consecutive
+times. Every product file this milestone changed is
+`#[cfg(target_os = "macos")]` and compiles to nothing on Linux, so it cannot
+be this change. The red run is recorded in the closure record rather than
+dropped, and it is not this milestone's code.
+
+**Criterion 6 — the C003 routed-LAN leg.** It passes on the final head on the
+disposable guest, against the final head's product, so C003's controlled-host
+evidence remains true of the code this milestone landed. C003's own closure
+record is not rewritten.
+
+Criterion 7 holds: the dependency audit is still red for the upstream reason
+already recorded, and it is not claimed as green.
+
+Nothing in this milestone widens what C004 may claim. The Darwin
+Internet-exit gateway mode remains refused, the supported Darwin target
+remains Apple silicon alone under ADR-009, installation and transactional
+self-update remain unimplemented, and the M007 MUST-NOT-release standing is
+unchanged.

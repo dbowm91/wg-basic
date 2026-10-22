@@ -96,6 +96,19 @@ sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo \
 - Never substitute mocked kernel behavior for real-kernel closure
   evidence; when `CI` is set, missing namespace/kernel prerequisites
   fail instead of skipping.
+- A live-fixture **contention refusal is a legitimate outcome**, not a
+  failure: on a host whose `utun` namespace churns, the product may find
+  more than one new device and correctly refuse to identify its own. The
+  live fixture waits for a quiescent `utun` inventory, retries a
+  contention refusal a bounded number of times, records every attempt and
+  every inventory, and still fails if the refusal persists. Never weaken
+  the product's fail-closed adoption rule to make the fixture pass, and
+  never retry an identity or executability refusal — retrying it only
+  repeats a correct answer.
+- The managed device is proved new from the **product's own** pre-spawn
+  observation, not from an inventory snapshot taken at a different moment:
+  macOS recycles `utun` indices, so a snapshot from another instant proves
+  nothing and fires on correct product behaviour.
 - Copy-pasteable per-suite commands live in `docs/development.md`;
   the suite catalog (what each target proves) is in
   `architecture/testing-qualification.md`.

@@ -55,9 +55,50 @@ Targets with `linux-integration` only compile/run under
 | `wireguard_darwin_live` | root, macOS only, `#[ignore]`d, needs `WGB_DARWIN_LIVE=1` + `WGB_WIREGUARD_GO` (+ `WGB_BINARY` for launchd) | Ephemeral-hosted-runner fixtures only: loopback handshake/traffic/counters (v4+v6), route inventory preservation, PF anchor lifecycle (with the attachment controls — the real positive, collision, and negative cases against live `pfctl` output), forwarding/PF cycle, launchd bootstrap/reinstall, production backend ownership, unprivileged management daemon, backend convergence; `--test-threads=1` |
 | `wireguard_darwin_controlled` | root, macOS only, `#[ignore]`d, needs `WGB_DARWIN_LIVE=1` + `WGB_WIREGUARD_GO` + `WGB_BINARY` (+ `WGB_PEER_COMMAND` for the off-host peer, `WGB_C002_REBOOT_PHASE` for the reboot leg) | Disposable controlled-host fixtures only, in a separate target so the hosted runner never picks them up: product path against an off-host Linux-kernel peer, and the three-phase cold-reboot leg; `--test-threads=1` |
 
+### What the hosted live fixture proves about the managed device
+
+The hosted live fixture runs on a host whose `utun` namespace is not under the
+fixture's control: the host creates and destroys `utun` devices on its own and
+**recycles the indices**. A device that existed when the fixture started may
+be gone before the product's own observation, and the kernel may hand that
+same index to the helper the product spawns. Two rules follow, and the
+fixture holds to both.
+
+**The device is proved new from the product's own observation.** The fixture
+does not compare the device the product chose against an inventory snapshot it
+took at some earlier moment; it uses the inventory the product read
+immediately before it spawned the helper, which the spawn returns as its own
+evidence (`devices_before_spawn`). A snapshot taken at a different instant
+proves nothing on a host that recycles indices, and asserting against one
+fires on correct product behaviour.
+
+**A contention refusal is a legitimate outcome.** When the product's diff finds
+more than one new device, it refuses to identify its own — it will not adopt a
+device by number. That refusal is `managed_device_ambiguous`, and it is a
+correct answer, not a failure to start. The fixture waits for a **quiescent**
+`utun` namespace, retries a contention refusal a bounded number of times,
+records **every attempt and every inventory** it observed, and still fails if
+the refusal persists. A refusal that is about *identity* or *executability* is
+never retried: retrying it would only repeat a correct answer.
+
+The fixture identifies **its own** helper by the control socket the helper
+published, and it identifies that socket by its **device and inode** rather
+than by its path: macOS derives the socket path from the `utun` index, so a
+respawned helper replaces the previous socket at exactly the same path with a
+new inode, and the path alone cannot tell the two apart. This is the
+fixture's own business; the product's own device-identification method is a
+separate question and is not changed by the fixture's method.
+
+The fixture claims only what it created: it asserts that **its** helper, **its**
+socket, and **its** receipt are gone, rather than that a set difference
+against a possibly stale inventory is empty. A failing live test keeps its
+evidence — the evidence file is written when the test ends, including when it
+ends in a panic, and the baseline the assertions compared against is logged —
+so a failure can be diagnosed from its own artifact.
+
 ## Architecture-guard categories
 
-`tests/architecture_guards.rs` currently contains 47 `#[test]` functions
+`tests/architecture_guards.rs` currently contains 67 `#[test]` functions
 (including the comment-stripper self-test and runtime checks such as
 secret redaction and the bundled-SQLite version). They are cheap
 source-text assertions that run in the ordinary suite. By category:
