@@ -325,6 +325,13 @@ With the final head's `wg-basic` and `wireguard_darwin_routed` on the guest,
 the leg **passes**: `1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered
 out`, in 191.1 s.
 
+Measuring what the leg left behind the host is what produced **F8** (§9): the
+leg's teardown restores the ruleset and the routes but not the anchor's
+loaded rules, and not PF's own state. The product's part is unaffected — it
+writes no PF state — and the guest was restored afterwards by emptying every
+`wg-basic-v1-*` anchor, moving the leftover anchor files aside, reloading the
+stock ruleset, and disabling PF.
+
 ## 6. Security and ownership evidence
 
 - **The adoption rule is unchanged.** Exactly one new `utun`, or fail closed.
@@ -392,6 +399,10 @@ out`, in 191.1 s.
 - **The routed-LAN leg's own global inventory comparison is unchanged.** It
   runs on the controlled guest, whose namespace does not churn, and it is
   C003's evidence rather than this milestone's subject.
+- **C003's routed-LAN leg leaves its loaded filter rules behind** (**F8**,
+  §9). This is a defect in that leg's fixture, not in the product and not in
+  this milestone's code; it needs its own corrective, and C003's closure
+  record carries the dated §12 amendment that says so.
 
 ## 9. Findings, by severity
 
@@ -424,6 +435,37 @@ out`, in 191.1 s.
   load. It did not reproduce: the suite passed on re-run and that target
   passed five consecutive times. It is recorded in §5.2 rather than dropped,
   and it is not this milestone's code.
+- **F8 (low, open, proposed, in C003's fixture):** re-running C003's
+  routed-LAN leg against this head showed that the leg's teardown does not
+  restore the guest's filter. macOS keeps a loaded anchor's **rules** across
+  `pfctl -f` and `pfctl -F all`, and the teardown removes the anchor from
+  `/etc/pf.conf` and deletes its anchor file without flushing the rules the
+  anchor already had loaded, so the operator's filter is left loaded and
+  being evaluated, with PF still enabled:
+
+  ```
+  $ pfctl -a wg-basic-v1-0349b3e7-3a2e-4a9b-a901-c521c4e31163 -s rules
+  pass out on en0 inet from 10.77.0.0/24 to 10.20.20.0/24 flags S/SA keep state
+  pass out on en0 inet6 from 2001:db8:77::/64 to 2001:db8:20::/64 flags S/SA keep state
+  pass in on en0 inet from 10.20.20.0/24 to 10.77.0.0/24 flags S/SA keep state
+  pass in on en0 inet6 from 2001:db8:20::/64 to 2001:db8:77::/64 flags S/SA keep state
+  pass in on utun0 inet from 10.77.0.0/24 to 10.20.20.0/24 flags S/SA keep state
+  pass in on utun0 inet6 from 2001:db8:77::/64 to 2001:db8:20::/64 flags S/SA keep state
+  pass out on utun0 inet from 10.20.20.0/24 to 10.77.0.0/24 flags S/SA keep state
+  pass out on utun0 inet6 from 2001:db8:20::/64 to 2001:db8:77::/64 flags S/SA keep state
+  ```
+
+  Two of those rules match on `utun0`, an index macOS recycles, so a later
+  tunnel that took it would inherit the previous leg's rules — the hazard the
+  leg's own drift control had already established, left behind by the leg
+  itself. The fixture's `.drift` file also remains in `/etc/pf.anchors/`. The
+  product wrote none of this state, the host is a disposable lab, and the leg
+  itself still passes; the defect is in `tests/wireguard_darwin_routed.rs`,
+  which is C003's fixture and not this milestone's code. It needs its own
+  corrective, and it is recorded in C003's closure record as its dated §12
+  amendment. The guest was restored afterwards: PF disabled, the stock
+  ruleset, every `wg-basic-v1-*` anchor emptied, and the leftover anchor
+  files moved aside.
 
 ## 10. Disposition
 
