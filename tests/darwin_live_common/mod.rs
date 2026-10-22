@@ -266,18 +266,28 @@ pub fn spawn_managed_tunnel_with_retries(
     );
 }
 
-/// The control sockets the pinned helper publishes, by file name.
-pub fn uapi_socket_names() -> Vec<String> {
+/// The control sockets the pinned helper publishes, with the identity of each.
+///
+/// The identity is the file's device and inode, not its name: macOS recycles
+/// a `utun` index, and the helper binds its control socket at a path derived
+/// from that index, so a *replaced* socket can sit at exactly the path the
+/// previous helper used. The name alone cannot tell the two apart.
+pub fn uapi_socket_identities() -> Vec<(String, (u64, u64))> {
     let dir = Path::new(wg_darwin::UAPI_SOCKET_DIR);
-    let mut names: Vec<String> = match std::fs::read_dir(dir) {
+    let mut entries: Vec<(String, (u64, u64))> = match std::fs::read_dir(dir) {
         Ok(entries) => entries
             .filter_map(|entry| entry.ok())
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter_map(|entry| {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let metadata = std::fs::metadata(entry.path()).ok()?;
+                use std::os::unix::fs::MetadataExt;
+                Some((name, (metadata.dev(), metadata.ino())))
+            })
             .collect(),
         Err(_) => Vec::new(),
     };
-    names.sort();
-    names
+    entries.sort();
+    entries
 }
 
 /// Waits until the helper publishes exactly one new control socket, and names
@@ -287,23 +297,32 @@ pub fn uapi_socket_names() -> Vec<String> {
 /// device name it was given: the helper owns that socket and publishes it
 /// under the device's name. A device *diff* cannot make that link on a busy
 /// host — macOS creates and destroys `utun` devices on its own — while the
-/// socket the helper itself publishes is unambiguous.
+/// socket the helper itself publishes is unambiguous, as long as it is
+/// identified by what it *is* and not by what it is called: a recycled index
+/// puts the new socket at the old socket's path.
 pub fn wait_for_new_uapi_socket(
     evidence: &mut Evidence,
-    before: &[String],
+    before: &[(String, (u64, u64))],
     timeout: Duration,
 ) -> String {
     let start = Instant::now();
     loop {
-        let after = uapi_socket_names();
-        let new: Vec<&String> = after.iter().filter(|name| !before.contains(name)).collect();
+        let after = uapi_socket_identities();
+        let new: Vec<&(String, (u64, u64))> = after
+            .iter()
+            .filter(|entry| !before.contains(entry))
+            .collect();
         match new.as_slice() {
             [single] => {
                 let name = single
+                    .0
                     .strip_suffix(".sock")
-                    .unwrap_or(single.as_str())
+                    .unwrap_or(single.0.as_str())
                     .to_owned();
-                evidence.log(&format!("the helper published {single} for device {name}"));
+                evidence.log(&format!(
+                    "the helper published {} for device {name}",
+                    single.0
+                ));
                 return name;
             }
             [] => {}
@@ -463,7 +482,7 @@ impl LiveEndpoint {
     /// be ambiguous — or name the wrong device — exactly when the host is
     /// busy.
     pub fn spawn(evidence: &mut Evidence, helper_path: &Path, tag: &str) -> Self {
-        let before_sockets = uapi_socket_names();
+        let before_sockets = uapi_socket_identities();
         let argv =
             wg_darwin::HelperArgv::new(helper_path.to_owned()).expect("helper argv must validate");
         let helper =

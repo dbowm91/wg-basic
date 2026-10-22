@@ -23,7 +23,7 @@ observation as an empty one.
 
 ## Objective
 
-Two things, one root cause.
+Three things, one root cause.
 
 1. The hosted macOS live qualification must assert only what it can prove. It
    currently compares the product's chosen device against a device inventory
@@ -36,6 +36,15 @@ Two things, one root cause.
    "there is nothing there" are the same value to every caller. One of the
    call sites turns that into a **fail-open**: the teardown wait concludes
    that a device is gone when the inventory was merely unreadable.
+3. The product must not report a mismatch it cannot prove. The ownership
+   proof compares the executable path the kernel reports for the running
+   helper against the path the receipt records, as strings. The kernel
+   reports the **canonical** path, and `/tmp` is `/private/tmp` on every
+   macOS, so a helper installed under a symlinked directory is reported as
+   "not the pinned executable" while it is running correctly. The claim then
+   reads as stale, the receipt is dropped, and the tunnel is recreated into
+   the same verdict: an installation whose helper lives under such a
+   directory can never hold a managed tunnel.
 
 ## Explicit non-goals
 
@@ -69,6 +78,8 @@ The defect is reproduced from the branch's own CI history, not inferred.
 | The two inventory mechanisms **agree**: `ifconfig -l` and `getifaddrs` list the same `utun0`–`utun6` on the maintainer's Mac, and every one of those devices has **no IPv4 address** while `getifaddrs` still lists it | measured on the maintainer's Mac, 2026-10-22 |
 | The fixture's baseline is never logged, and the evidence file is written only on success, so the failing run uploaded **no** artifact for the failing test | `tests/wireguard_darwin_live.rs:1393` (`let baseline = utun_names();`, no log) and `tests/darwin_live_common/mod.rs:79` (`pub fn write(self)`) |
 | The product discards a failed enumeration: `utun_interface_names()` ends in `.unwrap_or_default()` | `src/wireguard/darwin_backend.rs:441` |
+| The kernel reports the helper's **canonical** executable path while the receipt records the installed path: `/private/tmp/wireguard-go` against `/tmp/wireguard-go` | measured on the disposable guest, 2026-10-22 — `lsof -p <pid>` shows `txt /private/tmp/wireguard-go` for a process started as `/tmp/wireguard-go`, and `/tmp` is a symlink to `private/tmp` |
+| A helper's control socket is left behind when it is killed, and a helper given the same recycled index **replaces** it at the same path with a new inode | measured on the disposable guest, 2026-10-22 — the socket's inode changes from 132950 to 132952 across the respawn, and the helper survives the stale file |
 | The teardown wait treats an unreadable inventory as "the device is gone" | `src/reconcile/backend_darwin.rs:561` |
 | The CI runs the live fixture single-threaded, so test concurrency is **not** the cause | `.github/workflows/macos-qualification.yml:78` (`--ignored --test-threads=1 --nocapture`) |
 
@@ -129,6 +140,11 @@ build.
    decisions for every *successful* observation are unchanged.
 7. The teardown wait treats an unreadable inventory as "not yet gone" rather
    than "gone". This is a fail-open being closed.
+8. The ownership proof compares the running helper's executable path with the
+   recorded path **as the files they name**, not as strings. A path that
+   cannot be resolved names nothing and matches nothing, so the proof still
+   fails closed. The receipt's stored path is unchanged, and a receipt
+   written before this change is proved correctly too.
 
 No change to: the persisted state or its schema, the UAPI wire format, the
 netd/serve protocol, the configuration surface, or the helper's argv.
@@ -147,7 +163,11 @@ netd/serve protocol, the configuration surface, or the helper's argv.
   pre-spawn inventory. The leak check becomes per-device: the devices the
   fixture created must be gone, rather than a set difference against a stale
   snapshot (which the host's own churn can both trigger and hide). The
-  fixture's inventory observations are logged.
+  fixture's inventory observations are logged. The fixture's *own* helper is
+  identified by the control socket it publishes, by the socket's identity
+  rather than its name: a device diff cannot be unambiguous on a host that
+  creates and destroys `utun` devices on its own, and a recycled index puts
+  the new socket at the old socket's path.
 - **WP4 — the fixture tolerates a correct refusal.** Before identifying a
   device, the fixture waits for the host's inventory to be **quiescent** (two
   consecutive equal observations). If the product still refuses — which is
@@ -215,6 +235,7 @@ Deterministic, and each fails without the corresponding fix:
 | the fixture's "the managed device is new" predicate holds for a device whose index was recycled after the product's own observation, and fails for a device that was present in that observation | the fixture proves what the product proved |
 | the fixture's leak predicate reports a device the fixture created as leaked and does **not** report a device the host created on its own | the churn-induced false leak is gone |
 | the fixture's retry decision retries a contention refusal and does not retry an identity mismatch | a correct refusal is retried; a real defect is not |
+| the ownership proof accepts a helper whose installed path traverses a symlink, and rejects a different file and an unresolvable path | a live, correct helper is no longer reported as a mismatch; the proof is not weakened |
 
 The ordinary gate order runs these on the Darwin host; the hosted macOS
 `gates-arm64` job runs them too.
