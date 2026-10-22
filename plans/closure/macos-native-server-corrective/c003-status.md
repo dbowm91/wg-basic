@@ -402,3 +402,76 @@ executed with no skips, and the host's unrelated state preserved.
 C004's dependency on C003 was already discharged by the conditional closure;
 nothing in this amendment widens what C004 may claim, and C005 remains open on
 its own gates and on the maintainer's release authority.
+
+## 12. Amendment (2026-10-22): the leg's teardown did not restore the filter
+
+### 12.1 Why this amendment exists
+
+This record's §2 carries one row:
+
+> | Stop if the only workable strategy needs uncontrolled PF edits, unbounded
+> sysctl writes, default-route takeover, unqualified filtering, or foreign
+> resource deletion | None was needed. The product writes no PF state, no
+> sysctl, and no route; the operator installed the filter, the forwarding
+> switches, and the upstream routes, and the run's teardown left the host's
+> routing and filter as it found them |
+
+The last clause is not accurate, and re-running the leg found why.
+
+macOS keeps a loaded anchor's **rules** across `pfctl -f` and `pfctl -F all`.
+The leg's teardown removes the anchor from `/etc/pf.conf` and deletes its
+anchor file, which restores the *ruleset*; it does not flush the anchor's
+already-loaded rules, and it does not disable PF. Measured on the disposable
+guest immediately after the leg was re-run against the final head:
+
+```
+$ pfctl -s info | head -2
+Status: Enabled for 0 days 00:33:11           Debug: Urgent
+
+$ pfctl -a wg-basic-v1-0349b3e7-3a2e-4a9b-a901-c521c4e31163 -s rules
+pass out on en0 inet from 10.77.0.0/24 to 10.20.20.0/24 flags S/SA keep state
+pass out on en0 inet6 from 2001:db8:77::/64 to 2001:db8:20::/64 flags S/SA keep state
+pass in on en0 inet from 10.20.20.0/24 to 10.77.0.0/24 flags S/SA keep state
+pass in on en0 inet6 from 2001:db8:20::/64 to 2001:db8:77::/64 flags S/SA keep state
+pass in on utun0 inet from 10.77.0.0/24 to 10.20.20.0/24 flags S/SA keep state
+pass in on utun0 inet6 from 2001:db8:77::/64 to 2001:db8:20::/64 flags S/SA keep state
+pass out on utun0 inet from 10.20.20.0/24 to 10.77.0.0/24 flags S/SA keep state
+pass out on utun0 inet6 from 2001:db8:20::/64 to 2001:db8:77::/64 flags S/SA keep state
+
+$ ls -la /etc/pf.anchors/
+-rw-r--r-- 1 root wheel 44 Oct 22 14:47 wg-basic-v1-0349b3e7-3a2e-4a9b-a901-c521c4e31163.drift
+```
+
+So the leg left the operator's filter **loaded and being evaluated** (PF is
+still enabled), and it left the fixture's `.drift` file in the anchors
+directory. Two of the eight loaded rules match on `utun0`, and macOS recycles
+`utun` indices: a later tunnel that took that index would inherit the
+previous leg's rules. The leg's own drift control had already established
+that a stale rule can match the wrong device — this is that same hazard,
+left behind by the leg itself.
+
+What the teardown *did* restore: `/etc/pf.conf` and the main ruleset are
+back to the stock macOS ruleset, the host's routes are as they were, no
+product process, no control socket, and no state directory remained, and the
+product wrote none of this state — the filter is the operator's and the
+fixture's, not the product's.
+
+### 12.2 What this does and does not change
+
+**The milestone's closure stands.** The routed-LAN contract is implemented and
+qualified, the traffic evidence is real and unaffected, the product wrote no
+PF state, no forwarding sysctl, and no route, and the stop condition was met.
+What was inaccurate is one clause of one §2 row — "the host's routing and
+filter as it found them" — and that clause is about the *leg's own* hygiene
+on a disposable host, not about the product's behaviour.
+
+**This is a defect in the leg's fixture**, in `tests/wireguard_darwin_routed.rs`
+— the teardown does not flush the anchor's loaded rules, does not disable PF,
+and does not remove the `.drift` file it wrote. It is **not** C013's code and
+not in the product. Per §13 of the planning process it needs its own
+corrective, with its own plan and closure record; the finding is recorded in
+C013's closure record as **F8**, where the observation was made.
+
+Nothing in this amendment widens what C004 may claim, C005 remains open on
+its own gates and on the maintainer's release authority, and the M007
+MUST-NOT-release standing is unchanged.
