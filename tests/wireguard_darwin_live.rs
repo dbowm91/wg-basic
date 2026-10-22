@@ -99,11 +99,8 @@ fn live_loopback_handshake_and_traffic() {
     let (addr6_a, addr6_b) = ("2001:db8::1", "2001:db8::2");
     evidence.log("fresh keypairs generated (private material never logged)");
 
-    let mut endpoint_a = LiveEndpoint::spawn(&mut evidence, &helper_path, &baseline, "side-a");
-    let mut baseline_plus_a = baseline.clone();
-    baseline_plus_a.push(endpoint_a.utun.clone());
-    let mut endpoint_b =
-        LiveEndpoint::spawn(&mut evidence, &helper_path, &baseline_plus_a, "side-b");
+    let mut endpoint_a = LiveEndpoint::spawn(&mut evidence, &helper_path, "side-a");
+    let mut endpoint_b = LiveEndpoint::spawn(&mut evidence, &helper_path, "side-b");
 
     let allowed_a: [IpNet; 2] = [
         format!("{addr_b}/32").parse().expect("peer prefix"),
@@ -317,9 +314,7 @@ fn live_loopback_handshake_and_traffic() {
         "side B utun survives side A death"
     );
     evidence.log("side-A kill removed only its own utun; side B unaffected");
-    let mut baseline_b = baseline.clone();
-    baseline_b.push(endpoint_b.utun.clone());
-    endpoint_a = LiveEndpoint::spawn(&mut evidence, &helper_path, &baseline_b, "side-a2");
+    endpoint_a = LiveEndpoint::spawn(&mut evidence, &helper_path, "side-a2");
     evidence.log(&format!(
         "side A respawned as {} (renumber tolerated)",
         endpoint_a.utun
@@ -374,6 +369,8 @@ fn live_loopback_handshake_and_traffic() {
     let utun_b = endpoint_b.utun.clone();
     let socket_a = endpoint_a.socket.clone();
     let socket_b = endpoint_b.socket.clone();
+    let pid_a = endpoint_a.helper.pid;
+    let pid_b = endpoint_b.helper.pid;
     drop(endpoint_a);
     drop(endpoint_b);
     wait_until("full utun teardown", Duration::from_secs(15), || {
@@ -382,12 +379,13 @@ fn live_loopback_handshake_and_traffic() {
     });
     remove_if_exists(&socket_a);
     remove_if_exists(&socket_b);
-    let leaked: Vec<String> = utun_names()
-        .into_iter()
-        .filter(|name| !baseline.contains(name))
-        .collect();
-    assert!(leaked.is_empty(), "no utun may leak: {leaked:?}");
-    evidence.log("teardown complete: interface inventory matches baseline");
+    // The fixture's leak claim is about what the fixture created, not about
+    // a difference against an inventory snapshot taken earlier: the host
+    // creates and destroys `utun` devices on its own, so that difference
+    // reports the host's churn as a leak and hides a real leak whose index
+    // the kernel recycled. A device's lifetime is its helper's lifetime.
+    assert_fixture_left_nothing(&mut evidence, &[pid_a, pid_b], &[&socket_a, &socket_b]);
+    evidence.log("teardown complete: the fixture's own devices and sockets are gone");
     evidence.write();
 }
 
@@ -407,8 +405,8 @@ fn live_route_inventory_preserved() {
     let baseline_default = sh(&mut evidence, "route", &["-n", "get", "default"]);
     evidence.log("baseline route inventory captured");
 
-    let seed: Vec<String> = baseline_utuns.iter().cloned().collect();
-    let endpoint = LiveEndpoint::spawn(&mut evidence, &helper_path, &seed, "route-probe");
+    evidence.log(&format!("baseline utun inventory: {baseline_utuns:?}"));
+    let endpoint = LiveEndpoint::spawn(&mut evidence, &helper_path, "route-probe");
     sh(
         &mut evidence,
         "ifconfig",
@@ -612,7 +610,8 @@ fn live_pf_inventory_and_anchor_cycle() {
     }
 
     let baseline_utuns = utun_names();
-    let endpoint = LiveEndpoint::spawn(&mut evidence, &helper_path, &baseline_utuns, "pf-probe");
+    evidence.log(&format!("baseline utun inventory: {baseline_utuns:?}"));
+    let endpoint = LiveEndpoint::spawn(&mut evidence, &helper_path, "pf-probe");
     let anchor = format!("wg-basic-live-{}", std::process::id());
     let rendered_anchor = anchor_name(InstallationId::new());
     evidence.log(&format!(
@@ -933,10 +932,10 @@ fn live_forwarding_and_unattached_anchor_probe() {
     let key_b = generate_keypair().expect("keypair B");
     let (port_a, port_b) = (51841_u16, 51842_u16);
     let (addr_a, addr_b) = ("192.0.2.11", "192.0.2.12");
-    let endpoint_a = LiveEndpoint::spawn(&mut evidence, &helper_path, &baseline, "nat-a");
+    let endpoint_a = LiveEndpoint::spawn(&mut evidence, &helper_path, "nat-a");
     let mut baseline_plus_a = baseline.clone();
     baseline_plus_a.push(endpoint_a.utun.clone());
-    let endpoint_b = LiveEndpoint::spawn(&mut evidence, &helper_path, &baseline_plus_a, "nat-b");
+    let endpoint_b = LiveEndpoint::spawn(&mut evidence, &helper_path, "nat-b");
 
     // Side A encrypts the probe (peer allows the echo target); side B
     // delivers it to the stack for forwarding (peer allows A's address).
@@ -1163,6 +1162,8 @@ fn live_forwarding_and_unattached_anchor_probe() {
     let utun_b = endpoint_b.utun.clone();
     let socket_a = endpoint_a.socket.clone();
     let socket_b = endpoint_b.socket.clone();
+    let pid_a = endpoint_a.helper.pid;
+    let pid_b = endpoint_b.helper.pid;
     drop(endpoint_a);
     drop(endpoint_b);
     wait_until("nat teardown", Duration::from_secs(15), || {
@@ -1172,12 +1173,13 @@ fn live_forwarding_and_unattached_anchor_probe() {
     remove_if_exists(&socket_a);
     remove_if_exists(&socket_b);
     std::fs::remove_dir_all(&scratch).ok();
-    let leaked: Vec<String> = utun_names()
-        .into_iter()
-        .filter(|name| !baseline.contains(name))
-        .collect();
-    assert!(leaked.is_empty(), "no utun may leak: {leaked:?}");
-    evidence.log("egress fixture complete: host restored, inventory at baseline");
+    // The fixture's leak claim is about what the fixture created, not about
+    // a difference against an inventory snapshot taken earlier: the host
+    // creates and destroys `utun` devices on its own, so that difference
+    // reports the host's churn as a leak and hides a real leak whose index
+    // the kernel recycled. A device's lifetime is its helper's lifetime.
+    assert_fixture_left_nothing(&mut evidence, &[pid_a, pid_b], &[&socket_a, &socket_b]);
+    evidence.log("egress fixture complete: the fixture's own devices and sockets are gone");
     evidence.write();
 }
 
@@ -1391,6 +1393,7 @@ fn live_c001_production_backend_owns_and_configures_a_managed_tunnel() {
     let mut evidence = Evidence::new("c001-production-backend");
     let helper_path = require_live(&mut evidence);
     let baseline = utun_names();
+    evidence.log(&format!("baseline utun inventory: {baseline:?}"));
 
     let scratch = std::env::temp_dir().join(format!("wgb-c001-{}", std::process::id()));
     std::fs::create_dir_all(&scratch).expect("c001 scratch dir");
@@ -1425,13 +1428,27 @@ fn live_c001_production_backend_owns_and_configures_a_managed_tunnel() {
         sha256: digest.clone(),
     };
 
-    let (child, utun) =
-        wg_basic::wireguard::darwin_backend::spawn_managed_tunnel(&identity).expect("spawn helper");
+    // The product's own spawn. It refuses to identify its device when the
+    // host's device namespace is not quiescent, and that refusal is correct:
+    // the qualification retries it on a quiescent namespace and records
+    // every attempt.
+    let tunnel = spawn_managed_tunnel_with_retries(&mut evidence, &identity, 3);
+    let utun = tunnel.utun.clone();
+    let child = tunnel.helper;
     evidence.log(&format!("helper created {utun}"));
+    // "The managed device is new" is proved by the product's own
+    // observation — the inventory it read immediately before the helper
+    // started. It is not proved against an inventory snapshotted earlier in
+    // the test: macOS recycles `utun` indices, so a stale snapshot can name
+    // the very device the helper just created, and the assertion would fire
+    // on correct product behaviour.
     assert!(
-        !baseline.contains(&utun),
-        "the managed device must be new, not an adopted foreign device"
+        managed_device_is_new(&tunnel.devices_before_spawn, &utun),
+        "the managed device must be new, not an adopted foreign device: \
+         the product observed {:?} before the spawn and chose {utun}",
+        tunnel.devices_before_spawn
     );
+    evidence.log("the managed device is new by the product's own pre-spawn observation");
 
     let interface = wg_basic::domain::InterfaceName::new("wgc001").expect("interface name");
     let owner = wg_basic::domain::OwnerTag::new(
@@ -1490,17 +1507,23 @@ fn live_c001_production_backend_owns_and_configures_a_managed_tunnel() {
     );
     evidence.log("the durable receipt survives a reader restart");
 
+    let helper_pid = child.pid;
     drop(child);
     wait_until("managed device teardown", Duration::from_secs(15), || {
         !utun_names().contains(&utun)
     });
     std::fs::remove_file(&runtime.uapi_socket).ok();
     std::fs::remove_dir_all(&scratch).ok();
-    let leaked: Vec<String> = utun_names()
-        .into_iter()
-        .filter(|name| !baseline.contains(name))
-        .collect();
-    assert!(leaked.is_empty(), "no utun may leak: {leaked:?}");
+    // The fixture's leak claim is about what the fixture created, not about
+    // a difference against an inventory snapshot taken earlier: the host
+    // creates and destroys `utun` devices on its own, so that difference
+    // reports the host's churn as a leak and hides a real leak whose index
+    // the kernel recycled. A device's lifetime is its helper's lifetime.
+    assert_fixture_left_nothing(
+        &mut evidence,
+        &[helper_pid],
+        &[Path::new(&runtime.uapi_socket)],
+    );
     evidence.log("teardown complete: no device, socket, or receipt left behind");
     evidence.write();
 }

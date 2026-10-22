@@ -477,14 +477,14 @@ impl DarwinNetworkBackend {
         // first: the tunnel it backed is gone, and a second helper would
         // leak the first one.
         self.stop_supervised(interface.as_str());
-        let (child, utun_name) =
-            spawn_managed_tunnel(helper).map_err(|_| ReconcileError::BackendFailure)?;
+        let tunnel = spawn_managed_tunnel(helper).map_err(|_| ReconcileError::BackendFailure)?;
+        let utun_name = tunnel.utun.clone();
         let runtime = ManagedRuntime {
             installation_id: owner_tag.installation_id(),
             interface_id: owner_tag.interface_id(),
             interface: interface.as_str().to_owned(),
             utun_name: utun_name.clone(),
-            helper_pid: child.pid,
+            helper_pid: tunnel.helper.pid,
             helper_path: helper.path.to_string_lossy().into_owned(),
             helper_sha256: helper.sha256.clone(),
             uapi_socket: crate::wireguard::darwin::uapi_socket_path(&utun_name)
@@ -502,7 +502,7 @@ impl DarwinNetworkBackend {
             .helpers
             .lock()
             .map_err(|_| ReconcileError::BackendFailure)?
-            .insert(interface.as_str().to_owned(), child);
+            .insert(interface.as_str().to_owned(), tunnel.helper);
         // From here the backend owns a live helper, so the monitor that
         // replaces a helper that dies must be running.
         self.ensure_monitor();
@@ -521,6 +521,11 @@ impl DarwinNetworkBackend {
         match registry.claim(owner_tag) {
             OwnerClaim::Absent => Ok(()),
             OwnerClaim::Live => Err(ReconcileError::Conflict),
+            // The host's device inventory could not be read. The claim is
+            // neither proven nor disproven, so the receipt is neither obeyed
+            // nor dropped: the reconcile refuses and retries rather than
+            // destroying a proof it could not read.
+            OwnerClaim::Unreadable => Err(ReconcileError::BackendFailure),
             OwnerClaim::Stale(runtime) => {
                 let stale = runtime
                     .interface_name()
@@ -558,14 +563,17 @@ impl DarwinNetworkBackend {
         }
         let deadline = std::time::Instant::now() + DEVICE_TEARDOWN_TIMEOUT;
         while std::time::Instant::now() < deadline {
-            if !crate::wireguard::darwin_backend::utun_interface_names()
-                .contains(&runtime.utun_name)
-            {
-                registry
-                    .remove(interface)
-                    .map_err(|_| ReconcileError::BackendFailure)?;
-                self.forget(interface.as_str());
-                return Ok(());
+            // An unreadable inventory is not an absent device: keep waiting
+            // rather than concluding that the device is gone and dropping a
+            // receipt for a device that is still there.
+            if let Ok(names) = crate::wireguard::darwin_backend::observe_utun_interfaces() {
+                if !names.contains(&runtime.utun_name) {
+                    registry
+                        .remove(interface)
+                        .map_err(|_| ReconcileError::BackendFailure)?;
+                    self.forget(interface.as_str());
+                    return Ok(());
+                }
             }
             std::thread::sleep(Duration::from_millis(50));
         }

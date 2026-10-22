@@ -155,6 +155,10 @@ pub enum HelperError {
     IdentityMismatch,
     #[error("helper exited or failed before the interface was proven")]
     StartupFailed,
+    #[error("the host's interface inventory could not be read")]
+    ObservationFailed,
+    #[error("more than one new device appeared, so the managed device is not identifiable")]
+    DeviceAmbiguous,
     #[error("UAPI transport failed")]
     UapiTransport,
     #[error("UAPI response was malformed or exceeded its bound")]
@@ -177,6 +181,8 @@ impl HelperError {
             HelperError::NotExecutable => "helper_not_executable",
             HelperError::IdentityMismatch => "helper_identity_mismatch",
             HelperError::StartupFailed => "helper_startup_failed",
+            HelperError::ObservationFailed => "interface_inventory_unreadable",
+            HelperError::DeviceAmbiguous => "managed_device_ambiguous",
             HelperError::UapiTransport => "uapi_transport_failed",
             HelperError::UapiMalformed => "uapi_malformed",
             HelperError::UapiRefused => "uapi_refused",
@@ -406,6 +412,13 @@ pub fn uapi_socket_path(utun_name: &str) -> PathBuf {
 /// Before/after interface-name delta: exactly one new `utunN` must appear
 /// after the helper spawn. Zero or several is a fail-closed conflict (never
 /// adopt or kill by numeric guess).
+///
+/// Zero and several are different facts and are reported as different
+/// failures: zero means the helper never published a device, while several
+/// means the host's device namespace was not quiescent when the helper
+/// started, so the managed device cannot be told apart from the devices the
+/// host created on its own. A caller that retries a contention must not be
+/// told the helper died.
 pub fn interface_delta(before: &[String], after: &[String]) -> Result<String, HelperError> {
     let mut new_names: Vec<&String> = after
         .iter()
@@ -415,7 +428,8 @@ pub fn interface_delta(before: &[String], after: &[String]) -> Result<String, He
     new_names.dedup();
     match new_names.as_slice() {
         [single] => Ok((*single).clone()),
-        _ => Err(HelperError::StartupFailed),
+        [] => Err(HelperError::StartupFailed),
+        _ => Err(HelperError::DeviceAmbiguous),
     }
 }
 
@@ -697,11 +711,34 @@ mod tests {
         let two = vec!["utun0".to_owned(), "utun4".to_owned(), "utun7".to_owned()];
         assert_eq!(
             interface_delta(&before, &two).unwrap_err(),
-            HelperError::StartupFailed
+            HelperError::DeviceAmbiguous
         );
         // Non-utun newcomers never satisfy the delta.
         let other = vec!["utun0".to_owned(), "en0".to_owned(), "ipsec0".to_owned()];
         assert!(interface_delta(&before, &other).is_err());
+    }
+
+    #[test]
+    fn a_contended_device_namespace_is_not_reported_as_a_failed_helper() {
+        // macOS creates and destroys `utun` devices on its own, so more than
+        // one new device is a fact about the host and not about the helper.
+        // Reporting it as a startup failure tells the operator the wrong
+        // thing and tells a retrying caller that there is nothing to retry.
+        let before = vec!["utun0".to_owned()];
+        let after = vec!["utun0".to_owned(), "utun4".to_owned(), "utun5".to_owned()];
+        assert_eq!(
+            interface_delta(&before, &after).unwrap_err(),
+            HelperError::DeviceAmbiguous
+        );
+        // And the two are distinguishable in the diagnostic names too.
+        assert_eq!(
+            HelperError::DeviceAmbiguous.as_str(),
+            "managed_device_ambiguous"
+        );
+        assert_ne!(
+            HelperError::DeviceAmbiguous.as_str(),
+            HelperError::StartupFailed.as_str()
+        );
     }
 
     #[test]
