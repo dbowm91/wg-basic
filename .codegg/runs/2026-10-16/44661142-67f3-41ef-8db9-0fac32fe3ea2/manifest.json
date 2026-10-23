@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "run_id": "44661142-67f3-41ef-8db9-0fac32fe3ea2",
+  "kind": "raw_shell",
+  "invocation": {
+    "command": "grep -rn \"version\\|installer\\|bootstrap\" src/main.rs | grep -i \"version\\|install\" | head -10",
+    "argv": [
+      "sh",
+      "-c",
+      "grep -rn \"version\\|installer\\|bootstrap\" src/main.rs | grep -i \"version\\|install\" | head -10"
+    ]
+  },
+  "started_at": "2026-10-16T02:05:22.337055Z",
+  "completed_at": "2026-10-16T02:05:22.367086Z",
+  "status": "complete",
+  "workspace_root": "/Users/davidbowman/projects/wg-basic",
+  "cwd": "/Users/davidbowman/projects/wg-basic",
+  "backend": {
+    "family": "bash",
+    "detail": "raw_shell"
+  },
+  "risk": {
+    "level": "low",
+    "has_subprocess": true,
+    "has_git_mutation": false,
+    "has_destructive_mutation": false
+  },
+  "permissions": [],
+  "artifacts": [
+    {
+      "artifact_id": "28c507c9-3cd9-4a10-84f3-6c18d030bec8",
+      "kind": "stdout",
+      "relative_path": "stdout.log",
+      "mime_type": "text/plain",
+      "byte_length": 784,
+      "sha256": "b42901e1238aa5c1ecde3ad057058f77c7cb6f09dbf1bd410f3d47e48f8dfd55",
+      "truncated": false,
+      "redacted": false,
+      "created_at": "2026-10-16T02:05:22.359160Z",
+      "safe_for_model": false
+    }
+  ],
+  "changes": [],
+  "planned_backend": "raw_shell",
+  "actual_backend": "raw_shell",
+  "ownership": "Caller",
+  "asset_provenance": {
+    "generation": 2,
+    "fingerprint": "3f460529ea76f722c42a807f6a0531c6c954180525ac19ae60e772c4d5179498"
+  }
+}

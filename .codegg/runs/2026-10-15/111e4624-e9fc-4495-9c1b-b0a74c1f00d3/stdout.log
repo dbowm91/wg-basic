@@ -1,0 +1,82 @@
+=== main.rs dispatch / serve arm ===
+                            "system update requires effective root; no automatic sudo is performed"
+                                .into(),
+                        )
+                    }
+                }
+                UpdateCommand::Recover => {
+                    if nix::unistd::Uid::effective().is_root() {
+                        wg_basic::update::recover()
+                    } else {
+                        Err("update recovery requires effective root; no automatic sudo is performed".into())
+                    }
+                }
+            }
+        }
+        Some(Command::Health { state, socket }) => {
+            let runtime = wg_basic::management::ManagementRuntime::open(&state, &socket)
+                .map_err(|error| error.to_string())?;
+            // The health projection carries categories only, never receipts.
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&runtime.health())
+                    .map_err(|_| "could not format management health".to_owned())?
+            );
+            Ok(())
+        }
+        Some(Command::Doctor {
+            state,
+            socket,
+            json,
+            allow_warnings,
+            http_bind,
+            canonical_origin,
+            allow_non_loopback,
+        }) => {
+            #[cfg(all(target_os = "linux", feature = "update-test-fixtures"))]
+            delay_fixture_candidate_doctor_start(&state)?;
+            let (mut checks, state_snapshot) = doctor_state_checks(&state);
+            match request(&socket, RequestOperation::InspectCapabilities, 2) {
+                Ok(ResponseBody::Capabilities(snapshot)) => {
+                    let netd_ready =
+                        snapshot.runtime_directory_safe && snapshot.cap_net_admin == Some(true);
+                    checks.push(wg_basic::doctor::DoctorCheck::new(
+                        wg_basic::doctor::DoctorCheckId::Netd,
+                        if netd_ready {
+                            wg_basic::doctor::DoctorDisposition::Pass
+                        } else {
+                            wg_basic::doctor::DoctorDisposition::Fail
+                        },
+                        if netd_ready {
+                            "netd answered and its runtime/capability checks passed"
+                        } else {
+                            "netd runtime directory or CAP_NET_ADMIN check failed"
+                        },
+                        format!(
+                            "uid {}; gid {}; CAP_NET_ADMIN {}; runtime directory {}; kernel {} ({})",
+                            snapshot.effective_uid,
+                            snapshot.effective_gid,
+                            snapshot.cap_net_admin.map_or("unknown", |value| if value { "present" } else { "absent" }),
+                            if snapshot.runtime_directory_safe { "safe" } else { "unsafe" },
+                            snapshot.kernel_release.as_deref().unwrap_or("unknown"),
+                            snapshot.architecture,
+                        ),
+                        if netd_ready { "none" } else { "review netd privilege and runtime-directory ownership/mode" },
+                    ));
+                }
+                _ => checks.push(wg_basic::doctor::DoctorCheck::new(
+                    wg_basic::doctor::DoctorCheckId::Netd,
+                    wg_basic::doctor::DoctorDisposition::Unknown,
+                    "netd capability state is unavailable",
+                    "no safe capability response was received",
+                    "start netd and verify its socket path and peer permissions",
+                )),
+            }
+            if let Some(snapshot) = state_snapshot.as_ref() {
+                append_network_plan_checks(&mut checks, &socket, snapshot);
+                append_forwarding_check(&mut checks, snapshot);
+                append_ipv6_forwarding_check(&mut checks, snapshot);
+            } else {
+                checks.push(wg_basic::doctor::DoctorCheck::new(
+                    wg_basic::doctor::DoctorCheckId::NetworkOwnership,
+                    wg_basic::doctor::DoctorDisposition::Unknown,

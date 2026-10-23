@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "name": "wireguard-go",
+  "description": "The Darwin dataplane helper. This file is the single declaration of the helper's build input: the builder script, the tests, and the qualification workflow all refer to it, and nothing else may name the upstream source.",
+  "source": {
+    "url": "https://github.com/WireGuard/wireguard-go",
+    "tag": "0.0.20250522",
+    "commit": "f333402bd9cbe0f3eeb02507bd14e23d7d639280"
+  },
+  "license": {
+    "spdx": "MIT",
+    "file": "LICENSE",
+    "marker": "Permission is hereby granted, free of charge"
+  },
+  "toolchain": {
+    "go_version": "1.27.1"
+  },
+  "targets": [
+    "aarch64-apple-darwin"
+  ],
+  "build": {
+    "flags": [
+      "-trimpath"
+    ]
+  }
+}

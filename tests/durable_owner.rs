@@ -21,8 +21,8 @@ use std::{
 use wg_basic::{
     aggregate::{AggregateStatus, InstallationNetworkIntent},
     domain::{
-        DesiredGeneration, InstallationId, InterfaceId, InterfaceName, NetworkPrefix, OwnerTag,
-        PrivateKey,
+        DesiredGeneration, InstallationId, InterfaceId, InterfaceName, NetworkPolicyMode,
+        NetworkPrefix, OwnerTag, PrivateKey,
     },
     firewall::{DesiredNetworkPolicy, Ipv4Forwarding, NatMode},
     protocol::{request, AuthorizationPolicy, RequestOperation, ResponseBody, SocketServer},
@@ -557,10 +557,12 @@ fn the_owned_nftables_table_marker_binds_to_the_installation() {
             generation(1),
             present_desired(owner, keys.private_key.clone()),
             Some(DesiredNetworkPolicy {
+                mode: NetworkPolicyMode::HostOnly,
                 ipv4_forwarding: Ipv4Forwarding::NotRequired,
                 ipv6_forwarding: wg_basic::firewall::Ipv6Forwarding::NotRequired,
                 egress_interface: "veth-a".parse().unwrap(),
                 source_prefixes: vec![NetworkPrefix::new("10.44.0.0/24".parse().unwrap())],
+                destination_prefixes: Vec::new(),
                 nat: NatMode::Disabled,
             }),
         ),
@@ -631,10 +633,12 @@ fn a_foreign_installation_table_marker_is_a_conflict() {
                 generation(1),
                 present_desired(owner, keys.private_key),
                 Some(DesiredNetworkPolicy {
+                    mode: NetworkPolicyMode::HostOnly,
                     ipv4_forwarding: Ipv4Forwarding::NotRequired,
                     ipv6_forwarding: wg_basic::firewall::Ipv6Forwarding::NotRequired,
                     egress_interface: "veth-a".parse().unwrap(),
                     source_prefixes: vec![NetworkPrefix::new("10.44.0.0/24".parse().unwrap())],
+                    destination_prefixes: Vec::new(),
                     nat: NatMode::Disabled,
                 }),
             ),
@@ -691,10 +695,12 @@ fn equal_generation_reapply_is_idempotent_and_lower_generation_is_rejected() {
             generation,
             present_desired(owner.clone(), keys.private_key.clone()),
             Some(DesiredNetworkPolicy {
+                mode: NetworkPolicyMode::HostOnly,
                 ipv4_forwarding: Ipv4Forwarding::NotRequired,
                 ipv6_forwarding: wg_basic::firewall::Ipv6Forwarding::NotRequired,
                 egress_interface: "veth-a".parse().unwrap(),
                 source_prefixes: vec![NetworkPrefix::new("10.44.0.0/24".parse().unwrap())],
+                destination_prefixes: Vec::new(),
                 nat: NatMode::Disabled,
             }),
         )
@@ -780,10 +786,12 @@ fn the_disable_aggregate_path_removes_firewall_before_the_interface() {
             generation(1),
             present_desired(owner.clone(), keys.private_key.clone()),
             Some(DesiredNetworkPolicy {
+                mode: NetworkPolicyMode::HostOnly,
                 ipv4_forwarding: Ipv4Forwarding::NotRequired,
                 ipv6_forwarding: wg_basic::firewall::Ipv6Forwarding::NotRequired,
                 egress_interface: "veth-a".parse().unwrap(),
                 source_prefixes: vec![NetworkPrefix::new("10.44.0.0/24".parse().unwrap())],
+                destination_prefixes: Vec::new(),
                 nat: NatMode::Disabled,
             }),
         ),

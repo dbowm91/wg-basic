@@ -1,0 +1,808 @@
+
+running 378 tests
+test distribution::tests::install_lock_is_exclusive_and_released_on_drop ... ok
+test aggregate::tests::absence_of_a_layer_status_is_reported_truthfully ... ok
+test distribution::tests::non_root_install_refuses_before_any_install_action ... ok
+test distribution::tests::unit_material_pins_hardening_and_identity ... ok
+test distribution::tests::username_lookup_seam_handles_fixture_and_missing_accounts ... ok
+test distribution::tests::exact_file_ownership_rejects_changed_bytes_and_symlinks ... ok
+test aggregate::tests::the_first_generation_establishes_the_installation_identity ... ok
+test aggregate::tests::a_lower_generation_is_rejected_as_stale ... ok
+test aggregate::tests::an_owner_tag_from_another_installation_is_refused_before_privileged_work ... ok
+test aggregate::tests::an_owner_tag_from_another_interface_is_refused ... ok
+test aggregate::tests::a_different_installation_identity_is_rejected_while_the_process_lives ... ok
+test aggregate::tests::a_higher_generation_is_eligible_and_equal_is_idempotent ... ok
+test distribution::tests::username_syntax_is_bounded_before_lookup ... ok
+test aggregate::tests::an_invalid_interface_is_refused_before_any_privileged_call ... ok
+test domain::auth::tests::a_non_argon2id_or_malformed_verifier_never_verifies ... ok
+test doctor::tests::sqlite_runtime_floor_parses_numeric_components ... ok
+test doctor::tests::report_aggregates_disposition_and_caps_text ... ok
+test doctor::tests::required_failure_has_exit_code_two ... ok
+test domain::auth::tests::credential_rejection_never_distinguishes_username_from_password ... ok
+test domain::auth::tests::invalid_utf8_is_refused_rather_than_lossy_decoded ... ok
+test domain::auth::tests::the_configured_policy_meets_the_management_roadmap_minimums ... ok
+test aggregate::tests::acceptance_records_the_generation_before_mutation_and_never_lowers_it ... ok
+test domain::auth::tests::the_password_policy_bounds_input_without_truncating ... ok
+test domain::auth::tests::a_csrf_token_has_256_bits_of_entropy ... ok
+test distribution::tests::metadata_rejects_digest_or_layout_tampering ... ok
+test domain::generation::tests::generation_never_wraps_at_the_storage_ceiling ... ok
+test domain::auth::tests::a_digest_round_trips_and_rejects_a_wrong_length ... ok
+test domain::auth::tests::a_session_token_has_256_bits_of_entropy_and_stores_only_its_digest ... ok
+test domain::generation::tests::generation_round_trips_through_sqlite_storage_form ... ok
+test domain::generation::tests::installation_id_is_random_stable_and_round_trips ... ok
+test domain::generation::tests::invalid_or_tampered_storage_values_are_rejected ... ok
+test domain::generation::tests::generation_starts_at_one_and_increments_monotonically ... ok
+test domain::generation::tests::caller_supplied_generations_are_range_checked ... ok
+test domain::identifiers::tests::identifiers_round_trip_and_are_type_distinct ... ok
+test distribution::tests::username_uid_resolution_deduplicates_aliases ... ok
+test domain::auth::tests::distinct_tokens_never_collide ... ok
+test domain::intent::tests::intent_vocabulary_serializes_in_snake_case ... ok
+test aggregate::tests::generation_bounds_are_validated ... ok
+test aggregate::tests::a_valid_intent_reports_the_owner_tag_it_implies ... ok
+test domain::interface_name::tests::validates_linux_name_bounds_and_characters ... ok
+test domain::network::tests::parses_prefixes_and_rejects_invalid_client_assignments ... ok
+test domain::network::tests::route_policy_accepts_explicit_family_defaults_and_unique_split_routes ... ok
+test domain::keys::tests::derives_wireguard_public_key_from_known_private_key ... ok
+test domain::keys::tests::generated_keypair_has_valid_distinct_keys_and_redacted_debug ... ok
+test domain::owner::tests::a_distinct_installation_or_interface_yields_a_distinct_tag ... ok
+test domain::network::tests::route_policy_rejects_duplicates_bad_prefixes_and_overflow ... ok
+test domain::owner::tests::invalid_and_foreign_formats_are_rejected_rather_than_guessed ... ok
+test domain::owner::tests::classification_distinguishes_owned_absent_foreign_and_unrelated_aliases ... ok
+test domain::interface_name::tests::darwin_utun_names_satisfy_logical_bounds_but_are_not_identity ... ok
+test domain::owner::tests::only_an_exact_match_proves_ownership ... ok
+test domain::owner::tests::ownership_never_relaxes_to_a_partial_identity_match ... ok
+test domain::owner::tests::owner_tag_round_trips_into_installation_and_interface_identity ... ok
+test domain::owner::tests::owner_tag_is_deterministic_ascii_and_well_under_the_kernel_limit ... ok
+test firewall::pf::tests::anchor_names_are_deterministic_and_installation_scoped ... ok
+test domain::secret::tests::private_and_preshared_formatting_is_redacted ... ok
+test firewall::pf::tests::attachment_requires_parent_invocation_not_mere_existence ... ok
+test domain::state::tests::global_ipv6_routes_require_a_managed_server_ipv6_pool ... ok
+test domain::state::tests::validates_client_assignment_relationships_and_unique_addresses ... ok
+test firewall::pf::tests::sysctl_paths_are_fixed_constants ... ok
+test firewall::pf::tests::teardown_never_touches_global_or_foreign_state ... ok
+test domain::network::tests::serde_normalizes_prefixes_before_route_validation ... ok
+test firewall::policy::tests::policy_validation_is_bounded_ipv4_and_rejects_unsafe_names ... ok
+test firewall::policy::tests::the_historical_product_only_marker_is_never_treated_as_ownership ... ok
+test firewall::policy::tests::the_installation_marker_is_bounded_and_ascii ... ok
+test firewall::pf::tests::rendering_masks_masquerade_without_nat66 ... ok
+test firewall::planner::tests::planner_is_deterministic_and_refuses_unowned_table_collisions ... ok
+test firewall::pf::tests::drift_is_detected_by_digest ... ok
+test firewall::planner::tests::owned_expression_drift_plans_replacement_even_if_markers_remain ... ok
+test http::api::tests::a_peer_address_is_accepted_by_the_login_entry_point ... ok
+test domain::intent::tests::managed_route_round_trips_with_and_without_a_gateway ... ok
+test doctor::tests::report_json_is_one_secret_free_serialized_value ... ok
+test firewall::planner::tests::repeated_desired_policy_is_a_noop_and_disable_preserves_forwarding ... ok
+test http::api::tests::a_refusal_never_names_its_own_cause ... ok
+test http::api::tests::a_login_body_must_be_the_expected_json_shape ... ok
+test http::api::tests::a_refusal_never_reveals_which_check_failed ... ok
+test http::api::tests::a_login_cookie_reaches_the_response_without_being_readable_by_a_script ... ok
+test http::api::tests::an_https_deployment_gets_hsts_and_no_loopback_deployment_does ... ok
+test firewall::planner::tests::ipv6_policy_enables_forwarding_and_renders_routed_v6_without_nat66 ... ok
+test http::api::tests::a_safe_method_carries_no_origin_requirement ... ok
+test http::api::tests::a_safe_get_needs_no_csrf_token ... ok
+test http::api::tests::json_content_type_accepts_parameters_but_not_another_media_type ... ok
+test http::assets::tests::a_response_body_is_the_exact_embedded_bytes ... ok
+test http::api::tests::an_unsafe_request_needs_the_exact_csrf_token ... ok
+test http::api::tests::a_rebinding_host_is_refused ... ok
+test http::api::tests::a_login_must_declare_json_and_never_a_form_encoding ... ok
+test http::api::tests::every_api_response_carries_the_security_headers_and_no_cors ... ok
+test http::assets::tests::the_inventory_is_bounded_and_small ... ok
+test http::assets::tests::content_types_are_declared_and_deterministic ... ok
+test http::assets::tests::every_asset_path_is_exact_and_unique ... ok
+test http::assets::tests::no_asset_references_an_external_origin ... ok
+test http::api::tests::a_presented_cookie_yields_a_token_and_a_foreign_one_does_not ... ok
+test http::api::tests::an_unsafe_method_needs_the_exact_origin ... ok
+test http::assets::tests::the_shell_exposes_the_product_api_workflows ... ok
+test http::api::tests::a_cross_site_fetch_metadata_header_is_decisive ... ok
+test http::config::tests::a_read_buffer_below_the_transport_floor_is_refused ... ok
+test http::assets::tests::telemetry_polling_is_bounded_to_visible_authenticated_pages ... ok
+test http::assets::tests::the_shell_sends_the_csrf_header_and_never_reads_the_cookie ... ok
+test http::config::tests::a_zero_limit_is_refused_rather_than_becoming_unbounded ... ok
+test http::config::tests::an_unparseable_bind_address_is_rejected_with_the_input ... ok
+test http::config::tests::the_default_bind_is_loopback_only ... ok
+test http::headers::tests::a_cookie_is_attached_without_rebuilding_the_response ... ok
+test http::config::tests::a_configuration_names_one_ephemeral_port_for_tests ... ok
+test http::api::tests::the_login_body_limit_is_below_the_eggserve_ceiling ... ok
+test http::config::tests::the_surface_advertises_no_stack_and_no_tunnels ... ok
+test http::config::tests::an_unbounded_body_ceiling_is_refused ... ok
+test http::headers::tests::a_response_sealed_twice_would_duplicate_rather_than_replace ... ok
+test http::config::tests::the_default_limits_reach_the_runtime_config ... ok
+test http::headers::tests::every_response_carries_the_full_security_header_set ... ok
+test http::headers::tests::every_security_header_name_is_a_valid_header_name ... ok
+test http::headers::tests::hsts_does_not_claim_subdomains ... ok
+test http::assets::tests::the_shell_needs_no_csp_concession ... ok
+test http::headers::tests::hsts_is_sent_only_for_an_https_canonical_origin ... ok
+test http::headers::tests::sealing_preserves_the_status_the_route_already_chosen ... ok
+test http::headers::tests::the_csp_denies_the_dangerous_directives_explicitly ... ok
+test http::headers::tests::no_header_names_the_stack ... ok
+test http::headers::tests::the_headers_are_shared_by_constants_so_a_route_cannot_drift ... ok
+test http::headers::tests::the_permissions_policy_switches_every_feature_off ... ok
+test http::origin::tests::a_dns_rebinding_host_is_refused_even_on_a_loopback_listener ... ok
+test http::origin::tests::a_loopback_cookie_makes_no_false_secure_claim ... ok
+test http::origin::tests::a_proxy_deployment_gets_a_secure_cookie_and_hsts_eligibility ... ok
+test http::origin::tests::a_proxy_deployment_must_actually_be_https ... ok
+test http::origin::tests::a_routable_listener_needs_acknowledgement_and_cannot_claim_https ... ok
+test http::origin::tests::an_ipv6_literal_origin_round_trips ... ok
+test http::origin::tests::an_origin_is_scheme_host_and_implied_port_only ... ok
+test http::origin::tests::host_normalization_strips_a_trailing_dot_but_nothing_else ... ok
+test http::origin::tests::origin_matching_is_exact_including_scheme_and_port ... ok
+test http::origin::tests::the_default_policy_is_loopback_and_accepts_both_loopback_spellings ... ok
+test http::origin::tests::an_origin_with_a_path_query_or_fragment_is_refused ... ok
+test http::ratelimit::tests::a_refill_never_exceeds_capacity ... ok
+test http::ratelimit::tests::a_bucket_admits_up_to_capacity_then_refuses_with_a_retry_hint ... ok
+test http::ratelimit::tests::a_zero_peer_bound_degrades_to_one_rather_than_none ... ok
+test http::ratelimit::tests::a_zero_refill_rate_never_becomes_a_permanent_block ... ok
+test http::ratelimit::tests::an_ipv6_peer_is_tracked_separately ... ok
+test http::ratelimit::tests::many_peers_still_cannot_exceed_the_global_budget ... ok
+test http::ratelimit::tests::the_default_shape_matches_the_measured_argon2_cost ... ok
+test http::ratelimit::tests::one_peer_cannot_consume_the_whole_global_budget ... ok
+test http::ratelimit::tests::tokens_refill_over_time ... ok
+test http::readiness::tests::a_degraded_state_always_has_a_reason ... ok
+test http::readiness::tests::a_failure_in_one_dependency_does_not_claim_the_others_are_wrong ... ok
+test http::readiness::tests::a_fatal_state_has_no_public_answer_and_is_not_serving ... ok
+test http::readiness::tests::an_unhealthy_dependency_is_degraded_not_fatal ... ok
+test http::readiness::tests::every_unhealthy_dependency_is_reported_and_none_is_invented ... ok
+test http::readiness::tests::the_anonymous_answer_does_not_depend_on_the_reason ... ok
+test http::readiness::tests::the_public_projection_is_exactly_two_tokens ... ok
+test http::response::tests::a_health_snapshot_is_reduced_to_two_states ... ok
+test http::readiness::tests::the_startup_reconcile_only_ever_moves_convergence ... ok
+test http::ratelimit::tests::the_peer_map_is_bounded ... ok
+test http::response::tests::both_liveness_classes_are_served_as_200 ... ok
+test http::response::tests::every_body_is_a_bounded_literal ... ok
+test http::response::tests::every_response_declares_itself_uncacheable ... ok
+test http::response::tests::overload_answers_are_indistinguishable_from_each_other ... ok
+test http::response::tests::unknown_routes_and_methods_are_bounded_and_distinct ... ok
+test http::serve::tests::a_routable_bind_is_refused_without_the_acknowledgement ... ok
+test http::serve::tests::a_reverse_proxy_origin_gives_the_secure_cookie_profile ... ok
+test http::serve::tests::an_acknowledged_routable_bind_is_built_with_a_restrictive_host_set ... ok
+test http::serve::tests::a_routable_listener_may_not_claim_an_https_origin ... ok
+test http::serve::tests::a_loopback_bind_is_not_reported_as_off_host ... ok
+test http::serve::tests::each_run_gets_its_own_limiter ... ok
+test http::serve::tests::an_invalid_bind_address_is_refused_before_anything_is_opened ... ok
+test http::service::tests::a_refusal_renders_one_of_four_bounded_literals ... ok
+test http::service::tests::dynamic_product_routes_require_canonical_uuid_and_exact_segments ... ok
+test http::service::tests::audit_cursor_route_is_canonical_and_exact ... ok
+test http::service::tests::each_route_answers_exactly_one_method ... ok
+test http::service::tests::only_declared_json_routes_accept_bodies ... ok
+test http::service::tests::routing_is_an_exact_match_over_a_closed_set ... ok
+test http::service::tests::status_selection_matches_the_documented_vocabulary ... ok
+test http::session_cookie::tests::a_session_whose_lifetime_has_elapsed_is_never_published ... ok
+test http::session_cookie::tests::a_missing_malformed_or_foreign_cookie_is_simply_absent ... ok
+test http::session_cookie::tests::the_cookie_profile_follows_the_origin_not_the_request ... ok
+test http::session_cookie::tests::a_loopback_session_cookie_is_host_only_and_makes_no_secure_claim ... ok
+test launchd::tests::installer_refuses_bad_targets_and_empty_artifacts ... ok
+test http::session_cookie::tests::an_https_origin_gets_a_secure_prefixed_cookie ... ok
+test http::session_cookie::tests::a_presented_cookie_yields_its_token ... ok
+test http::session_cookie::tests::logout_expires_the_cookie_with_matching_attributes ... ok
+test http::session_cookie::tests::the_secure_cookie_is_not_readable_by_a_loopback_deployment ... ok
+test launchd::tests::no_production_signing_claim_exists ... ok
+test launchd::tests::plist_renders_fixed_keys_without_secrets ... ok
+test http::serve::tests::the_default_policy_refuses_a_foreign_host_at_runtime ... ok
+test http::serve::tests::a_fatal_state_failure_never_binds_a_listener ... ok
+test launchd::tests::install_verify_uninstall_round_trip_preserves_state ... ok
+test http::serve::tests::the_lifecycle_serves_then_drains_and_releases_the_store ... ok
+test domain::auth::tests::secret_values_redact_ordinary_debug_and_display ... ok
+test domain::auth::tests::unicode_passwords_are_measured_as_utf8_bytes ... ok
+test domain::auth::tests::a_verifier_adopted_from_storage_still_verifies ... ok
+test management::auth::tests::a_session_lifetime_is_bounded_and_cannot_be_instant ... ok
+test management::auth::tests::a_disabled_principal_fails_authentication ... ok
+test management::auth::tests::an_expired_session_is_removed_rather_than_left_to_rot ... ok
+test management::auth::tests::a_sweep_keeps_a_session_whose_expiry_is_still_ahead ... ok
+test management::auth::tests::a_second_distinct_username_is_refused_in_phase_7 ... ok
+test management::auth::tests::status_on_a_fresh_path_reports_no_administrator_rather_than_failing ... ok
+test management::auth::tests::a_raw_password_is_never_persisted ... ok
+test domain::auth::tests::a_verifier_round_trips_and_is_never_the_plaintext ... ok
+test management::auth::tests::the_timing_equaliser_carries_the_current_argon2_policy ... ok
+test management::auth::tests::an_over_long_login_candidate_is_refused_before_hashing ... ok
+test management::auth::tests::the_username_shape_is_bounded ... ok
+test management::coordinator::tests::a_newer_generation_waits_while_an_apply_is_running ... ok
+test management::coordinator::tests::an_idle_coordinator_does_no_work ... ok
+test management::coordinator::tests::the_coordinator_coalesces_writes_before_an_apply_starts ... ok
+test management::error::tests::a_preserved_protocol_error_outranks_the_transport_kind ... ok
+test management::error::tests::attempt_dispositions_are_categories_not_messages ... ok
+test management::error::tests::refusals_are_not_mistaken_for_an_unavailable_backend ... ok
+test management::error::tests::transient_transport_errors_are_treated_as_backend_unavailable ... ok
+test management::health::tests::a_backend_outage_never_projects_as_a_reachable_netd ... ok
+test management::health::tests::an_untried_installation_has_no_reachability_evidence ... ok
+test management::health::tests::health_projection_never_carries_a_receipt_or_secret ... ok
+test management::health::tests::health_reports_pending_when_convergence_lags_the_desired_generation ... ok
+test management::health::tests::non_retryable_categories_never_project_as_retryable ... ok
+test management::runtime::tests::a_projected_intent_carries_a_matching_owner_tag_and_generation ... ok
+test management::runtime::tests::intent_projection_requires_a_usable_installation_state ... ok
+test management::worker::tests::a_closed_queue_reports_a_stopped_worker ... ok
+test domain::auth::tests::the_same_password_hashes_differently_every_time ... ok
+test management::worker::tests::a_full_queue_is_refused_rather_than_queued ... ok
+test management::worker::tests::a_missed_reply_deadline_is_overload_not_success ... ok
+test management::worker::tests::a_started_worker_answers_health_and_shuts_down ... ok
+test management::auth::tests::logout_revokes_the_session_immediately ... ok
+test management::worker::tests::an_unusable_state_path_is_fatal ... ok
+test operational::tests::event_json_is_one_bounded_line_with_stable_fields ... ok
+test platform::tests::capability_states_stay_distinct ... ok
+test management::worker::tests::telemetry_projection_caps_a_maximum_sized_backend_snapshot ... ok
+test platform::tests::current_platform_matches_compile_target ... ok
+test platform::tests::darwin_target_floor_is_declared_and_supported_targets_are_both_darwin ... ok
+test platform::tests::logical_identity_is_stable_while_os_locators_churn ... ok
+test platform::tests::only_linux_reports_a_native_network_backend_in_m001 ... ok
+test platform::tests::wire_protocol_stays_pinned_through_the_portability_refactor ... ok
+test product::allocator::tests::a_disabled_client_keeps_its_address_reserved ... ok
+test product::allocator::tests::a_non_zero_network_octet_is_normalised_before_allocation ... ok
+test product::allocator::tests::a_requested_address_fails_on_reservation_and_out_of_prefix ... ok
+test product::allocator::tests::a_server_address_in_the_middle_is_reserved ... ok
+test product::allocator::tests::allocates_the_lowest_usable_free_address ... ok
+test product::allocator::tests::allocation_is_deterministic_across_repeated_calls ... ok
+test product::allocator::tests::duplicate_reservations_do_not_disturb_the_gap_scan ... ok
+test product::allocator::tests::fills_the_first_gap_not_merely_the_next_integer ... ok
+test product::allocator::tests::handles_a_slash_30_pool_exactly ... ok
+test product::allocator::tests::handles_slash_24_and_slash_16_prefixes ... ok
+test product::allocator::tests::handles_the_largest_prefix_without_scanning_it ... ok
+test management::auth::tests::provisioning_then_authenticating_issues_a_session ... ok
+test product::allocator::tests::ipv6_allocator_is_bounded_and_chooses_lowest_free_host ... ok
+test product::allocator::tests::ipv6_exact_requests_reject_reserved_invalid_and_out_of_prefix_values ... ok
+test product::allocator::tests::ipv6_prefix_shape_must_leave_server_and_client_addresses ... ok
+test product::allocator::tests::refuses_ipv6_and_prefixes_with_no_usable_hosts ... ok
+test product::allocator::tests::skips_the_broadcast_address_at_the_top_of_the_pool ... ok
+test product::allocator::tests::skips_the_network_address_and_a_leading_server_address ... ok
+test product::export::tests::config_without_a_route_policy_is_not_exported_as_invalid_wireguard_syntax ... ok
+test product::export::tests::configured_preshared_key_is_written_only_in_the_peer_section ... ok
+test product::export::tests::qr_rejects_input_that_exceeds_the_encoder_bound ... ok
+test product::export::tests::renders_exact_stable_config_and_redacts_debug ... ok
+test product::export::tests::renders_ipv6_route_dns_and_bracketed_endpoint_with_stable_order ... ok
+test product::model::tests::a_receipt_keeps_the_committed_generation_when_enforcement_degrades ... ok
+test product::model::tests::accepts_dns_ipv4_and_ipv6_hosts ... ok
+test product::model::tests::accepts_ordinary_unicode_labels_and_refuses_line_breakers ... ok
+test product::model::tests::bounds_host_length_and_port_range ... ok
+test product::model::tests::brackets_an_ipv6_literal_exactly_once_in_both_input_forms ... ok
+test product::model::tests::derived_labels_are_stable_and_bounded ... ok
+test product::model::tests::refuses_a_second_port_smuggled_into_the_host ... ok
+test product::model::tests::rejects_uri_syntax_whitespace_and_control_characters ... ok
+test protocol::auth::tests::darwin_default_policy_has_no_root_bypass ... ok
+test protocol::auth::tests::peer_identity_matches_kernel_credentials ... ok
+test protocol::capability::tests::darwin_snapshot_reports_unsupported_never_linux_values ... ok
+test protocol::framing::tests::accepts_max_frame_and_rejects_oversized_before_payload_allocation ... ok
+test protocol::framing::tests::truncated_and_empty_frames_fail ... ok
+test product::export::tests::qr_svg_has_only_fixed_elements_and_integer_coordinates ... ok
+test protocol::socket::tests::client_rejects_response_with_wrong_request_id ... ok
+test management::auth::tests::the_raw_token_is_never_persisted_only_its_digest ... ok
+test protocol::socket::tests::denied_peer_is_rejected_before_request_data_is_read ... ok
+test protocol::socket::tests::invalid_wireguard_patch_is_rejected_before_opening_netlink ... ok
+test protocol::socket::tests::malformed_frame_does_not_leak_payload ... ok
+test protocol::socket::tests::kernel_peer_credentials_authorize_ping_and_capability_snapshot ... ok
+test protocol::socket::tests::socket_path_conflicts_fail_closed_and_cleanup_is_inode_owned ... ok
+test management::auth::tests::status_never_carries_a_credential ... ok
+test protocol::wire::tests::managed_interface_request_round_trips_with_redacted_private_key ... ok
+test protocol::wire::tests::network_policy_request_round_trips_as_typed_data ... ok
+test protocol::wire::tests::request_and_response_round_trip_with_stable_operation_names ... ok
+test protocol::wire::tests::unknown_operations_and_fields_are_rejected_without_echoing_payload ... ok
+test protocol::wire::tests::wireguard_patch_round_trip_keeps_secret_debug_redacted ... ok
+test reconcile::darwin::tests::absent_utun_global_takeover_and_duplicates_refuse ... ok
+test reconcile::darwin::tests::conflicting_unowned_route_is_a_conflict_not_an_adoption ... ok
+test reconcile::darwin::tests::converged_state_plans_nothing ... ok
+test reconcile::darwin::tests::foreign_state_is_preserved_never_deleted ... ok
+test reconcile::darwin::tests::missing_entries_plan_adds_and_owned_extras_plan_removal ... ok
+test reconcile::darwin::tests::renumbered_utun_reapplies_under_the_same_logical_identity ... ok
+test reconcile::planner::tests::a_duplicate_owner_tag_elsewhere_is_a_conflict_and_survives ... ok
+test reconcile::planner::tests::a_foreign_installation_or_interface_tag_is_a_conflict ... ok
+test reconcile::planner::tests::a_matching_owner_tag_permits_full_owned_reconciliation ... ok
+test reconcile::planner::tests::a_missing_link_is_created_and_tagged ... ok
+test reconcile::planner::tests::a_wrong_kind_link_is_still_refused_before_ownership_is_considered ... ok
+test reconcile::planner::tests::an_absent_alias_is_a_conflict_for_an_existing_link ... ok
+test reconcile::planner::tests::an_unowned_link_is_refused_before_destruction_too ... ok
+test reconcile::planner::tests::an_unrelated_alias_is_never_treated_as_ownership ... ok
+test reconcile::planner::tests::plans_in_deterministic_dependency_order ... ok
+test reconcile::planner::tests::route_conflict_on_another_interface_is_not_replaced ... ok
+test reconcile::planner::tests::telemetry_only_wireguard_changes_do_not_create_mutations ... ok
+test reconcile::planner::tests::wrong_kind_and_unlisted_delete_resources_fail_closed ... ok
+test release::tests::artifact_integrity_requires_exact_size_and_digest ... ok
+test release::tests::eggup_adapter_rejects_symlink_and_nonregular_acquired_paths ... ok
+test protocol::socket::tests::unknown_version_is_rejected_with_request_correlation ... ok
+test release::tests::minisign_verification_accepts_fixture_and_fails_closed_without_echoing_bytes ... ok
+test release::tests::only_canonical_linux_targets_are_selectable ... ok
+test release::tests::stable_version_policy_is_strict_and_monotonic ... ok
+test state::backup::tests::a_retained_previous_target_has_a_deterministic_name ... ok
+test state::backup::tests::backup_receipts_carry_no_row_contents ... ok
+test management::worker::tests::a_degraded_startup_still_serves_health ... ok
+test release::tests::signed_manifest_is_verified_before_projection_and_policy ... ok
+test state::diagnostic::tests::identity_inspection_reads_v4_with_live_wal_without_migrating ... ok
+test state::diagnostic::tests::immutable_inspection_decodes_state_without_mutating_files ... ok
+test state::error::tests::database_errors_never_carry_sql_text_or_bound_values ... ok
+test state::error::tests::path_and_ownership_errors_name_only_the_path_and_uids ... ok
+test state::inuse::tests::normalization_collapses_cur_dir_and_repeated_separators ... ok
+test state::inuse::tests::registration_is_exclusive_per_path ... ok
+test state::projection::tests::absent_links_project_without_wireguard_configuration ... ok
+test state::projection::tests::projected_interface_carries_exactly_the_kernel_shaped_intent ... ok
+test state::projection::tests::projection_includes_ipv6_policy_prefix_only_when_forwarding_is_opted_in ... ok
+test state::projection::tests::projection_is_deterministic_across_repeated_calls ... ok
+test state::projection::tests::projection_requires_host_prefixes_for_client_assignments ... ok
+test state::diagnostic::tests::immutable_inspection_refuses_a_newer_schema_without_migrating_it ... ok
+test state::schema::tests::a_pre_migration_snapshot_is_taken_before_a_schema_change ... ok
+test management::auth::tests::auth_writes_never_advance_the_desired_generation ... ok
+test state::schema::tests::a_corrupted_generation_value_is_refused_at_both_layers ... ok
+test state::schema::tests::a_snapshot_name_is_deterministic_and_documented ... ok
+test state::schema::tests::a_schema_newer_than_the_binary_is_refused_rather_than_downgraded ... ok
+test state::backup::tests::offline_state_restore_can_be_replayed_after_an_interrupted_attempt ... ok
+test state::schema::tests::extension_loading_is_absent_from_the_dependency_configuration ... ok
+test state::schema::tests::dns_is_stored_in_its_own_table_and_never_overloaded_into_routes ... ok
+test state::schema::tests::an_upgrade_preserves_installation_identity_and_typed_state ... ok
+test state::schema::tests::a_schema_newer_than_the_binary_is_rejected ... ok
+test state::schema::tests::foreign_keys_are_checked_after_every_migration_step ... ok
+test state::schema::tests::foreign_key_constraints_are_rejected_by_sqlite ... ok
+test state::schema::tests::migration_v5_failure_rolls_back_schema_version_and_partial_ddl ... ok
+test management::auth::tests::purge_removes_only_expired_sessions ... ok
+test state::schema::tests::migration_v6_failure_rolls_back_the_new_column_and_version ... ok
+test state::schema::tests::no_snapshot_is_taken_when_there_is_nothing_to_migrate ... ok
+test state::schema::tests::migration_v7_failure_rolls_back_forwarding_column_and_version ... ok
+test state::schema::tests::migration_v4_to_v7_preserves_generation_and_defaults_ipv6_forwarding_off ... ok
+test state::schema::tests::migration_zero_to_head_creates_every_schema ... ok
+test state::service_lease::tests::lock_excludes_another_open_file_and_releases_on_drop ... ok
+test state::service_lease::tests::shared_backups_exclude_exclusive_maintenance_but_not_each_other ... ok
+test update::tests::acquisition_uses_exact_tag_and_authenticates_before_projection ... ok
+test update::tests::discovery_accepts_only_exact_published_stable_tags ... ok
+test state::schema::tests::the_opened_database_enforces_the_hardened_pragma_contract ... ok
+test update::tests::failed_service_stop_requires_eggup_quiescence_receipt_and_stable_owned_state ... ok
+test update::tests::historical_schema_one_journals_remain_parseable_without_typed_identity ... ok
+test update::tests::intentionally_disabled_product_health_does_not_require_live_convergence ... ok
+test update::tests::journal_rejects_invalid_version_path_and_digest ... ok
+test update::tests::journal_rejects_malformed_typed_state_identity ... ok
+test state::schema::tests::the_schema_contains_no_live_telemetry_columns ... ok
+test update::tests::journal_state_machine_rejects_skipped_and_terminal_transitions ... ok
+test update::tests::journal_writer_child_waits_for_kill ... ok
+test update::tests::journal_round_trip_is_atomic_and_private ... ok
+test update::tests::product_health_projection_requires_database_backend_identity_and_convergence ... ok
+test update::tests::recovery_restores_state_for_every_phase_that_may_follow_migration ... ok
+test update::tests::terminal_transactions_allow_later_product_mutations_but_pin_identity_and_schema ... ok
+test update::tests::update_operations_refuse_without_a_production_key ... ok
+test wireguard::darwin::tests::helper_argv_is_fixed_with_no_path_lookup ... ok
+test wireguard::darwin::tests::helper_identity_verification_rejects_mismatch ... ok
+test state::schema::tests::the_runner_upgrades_a_historical_fixture_to_the_latest_version ... ok
+test wireguard::darwin::tests::helper_provenance_is_pinned ... ok
+test wireguard::darwin::tests::interface_delta_requires_exactly_one_new_utun ... ok
+test wireguard::darwin::tests::ownership_proof_fails_closed_on_every_mismatch ... ok
+test wireguard::darwin::tests::uapi_get_parses_errno_and_pairs_with_terminator ... ok
+test wireguard::darwin::tests::uapi_handshake_reads_helper_epoch_not_kernel_name ... ok
+test wireguard::darwin::tests::uapi_keys_convert_from_base64_to_helper_hex ... ok
+test wireguard::darwin::tests::uapi_round_trip_works_over_a_socketpair ... ok
+test wireguard::darwin::tests::uapi_set_renders_typed_fields_with_bounds ... ok
+test wireguard::tests::allowed_ip_validation_rejects_duplicates_and_detects_cross_peer_overlap ... ok
+test wireguard::tests::secret_debug_is_redacted_inside_protocol_operation ... ok
+test wireguard::tests::update_semantics_distinguish_keep_clear_and_set ... ok
+test management::auth::tests::the_one_shot_commands_work_on_a_path_nothing_has_opened ... ok
+test update::tests::killed_journal_writer_child_leaves_a_durable_candidate_healthy_phase ... ok
+test management::auth::tests::credential_failure_never_distinguishes_username_from_password ... ok
+test wireguard::darwin::tests::supervisor_spawns_fixed_argv_with_controlled_env ... ok
+test state::store::product::retention_tests::retention_never_deletes_new_event_and_pages_the_retained_boundary ... ok
+test management::auth::tests::a_password_reset_revokes_every_prior_session ... ok
+test management::auth::tests::a_disabled_principal_costs_a_verification_too ... ok
+test update::tests::eggup_commit_keeps_old_binary_until_product_check_and_rolls_back_on_failure ... ok
+test management::auth::tests::the_timing_equaliser_is_never_any_principals_verifier ... ok
+test protocol::socket::tests::idle_client_is_bounded_and_shutdown_completes ... ok
+test protocol::socket::tests::authorized_slow_peer_blocks_one_at_a_time_service_for_at_most_io_timeout ... ok
+test management::auth::tests::an_unknown_username_costs_a_verification_rather_than_being_free ... ok
+test protocol::socket::tests::malformed_peer_burst_does_not_prevent_a_later_authorized_request ... ok
+
+test result: ok. 378 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.99s
+
+
+running 3 tests
+test tests::the_state_cli_offers_no_sql_or_shell_access ... ok
+test tests::cli_roles_parse_without_starting_services ... ok
+test tests::the_state_roles_require_their_paths ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 57 tests
+test bundled_sqlite_runtime_is_past_the_wal_reset_advisory_range ... ok
+test no_build_toolchain_is_required_to_produce_the_shell ... ok
+test cargo_target_tables_keep_linux_backends_linux_only ... ok
+test a_failed_login_lookup_always_spends_one_argon2_verification ... ok
+test linux_observation_metadata_is_not_universal_ownership_proof ... ok
+test a_migration_fixture_is_a_real_v1_database ... ok
+test no_authentication_value_can_reach_a_database_query_as_plaintext ... ok
+test a_non_loopback_bind_is_never_permitted_without_acknowledgement ... ok
+test no_embedded_asset_names_an_external_origin ... ok
+test operational_events_have_a_closed_secret_safe_schema ... ok
+test privileged_protocol_exposes_no_generic_escape_hatch_operation ... ok
+test protocol_operation_vocabulary_is_closed_and_version_pinned ... ok
+test secret_wrappers_redact_ordinary_debug_and_display ... ok
+test service_hardening_contract_matches_netd_runtime_requirements ... ok
+test a_raw_session_token_has_no_path_into_the_database ... ok
+test the_aggregate_coordinator_is_privileged_and_database_free ... ok
+test doctor_uses_only_immutable_state_reads_and_plan_operations ... ok
+test the_asset_shell_needs_no_csp_concession_and_no_build_step ... ok
+test the_comment_stripper_actually_strips_and_preserves ... ok
+test the_darwin_helper_supervisor_spawns_only_the_pinned_foreground_helper ... ok
+test no_module_outside_the_response_module_builds_a_management_response ... ok
+test the_anonymous_health_answer_comes_only_from_the_readiness_projection ... ok
+test the_darwin_pf_model_renders_without_executing ... ok
+test the_darwin_installer_claims_no_signing_and_touches_no_system_path ... ok
+test the_darwin_reconciler_plans_without_touching_the_host ... ok
+test the_limiter_peer_map_is_bounded ... ok
+test the_login_limiter_is_consulted_before_the_worker_admits_the_command ... ok
+test the_login_limiter_stays_in_memory_across_a_restart ... ok
+test authentication_is_reached_only_through_the_bounded_worker ... ok
+test the_management_http_surface_ships_no_router_or_client_crate ... ok
+test every_security_header_is_applied_from_one_place ... ok
+test darwin_stubs_fail_closed_without_process_or_shell ... ok
+test the_admin_cli_offers_no_argv_or_environment_secret_path ... ok
+test the_management_state_store_never_reaches_a_privileged_boundary ... ok
+test the_management_surface_ships_no_token_or_oauth_dependency ... ok
+test the_nft_backend_spawns_exactly_nft_and_never_a_shell ... ok
+test the_platform_boundary_stays_pure_types_without_privilege_or_process ... ok
+test the_live_backend_probe_is_reachable_only_from_the_authenticated_route ... ok
+test the_long_running_roles_catch_a_supervisors_termination_signal ... ok
+test the_session_cookie_cannot_lose_its_defining_attributes ... ok
+test process_execution_is_isolated_to_audited_backends ... ok
+test the_shell_uses_product_routes_without_exposing_internal_operations ... ok
+test the_shell_goes_through_the_same_single_seal_point ... ok
+test the_state_backup_and_restore_path_stays_local_to_the_database ... ok
+test the_privileged_service_never_opens_the_state_database ... ok
+test update_fixture_hooks_are_opt_in_and_excluded_from_release_builds ... ok
+test the_state_store_submodules_stay_a_one_directed_layering ... ok
+test the_management_worker_queue_is_bounded ... ok
+test no_module_shells_out_through_a_shell ... ok
+test the_management_role_never_becomes_an_http_surface ... ok
+test the_management_surface_emits_no_cors_header_at_all ... ok
+test the_http_boundary_never_reaches_the_durable_store_or_the_kernel ... ok
+test production_control_paths_do_not_invoke_wg_wg_quick_or_ip ... ok
+test the_management_surface_never_trusts_a_forwarded_header ... ok
+test the_shell_is_embedded_at_compile_time_and_never_read_from_disk ... ok
+test minisign_fixture_private_key_is_not_embedded_in_shipped_sources ... ok
+test only_the_serve_module_orders_the_service_lifecycle ... ok
+
+test result: ok. 57 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 16 tests
+test the_argon2id_policy_is_the_roadmap_minimum ... ok
+test the_digest_is_what_is_looked_up_not_the_token ... ok
+test a_v1_database_that_cannot_migrate_is_left_at_version_one ... ok
+test a_real_v1_database_upgrades_to_head_and_preserves_desired_state ... ok
+test the_upgrade_takes_a_recovery_snapshot_holding_the_v1_schema ... ok
+test the_new_tables_exist_and_credential_values_are_absent_from_desired_state ... ok
+test a_one_shot_admin_command_never_reports_a_credential ... ok
+test concurrent_session_issuance_is_capped_without_advancing_desired_generation ... ok
+test the_raw_token_is_absent_from_the_database_after_a_worker_login ... ok
+test the_worker_owns_credential_and_session_operations ... ok
+test a_csrf_token_is_issued_per_session_and_is_not_the_bearer ... ok
+test a_refused_login_is_distinguishable_from_an_outage_by_the_caller ... ok
+test authentication_across_the_worker_never_advances_the_desired_generation ... ok
+test an_argon2id_verifier_round_trips_through_the_database_and_never_stores_a_password ... ok
+test a_password_reset_across_the_worker_revokes_every_session ... ok
+test argon2id_cost_evidence_is_printed_for_ci ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.20s
+
+
+running 13 tests
+test the_global_bucket_is_charged_before_the_peer_bucket ... ok
+test a_refusal_always_carries_a_usable_retry_after ... ok
+test only_the_exact_canonical_origin_is_accepted ... ok
+test the_allowed_host_set_is_not_a_wildcard ... ok
+test a_rebinding_host_is_refused_for_every_route_and_method ... ok
+test a_login_must_be_json_and_a_simple_form_is_never_accepted ... ok
+test a_safe_method_carries_no_origin_requirement ... ok
+test a_throttled_login_does_not_answer_at_all ... ok
+test revoking_a_session_makes_its_cookie_stop_working ... ok
+test a_refusal_never_distinguishes_why_credentials_were_rejected ... ok
+test each_session_carries_its_own_csrf_token ... ok
+test a_correct_login_answers_once_and_only_once ... ok
+test limiter_before_hashing ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.96s
+
+
+running 6 tests
+test allowlist_extension_keeps_default_user_and_denial_is_kernel_enforced ... ok
+test serve_reaches_netd_only_through_the_authorized_socket ... ok
+test authorized_peer_ping_and_capability_snapshot_over_getpeereid ... ok
+test sigterm_drains_and_restart_rebinds ... ok
+test stale_socket_rebind_and_foreign_preservation ... ok
+test malformed_frames_do_not_crash_or_bypass_auth ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.26s
+
+
+running 1 test
+test state_init_creates_once_then_validates_existing_state ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 19 tests
+test an_unknown_route_is_a_bounded_404_on_the_wire ... ok
+test a_body_bearing_request_never_reaches_application_work ... ok
+test a_form_encoded_login_is_refused ... ok
+test a_loopback_deployment_never_claims_a_secure_transport ... ok
+test an_ephemeral_loopback_bind_serves_the_health_route ... ok
+test an_unsafe_method_without_the_exact_origin_is_refused ... ok
+test a_known_route_answers_the_same_on_every_connection ... ok
+test an_unsupported_method_is_refused_with_405_and_a_bounded_body ... ok
+test a_foreign_host_is_refused_before_routing ... ok
+test an_authenticated_route_refuses_an_unauthenticated_caller ... ok
+test every_response_kind_carries_the_security_headers ... ok
+test a_worker_that_is_stopped_becomes_a_bounded_503 ... ok
+test the_health_route_is_not_cached_by_an_intermediary ... ok
+test the_listener_advertises_no_server_stack ... ok
+test the_lifecycle_releases_the_state_store_before_it_returns ... ok
+test an_expired_session_stops_authenticating ... ok
+test the_cookie_profile_follows_the_canonical_origin_not_the_connection ... ok
+test logout_without_a_csrf_token_changes_nothing ... ok
+test authenticated_product_crud_uses_generation_cas_and_reports_degraded_commit ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.04s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test long_running_role_events_are_stderr_only_and_json_is_line_delimited ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 31 tests
+test a_conflicting_request_is_refused_with_a_bounded_reason ... ok
+test concurrent_same_generation_creates_have_exactly_one_winner ... ok
+test created_clients_receive_consecutive_lowest_free_addresses ... ok
+test enrollment_links_are_capped_and_old_terminal_rows_are_pruned_with_audit_retained ... ok
+test dual_stack_setup_allocates_persists_and_reassigns_client_addresses ... ok
+test create_generates_a_key_allocates_the_next_address_and_returns_no_secret ... ok
+test a_reassignment_onto_another_clients_address_is_refused_atomically ... ok
+test a_refused_mutation_appends_no_audit_row_and_does_not_advance_the_generation ... ok
+test an_exhausted_pool_is_reported_rather_than_wrapping ... ok
+test a_stale_expected_generation_is_refused_and_commits_nothing ... ok
+test delete_removes_the_client_and_its_peer_and_releases_the_address ... ok
+test disabling_one_client_leaves_the_others_and_their_addresses_alone ... ok
+test the_allocator_is_deterministic_for_identical_product_state ... ok
+test a_requested_address_is_honoured_and_a_conflict_is_refused ... ok
+test a_disabled_client_leaves_projected_intent_and_re_enabling_restores_the_same_peer ... ok
+test invalid_ipv6_client_route_is_rejected_without_advancing_generation ... ok
+test product_mutation_is_serialised_by_the_store_lock ... ok
+test every_committed_mutation_appends_exactly_one_audit_row ... ok
+test reassigning_an_address_is_one_atomic_mutation_that_keeps_uniqueness ... ok
+test setup_is_one_time ... ok
+test setup_generates_the_server_identity_and_returns_no_secret ... ok
+test product_rows_survive_a_plain_non_product_mutation ... ok
+test admin_at_a_fresh_scratch_returns_a_stable_principal ... ok
+test the_audit_table_has_no_column_that_could_hold_a_free_form_message ... ok
+test the_server_summary_and_its_debug_form_never_carry_the_private_key ... ok
+test ipv6_route_policy_requires_and_uses_explicit_ipv6_client_assignment ... ok
+test two_clients_never_share_a_peer_or_a_client_identifier ... ok
+test product_state_survives_reopen_including_disabled_clients ... ok
+test update_changes_label_dns_keepalive_and_route_policy_without_rotating_keys ... ok
+test whole_network_disable_preserves_configuration_and_enable_restores_same_intent ... ok
+test interface_identifiers_are_distinct_per_installation ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.40s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test fixture_signatures_verify_exact_manifest_and_installer_bytes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 1 test
+test repeated_valid_and_rejected_http_requests_have_bounded_resource_and_row_growth ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+
+running 1 test
+test the_under_test_binary_is_the_one_this_suite_exercises ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test serve_is_singleton_and_sigkill_releases_the_advisory_lease ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+
+running 20 tests
+test a_fatal_state_failure_is_not_a_degraded_one ... ok
+test the_declared_bounds_are_the_documented_ones ... ok
+test request_target_limit_accepts_1024_bytes_and_rejects_1025 ... ok
+test the_overload_answers_the_surface_maps_are_still_distinct ... ok
+test header_byte_limit_accepts_8192_and_rejects_8193_bytes ... ok
+test header_count_boundary_accepts_32_and_rejects_33_without_losing_service ... ok
+test total_connection_lifetime_closes_a_still_open_keepalive_socket ... ok
+test a_stalled_request_head_is_dropped_at_the_header_timeout ... ok
+test an_oversized_login_body_is_refused_with_a_bounded_answer ... ok
+test a_keepalive_connection_is_closed_after_256_requests ... ok
+test more_connections_than_the_limit_are_answered_or_closed_never_queued ... ok
+test expired_sessions_are_reclaimed_and_the_table_does_not_grow ... ok
+test a_stalled_request_body_is_dropped_at_the_body_timeout ... ok
+test shutdown_with_a_request_in_flight_drains_and_exits ... ok
+test a_slow_handler_still_answers_within_the_handler_timeout ... ok
+test repeated_logins_are_throttled_with_a_usable_retry_after ... ok
+test a_login_flood_costs_far_less_cpu_than_one_verification_per_attempt ... ok
+test the_worker_queue_is_bounded_and_refuses_rather_than_queueing ... ok
+test worker_overload_is_never_reported_as_a_credential_refusal ... ok
+test the_in_flight_ceiling_holds_under_a_slow_client_flood ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.16s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test the_harness_dials_loopback_only ... ok
+test an_expired_session_stays_expired_across_a_restart ... ok
+test readiness_is_reported_at_startup_and_healthz_never_explains_it ... ok
+test a_non_expired_session_survives_a_serve_restart ... ok
+test logout_across_a_restart_invalidates_the_old_cookie ... ok
+test a_password_reset_invalidates_every_prior_session_across_a_restart ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.66s
+
+
+running 20 tests
+test a_backup_refuses_a_destination_inside_an_unsafe_directory ... ok
+test a_failed_backup_removes_only_its_own_temporary_artifact ... ok
+test a_restore_refuses_a_candidate_opened_by_this_process ... ok
+test a_file_that_is_not_sqlite_is_refused ... ok
+test a_missing_singleton_installation_row_is_refused ... ok
+test a_backup_refuses_to_overwrite_an_existing_destination ... ok
+test a_backup_is_not_a_blind_copy_of_the_live_database ... ok
+test a_backup_is_a_consistent_snapshot_of_exactly_one_generation ... ok
+test a_duplicate_identifier_is_refused_at_every_layer ... ok
+test a_restore_refuses_while_the_target_is_open_in_this_process ... ok
+test a_backup_receipt_carries_no_secret_contents ... ok
+test a_symlinked_candidate_is_refused ... ok
+test a_world_readable_candidate_is_refused ... ok
+test a_truncated_database_is_refused_by_the_integrity_check ... ok
+test backup_artifacts_are_owner_only_and_leave_no_temporary_files ... ok
+test a_schema_newer_than_the_binary_is_refused_before_anything_is_replaced ... ok
+test a_restore_round_trips_identity_generation_and_typed_state ... ok
+test a_failed_restore_preserves_the_original_database ... ok
+test a_restore_retains_the_previous_database_for_recovery ... ok
+test convergence_categories_survive_a_backup_and_restore_round_trip ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+
+running 5 tests
+test crash_worker ... ok
+test the_store_refuses_a_database_whose_singleton_row_is_missing ... ok
+test a_backup_taken_after_a_crash_is_itself_consistent ... ok
+test an_abrupt_kill_leaves_a_reopenable_database_with_whole_generations ... ok
+test an_abrupt_kill_does_not_leave_secrets_exposed ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 30 tests
+test backup_and_restore_stay_a_local_file_operation ... ok
+test a_group_or_world_writable_parent_directory_is_rejected ... ok
+test a_symlinked_database_is_rejected ... ok
+test a_directory_in_place_of_the_database_is_rejected ... ok
+test cross_interface_validation_rejects_duplicate_names_and_dangling_policies ... ok
+test a_stale_writer_is_refused_and_changes_nothing ... ok
+test convergence_evidence_round_trips_and_starts_unset ... ok
+test a_group_or_world_accessible_database_is_narrowed_when_ownership_is_proven ... ok
+test a_multi_table_mutation_commits_entirely_or_not_at_all ... ok
+test a_database_owned_by_another_uid_is_rejected ... ok
+test projection_refuses_ipv6_policy_prefixes_without_explicit_forwarding_opt_in ... ok
+test a_freshly_created_database_is_owner_only ... ok
+test generation_advances_by_exactly_one_per_committed_mutation ... ok
+test reopening_a_missing_database_is_refused_rather_than_created ... ok
+test an_update_closure_error_rolls_the_whole_mutation_back ... ok
+test a_stale_receipt_cannot_mark_a_newer_generation_converged ... ok
+test an_absent_interface_projects_without_a_wireguard_configuration ... ok
+test the_state_module_does_not_depend_on_the_network_backends ... ok
+test a_commit_does_not_imply_kernel_convergence ... ok
+test desired_state_round_trips_through_the_store_with_every_relationship ... ok
+test an_unchanged_snapshot_still_advances_the_generation ... ok
+test convergence_evidence_records_attempts_and_categories_only ... ok
+test initialization_refuses_to_overwrite_an_existing_database ... ok
+test projection_is_deterministic_across_reopen_and_store_cycles ... ok
+test projection_produces_the_existing_kernel_intent_types ... ok
+test reopen_preserves_the_installation_identity_and_generation ... ok
+test secret_values_never_appear_in_store_diagnostics ... ok
+test new_store_initializes_with_generation_one_and_a_fresh_installation_id ... ok
+test validation_failure_performs_no_row_changes_and_does_not_advance_generation ... ok
+test server_allowed_ips_and_client_route_policy_remain_separate ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+
+running 2 tests
+test systemd_installation_ownership_reinstall_and_service_credentials ... ignored, mutates system users, /usr/local/bin, /etc/systemd, /var/lib, and systemd services
+test unrelated_uid_cannot_connect_to_netd_socket ... ignored, run as an unrelated account after the systemd installation fixture
+
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test real_v4_state_migrates_refuses_old_binary_and_rolls_back_with_v4_artifact ... ignored, requires a separately built immutable Phase 8 binary; run in upgrade-rehearsal CI
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 5 tests
+test live_forwarding_and_unattached_anchor_probe ... ignored, needs WGB_DARWIN_LIVE=1 as root on a disposable macOS host
+test live_launchd_bootstrap_cycle ... ignored, needs WGB_DARWIN_LIVE=1 as root on a disposable macOS host
+test live_loopback_handshake_and_traffic ... ignored, needs WGB_DARWIN_LIVE=1 as root on a disposable macOS host
+test live_pf_inventory_and_anchor_cycle ... ignored, needs WGB_DARWIN_LIVE=1 as root on a disposable macOS host
+test live_route_inventory_preserved ... ignored, needs WGB_DARWIN_LIVE=1 as root on a disposable macOS host
+
+test result: ok. 0 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

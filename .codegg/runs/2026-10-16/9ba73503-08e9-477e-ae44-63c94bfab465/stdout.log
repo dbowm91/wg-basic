@@ -1,0 +1,13 @@
+src/distribution.rs:718:        return Err("candidate version does not match this installer's release identity".into());
+src/update.rs:24:const RELEASE_ORIGIN: &str = "https://github.com/dbowm91/wg-basic/releases/download";
+src/update.rs:1817:/// Resolve only a qualified, absolute curl binary. PATH is never consulted.
+src/update.rs:1818:pub fn system_transport() -> Result<eggup_curl::CurlTransport, String> {
+src/update.rs:1819:    use eggup_curl::{CurlConfig, CurlTransport};
+src/update.rs:1820:    for candidate in ["/usr/bin/curl", "/bin/curl"] {
+src/update.rs:1838:            .map_err(|_| "curl transport policy could not be configured".into());
+src/update.rs:1841:    Err("no safe allowlisted curl executable is available".into())
+src/launchd.rs:7://! to `/Library/LaunchDaemons`, creating service users, or bootstrapping
+src/launchd.rs:13://!   loaded via `launchctl bootstrap system/`; `RunAtLoad` + `KeepAlive`
+src/launchd.rs:28://! - no unverified download ever executes as root; signing claims stay
+src/launchd.rs:346:    fn installer_refuses_bad_targets_and_empty_artifacts() {
+src/launchd.rs:376:                "launchd installer must not claim signing or update capability"

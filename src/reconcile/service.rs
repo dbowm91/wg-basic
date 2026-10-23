@@ -2,16 +2,9 @@
 //!
 //! One installation-wide lock serializes observe/plan/apply/verify sequences.
 
+use super::apply::{apply_with_backend, plan_with_backend};
 use super::linux::LinuxNetworkBackend;
-use super::model::{
-    ApplyReceipt, ApplyStatus, DesiredManagedInterface, ObservedManagedInterface, ReconcileError,
-    ReconcilePlanSummary, SafeFailureCategory,
-};
-use super::planner::{plan_execution, plan_managed_interface, Mutation};
-use crate::{
-    domain::{InterfaceName, OwnerTag},
-    wireguard::WireGuardValidationError,
-};
+use super::model::{ApplyReceipt, DesiredManagedInterface, ReconcileError, ReconcilePlanSummary};
 use std::sync::Mutex;
 
 /// One installation-wide lock serializes observe/plan/apply/verify sequences.
@@ -41,10 +34,7 @@ impl ReconciliationService {
         desired: &DesiredManagedInterface,
     ) -> Result<ReconcilePlanSummary, ReconcileError> {
         desired.validate()?;
-        let observed = self
-            .backend
-            .observe(&desired.interface, &desired.owner_tag)?;
-        plan_managed_interface(desired, &observed)
+        plan_with_backend(desired, &self.backend)
     }
 
     pub fn apply(&self, desired: &DesiredManagedInterface) -> Result<ApplyReceipt, ReconcileError> {
@@ -57,117 +47,17 @@ impl ReconciliationService {
     }
 }
 
-pub(crate) trait ReconcileBackend {
-    fn observe(
-        &self,
-        interface: &InterfaceName,
-        owner_tag: &OwnerTag,
-    ) -> Result<ObservedManagedInterface, ReconcileError>;
-    fn apply(&self, interface: &InterfaceName, mutation: Mutation) -> Result<(), ReconcileError>;
-}
-
-fn apply_with_backend(
-    desired: &DesiredManagedInterface,
-    backend: &impl ReconcileBackend,
-) -> Result<ApplyReceipt, ReconcileError> {
-    let before = backend.observe(&desired.interface, &desired.owner_tag)?;
-    let plan = plan_execution(desired, &before)?;
-    if plan.mutations.is_empty() {
-        return Ok(ApplyReceipt {
-            interface: desired.interface.clone(),
-            status: ApplyStatus::NoChange,
-            planned_actions: Vec::new(),
-            completed_actions: 0,
-            failed_action: None,
-            failure: None,
-            observed_after: Some(before),
-        });
-    }
-    let planned_actions = plan.summary.actions;
-    let mut completed_actions = 0;
-    for (index, mutation) in plan.mutations.into_iter().enumerate() {
-        if let Err(error) = backend.apply(&desired.interface, mutation) {
-            let observed_after = backend.observe(&desired.interface, &desired.owner_tag).ok();
-            let raced_to_desired = observed_after.as_ref().is_some_and(|observed| {
-                plan_execution(desired, observed)
-                    .is_ok_and(|remaining| remaining.mutations.is_empty())
-            });
-            return Ok(ApplyReceipt {
-                interface: desired.interface.clone(),
-                status: if raced_to_desired {
-                    ApplyStatus::AlreadyConverged
-                } else if completed_actions == 0 {
-                    ApplyStatus::FailedBeforeMutation
-                } else {
-                    ApplyStatus::PartialFailure
-                },
-                failed_action: Some(planned_actions[index].clone()),
-                failure: (!raced_to_desired).then_some(failure_category(&error)),
-                planned_actions,
-                completed_actions,
-                observed_after,
-            });
-        }
-        completed_actions += 1;
-    }
-    let observed_after = match backend.observe(&desired.interface, &desired.owner_tag) {
-        Ok(observed) => observed,
-        Err(error) => {
-            return Ok(ApplyReceipt {
-                interface: desired.interface.clone(),
-                status: ApplyStatus::VerificationFailed,
-                planned_actions,
-                completed_actions,
-                failed_action: None,
-                failure: Some(failure_category(&error)),
-                observed_after: None,
-            })
-        }
-    };
-    let converged = plan_execution(desired, &observed_after)
-        .is_ok_and(|remaining| remaining.mutations.is_empty());
-    Ok(ApplyReceipt {
-        interface: desired.interface.clone(),
-        status: if converged {
-            ApplyStatus::Applied
-        } else {
-            ApplyStatus::VerificationFailed
-        },
-        planned_actions,
-        completed_actions,
-        failed_action: None,
-        failure: (!converged).then_some(SafeFailureCategory::KernelRejected),
-        observed_after: Some(observed_after),
-    })
-}
-
-fn failure_category(error: &ReconcileError) -> SafeFailureCategory {
-    match error {
-        ReconcileError::OwnershipRequired
-        | ReconcileError::Conflict
-        | ReconcileError::WrongLinkKind => SafeFailureCategory::Conflict,
-        ReconcileError::WireGuard(WireGuardValidationError::PermissionDenied) => {
-            SafeFailureCategory::PermissionDenied
-        }
-        ReconcileError::WireGuard(WireGuardValidationError::UnsupportedBackend) => {
-            SafeFailureCategory::Unsupported
-        }
-        ReconcileError::WireGuard(WireGuardValidationError::KernelRejected) => {
-            SafeFailureCategory::KernelRejected
-        }
-        _ => SafeFailureCategory::BackendFailure,
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use super::super::apply::ReconcileBackend;
     use super::super::model::{
-        DesiredAddress, DesiredManagedInterface, LinkLifecycle, OwnershipDeclaration,
-        ResourcePresence,
+        ApplyStatus, DesiredAddress, DesiredManagedInterface, LinkLifecycle,
+        ObservedManagedInterface, OwnershipDeclaration, ResourcePresence,
     };
     use super::*;
     use crate::domain::{InstallationId, InterfaceId, InterfaceName, OwnerTag};
     use crate::reconcile::model::ObservedLinkKind;
+    use crate::reconcile::Mutation;
     use std::sync::Mutex as StdMutex;
 
     /// One stable tag for the whole module: ownership is proven by an exact

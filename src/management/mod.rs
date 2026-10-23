@@ -71,11 +71,10 @@ pub use auth::{
 pub use coordinator::{CoordinatorAction, ReconcileCoordinator};
 pub use error::{FailureClass, ManagementError, ProjectionFailure};
 pub use health::{BackendProbe, ConvergenceState, ManagementHealth};
-#[cfg(target_os = "linux")]
 pub use runtime::project_diagnostic_intent;
 pub use runtime::{ManagementRuntime, ReconcileOutcome};
 pub use worker::{
     spawn, ClientMutationReply, ProductFailure, ProductSnapshotReply, SetupReply, StartupReconcile,
-    WorkerClient, WorkerCommand, WorkerConfig, WorkerError, WorkerStartup, DEFAULT_QUEUE_CAPACITY,
-    DEFAULT_REPLY_DEADLINE,
+    WorkerClient, WorkerCommand, WorkerConfig, WorkerError, WorkerStartup, BACKEND_STARTUP_WAIT,
+    DEFAULT_QUEUE_CAPACITY, DEFAULT_REPLY_DEADLINE,
 };

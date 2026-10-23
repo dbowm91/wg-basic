@@ -1,0 +1,7 @@
+src/launchd.rs:59:        r#"<?xml version="1.0" encoding="UTF-8"?>
+src/launchd.rs:61:<plist version="1.0">
+src/launchd.rs:115:    pub version: String,
+src/launchd.rs:128:    version: &str,
+src/launchd.rs:197:        version: version.into(),
+src/launchd.rs:346:    fn installer_refuses_bad_targets_and_empty_artifacts() {
+src/launchd.rs:376:                "launchd installer must not claim signing or update capability"

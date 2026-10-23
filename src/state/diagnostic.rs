@@ -44,10 +44,23 @@ pub struct StateIdentity {
 /// Reads the update identity from a live database without applying migrations
 /// or changing SQLite pragmas. A read-only connection observes committed WAL
 /// data when the service is running.
+/// Whether a write-ahead log still carries committed transactions.
+///
+/// An empty log carries nothing, so an immutable read of the main database
+/// file misses nothing. A log with content carries transactions that an
+/// immutable read would not see.
+fn wal_carries_content(path: &Path) -> bool {
+    fs::metadata(path)
+        .map(|metadata| metadata.len() > 0)
+        .unwrap_or(false)
+}
+
 pub fn inspect_identity_readonly(path: &Path) -> Result<StateIdentity, StateError> {
     use sha2::Digest;
 
-    let path = std::path::absolute(path).map_err(|_| StateError::DatabaseOpenFailed)?;
+    // Portable (M001): resolve macOS symlink components (`/var`, `/tmp`)
+    // before `NOFOLLOW` opens; the file itself must still not be a symlink.
+    let path = fs::canonicalize(path).map_err(|_| StateError::DatabaseOpenFailed)?;
     verify_path_readonly(&path)?;
     let wal_exists = sidecar(&path, "-wal").exists();
     let shm_exists = sidecar(&path, "-shm").exists();
@@ -114,9 +127,17 @@ pub fn inspect_identity_readonly(path: &Path) -> Result<StateIdentity, StateErro
 /// Loads and validates one immutable SQLite snapshot without migrations,
 /// pragma updates, WAL creation, or any other writes.
 pub fn inspect_readonly(path: &Path) -> Result<StateDiagnostic, StateError> {
-    let path = std::path::absolute(path).map_err(|_| StateError::DatabaseOpenFailed)?;
+    // Portable (M001): see `inspect_identity_readonly`.
+    let path = fs::canonicalize(path).map_err(|_| StateError::DatabaseOpenFailed)?;
     verify_path_readonly(&path)?;
-    if sidecar(&path, "-wal").exists() || sidecar(&path, "-shm").exists() {
+    // Immutable mode ignores WAL data, so a WAL that still holds committed
+    // transactions would be read as if they did not exist, and the inspection
+    // has to refuse it. An *empty* WAL holds none, and the shared-memory index
+    // that may be left beside it is meaningless without it: a database that
+    // was closed cleanly leaves the index behind, and that is not a writer.
+    // The same rule is applied again after the read, where it catches a writer
+    // that arrived while the inspection was in progress.
+    if wal_carries_content(&sidecar(&path, "-wal")) {
         return Err(StateError::Busy);
     }
     let uri = immutable_uri(&path)?;
@@ -186,9 +207,14 @@ pub fn inspect_readonly(path: &Path) -> Result<StateDiagnostic, StateError> {
             })
         })?;
 
-    // Immutable mode intentionally ignores WAL data. Refuse a result if a
-    // writer created sidecars while inspection was in progress.
-    if sidecar(&path, "-wal").exists() || sidecar(&path, "-shm").exists() {
+    // Immutable mode intentionally ignores WAL data, so a WAL that still
+    // holds committed transactions would be read as if they did not exist.
+    // An *empty* WAL holds none, and the shared-memory index that may be
+    // left beside it is meaningless without it: a database that was closed
+    // cleanly leaves the index behind, and that is not a writer. A writer
+    // that arrives during the inspection puts its transactions in the WAL,
+    // which the length check below still catches.
+    if wal_carries_content(&sidecar(&path, "-wal")) {
         return Err(StateError::Busy);
     }
     let recovery_artifacts = (1..schema_version)
@@ -313,21 +339,31 @@ fn sidecar(path: &Path, suffix: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{
-        os::unix::fs::PermissionsExt,
-        time::{SystemTime, UNIX_EPOCH},
-    };
+    use std::os::unix::fs::PermissionsExt;
+
+    /// A per-process scratch-path counter.
+    ///
+    /// The wall clock is too coarse to tell two concurrent tests apart: on
+    /// macOS consecutive `SystemTime::now()` calls routinely return the same
+    /// nanosecond value, so a timestamped scratch path is not unique and one
+    /// test's directory collides with another's. A counter is unique by
+    /// construction within the process, and the pid separates processes.
+    static SCRATCH_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    /// A scratch directory path that no concurrent test can claim.
+    fn scratch_directory(prefix: &str) -> PathBuf {
+        let path = Path::new("/tmp").join(format!(
+            "{prefix}-{}-{}",
+            std::process::id(),
+            SCRATCH_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        ));
+        let _ = std::fs::remove_dir_all(&path);
+        path
+    }
 
     #[test]
     fn immutable_inspection_decodes_state_without_mutating_files() {
-        let directory = Path::new("/tmp").join(format!(
-            "wg-basic-state-diagnostic-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let directory = scratch_directory("wg-basic-state-diagnostic");
         fs::create_dir(&directory).unwrap();
         fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
         let database = directory.join("state.db");
@@ -360,16 +396,50 @@ mod tests {
         fs::remove_dir_all(directory).unwrap();
     }
 
+    /// A cleanly closed database leaves an empty write-ahead log behind.
+    ///
+    /// The immutable inspection ignores WAL data, so it must refuse a log that
+    /// still holds committed transactions — but an *empty* log holds none, and
+    /// the shared-memory index that a clean close leaves beside it is
+    /// meaningless without it. Refusing that state makes the doctor's
+    /// immutable inspection unusable on a host whose service was stopped
+    /// cleanly, which is exactly how an operator reads it.
+    #[test]
+    fn immutable_inspection_accepts_a_cleanly_closed_database_with_an_empty_log() {
+        let directory = scratch_directory("wg-basic-state-diagnostic-clean");
+        fs::create_dir(&directory).unwrap();
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+        let database = directory.join("state.db");
+        drop(crate::state::StateStore::initialize(&database).unwrap());
+
+        // An empty write-ahead log and the shared-memory index a clean close
+        // leaves behind.
+        let wal = directory.join("state.db-wal");
+        let shm = directory.join("state.db-shm");
+        fs::write(&wal, b"").unwrap();
+        fs::write(&shm, [0u8; 32]).unwrap();
+
+        let inspected = inspect_readonly(&database);
+        assert!(
+            inspected.is_ok(),
+            "a cleanly closed database must be inspectable: {:?}",
+            inspected.err()
+        );
+
+        // A log that carries committed transactions is still refused: the
+        // immutable read would miss them.
+        fs::write(&wal, [7u8; 64]).unwrap();
+        assert!(
+            matches!(inspect_readonly(&database), Err(StateError::Busy)),
+            "a log with content must still be refused"
+        );
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
     #[test]
     fn immutable_inspection_refuses_a_newer_schema_without_migrating_it() {
-        let directory = Path::new("/tmp").join(format!(
-            "wg-basic-newer-diagnostic-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let directory = scratch_directory("wg-basic-newer-diagnostic");
         fs::create_dir(&directory).unwrap();
         fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
         let database = directory.join("state.db");
@@ -390,14 +460,7 @@ mod tests {
 
     #[test]
     fn identity_inspection_reads_v4_with_live_wal_without_migrating() {
-        let directory = Path::new("/tmp").join(format!(
-            "wg-basic-identity-diagnostic-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let directory = scratch_directory("wg-basic-identity-diagnostic");
         fs::create_dir(&directory).unwrap();
         fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
         let database = directory.join("state.db");

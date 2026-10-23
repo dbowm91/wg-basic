@@ -230,6 +230,13 @@
     };
     if (data.ipv6_tunnel_prefix.trim()) body.ipv6_tunnel_prefix = data.ipv6_tunnel_prefix.trim();
     if (data.ipv6_server_address.trim()) body.ipv6_server_address = data.ipv6_server_address.trim();
+    // The routing intent is only stated when it is the one that cannot be
+    // derived: everything else follows from the forwarding and masquerade
+    // settings, exactly as it did before the routed-LAN mode existed.
+    if (data.network_mode === "routed_lan") {
+      body.mode = "routed_lan";
+      body.destination_prefixes = data.destination_prefixes.split(",").map((value) => value.trim()).filter(Boolean);
+    }
     const response = await api("POST", "/api/v1/setup", body); const result = await json(response);
     await refreshAfterMutation(response, result, false);
   }

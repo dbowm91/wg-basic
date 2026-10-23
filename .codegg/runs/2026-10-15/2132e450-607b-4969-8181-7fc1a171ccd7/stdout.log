@@ -1,0 +1,41 @@
+=== run_admin_action / set-password ===
+177:    SetPassword {
+953:        AdminAction::SetPassword {
+966:            let status = management::set_password_at(&state, &username, &password)
+1047:            "state database is not initialized",
+1049:            "initialize the state database with the documented setup flow",
+1743:                let store = StateStore::initialize(&state).map_err(|error| error.to_string())?;
+1744:                println!("state initialized: {}", store.path().display());
+2262:        drop(wg_basic::state::StateStore::initialize(&path).unwrap());
+
+=== serve default host/port ===
+44:        http_bind: String,
+54:        /// Acknowledge that `--http-bind` is a routable address.
+86:        http_bind: Option<String>,
+320:            http_bind,
+326:            http_bind,
+374:            http_bind,
+382:            http_bind,
+420:    let server = SocketServer::bind(&socket, policy)
+421:        .map_err(|_| "could not safely bind the configured netd socket path".to_owned())?;
+468:    http_bind: Option<String>,
+567:    if let Some(bind) = http_bind {
+571:                ServeConfig::behind_https_proxy(state.clone(), socket.clone(), &bind, origin)
+575:                ServeConfig::acknowledged_off_host(state.clone(), socket.clone(), &bind, origin)
+578:            (None, false) => ServeConfig::new(state.clone(), socket.clone(), &bind).is_ok(),
+585:                "HTTP bind and origin policy are valid",
+592:                "HTTP bind and origin policy are invalid",
+594:                "correct the bind/origin and exposure acknowledgement",
+647:            http_bind,
+653:            http_bind,
+730:            http_bind,
+816:            if let Some(bind) = http_bind {
+823:                            &bind,
+831:                        &bind,
+835:                    (None, false) => ServeConfig::new(state.clone(), socket.clone(), &bind).is_ok(),
+842:                        "HTTP bind and origin policy are valid",
+849:                        "HTTP bind and origin policy are invalid",
+851:                        "correct the bind/origin and exposure acknowledgement",
+897:            let server = SocketServer::bind(&socket, policy)
+898:                .map_err(|_| "could not safely bind the configured netd socket path".to_owned())?;
+1351:            "check other host UDP/WireGuard users manually; doctor did not bind or mutate the port",

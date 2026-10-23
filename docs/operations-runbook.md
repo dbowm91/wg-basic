@@ -151,3 +151,398 @@ The detailed current behavior and exact CLI options are in
 [development](development.md). Release health and binary/database rollback
 ordering are specified in the
 [update and rollback contract](../architecture/update-rollback-contract.md).
+
+## Routed LAN on macOS
+
+A routed LAN lets clients reach administrator-approved downstream LAN prefixes
+through the managed tunnel, and the traffic comes back through the same
+tunnel. It is selected in the server setup — `mode` is `routed_lan` and
+`destination_prefixes` names the approved prefixes, in the management UI's
+"Network policy mode" and "Routed LAN destinations" fields, or in the
+`POST /api/v1/setup` body — and it is implemented on macOS only. A routed-LAN
+policy never masquerades. The internet-exit gateway mode is a different
+contract, with its own PF ownership and its own operator procedure, and it is
+described below.
+
+The product does not configure the host for a routed LAN. It observes the host,
+reports what it observed, and refuses to converge while a prerequisite is
+missing. Three things belong to the operator.
+
+Enable host forwarding. The host's global IPv4 and IPv6 forwarding must be on
+for every family the policy needs. Those switches are shared with everything
+else that routes packets on the machine, so wg-basic reads them
+(`net.inet.ip.forwarding`, `net.inet6.ip6.forwarding`) and never writes them.
+Enable them in the host's own configuration — `/etc/sysctl.conf` for a setting
+that must survive a reboot, or `sysctl -w` for the current boot:
+
+```sh
+sudo sysctl -w net.inet.ip.forwarding=1
+sudo sysctl -w net.inet6.ip6.forwarding=1
+```
+
+Install the routes for the approved prefixes. Each approved downstream prefix
+must be reached by a specific route through the declared egress interface. A
+routed LAN never depends on the default route, and wg-basic never takes the
+default route over:
+
+```sh
+sudo route -n add -net 192.168.9.0/24 -interface en0
+```
+
+The return path is the upstream router's job: it must route the tunnel pool
+back to this host's address on the LAN. wg-basic does not configure the
+upstream router. The pool's own route on this host must be scoped to the
+managed `utun` device.
+
+Route the pool back through **this host's LAN address**, not as a link-level
+route on the router's own interface:
+
+```sh
+# on the upstream router, where 192.168.9.3 is this host's LAN address
+sudo route -n add -net 10.77.0.0/24 192.168.9.3
+```
+
+A link-level route on the router's own interface makes it look for the pool
+address on that interface, where it does not exist — the pool lives on this
+host's tunnel device — so the router caches a rejection and the return path
+never leaves the router. The IPv6 equivalent has the same shape and must name
+this host's link-local address on that interface.
+
+The failure is silent, so check the shape rather than discovering it as a
+missing return path:
+
+```sh
+# on the upstream router: the pool route must name this host's LAN address
+netstat -rn -f inet | grep 10.77
+```
+
+A line that ends in an interface (`link#3`, `en0`) is the wrong shape. The
+route must name an address, and that address must be this host's address on
+the LAN. wg-basic cannot check this for you: it can only observe the routes on
+the host it runs on, never the routing table of the router upstream.
+
+Install the filter and attach the anchor. The filter that bounds a routed LAN
+is operator-managed: the rules go into the installation's own anchor, and the
+anchor is attached from your own pf configuration. wg-basic writes neither the
+rules nor `/etc/pf.conf`, and it never enables or disables PF. The doctor
+reports the exact rules to install:
+
+```sh
+wg-basic doctor --state /var/db/wg-basic/state.db \
+  --socket /var/run/wg-basic/netd.sock --json
+```
+
+The doctor reaches netd over the authorized socket, so run it as an account
+netd admits; on Darwin that is the management service account, and root is not
+a universal bypass there. The `routed_lan` check appears only when that plan
+succeeded.
+
+The rules travel as structured data, not as prose. The doctor's evidence is
+bounded, and a routed LAN's rule set outgrows that bound, so the exact rules
+are carried in the check's `required_filter_rules` array and the bounded
+evidence only reports how many rules there are. Read them out with:
+
+```sh
+wg-basic doctor --state /var/db/wg-basic/state.db \
+  --socket /var/run/wg-basic/netd.sock --json \
+  | jq -r '.checks[] | select(.id == "routed_lan") | .required_filter_rules[]'
+```
+
+Diagnosing offline. The doctor inspects the state database without writing to
+it, and it refuses a database that still has live write-ahead sidecars. The
+management service is what holds them, so a diagnosis that has to run with the
+service down is done in this order: stop the management service, close the
+database cleanly, run the doctor, then start the service again.
+
+On macOS the management service is a bootstrapped system service, and
+`launchctl stop` is not accepted for one. Unload the job, close the database
+cleanly, run the doctor, and register the job again:
+
+```sh
+sudo launchctl bootout system/com.wg-basic.serve
+sudo -u _wg-basic-serve wg-basic state status --state /var/db/wg-basic/state.db
+sudo -u _wg-basic-serve wg-basic doctor --state /var/db/wg-basic/state.db \
+  --socket /var/run/wg-basic/netd.sock --json
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.wg-basic.serve.plist
+```
+
+The `state status` command in the middle is what closes the database cleanly,
+so the sidecars are gone before the doctor opens it. Unloading the job is what
+keeps launchd from bringing the service back: the job carries `KeepAlive`, so
+a process that exits is started again, and a restart that was already
+scheduled still runs after the job is disabled. Do **not** disable the job
+instead — a disabled job is registered but never starts, which is the wrong
+shape for a service that has to come back afterwards.
+
+Unloading also stops the service: the service acts on `SIGTERM`, drains its
+listener, and stops its worker within its own bounded budget. The job carries
+an exit timeout as well, so a service that wedges is killed rather than
+waiting. If the process is still there after the unload, kill it outright:
+
+```sh
+sudo launchctl kill SIGKILL system/com.wg-basic.serve
+```
+
+A management service that does not act on `SIGTERM` is not expected any more.
+The service holds the state lease and the write-ahead log until it exits, so
+the doctor's lease check reports it as held while it is still draining.
+
+The anchor is named after the installation, and `wg-basic state status` prints
+that installation id:
+
+```sh
+wg-basic state status --state /var/db/wg-basic/state.db
+```
+
+Put the reported rules into an anchor file and load them into that anchor,
+whose name is `wg-basic-v1-<installation-id>`:
+
+```sh
+sudo pfctl -a wg-basic-v1-<installation-id> -f /etc/pf.anchors/wg-basic-routed
+```
+
+The anchor file has to end with a newline. PF rejects a file whose last rule
+is not terminated, and it reports that as a syntax error in the `load anchor`
+line that pulled the file in, not in the file itself.
+
+Attach that anchor from your own `/etc/pf.conf`, then load the configuration
+and enable the filter:
+
+```text
+anchor "wg-basic-v1-<installation-id>"
+```
+
+```sh
+sudo pfctl -f /etc/pf.conf
+sudo pfctl -e
+```
+
+Reading the verdict. The `routed_lan` check reports one verdict, and each
+verdict names a different missing prerequisite:
+
+| Verdict | What doctor reports | What to do |
+|---|---|---|
+| `ready` | the routed-LAN prerequisites are in place | none |
+| `forwarding_disabled` | host forwarding is not enabled for a family this policy requires | enable it through host configuration |
+| `filter_missing` | the operator-managed filter is absent or is not attached | install the reported rules and attach the anchor |
+| `filter_drift` | the operator-managed filter does not match the rendered policy | reinstall the reported rules; wg-basic never repairs a drifted filter |
+| `missing_return_route` | no observed route carries traffic back to the tunnel pool | restore the pool route, and make sure the upstream router routes the pool back to this host |
+| `route_conflict` | a foreign or ambiguous route covers an approved destination | remove the competing route, or narrow the approved destinations |
+| `unsupported_topology` | the approved destinations are not reachable through the declared egress interface | install a specific route for each approved destination through the egress interface |
+| `tunnel_unavailable` | the managed tunnel is not up, so its filter cannot be proven | start the managed network, then rerun doctor |
+
+The rendered rules name the tunnel device and the egress interface explicitly,
+so they have to be reinstalled when the helper is renumbered and its `utun`
+device changes.
+
+## Internet-eit gateway on macOS
+
+The gateway mode carries the tunnel's IPv4 traffic out to the internet with
+the host's own address as the source, and it routes IPv6 without translating
+it. It is an **advanced-administrator opt-in** under Apple TN3165: you attach
+the installation's anchor to your own PF configuration, and PF and the host's
+forwarding are your switches, not the product's. General consumer macOS
+gateway support is not claimed and not advertised.
+
+The mode is selected in the server setup — `mode` is `gateway` — and it is
+implemented on macOS only. The gateway's own packet-level qualification is
+separate work and is not finished; what this section gives you is the
+procedure, and the procedure is what makes the mode work.
+
+### 1. Create the anchor file first
+
+The anchor is named after the installation, and `wg-basic state status` prints
+that installation id:
+
+```sh
+wg-basic state status --state /var/db/wg-basic/state.db
+```
+
+The anchor's file is `/etc/pf.anchors/wg-basic-v1-<installation-id>`. Create
+it **before** you add the `load anchor` line:
+
+```sh
+sudo touch /etc/pf.anchors/wg-basic-v1-<installation-id>
+```
+
+This is not optional. With the `load anchor` line in place and the file
+missing, `pfctl -f /etc/pf.conf` **fails**:
+
+```text
+No such file or directory
+cannot open the main config file!
+pf rules not loaded
+```
+
+and the kernel keeps the previous ruleset, so the host's whole packet-filter
+configuration goes stale — not just this installation's anchor. An empty file
+is enough; the product writes the rules into it afterwards.
+
+That path is the product's: it writes the file whole when it installs the
+anchor's rules, so it must not be a file you also manage as an operator
+filter of your own.
+
+### 2. Add the three lines to your own `/etc/pf.conf`
+
+```text
+nat-anchor "wg-basic-v1-<installation-id>" all
+anchor "wg-basic-v1-<installation-id>" all
+load anchor "wg-basic-v1-<installation-id>" from "/etc/pf.anchors/wg-basic-v1-<installation-id>"
+```
+
+**The placement matters.** PF requires the rules of one ruleset to appear in
+the order *options, normalization, queueing, translation, filtering*.
+
+- The `nat-anchor` line goes in the ruleset's **translation** section —
+  before the stock `anchor "com.apple/*"` line.
+- The `anchor` line and the `load anchor` line go at the **end**, in the
+  filtering section.
+
+Appending all three to the end of `/etc/pf.conf` makes the main ruleset fail
+to load:
+
+```text
+/etc/pf.conf:29: Rules must be in order: options, normalization, queueing, translation, filtering
+pf rules not loaded
+```
+
+The load exits 1 and the kernel keeps the previous ruleset, so the host's
+whole packet-filter configuration is then stale. Load the configuration once
+the lines are in place:
+
+```sh
+sudo pfctl -f /etc/pf.conf
+```
+
+### 3. Enable the host's forwarding
+
+The host's global IPv4 forwarding has to be on, and IPv6 forwarding too if the
+policy names IPv6. Those switches are shared with everything else that routes
+packets on the machine, so wg-basic **reads** them (`net.inet.ip.forwarding`,
+`net.inet6.ip6.forwarding`) and **reports** them, and it **never writes
+them**. Enable them in the host's own configuration — `/etc/sysctl.conf` for
+a setting that must survive a reboot, or `sysctl -w` for the current boot:
+
+```sh
+sudo sysctl -w net.inet.ip.forwarding=1
+sudo sysctl -w net.inet6.ip6.forwarding=1
+```
+
+### 4. Enable PF
+
+PF has to be enabled for the anchor to have any effect, and the administrator
+enables it:
+
+```sh
+sudo pfctl -e
+```
+
+wg-basic never enables or disables PF and never toggles it globally. Read the
+state with `sudo pfctl -s info`.
+
+### 5. Read the verdict
+
+The doctor's `gateway` check appears when the plan carries a gateway verdict,
+and its verdict is per prerequisite:
+
+| Verdict | What doctor reports | What to do |
+|---|---|---|
+| `ready` | the gateway prerequisites are in place | none |
+| `forwarding_disabled` | host forwarding is not enabled for a family this policy requires | enable it through host configuration |
+| `attachment_missing` | the administrator's PF configuration does not invoke the installation anchor in both rule classes | create the anchor file, add the three lines in the two sections, and reload |
+| `filter_drift` | the managed anchor's filter rules do not match the rendered policy | remove the foreign rules; wg-basic never repairs a drifted anchor by guessing |
+| `nat_drift` | the managed anchor's NAT rules do not match the rendered policy | remove the foreign translation rules |
+| `tunnel_unavailable` | the managed tunnel is not up, so its anchor cannot be proven | start the managed network, then rerun doctor |
+| `apply_refused` | the host's packet filter could not be read | run doctor with the privileges required to read the host's packet filter |
+
+The `attachment_missing` verdict names the three lines and the file that has
+to exist, so the remedy is in the check itself:
+
+```sh
+wg-basic doctor --state /var/db/wg-basic/state.db \
+  --socket /var/run/wg-basic/netd.sock --json \
+  | jq -r '.checks[] | select(.id == "gateway")'
+```
+
+### What the egress looks like
+
+IPv4 leaves the host with a **translated source**: the far side sees the
+host's own address, not the tunnel pool address. IPv6 is **routed and never
+NAT66** — the far side sees the client's own IPv6 address.
+
+### The teardown
+
+Disabling the managed network empties the anchor's rules in both rule classes
+and rewrites the anchor file to its marker line alone. The file is left in
+place on purpose, so your `load anchor` line keeps resolving; a removed file
+would make your next `pfctl -f /etc/pf.conf` fail outright.
+
+When you decommission the installation, remove your three lines from
+`/etc/pf.conf` and reload:
+
+```sh
+sudo pfctl -f /etc/pf.conf
+```
+
+## When the helper dies
+
+The managed tunnel is carried by a helper process that the privileged daemon
+spawns and supervises. If that helper exits on its own, the kernel releases
+its device and the tunnel goes down with it.
+
+The privileged daemon replaces the helper it lost. The replacement re-applies
+the configuration, addresses, and routes that belonged to the tunnel, and the
+kernel may assign a different `utun` number to the new device. The recovery
+is reported in the privileged daemon's log:
+
+```sh
+sudo tail -f /var/log/wg-basic/netd.log
+```
+
+`netd.helper_recovery_started` marks the replacement, and
+`netd.helper_recovery_completed` or `netd.helper_recovery_failed` ends it.
+
+A renumbered device means the rendered filter rules no longer match: the
+rules name the device, so reinstall the rules the doctor reports after the
+recovery, exactly as you would after any device change.
+
+### The tunnel comes back before the sessions do
+
+The device, its address, the routes, and the peer policy are back as soon as
+the recovery completes. The *sessions* are not, and that is not a fault in the
+recovery.
+
+A WireGuard session is negotiated between the two peers, and it lives in the
+helper's memory. The replacement helper is a new process, so it starts with no
+session with any peer. A peer whose own session is still valid keeps sending
+packets the replacement cannot decrypt, and those packets are dropped until
+the peer re-keys — 120 s after its last handshake by default. The traffic is
+down for that window even though the tunnel itself is already back.
+
+The peer drives that handshake, not the product: the address a peer is reached
+at is learned from its handshake initiations, and the store keeps desired state
+rather than live telemetry, so the replacement helper has no learned endpoint
+to send one to.
+
+To see where a peer stands, read the client telemetry. It reports each client's
+observed endpoint, last handshake, and handshake age:
+
+```sh
+# log in first: the telemetry route needs the session cookie
+curl -s -c cookies.txt http://127.0.0.1:8000/api/v1/login \
+  -H 'Host: 127.0.0.1:8000' \
+  -H 'Origin: http://127.0.0.1:8000' \
+  -H 'Content-Type: application/json' \
+  --data '{"username":"admin","password":"a strong administrator password"}'
+curl -s http://127.0.0.1:8000/api/v1/clients/telemetry -b cookies.txt \
+  -H 'Host: 127.0.0.1:8000' \
+  -H 'Origin: http://127.0.0.1:8000'
+```
+
+A client with no endpoint and a handshake that predates the recovery is a peer
+that has not re-keyed yet. A client whose handshake age stops growing is a peer
+that is back.
+
+If the recovery fails, the doctor reports `tunnel_unavailable` and the
+remediation is to start the managed network again. The privileged daemon
+refuses to adopt a device it cannot prove, so nothing is left half-owned.

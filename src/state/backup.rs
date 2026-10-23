@@ -557,7 +557,9 @@ fn open_read_only(path: &Path) -> Result<rusqlite::Connection, StateError> {
     // A normal read-only open of a WAL-mode database can still create -wal and
     // -shm sidecars. Immutable mode reads only the main file and guarantees
     // inspection never changes the candidate or depends on live WAL state.
-    let uri_path = path.to_string_lossy();
+    // Portable (M001): canonicalize macOS symlink components before NOFOLLOW.
+    let canonical = fs::canonicalize(path).map_err(|_| StateError::DatabaseOpenFailed)?;
+    let uri_path = canonical.to_string_lossy();
     let mut uri = String::from("file:");
     for byte in uri_path.bytes() {
         if byte.is_ascii_alphanumeric() || b"/:._-".contains(&byte) {
@@ -713,9 +715,8 @@ fn sync_directory(path: &Path) -> Result<(), StateError> {
 fn current_uid() -> u32 {
     // The effective uid of this process. Reading it from the database file's own
     // ownership would make a chown'd database appear valid.
-    std::os::unix::fs::MetadataExt::uid(
-        &fs::metadata("/proc/self").unwrap_or_else(|_| fs::metadata(".").expect("cwd")),
-    )
+    // Portable (M001): `geteuid` on Linux and Darwin; no `/proc` read.
+    nix::unistd::geteuid().as_raw()
 }
 
 #[cfg(test)]

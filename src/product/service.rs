@@ -23,7 +23,8 @@ use crate::{
     domain::{
         ClientId, ClientRoutePolicy, DesiredAddress, DesiredClient, DesiredGeneration,
         DesiredInterface, DesiredPeer, DesiredState, InterfaceId, InterfaceName, LinkLifecycle,
-        ManagedRoute, NetworkPrefix, OwnershipDeclaration, PeerId, ResourcePresence,
+        ManagedRoute, NetworkPolicyMode, NetworkPrefix, OwnershipDeclaration, PeerId,
+        ResourcePresence,
     },
     product::{
         allocator::{AddressRequest, AllocationContext, AllocationError},
@@ -210,6 +211,74 @@ pub(crate) fn material_from_snapshots(
 // Commands
 // ---------------------------------------------------------------------------
 
+/// Resolves the routing intent of a setup command.
+///
+/// An explicit mode is the operator's statement, and it is checked against the
+/// forwarding and masquerade settings because the two describe the same thing
+/// from different sides: a policy that contradicts itself is refused rather
+/// than resolved silently. An absent mode is derived from those settings,
+/// which is exactly what every caller before the routed-LAN mode existed
+/// meant — no forwarding and no masquerade is a host-only endpoint, and
+/// anything else is a gateway.
+fn resolve_policy_mode(
+    mode: Option<NetworkPolicyMode>,
+    ipv4_forwarding_required: bool,
+    ipv6_forwarding_required: bool,
+    masquerade: bool,
+    destination_prefixes: &[NetworkPrefix],
+) -> Result<NetworkPolicyMode, ProductError> {
+    let forwarding = ipv4_forwarding_required || ipv6_forwarding_required;
+    let mode = mode.unwrap_or(if forwarding || masquerade {
+        NetworkPolicyMode::Gateway
+    } else {
+        NetworkPolicyMode::HostOnly
+    });
+    match mode {
+        NetworkPolicyMode::HostOnly => {
+            if forwarding {
+                return Err(ProductError::InvalidNetworkPolicyMode(
+                    "a host-only policy cannot require forwarding",
+                ));
+            }
+            if masquerade {
+                return Err(ProductError::InvalidNetworkPolicyMode(
+                    "a host-only policy cannot masquerade",
+                ));
+            }
+            if !destination_prefixes.is_empty() {
+                return Err(ProductError::InvalidNetworkPolicyMode(
+                    "a host-only policy cannot name downstream destinations",
+                ));
+            }
+        }
+        NetworkPolicyMode::Gateway => {
+            if !destination_prefixes.is_empty() {
+                return Err(ProductError::InvalidNetworkPolicyMode(
+                    "a gateway policy cannot name downstream destinations",
+                ));
+            }
+        }
+        NetworkPolicyMode::RoutedLan => {
+            if masquerade {
+                return Err(ProductError::InvalidNetworkPolicyMode(
+                    "a routed-LAN policy cannot masquerade",
+                ));
+            }
+            if destination_prefixes.is_empty() {
+                return Err(ProductError::InvalidNetworkPolicyMode(
+                    "a routed-LAN policy must name at least one downstream destination",
+                ));
+            }
+            if !cfg!(target_os = "macos") {
+                return Err(ProductError::InvalidNetworkPolicyMode(
+                    "a routed LAN is implemented on macOS only",
+                ));
+            }
+        }
+    }
+    Ok(mode)
+}
+
 /// Configure the one managed server. Rejected if a server already exists.
 #[derive(Clone, Debug)]
 pub struct ServerSetupCommand {
@@ -227,6 +296,17 @@ pub struct ServerSetupCommand {
     pub ipv4_forwarding_required: bool,
     pub ipv6_forwarding_required: bool,
     pub masquerade: bool,
+    /// The routing intent.
+    ///
+    /// `None` derives the mode from the forwarding and masquerade settings,
+    /// which is exactly what every caller before the routed-LAN mode existed
+    /// meant. An explicit mode is the operator's statement and is checked
+    /// against those settings.
+    pub mode: Option<NetworkPolicyMode>,
+    /// The approved downstream LAN prefixes.
+    ///
+    /// Only a routed-LAN policy may name any.
+    pub destination_prefixes: Vec<NetworkPrefix>,
     pub default_client_route_policy: ClientRoutePolicy,
 }
 
@@ -289,6 +369,8 @@ impl<'a> ProductService<'a> {
             ipv4_forwarding_required,
             ipv6_forwarding_required,
             masquerade,
+            mode,
+            destination_prefixes,
             default_client_route_policy,
         } = command;
 
@@ -322,6 +404,14 @@ impl<'a> ProductService<'a> {
         if ipv6_forwarding_required && ipv6_tunnel_prefix.is_none() {
             return Err(ProductError::Allocation(super::AllocationError::NotIpv6));
         }
+
+        let mode = resolve_policy_mode(
+            mode,
+            ipv4_forwarding_required,
+            ipv6_forwarding_required,
+            masquerade,
+            &destination_prefixes,
+        )?;
 
         let interface_id = InterfaceId::new();
         // The generated pair's public half is not stored on the interface: the
@@ -367,18 +457,22 @@ impl<'a> ProductService<'a> {
                         presence: ResourcePresence::Present,
                     }))
                     .collect(),
-                    // Linux needs a route for the tunnel pool so replies to
-                    // IPv6 client addresses leave through this WireGuard link.
-                    // WireGuard AllowedIPs selects the peer, but does not add
-                    // routes to the host routing table.
-                    routes: ipv6_tunnel_prefix
-                        .clone()
+                    // The managed tunnel interface carries its pool: a route
+                    // for every tunnel prefix so replies to client addresses
+                    // leave through this WireGuard link. WireGuard AllowedIPs
+                    // selects the peer, but does not add routes to the host
+                    // routing table on every platform: Linux derives
+                    // per-peer routes from AllowedIPs and still needs the pool
+                    // route for IPv6, and macOS derives none at all, so
+                    // without the IPv4 pool route the IPv4 half of the
+                    // tunnel cannot carry traffic.
+                    routes: std::iter::once(tunnel_prefix.clone())
+                        .chain(ipv6_tunnel_prefix.clone())
                         .map(|destination| ManagedRoute {
                             destination,
                             gateway: None,
                             presence: ResourcePresence::Present,
                         })
-                        .into_iter()
                         .collect(),
                     peers: Vec::new(),
                     clients: Vec::new(),
@@ -389,12 +483,14 @@ impl<'a> ProductService<'a> {
                     client_routes: default_client_route_policy.clone(),
                     network_policy: Some(crate::domain::DesiredNetworkPolicy {
                         wireguard_interface: interface_name.clone(),
+                        mode,
                         ipv4_forwarding_required,
                         ipv6_forwarding_required,
                         egress_interface: egress_interface.clone(),
                         source_prefixes: std::iter::once(tunnel_prefix.clone())
                             .chain(ipv6_tunnel_prefix.clone())
                             .collect(),
+                        destination_prefixes,
                         masquerade,
                     }),
                 };
@@ -1129,6 +1225,8 @@ pub enum ProductError {
     Key(#[from] crate::domain::KeyError),
     #[error("allocation error: {0}")]
     Allocation(#[from] super::AllocationError),
+    #[error("the network policy mode is inconsistent with the rest of the setup: {0}")]
+    InvalidNetworkPolicyMode(&'static str),
 }
 
 impl ProductError {
@@ -1179,6 +1277,9 @@ impl ProductError {
             }
             ProductError::ServerMissingAfterSetup => StateError::Corrupt(
                 "committed server metadata could not be read back from the store",
+            ),
+            ProductError::InvalidNetworkPolicyMode(_) => StateError::Validation(
+                crate::domain::StateValidationError::NetworkPolicyModeInvalid,
             ),
         }
     }

@@ -1,0 +1,20 @@
+[
+  {
+    "adapter": "eggsearch",
+    "state": "complete",
+    "source_count": 0,
+    "coverage": "insufficient",
+    "warning_codes": [
+      "workflow_coverage_gaps",
+      "generic_context_untrusted"
+    ],
+    "trust_markers": [
+      "control_chars_removed",
+      "injection_hits",
+      "text_framed",
+      "text_sanitized"
+    ],
+    "failed_providers": [],
+    "sources": []
+  }
+]

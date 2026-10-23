@@ -1766,8 +1766,17 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "uuid",
+ "wg-basic-darwin-sys",
  "x25519-dalek",
  "zeroize",
+]
+
+[[package]]
+name = "wg-basic-darwin-sys"
+version = "0.1.0"
+dependencies = [
+ "ipnet",
+ "libc",
 ]
 
 [[package]]

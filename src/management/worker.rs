@@ -61,7 +61,9 @@ use crate::{
 };
 use std::{
     path::{Path, PathBuf},
+    sync::atomic::{AtomicBool, Ordering},
     sync::mpsc as std_mpsc,
+    sync::{Arc, Mutex},
     thread,
     time::Duration,
 };
@@ -74,6 +76,41 @@ pub const DEFAULT_QUEUE_CAPACITY: usize = 32;
 
 /// Default deadline for one command/reply round trip.
 pub const DEFAULT_REPLY_DEADLINE: Duration = Duration::from_secs(5);
+
+/// How long the service waits for the worker thread to exit.
+///
+/// The worker closes the state store when it leaves its loop, so the join is
+/// what releases the lease and the write-ahead log. The budget keeps a worker
+/// that will not exit from holding them indefinitely: the caller's own exit
+/// releases them, and the write-ahead log is crash-safe.
+pub const WORKER_STOP_DEADLINE: Duration = Duration::from_secs(10);
+
+/// How often the stop polls the worker thread for completion.
+const WORKER_STOP_POLL: Duration = Duration::from_millis(50);
+
+/// How long the management daemon waits for the privileged daemon to answer
+/// before its startup reconciliation.
+///
+/// The privileged daemon is a separate job that starts concurrently with the
+/// management daemon. Linux orders the two units with `After=` and gates the
+/// management daemon on a `doctor` pre-flight; launchd has no such dependency,
+/// so the management daemon waits for the backend itself. Without that wait
+/// the startup reconciliation races the backend's socket, exhausts its short
+/// retry budget, and the deployment comes back **degraded** after a cold
+/// reboot with nothing to retry it.
+///
+/// The wait is **Darwin's need**. On Linux the units already order the two
+/// services, and the wait would only delay the listener in the harnesses
+/// that start the management daemon without a privileged daemon beside it —
+/// so the bound is zero there and the Linux startup path is what it was
+/// before the Darwin fix.
+#[cfg(target_os = "macos")]
+pub const BACKEND_STARTUP_WAIT: Duration = Duration::from_secs(10);
+#[cfg(not(target_os = "macos"))]
+pub const BACKEND_STARTUP_WAIT: Duration = Duration::ZERO;
+
+/// The interval between two backend readiness probes.
+const BACKEND_PROBE_INTERVAL: Duration = Duration::from_millis(250);
 
 /// The typed commands the worker accepts.
 #[derive(Debug)]
@@ -193,8 +230,6 @@ pub enum WorkerCommand {
         token: EnrollmentToken,
         reply: oneshot::Sender<Result<Option<SecretArtifact>, ProductFailure>>,
     },
-    /// Stop the worker; the reply confirms the stop was observed.
-    Shutdown { reply: oneshot::Sender<()> },
 }
 
 /// The safe product snapshot returned by [`WorkerCommand::ProductSnapshot`].
@@ -282,6 +317,7 @@ impl ProductFailure {
             }
             ProductError::Key(_) => Self::Invalid,
             ProductError::Allocation(_) => Self::AddressUnavailable,
+            ProductError::InvalidNetworkPolicyMode(_) => Self::Invalid,
             ProductError::State(crate::state::StateError::StaleGeneration { .. }) => {
                 Self::StaleGeneration
             }
@@ -359,6 +395,12 @@ pub enum WorkerError {
     /// The worker is gone: it stopped, or never started successfully.
     #[error("the management worker is not running")]
     Stopped,
+    /// The worker did not exit within its stop budget.
+    ///
+    /// The service is stopping anyway, so the state store is released by the
+    /// process exiting rather than by a clean close.
+    #[error("the management worker did not exit in time")]
+    StopTimeout,
     /// The worker answered, and the operation itself failed.
     #[error(transparent)]
     Failed(#[from] ManagementError),
@@ -446,6 +488,11 @@ pub struct WorkerConfig {
     pub queue_capacity: usize,
     /// Deadline applied to one command/reply round trip.
     pub reply_deadline: Duration,
+    /// How long the startup waits for the privileged daemon to answer.
+    ///
+    /// Zero means "do not wait": the startup attempt runs immediately and a
+    /// backend that is not there yet is reported as degraded.
+    pub backend_startup_wait: Duration,
 }
 
 impl WorkerConfig {
@@ -457,6 +504,7 @@ impl WorkerConfig {
             socket: socket.as_ref().to_path_buf(),
             queue_capacity: DEFAULT_QUEUE_CAPACITY,
             reply_deadline: DEFAULT_REPLY_DEADLINE,
+            backend_startup_wait: BACKEND_STARTUP_WAIT,
         }
     }
 }
@@ -467,8 +515,17 @@ impl WorkerConfig {
 /// bounded queue, so cloning cannot widen the bound.
 #[derive(Clone, Debug)]
 pub struct WorkerClient {
-    sender: mpsc::Sender<WorkerCommand>,
+    /// The command queue.
+    ///
+    /// The sender sits in a shared slot so a stop request can close the queue.
+    /// Dropping the last sender is what wakes the worker out of its blocking
+    /// wait, and it cannot be refused the way an admission can: a stop
+    /// request that rode the bounded queue would be refused exactly when the
+    /// service is busiest.
+    sender: Arc<Mutex<Option<mpsc::Sender<WorkerCommand>>>>,
     deadline: Duration,
+    /// The flag that tells the worker thread to leave its loop.
+    stopping: Arc<AtomicBool>,
 }
 
 impl WorkerClient {
@@ -750,12 +807,20 @@ impl WorkerClient {
         }
     }
 
-    /// Asks the worker to stop, bounded by the same deadline as any command.
-    pub async fn shutdown(&self) -> Result<(), WorkerError> {
-        let (reply, answer) = oneshot::channel();
-        self.admit(WorkerCommand::Shutdown { reply }).await?;
-        self.await_reply(answer).await?;
-        Ok(())
+    /// Asks the worker to stop.
+    ///
+    /// The request cannot be refused. A stop request that rides the bounded
+    /// queue is refused exactly when the service is busiest, and a refused
+    /// stop request leaves the worker running with the state store open, so
+    /// this one closes the queue instead: the worker wakes, discards the
+    /// backlog, and exits.
+    pub fn request_stop(&self) {
+        self.stopping.store(true, Ordering::Release);
+        // Closing the queue wakes the worker out of its blocking wait. The
+        // backlog is discarded rather than worked through.
+        if let Ok(mut slot) = self.sender.lock() {
+            slot.take();
+        }
     }
 
     /// Admits one command against the bounded queue.
@@ -764,7 +829,11 @@ impl WorkerClient {
     /// [`WorkerError::Saturated`] rather than awaited, so overload cannot
     /// accumulate as pending requests waiting for the worker to catch up.
     async fn admit(&self, command: WorkerCommand) -> Result<(), WorkerError> {
-        self.sender.try_send(command).map_err(|error| match error {
+        let sender = self.sender.lock().map_err(|_| WorkerError::Stopped)?;
+        let Some(sender) = sender.as_ref() else {
+            return Err(WorkerError::Stopped);
+        };
+        sender.try_send(command).map_err(|error| match error {
             mpsc::error::TrySendError::Full(_) => WorkerError::Saturated,
             mpsc::error::TrySendError::Closed(_) => WorkerError::Stopped,
         })
@@ -790,6 +859,14 @@ pub struct WorkerHandle {
 }
 
 impl WorkerHandle {
+    /// Whether the worker thread has finished.
+    ///
+    /// This is a non-blocking check, so a caller can bound how long it waits
+    /// for the thread without moving the wait onto the blocking pool.
+    pub fn is_finished(&self) -> bool {
+        self.join.as_ref().is_some_and(|join| join.is_finished())
+    }
+
     /// Waits for the worker thread to finish, which is what actually releases
     /// the state store.
     pub fn join(mut self) -> thread::Result<()> {
@@ -821,14 +898,31 @@ impl WorkerStartup {
 
     /// Stops the worker and joins its thread, releasing the state store.
     ///
-    /// The join happens even when the stop request failed, so a saturated queue
-    /// cannot leave the database open.
+    /// The stop request cannot be refused, and the join is bounded: a worker
+    /// that will not exit must not hold the state lease and the write-ahead
+    /// log indefinitely. A worker that outlives its budget is reported as
+    /// [`WorkerError::StopTimeout`], and the caller's own exit releases the
+    /// lease — the write-ahead log is crash-safe, so the next start recovers
+    /// it.
     pub async fn stop(mut self) -> Result<(), WorkerError> {
-        let outcome = self.client.shutdown().await;
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+        self.client.request_stop();
+        let Some(handle) = self.handle.take() else {
+            return Ok(());
+        };
+        // The wait is bounded without moving it onto the blocking pool: the
+        // thread's completion is polled, and a thread that outlives its budget
+        // is left to the process exit rather than holding the lease open.
+        let deadline = tokio::time::Instant::now() + WORKER_STOP_DEADLINE;
+        while !handle.is_finished() {
+            if tokio::time::Instant::now() >= deadline {
+                return Err(WorkerError::StopTimeout);
+            }
+            tokio::time::sleep(WORKER_STOP_POLL).await;
         }
-        outcome
+        match handle.join() {
+            Ok(()) => Ok(()),
+            Err(_) => Err(WorkerError::Stopped),
+        }
     }
 }
 
@@ -848,13 +942,21 @@ pub fn spawn(config: WorkerConfig) -> Result<WorkerStartup, ManagementError> {
     let deadline = config.reply_deadline;
     let (sender, receiver) = mpsc::channel(capacity);
     let (startup_tx, startup_rx) = std_mpsc::sync_channel(1);
+    let stopping = Arc::new(AtomicBool::new(false));
 
     let join = thread::Builder::new()
         .name("wg-basic-management-worker".to_owned())
-        .spawn(move || run(config, receiver, startup_tx))
+        .spawn({
+            let stopping = Arc::clone(&stopping);
+            move || run(config, receiver, startup_tx, stopping)
+        })
         .map_err(|_| ManagementError::WorkerStartFailed)?;
 
-    let client = WorkerClient { sender, deadline };
+    let client = WorkerClient {
+        sender: Arc::new(Mutex::new(Some(sender))),
+        deadline,
+        stopping,
+    };
 
     match startup_rx.recv() {
         Ok(StartupOutcome::Ready { reconcile }) => Ok(WorkerStartup {
@@ -877,11 +979,45 @@ pub fn spawn(config: WorkerConfig) -> Result<WorkerStartup, ManagementError> {
     }
 }
 
+/// Waits, bounded, for the privileged daemon to answer a capability request.
+///
+/// The probe is read-only and is the same capability request the doctor
+/// makes, so "ready" means the backend is serving **and** admits this peer,
+/// not merely that a socket file exists. A missing socket, a refused
+/// connection, an unanswered request, or a refusal all mean "not yet".
+///
+/// Returns whether the backend answered within the budget. The caller does
+/// not treat a timeout as fatal: the listener must come up either way, and a
+/// backend that never answers is reported as degraded.
+///
+/// A budget of zero means **no wait at all**: the loop reports "not ready"
+/// before it sends a request, so a platform that does not need the wait
+/// neither probes nor sleeps.
+fn wait_for_backend(socket: &Path, budget: Duration) -> bool {
+    use crate::protocol::{request, RequestOperation, ResponseBody};
+    let deadline = std::time::Instant::now() + budget;
+    loop {
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        if request(socket, RequestOperation::InspectCapabilities, u64::MAX)
+            .is_ok_and(|response| matches!(response, ResponseBody::Capabilities(_)))
+        {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(BACKEND_PROBE_INTERVAL);
+    }
+}
+
 /// The worker body: open the runtime, attempt reconciliation, then serve.
 fn run(
     config: WorkerConfig,
     mut receiver: mpsc::Receiver<WorkerCommand>,
     startup: std_mpsc::SyncSender<StartupOutcome>,
+    stopping: Arc<AtomicBool>,
 ) {
     let runtime = match ManagementRuntime::open(&config.state_path, &config.socket) {
         Ok(runtime) => runtime,
@@ -903,6 +1039,13 @@ fn run(
         let _ = startup.send(StartupOutcome::Fatal(error.into()));
         return;
     }
+
+    // The privileged daemon is a separate job that starts concurrently with
+    // this one, so the startup reconciliation can reach it before it has bound
+    // its socket. The wait below is bounded: the listener still comes up
+    // either way, and a backend that never appears leaves the startup
+    // attempt degraded, which is what the operator has to see.
+    wait_for_backend(&config.socket, config.backend_startup_wait);
 
     // ADR-002 requires an unconditional startup attempt. It is deliberately not
     // conditional on stored convergence evidence, and a degraded result is
@@ -932,7 +1075,7 @@ fn run(
         return;
     }
 
-    serve(runtime, &mut receiver);
+    serve(runtime, &mut receiver, &stopping);
 }
 
 /// Builds the safe product snapshot from durable state.
@@ -1113,8 +1256,24 @@ fn product_failure(error: ProductCommandError) -> ProductFailure {
 /// The loop is exhaustive over [`WorkerCommand`] on purpose: adding a command
 /// without deciding how it is served is a compile error, so the bounded queue
 /// can never grow a path that quietly does something else.
-fn serve(runtime: ManagementRuntime, receiver: &mut mpsc::Receiver<WorkerCommand>) {
-    while let Some(command) = receiver.blocking_recv() {
+fn serve(
+    runtime: ManagementRuntime,
+    receiver: &mut mpsc::Receiver<WorkerCommand>,
+    stopping: &AtomicBool,
+) {
+    loop {
+        // A stop request discards the backlog rather than working through it:
+        // the worker is leaving, and every queued command would otherwise hold
+        // the state store open for as long as it took to answer them.
+        if stopping.load(Ordering::Acquire) {
+            break;
+        }
+        let Some(command) = receiver.blocking_recv() else {
+            break;
+        };
+        if stopping.load(Ordering::Acquire) {
+            break;
+        }
         match command {
             WorkerCommand::Health { reply } => {
                 // The projection cannot fail: it is derived from stored
@@ -1275,10 +1434,6 @@ fn serve(runtime: ManagementRuntime, receiver: &mut mpsc::Receiver<WorkerCommand
                     .map_err(|error| ProductFailure::classify(&error));
                 let _ = reply.send(result);
             }
-            WorkerCommand::Shutdown { reply } => {
-                let _ = reply.send(());
-                break;
-            }
         }
     }
     // Falling out of the loop drops `runtime`, which closes the state store.
@@ -1383,10 +1538,55 @@ mod tests {
         temp.path.join("no-such-netd.sock")
     }
 
+    /// A worker configuration for a host where no backend is running.
+    ///
+    /// The startup wait is zero: these tests are about the worker's command
+    /// vocabulary and its degraded startup, and a backend that can never
+    /// answer must not make them wait out the production budget.
+    fn config_without_backend(temp: &TempDir) -> WorkerConfig {
+        WorkerConfig {
+            backend_startup_wait: Duration::ZERO,
+            ..WorkerConfig::new(temp.db(), absent_socket(temp))
+        }
+    }
+
+    #[tokio::test]
+    async fn the_startup_wait_gives_up_on_a_backend_that_never_answers() {
+        let temp = TempDir::new();
+        // A backend that cannot exist is never ready, so the wait reports
+        // "not ready" instead of blocking the listener forever.
+        assert!(!wait_for_backend(&absent_socket(&temp), Duration::ZERO));
+        assert!(!wait_for_backend(
+            &absent_socket(&temp),
+            Duration::from_millis(200)
+        ));
+    }
+
+    #[tokio::test]
+    async fn the_startup_wait_bound_is_darwin_specific() {
+        // The wait exists because launchd starts the two jobs concurrently.
+        // Linux's units order them, so the bound is zero there and the
+        // listener must not be delayed.
+        if cfg!(target_os = "macos") {
+            assert_eq!(BACKEND_STARTUP_WAIT, Duration::from_secs(10));
+        } else {
+            assert_eq!(BACKEND_STARTUP_WAIT, Duration::ZERO);
+        }
+        // A zero budget is not a wait: it reports "not ready" without asking
+        // the backend anything.
+        let temp = TempDir::new();
+        let started = std::time::Instant::now();
+        assert!(!wait_for_backend(&absent_socket(&temp), Duration::ZERO));
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "a zero budget must not probe or sleep"
+        );
+    }
+
     #[tokio::test]
     async fn a_started_worker_answers_health_and_shuts_down() {
         let temp = TempDir::new();
-        let config = WorkerConfig::new(temp.db(), absent_socket(&temp));
+        let config = config_without_backend(&temp);
         let startup = spawn(config).expect("a fresh store and an absent netd still start");
 
         // The installation manages no interface, so there is nothing to apply.
@@ -1415,8 +1615,8 @@ mod tests {
             .unwrap();
         drop(store);
 
-        let startup = spawn(WorkerConfig::new(temp.db(), absent_socket(&temp)))
-            .expect("an absent netd is degraded, not fatal");
+        let startup =
+            spawn(config_without_backend(&temp)).expect("an absent netd is degraded, not fatal");
         assert!(
             startup.reconcile().is_degraded(),
             "{:?}",
@@ -1445,8 +1645,11 @@ mod tests {
         let bogus = temp.path.join("not-a-database");
         fs::create_dir(&bogus).unwrap();
 
-        let error = spawn(WorkerConfig::new(&bogus, absent_socket(&temp)))
-            .expect_err("an unopenable store has no authority to administer");
+        let error = spawn(WorkerConfig {
+            backend_startup_wait: Duration::ZERO,
+            ..WorkerConfig::new(&bogus, absent_socket(&temp))
+        })
+        .expect_err("an unopenable store has no authority to administer");
         assert!(error.is_fatal_without_authority(), "{error}");
     }
 
@@ -1456,14 +1659,15 @@ mod tests {
         // worker drain timing, which is the property actually under test.
         let (sender, mut receiver) = mpsc::channel(1);
         let client = WorkerClient {
-            sender,
+            sender: Arc::new(Mutex::new(Some(sender))),
             deadline: Duration::from_secs(5),
+            stopping: Arc::new(AtomicBool::new(false)),
         };
 
         // Occupy the only slot with a command nobody will ever answer.
         let (stranded, _unanswered) = oneshot::channel();
         client
-            .admit(WorkerCommand::Shutdown { reply: stranded })
+            .admit(WorkerCommand::Health { reply: stranded })
             .await
             .expect("the first command fits in the bound");
 
@@ -1471,7 +1675,7 @@ mod tests {
         // becoming an unbounded backlog.
         let (refused, _unanswered) = oneshot::channel();
         let refusal = client
-            .admit(WorkerCommand::Shutdown { reply: refused })
+            .admit(WorkerCommand::Health { reply: refused })
             .await
             .expect_err("a full queue refuses admission");
         assert!(
@@ -1490,15 +1694,82 @@ mod tests {
         );
         let (admitted, _unanswered) = oneshot::channel();
         client
-            .admit(WorkerCommand::Shutdown { reply: admitted })
+            .admit(WorkerCommand::Health { reply: admitted })
             .await
             .expect("admission resumes after a drain");
     }
 
     #[tokio::test]
+    async fn a_stop_request_is_never_refused_by_a_full_queue() {
+        // The stop request used to ride the bounded queue, where it was
+        // refused exactly when the service was busiest. A refused stop leaves
+        // the worker running with the state store open, so the stop now closes
+        // the queue instead.
+        let (sender, _receiver) = mpsc::channel(1);
+        let client = WorkerClient {
+            sender: Arc::new(Mutex::new(Some(sender))),
+            deadline: Duration::from_secs(5),
+            stopping: Arc::new(AtomicBool::new(false)),
+        };
+
+        // Fill the queue so an admission would be refused.
+        let (occupied, _unanswered) = oneshot::channel();
+        client
+            .admit(WorkerCommand::Health { reply: occupied })
+            .await
+            .expect("the first command fits in the bound");
+        let (refused, _unanswered) = oneshot::channel();
+        assert!(
+            client
+                .admit(WorkerCommand::Health { reply: refused })
+                .await
+                .is_err(),
+            "the queue is full"
+        );
+
+        // The stop still goes through.
+        client.request_stop();
+        assert!(
+            client.stopping.load(Ordering::Acquire),
+            "the stop request was observed"
+        );
+        let error = client
+            .health()
+            .await
+            .expect_err("a stopped worker answers nothing");
+        assert!(matches!(error, WorkerError::Stopped), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_stopped_worker_discards_the_backlog_and_closes_the_store() {
+        // A stop request must not work through the backlog: every queued
+        // command would hold the state store open for as long as it took to
+        // answer them.
+        let temp = TempDir::new();
+        let startup = spawn(config_without_backend(&temp)).unwrap();
+        let client = startup.client().clone();
+
+        // Occupy the worker with a command nobody will ever answer, then stop
+        // it. The stop must not wait for that command.
+        let (stranded, _unanswered) = oneshot::channel();
+        client
+            .admit(WorkerCommand::ProductSnapshot { reply: stranded })
+            .await
+            .ok();
+
+        let started = std::time::Instant::now();
+        startup.stop().await.expect("a clean shutdown");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the stop waited for the backlog: {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[tokio::test]
     async fn a_closed_queue_reports_a_stopped_worker() {
         let temp = TempDir::new();
-        let startup = spawn(WorkerConfig::new(temp.db(), absent_socket(&temp))).unwrap();
+        let startup = spawn(config_without_backend(&temp)).unwrap();
         let client = startup.client().clone();
         startup.stop().await.expect("a clean shutdown");
 
@@ -1513,7 +1784,7 @@ mod tests {
     #[tokio::test]
     async fn a_missed_reply_deadline_is_overload_not_success() {
         let temp = TempDir::new();
-        let mut config = WorkerConfig::new(temp.db(), absent_socket(&temp));
+        let mut config = config_without_backend(&temp);
         // A deadline this short cannot be met by a healthy round trip, which is
         // the point: the caller is bounded even if the worker misbehaves.
         config.reply_deadline = Duration::ZERO;

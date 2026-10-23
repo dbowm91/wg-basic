@@ -1,0 +1,43 @@
+=== src/protocol/framing.rs ===
+43:            read_frame(&mut Cursor::new(frame)).unwrap().len(),
+49:            read_frame(&mut oversized).unwrap_err().kind(),
+58:            read_frame(&mut Cursor::new([0, 0, 0])).unwrap_err().kind(),
+59:            io::ErrorKind::UnexpectedEof
+63:                .unwrap_err()
+69:                .unwrap_err()
+71:            io::ErrorKind::UnexpectedEof
+=== src/protocol/socket.rs ===
+107:                "created socket has unexpected ownership or type",
+270:            fs::create_dir(&directory).unwrap();
+271:            fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+288:        let server = Arc::new(SocketServer::bind(path, authorization).unwrap());
+302:        let pong = request(&path, RequestOperation::Ping, 11).unwrap();
+304:        let response = request(&path, RequestOperation::InspectCapabilities, 12).unwrap();
+306:            panic!("unexpected response")
+324:        handle.join().unwrap().unwrap();
+338:        let mut stream = UnixStream::connect(&path).unwrap();
+344:        .unwrap();
+352:            other => panic!("unauthorized connection was not closed: {other:?}"),
+355:        handle.join().unwrap().unwrap();
+364:        let mut stream = UnixStream::connect(&path).unwrap();
+370:        write_frame(&mut stream, &serde_json::to_vec(&request).unwrap()).unwrap();
+372:            serde_json::from_slice(&read_frame(&mut stream).unwrap()).unwrap();
+376:        handle.join().unwrap().unwrap();
+393:                interface: "wg0".parse().unwrap(),
+398:        .unwrap_err();
+401:        handle.join().unwrap().unwrap();
+408:        let listener = UnixListener::bind(&path).unwrap();
+410:            let (mut stream, _) = listener.accept().unwrap();
+412:                serde_json::from_slice(&read_frame(&mut stream).unwrap()).unwrap();
+421:            write_frame(&mut stream, &serde_json::to_vec(&response).unwrap()).unwrap();
+425:                .unwrap_err()
+429:        responder.join().unwrap();
+436:        fs::write(&path, b"keep me").unwrap();
+440:                .unwrap()
+444:        assert_eq!(fs::read(&path).unwrap(), b"keep me");
+445:        fs::remove_file(&path).unwrap();
+447:        let active = UnixListener::bind(&path).unwrap();
+=== src/protocol/dispatch.rs ===
+=== src/protocol/auth.rs ===
+100:        let (a, _b) = std::os::unix::net::UnixStream::pair().unwrap();
+101:        let (uid, _gid) = peer_identity(&a).unwrap();

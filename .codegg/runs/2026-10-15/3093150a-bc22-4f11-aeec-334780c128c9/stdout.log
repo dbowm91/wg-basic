@@ -1,0 +1,51 @@
+total 152
+drwxr-xr-x@ 21 davidbowman  staff    672 Oct 15 21:15 .
+drwxr-xr-x  81 davidbowman  staff   2592 Oct 15 20:21 ..
+drwxr-xr-x@  6 davidbowman  staff    192 Oct 15 21:28 .codegg
+drwxr-xr-x@ 16 davidbowman  staff    512 Oct 15 22:48 .git
+drwxr-xr-x@  3 davidbowman  staff     96 Oct 13 19:21 .github
+-rw-r--r--@  1 davidbowman  staff      8 Oct 13 19:21 .gitignore
+drwxr-xr-x@  4 davidbowman  staff    128 Oct 13 19:21 .skills
+-rw-r--r--@  1 davidbowman  staff   1652 Oct 13 19:21 AGENTS.md
+-rw-r--r--@  1 davidbowman  staff  50180 Oct 13 19:21 Cargo.lock
+-rw-r--r--@  1 davidbowman  staff   3686 Oct 13 19:52 Cargo.toml
+-rw-r--r--@  1 davidbowman  staff   1078 Oct 13 19:21 LICENSE
+-rw-r--r--@  1 davidbowman  staff   3514 Oct 13 19:21 README.md
+drwxr-xr-x@ 19 davidbowman  staff    608 Oct 13 19:21 architecture
+drwxr-xr-x@  8 davidbowman  staff    256 Oct 13 19:21 docs
+drwxr-xr-x@ 12 davidbowman  staff    384 Oct 13 19:44 plans
+drwxr-xr-x@  4 davidbowman  staff    128 Oct 13 19:21 release
+-rw-r--r--@  1 davidbowman  staff     86 Oct 13 19:21 rust-toolchain.toml
+drwxr-xr-x@ 15 davidbowman  staff    480 Oct 13 19:21 scripts
+drwxr-xr-x@ 23 davidbowman  staff    736 Oct 13 22:03 src
+drwxr-xr-x@  6 davidbowman  staff    192 Oct 15 20:07 target
+drwxr-xr-x@ 38 davidbowman  staff   1216 Oct 13 22:22 tests
+--- src ---
+aggregate.rs
+distribution.rs
+doctor.rs
+domain
+error.rs
+firewall
+http
+launchd.rs
+lib.rs
+main.rs
+management
+operational.rs
+platform
+product
+protocol
+reconcile
+release.rs
+state
+update.rs
+wireguard
+wireguard.rs
+--- rust-toolchain ---
+[toolchain]
+channel = "1.89.0"
+profile = "minimal"
+components = ["clippy", "rustfmt"]
+--- git status ---
+?? .codegg/

@@ -1,0 +1,629 @@
+ls: bugs.md: No such file or directory
+src/aggregate.rs:522:TEST?:"00000000-0000-4000-8000-0000000000a1".parse().unwrap()
+src/aggregate.rs:526:TEST?:DesiredGeneration::new(value).unwrap()
+src/aggregate.rs:537:TEST?:interface: "wg0".parse().unwrap(),
+src/aggregate.rs:543:TEST?:private_key: PrivateKey::new(KEY.into()).unwrap(),
+src/aggregate.rs:546:TEST?:public_key: crate::domain::PublicKey::new(PEER.into()).unwrap(),
+src/aggregate.rs:547:TEST?:allowed_ips: vec![NetworkPrefix::new("10.8.0.2/32".parse().unwrap())],
+src/aggregate.rs:554:TEST?:address: "10.8.0.1/24".parse().unwrap(),
+src/aggregate.rs:562:TEST?:egress_interface: "eth0".parse().unwrap(),
+src/aggregate.rs:563:TEST?:source_prefixes: vec![NetworkPrefix::new("10.8.0.0/24".parse().unwrap())],
+src/aggregate.rs:577:TEST?:interface: "wg0".parse().unwrap(),
+src/aggregate.rs:722:TEST?:.expect("first generation is accepted");
+src/aggregate.rs:733:TEST?:.expect("equal retry allowed");
+src/aggregate.rs:740:TEST?:.expect("higher generation allowed");
+src/aggregate.rs:759:TEST?:interface: "wg0".parse().unwrap(),
+src/aggregate.rs:768:TEST?:wireguard_interface: "wg0".parse().unwrap(),
+src/distribution.rs:1259:TEST?:resolve_username_uid_with("fixture-user", |_| Ok(Some(4242))).unwrap(),
+src/distribution.rs:1273:TEST?:assert_eq!(resolve_allowed_user_uids(&names).unwrap().len(), 1);
+src/distribution.rs:1286:TEST?:.unwrap();
+src/distribution.rs:1288:TEST?:let first = InstallLock::acquire_owned_by(&path, uid).unwrap();
+src/distribution.rs:1306:TEST?:fs::create_dir(&parent).unwrap();
+src/distribution.rs:1308:TEST?:fs::write(&path, b"unit bytes").unwrap();
+src/distribution.rs:1309:TEST?:fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+src/distribution.rs:1313:TEST?:fs::remove_file(&path).unwrap();
+src/distribution.rs:1314:TEST?:std::os::unix::fs::symlink(parent.join("missing"), &path).unwrap();
+src/doctor.rs:187:TEST?:let json = serde_json::to_string(&report).unwrap();
+src/doctor.rs:188:TEST?:assert_eq!(serde_json::from_str::<DoctorReport>(&json).unwrap(), report);
+src/launchd.rs:286:TEST?:std::fs::create_dir_all(&root).unwrap();
+src/launchd.rs:317:TEST?:.unwrap();
+src/launchd.rs:319:TEST?:assert_eq!(verify_installed_root(&root).unwrap(), receipt);
+src/launchd.rs:322:TEST?:root.join(BINARY_PATH.strip_prefix('/').unwrap()),
+src/launchd.rs:325:TEST?:.unwrap();
+src/launchd.rs:332:TEST?:root.join(BINARY_PATH.strip_prefix('/').unwrap()),
+src/launchd.rs:335:TEST?:.unwrap();
+src/launchd.rs:336:TEST?:uninstall_preserving_state(&root).unwrap();
+src/launchd.rs:337:TEST?:assert!(root.join(STATE_DIR.strip_prefix('/').unwrap()).is_dir());
+src/main.rs:2238:TEST?:.expect("the state command group is documented");
+src/main.rs:2256:TEST?:.unwrap()
+src/main.rs:2259:TEST?:std::fs::create_dir(&root).unwrap();
+src/main.rs:2260:TEST?:std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+src/main.rs:2262:TEST?:drop(wg_basic::state::StateStore::initialize(&path).unwrap());
+src/main.rs:2263:TEST?:let before = std::fs::read(&path).unwrap();
+src/main.rs:2265:TEST?:.unwrap()
+src/main.rs:2266:TEST?:.map(|entry| entry.unwrap().file_name())
+src/main.rs:2273:TEST?:.unwrap();
+src/main.rs:2277:TEST?:.unwrap();
+src/main.rs:2283:TEST?:assert_eq!(std::fs::read(&path).unwrap(), before);
+src/main.rs:2285:TEST?:.unwrap()
+src/main.rs:2286:TEST?:.map(|entry| entry.unwrap().file_name())
+src/main.rs:2289:TEST?:std::fs::remove_dir_all(root).unwrap();
+src/operational.rs:162:TEST?:let encoded = serde_json::to_string(&event).unwrap();
+src/operational.rs:165:TEST?:let decoded: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+src/release.rs:250:TEST?:.expect("fixture release is signed and policy-compliant");
+src/release.rs:305:TEST?:.unwrap();
+src/release.rs:318:TEST?:.unwrap();
+src/release.rs:331:TEST?:.unwrap();
+src/release.rs:396:TEST?:.unwrap();
+src/release.rs:398:TEST?:panic!("fixture is direct-installable");
+src/release.rs:407:TEST?:std::fs::create_dir(&root).unwrap();
+src/release.rs:409:TEST?:std::fs::write(&regular, b"test").unwrap();
+src/release.rs:411:TEST?:symlink(&regular, &linked).unwrap();
+src/release.rs:423:TEST?:std::fs::remove_dir_all(root).unwrap();
+src/update.rs:1454:PROD?:.expect("fixed release metadata bounds are valid")
+src/update.rs:2743:TEST?:let mut encoded = serde_json::to_value(&value).unwrap();
+src/update.rs:2746:TEST?:.unwrap()
+src/update.rs:2748:TEST?:let parsed: UpdateJournal = serde_json::from_value(encoded).unwrap();
+src/update.rs:2939:TEST?:_ => panic!("unknown child journal phase"),
+src/update.rs:2942:TEST?:let mut value = journal(path.parent().unwrap().join("rollback").as_path());
+src/update.rs:2944:TEST?:write_journal_owned_by(&path, &value, nix::unistd::Uid::effective().as_raw()).unwrap();
+src/update.rs:2962:TEST?:fs::create_dir_all(&transaction).unwrap();
+src/update.rs:2963:TEST?:fs::set_permissions(&temp, fs::Permissions::from_mode(0o700)).unwrap();
+src/update.rs:2964:TEST?:fs::set_permissions(&rollback, fs::Permissions::from_mode(0o700)).unwrap();
+src/update.rs:2965:TEST?:fs::set_permissions(&transaction, fs::Permissions::from_mode(0o700)).unwrap();
+src/update.rs:2975:TEST?:let mut child = Command::new(std::env::current_exe().unwrap())
+src/update.rs:2986:TEST?:.unwrap();
+src/update.rs:2994:TEST?:Ok(value) => panic!("child published unexpected phase: {:?}", value.phase),
+src/update.rs:2995:TEST?:Err(error) => panic!("child did not durably publish its phase: {error}"),
+src/update.rs:2998:TEST?:child.kill().unwrap();
+src/update.rs:3002:TEST?:.unwrap(),
+src/update.rs:3006:TEST?:fs::remove_dir_all(temp).unwrap();
+src/update.rs:3066:TEST?:fs::create_dir_all(temp.join("rollback")).unwrap();
+src/update.rs:3067:TEST?:fs::set_permissions(&temp, fs::Permissions::from_mode(0o700)).unwrap();
+src/update.rs:3068:TEST?:fs::set_permissions(temp.join("rollback"), fs::Permissions::from_mode(0o700)).unwrap();
+src/update.rs:3072:TEST?:write_journal_owned_by(&path, &value, owner).unwrap();
+src/update.rs:3073:TEST?:assert_eq!(read_journal_owned_by(&path, owner).unwrap(), value);
+src/update.rs:3075:TEST?:fs::metadata(path).unwrap().permissions().mode() & 0o777,
+src/update.rs:3093:TEST?:assert_eq!(parse_latest_release(accepted).unwrap().version, "1.2.3");
+src/update.rs:3137:TEST?:.unwrap();
+src/update.rs:3178:TEST?:.unwrap()
+src/update.rs:3179:TEST?:.unwrap();
+src/update.rs:3216:TEST?:fs::create_dir_all(&install).unwrap();
+src/update.rs:3217:TEST?:fs::create_dir_all(&stage).unwrap();
+src/update.rs:3218:TEST?:fs::set_permissions(&install, fs::Permissions::from_mode(0o755)).unwrap();
+src/update.rs:3221:TEST?:fs::write(&installed, b"old binary bytes").unwrap();
+src/update.rs:3226:TEST?:.unwrap();
+src/update.rs:3227:TEST?:fs::set_permissions(&installed, fs::Permissions::from_mode(0o700)).unwrap();
+src/update.rs:3228:TEST?:fs::set_permissions(&candidate, fs::Permissions::from_mode(0o700)).unwrap();
+src/update.rs:3229:TEST?:let old_digest = eggup_core::hash_file(&installed).unwrap();
+src/update.rs:3230:TEST?:let candidate_digest = eggup_core::hash_file(&candidate).unwrap();
+src/update.rs:3241:TEST?:assert_eq!(fs::read(&installed).unwrap(), fs::read(&candidate).unwrap());
+src/update.rs:3245:TEST?:.unwrap();
+src/update.rs:3248:TEST?:assert_eq!(fs::read(&installed).unwrap(), fs::read(&candidate).unwrap());
+src/update.rs:3250:TEST?:fs::write(&installed, b"old binary bytes").unwrap();
+src/update.rs:3260:TEST?:.unwrap();
+src/update.rs:3262:TEST?:assert_eq!(fs::read(&installed).unwrap(), b"old binary bytes");
+src/wireguard.rs:262:TEST?:PublicKey::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".into()).unwrap()
+src/wireguard.rs:299:TEST?:let prefix: NetworkPrefix = "10.8.0.0/24".parse().unwrap();
+src/wireguard.rs:300:TEST?:let host: NetworkPrefix = "10.8.0.2/32".parse().unwrap();
+src/wireguard.rs:306:TEST?:let other_family: NetworkPrefix = "2001:db8::/64".parse().unwrap();
+src/wireguard.rs:314:TEST?:private_key: FieldUpdate::Set(PrivateKey::new(secret.clone()).unwrap()),
+src/wireguard.rs:319:TEST?:let encoded = serde_json::to_string(&patch).unwrap();
+src/wireguard.rs:320:TEST?:let decoded: WireGuardDevicePatch = serde_json::from_str(&encoded).unwrap();
+src/reconcile/darwin.rs:212:TEST?:text.parse().unwrap()
+src/reconcile/darwin.rs:217:TEST?:address: address.parse().unwrap(),
+src/reconcile/darwin.rs:243:TEST?:addresses: vec!["10.8.0.1/24".parse().unwrap()],
+src/reconcile/darwin.rs:251:TEST?:assert_eq!(plan_darwin(&desired, &observed).unwrap(), Vec::new());
+src/reconcile/darwin.rs:257:TEST?:addresses: vec!["10.8.0.1/24".parse().unwrap()],
+src/reconcile/darwin.rs:266:TEST?:address: "fe80::1/64".parse().unwrap(),
+src/reconcile/darwin.rs:273:TEST?:let actions = plan_darwin(&desired, &observed).unwrap();
+src/reconcile/darwin.rs:292:TEST?:assert_eq!(plan_darwin(&desired, &observed).unwrap(), Vec::new());
+src/reconcile/darwin.rs:315:TEST?:addresses: vec!["10.8.0.1/24".parse().unwrap()],
+src/reconcile/darwin.rs:337:TEST?:"10.8.0.1/24".parse().unwrap(),
+src/reconcile/darwin.rs:338:TEST?:"10.8.0.1/24".parse().unwrap(),
+src/reconcile/darwin.rs:353:TEST?:addresses: vec!["10.8.0.1/24".parse().unwrap()],
+src/reconcile/darwin.rs:361:TEST?:let actions = plan_darwin(&desired, &renumbered).unwrap();
+src/reconcile/darwin.rs:362:TEST?:assert!(actions.contains(&DarwinAction::AddAddress("10.8.0.1/24".parse().unwrap())));
+src/reconcile/planner.rs:471:TEST?:.unwrap(),
+src/reconcile/planner.rs:474:TEST?:.unwrap(),
+src/reconcile/planner.rs:479:TEST?:"wg-test".parse().unwrap()
+src/reconcile/planner.rs:506:TEST?:address: "10.0.0.1/24".parse().unwrap(),
+src/reconcile/planner.rs:510:TEST?:destination: "10.1.0.0/16".parse().unwrap(),
+src/reconcile/planner.rs:523:TEST?:let plan = plan_execution(&desired(), &missing).unwrap();
+src/reconcile/planner.rs:554:TEST?:addresses: vec!["10.0.0.1/24".parse().unwrap()],
+src/reconcile/planner.rs:577:TEST?:destination: "10.1.0.0/16".parse().unwrap(),
+src/reconcile/planner.rs:591:TEST?:let keypair = crate::wireguard::generate_keypair().unwrap();
+src/reconcile/planner.rs:592:TEST?:let public_key = derive_public_key(&keypair.private_key).unwrap();
+src/reconcile/planner.rs:594:TEST?:PublicKey::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".into()).unwrap();
+src/reconcile/planner.rs:595:TEST?:let allowed_ips: Vec<NetworkPrefix> = vec!["10.9.0.2/32".parse().unwrap()];
+src/reconcile/planner.rs:608:TEST?:endpoint: Some("198.51.100.8:51820".parse().unwrap()),
+src/reconcile/planner.rs:622:TEST?:endpoint: Some("198.51.100.8:51820".parse().unwrap()),
+src/reconcile/planner.rs:629:TEST?:.unwrap()
+src/reconcile/planner.rs:665:TEST?:let plan = plan_execution(&desired, &observed).unwrap();
+src/reconcile/planner.rs:681:TEST?:let plan = plan_execution(&desired, &drifted).expect("a matching tag proves ownership");
+src/reconcile/service.rs:179:TEST?:.unwrap(),
+src/reconcile/service.rs:182:TEST?:.unwrap(),
+src/reconcile/service.rs:187:TEST?:"wg-test".parse().unwrap()
+src/reconcile/service.rs:199:TEST?:address: "10.0.0.1/24".parse().unwrap(),
+src/reconcile/service.rs:273:TEST?:let first = apply_with_backend(&wanted, &backend).unwrap();
+src/reconcile/service.rs:276:TEST?:assert_eq!(first.observed_after.as_ref().unwrap().addresses.len(), 1);
+src/reconcile/service.rs:278:TEST?:let retry = apply_with_backend(&wanted, &backend).unwrap();
+src/reconcile/service.rs:281:TEST?:let no_op = apply_with_backend(&wanted, &backend).unwrap();
+src/platform/mod.rs:125:PROD?:unreachable!("Darwin utun locators do not carry the logical name")
+src/platform/mod.rs:191:TEST?:let logical = LogicalTunnel::new(installation, interface_id, "wg0".parse().unwrap());
+src/platform/mod.rs:200:TEST?:name: "wg0".parse().unwrap(),
+src/platform/mod.rs:233:TEST?:let ping = serde_json::to_string(&RequestOperation::Ping).unwrap();
+src/platform/mod.rs:239:TEST?:serde_json::from_str(old).unwrap();
+src/management/auth.rs:435:PROD?:.expect("the timing equaliser is a constant of this crate")
+src/management/auth.rs:448:TEST?:let store = StateStore::initialize(dir.db()).unwrap();
+src/management/auth.rs:472:TEST?:fs::create_dir(&path).unwrap();
+src/management/auth.rs:473:TEST?:fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+src/management/auth.rs:496:TEST?:let principal = auth.set_password("admin", PASSWORD).unwrap();
+src/management/auth.rs:499:TEST?:let issued = auth.authenticate("admin", PASSWORD).unwrap();
+src/management/auth.rs:504:TEST?:let resolved = auth.resolve_session(issued.token.expose_once()).unwrap();
+src/management/auth.rs:513:TEST?:auth.set_password("admin", PASSWORD).unwrap();
+src/management/auth.rs:514:TEST?:let issued = auth.authenticate("admin", PASSWORD).unwrap();
+src/management/auth.rs:516:TEST?:let digests = store.session_digests_for_test().unwrap();
+src/management/auth.rs:529:TEST?:auth.set_password("admin", PASSWORD).unwrap();
+src/management/auth.rs:550:TEST?:let principal = auth.set_password("admin", PASSWORD).unwrap();
+src/management/auth.rs:559:TEST?:.unwrap();
+src/management/auth.rs:572:TEST?:auth.set_password("admin", PASSWORD).unwrap();
+src/management/auth.rs:573:TEST?:let issued = auth.authenticate("admin", PASSWORD).unwrap();
+src/management/auth.rs:575:TEST?:auth.revoke_session(issued.token.expose_once()).unwrap();
+src/management/auth.rs:581:TEST?:assert_eq!(store.session_count().unwrap(), 0);
+src/management/auth.rs:591:TEST?:auth.set_password("admin", PASSWORD).unwrap();
+src/management/auth.rs:598:TEST?:assert_eq!(store.session_count().unwrap(), 0);
+src/management/auth.rs:611:TEST?:auth.set_password("admin", PASSWORD).unwrap();
+src/management/auth.rs:612:TEST?:let issued = auth.authenticate("admin", PASSWORD).unwrap();
+src/management/auth.rs:621:TEST?:.unwrap()
+src/management/auth.rs:628:TEST?:.unwrap()
+src/management/auth.rs:633:TEST?:store.session_count().unwrap(),
+src/management/auth.rs:645:TEST?:auth.set_password("admin", PASSWORD).unwrap();
+src/management/auth.rs:647:TEST?:let first = auth.authenticate("admin", PASSWORD).unwrap();
+src/management/auth.rs:648:TEST?:let second = auth.authenticate("admin", PASSWORD).unwrap();
+src/management/auth.rs:649:TEST?:assert_eq!(store.session_count().unwrap(), 2);
+src/management/auth.rs:652:TEST?:auth.set_password("admin", new_password).unwrap();
+src/management/auth.rs:655:TEST?:store.session_count().unwrap(),
+src/management/auth.rs:672:TEST?:let before = store.installation_metadata().unwrap();
+src/management/auth.rs:675:TEST?:auth.set_password("admin", PASSWORD).unwrap();
+src/management/auth.rs:676:TEST?:let issued = auth.authenticate("admin", PASSWORD).unwrap();
+src/management/auth.rs:677:TEST?:auth.resolve_session(issued.token.expose_once()).unwrap();
+src/management/auth.rs:678:TEST?:auth.revoke_session(issued.token.expose_once()).unwrap();
+src/management/auth.rs:679:TEST?:auth.authenticate("admin", PASSWORD).unwrap();
+src/management/auth.rs:680:TEST?:auth.purge_expired_sessions().unwrap();
+src/management/auth.rs:682:TEST?:let after = store.installation_metadata().unwrap();
+src/management/auth.rs:688:TEST?:assert_eq!(store.load().unwrap().generation, before.desired_generation);
+src/management/auth.rs:695:TEST?:let principal = auth.set_password("admin", PASSWORD).unwrap();
+src/management/auth.rs:699:TEST?:.unwrap()
+src/management/auth.rs:700:TEST?:.unwrap();
+src/management/auth.rs:713:TEST?:auth.set_password("admin", PASSWORD).unwrap();
+src/management/auth.rs:738:TEST?:auth.set_password("admin", PASSWORD).unwrap();
+src/management/auth.rs:740:TEST?:let cost = auth.measure_verification(PASSWORD).unwrap();
+src/management/auth.rs:762:TEST?:assert!(auth.status().unwrap().is_none());
+src/management/auth.rs:764:TEST?:auth.set_password("admin", PASSWORD).unwrap();
+src/management/auth.rs:765:TEST?:let issued = auth.authenticate("admin", PASSWORD).unwrap();
+src/management/auth.rs:766:TEST?:let status = auth.status().unwrap().unwrap();
+src/management/auth.rs:781:TEST?:auth.set_password("admin", PASSWORD).unwrap();
+src/management/auth.rs:783:TEST?:let first = auth.authenticate("admin", PASSWORD).unwrap();
+src/management/auth.rs:784:TEST?:let second = auth.authenticate("admin", PASSWORD).unwrap();
+src/management/auth.rs:785:TEST?:assert_eq!(store.session_count().unwrap(), 2);
+src/management/auth.rs:791:TEST?:assert_eq!(store.purge_expired_sessions(later).unwrap(), 2);
+src/management/auth.rs:792:TEST?:assert_eq!(store.session_count().unwrap(), 0);
+src/management/auth.rs:803:TEST?:auth.set_password("admin", PASSWORD).unwrap();
+src/management/auth.rs:804:TEST?:let issued = auth.authenticate("admin", PASSWORD).unwrap();
+src/management/auth.rs:810:TEST?:.unwrap(),
+src/management/auth.rs:828:TEST?:.expect("set-password must initialise a fresh store");
+src/management/auth.rs:834:TEST?:.expect("status must open a store it did not create")
+src/management/auth.rs:835:TEST?:.expect("an administrator is provisioned");
+src/management/auth.rs:839:TEST?:let reset = set_password_at(&path, "admin", "a different password").expect("reset");
+src/management/auth.rs:842:TEST?:AuthService::new(&StateStore::open(&path).unwrap())
+src/management/auth.rs:859:TEST?:auth.set_password("admin", PASSWORD).unwrap();
+src/management/auth.rs:877:TEST?:.expect("SAMPLES is non-zero")
+src/management/auth.rs:917:TEST?:auth.set_password("admin", PASSWORD).unwrap();
+src/management/auth.rs:920:TEST?:.unwrap()
+src/management/auth.rs:921:TEST?:.expect("provisioned");
+src/management/auth.rs:961:TEST?:auth.set_password("admin", PASSWORD).unwrap();
+src/management/auth.rs:964:TEST?:.unwrap()
+src/management/auth.rs:965:TEST?:.expect("provisioned");
+src/management/auth.rs:968:TEST?:.unwrap();
+src/management/auth.rs:983:TEST?:.expect("three samples")
+src/management/auth.rs:1007:TEST?:let status = status_at(dir.db()).expect("status must work on a fresh store");
+src/management/coordinator.rs:71:TEST?:coordinator.enqueue(DesiredGeneration::new(1).unwrap());
+src/management/coordinator.rs:72:TEST?:coordinator.enqueue(DesiredGeneration::new(2).unwrap());
+src/management/coordinator.rs:73:TEST?:coordinator.enqueue(DesiredGeneration::new(3).unwrap());
+src/management/coordinator.rs:79:TEST?:DesiredGeneration::new(3).unwrap(),
+src/management/coordinator.rs:83:TEST?:CoordinatorAction::Idle => panic!("an apply should be claimable"),
+src/management/coordinator.rs:90:TEST?:coordinator.enqueue(DesiredGeneration::new(1).unwrap());
+src/management/coordinator.rs:96:TEST?:coordinator.enqueue(DesiredGeneration::new(2).unwrap());
+src/management/health.rs:154:TEST?:desired_generation: DesiredGeneration::new(4).unwrap(),
+src/management/health.rs:159:TEST?:last_attempted_generation: Some(DesiredGeneration::new(4).unwrap()),
+src/management/health.rs:199:TEST?:desired_generation: DesiredGeneration::new(2).unwrap(),
+src/management/health.rs:214:TEST?:last_converged_generation: Some(DesiredGeneration::new(2).unwrap()),
+src/management/health.rs:221:TEST?:last_converged_generation: Some(DesiredGeneration::new(1).unwrap()),
+src/management/health.rs:234:TEST?:desired_generation: DesiredGeneration::new(4).unwrap(),
+src/management/health.rs:239:TEST?:last_attempted_generation: Some(DesiredGeneration::new(4).unwrap()),
+src/management/health.rs:240:TEST?:last_converged_generation: Some(DesiredGeneration::new(3).unwrap()),
+src/management/health.rs:250:TEST?:last_converged_generation: Some(DesiredGeneration::new(4).unwrap()),
+src/management/health.rs:289:TEST?:desired_generation: DesiredGeneration::new(2).unwrap(),
+src/management/health.rs:295:TEST?:last_attempted_generation: Some(DesiredGeneration::new(2).unwrap()),
+src/management/health.rs:296:TEST?:last_converged_generation: Some(DesiredGeneration::new(2).unwrap()),
+src/management/runtime.rs:599:TEST?:DesiredGeneration::new(1).unwrap(),
+src/management/runtime.rs:607:TEST?:assert_eq!(intent.unwrap(), None);
+src/management/runtime.rs:617:TEST?:let generation = DesiredGeneration::new(7).unwrap();
+src/management/runtime.rs:624:TEST?:.expect("valid snapshot projects")
+src/management/runtime.rs:625:TEST?:.expect("one interface yields one intent");
+src/management/runtime.rs:637:TEST?:let address: ipnet::IpNet = "10.8.0.2/32".parse().unwrap();
+src/management/runtime.rs:641:TEST?:name: "wg0".parse().unwrap(),
+src/management/runtime.rs:648:TEST?:.unwrap(),
+src/management/runtime.rs:652:TEST?:"10.8.0.0/24".parse().unwrap(),
+src/management/runtime.rs:655:TEST?:address: "10.8.0.1/24".parse().unwrap(),
+src/management/runtime.rs:664:TEST?:.unwrap(),
+src/management/worker.rs:1314:TEST?:.unwrap();
+src/management/worker.rs:1321:TEST?:assigned_address: "10.8.0.2/32".parse().unwrap(),
+src/management/worker.rs:1324:TEST?:label: crate::product::ClientLabel::new("fixture").unwrap(),
+src/management/worker.rs:1335:TEST?:interface: "wg0".parse().unwrap(),
+src/management/worker.rs:1362:TEST?:fs::create_dir(&path).unwrap();
+src/management/worker.rs:1363:TEST?:fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+src/management/worker.rs:1390:TEST?:let startup = spawn(config).expect("a fresh store and an absent netd still start");
+src/management/worker.rs:1399:TEST?:.expect("health is answerable without netd");
+src/management/worker.rs:1402:TEST?:startup.stop().await.expect("a clean shutdown");
+src/management/worker.rs:1410:TEST?:let store = StateStore::initialize(temp.db()).unwrap();
+src/management/worker.rs:1415:TEST?:.unwrap();
+src/management/worker.rs:1419:TEST?:.expect("an absent netd is degraded, not fatal");
+src/management/worker.rs:1434:TEST?:let health = startup.client().health().await.expect("degraded health");
+src/management/worker.rs:1438:TEST?:startup.stop().await.expect("a clean shutdown");
+src/management/worker.rs:1446:TEST?:fs::create_dir(&bogus).unwrap();
+src/management/worker.rs:1468:TEST?:.expect("the first command fits in the bound");
+src/management/worker.rs:1495:TEST?:.expect("admission resumes after a drain");
+src/management/worker.rs:1501:TEST?:let startup = spawn(WorkerConfig::new(temp.db(), absent_socket(&temp))).unwrap();
+src/management/worker.rs:1503:TEST?:startup.stop().await.expect("a clean shutdown");
+src/management/worker.rs:1520:TEST?:let startup = spawn(config).expect("worker starts");
+src/management/worker.rs:1541:TEST?:name: "wg0".parse().unwrap(),
+src/management/worker.rs:1546:TEST?:.unwrap(),
+src/protocol/auth.rs:100:TEST?:let (a, _b) = std::os::unix::net::UnixStream::pair().unwrap();
+src/protocol/auth.rs:101:TEST?:let (uid, _gid) = peer_identity(&a).unwrap();
+src/protocol/framing.rs:43:TEST?:read_frame(&mut Cursor::new(frame)).unwrap().len(),
+src/protocol/socket.rs:270:TEST?:fs::create_dir(&directory).unwrap();
+src/protocol/socket.rs:271:TEST?:fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+src/protocol/socket.rs:288:TEST?:let server = Arc::new(SocketServer::bind(path, authorization).unwrap());
+src/protocol/socket.rs:302:TEST?:let pong = request(&path, RequestOperation::Ping, 11).unwrap();
+src/protocol/socket.rs:304:TEST?:let response = request(&path, RequestOperation::InspectCapabilities, 12).unwrap();
+src/protocol/socket.rs:306:TEST?:panic!("unexpected response")
+src/protocol/socket.rs:324:TEST?:handle.join().unwrap().unwrap();
+src/protocol/socket.rs:338:TEST?:let mut stream = UnixStream::connect(&path).unwrap();
+src/protocol/socket.rs:344:TEST?:.unwrap();
+src/protocol/socket.rs:352:TEST?:other => panic!("unauthorized connection was not closed: {other:?}"),
+src/protocol/socket.rs:355:TEST?:handle.join().unwrap().unwrap();
+src/protocol/socket.rs:364:TEST?:let mut stream = UnixStream::connect(&path).unwrap();
+src/protocol/socket.rs:370:TEST?:write_frame(&mut stream, &serde_json::to_vec(&request).unwrap()).unwrap();
+src/protocol/socket.rs:372:TEST?:serde_json::from_slice(&read_frame(&mut stream).unwrap()).unwrap();
+src/protocol/socket.rs:376:TEST?:handle.join().unwrap().unwrap();
+src/protocol/socket.rs:393:TEST?:interface: "wg0".parse().unwrap(),
+src/protocol/socket.rs:401:TEST?:handle.join().unwrap().unwrap();
+src/protocol/socket.rs:408:TEST?:let listener = UnixListener::bind(&path).unwrap();
+src/protocol/socket.rs:410:TEST?:let (mut stream, _) = listener.accept().unwrap();
+src/protocol/socket.rs:412:TEST?:serde_json::from_slice(&read_frame(&mut stream).unwrap()).unwrap();
+src/protocol/socket.rs:421:TEST?:write_frame(&mut stream, &serde_json::to_vec(&response).unwrap()).unwrap();
+src/protocol/socket.rs:429:TEST?:responder.join().unwrap();
+src/protocol/socket.rs:436:TEST?:fs::write(&path, b"keep me").unwrap();
+src/protocol/socket.rs:440:TEST?:.unwrap()
+src/protocol/socket.rs:444:TEST?:assert_eq!(fs::read(&path).unwrap(), b"keep me");
+src/protocol/socket.rs:445:TEST?:fs::remove_file(&path).unwrap();
+src/protocol/socket.rs:447:TEST?:let active = UnixListener::bind(&path).unwrap();
+src/protocol/socket.rs:451:TEST?:.unwrap()
+src/protocol/socket.rs:463:TEST?:SocketServer::bind(&path, AuthorizationPolicy::current_user_and_root()).unwrap();
+src/protocol/socket.rs:465:TEST?:fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+src/protocol/socket.rs:472:TEST?:SocketServer::bind(&path, AuthorizationPolicy::current_user_:is_held(&state).unwrap());
+src/state/service_lease.rs:198:TEST?:assert!(ServiceLease::is_held_by_uid(&state, nix::unistd::geteuid().as_raw()).unwrap());
+src/state/service_lease.rs:204:TEST?:assert!(!ServiceLease::is_held(&state).unwrap());
+src/state/service_lease.rs:205:TEST?:fs::remove_dir_all(root).unwrap();
+src/state/service_lease.rs:213:TEST?:fs::create_dir(&root).unwrap();
+src/state/service_lease.rs:214:TEST?:fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+src/state/service_lease.rs:216:TEST?:let first = MaintenanceLease::shared(&state).unwrap();
+src/state/service_lease.rs:217:TEST?:let second = MaintenanceLease::shared(&state).unwrap();
+src/state/service_lease.rs:224:TEST?:let exclusive = MaintenanceLease::exclusive(&state).unwrap();
+src/state/service_lease.rs:230:TEST?:fs::remove_dir_all(root).unwrap();
+src/state/schema/mod.rs:235:TEST?:fs::create_dir(&path).unwrap();
+src/state/schema/mod.rs:236:TEST?:fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+src/state/schema/mod.rs:266:TEST?:let address: ipnet::IpNet = "10.8.0.2/32".parse().unwrap();
+src/state/schema/mod.rs:270:TEST?:name: "wg0".parse().unwrap(),
+src/state/schema/mod.rs:275:TEST?:.unwrap(),
+src/state/schema/mod.rs:278:TEST?:tunnel_prefixes: vec![NetworkPrefix::new("10.8.0.0/24".parse().unwrap())],
+src/state/schema/mod.rs:286:TEST?:.unwrap(),
+src/state/schema/mod.rs:314:TEST?:let store = StateStore::initialize(temp.db()).unwrap();
+src/state/schema/mod.rs:316:TEST?:let connection = open_inspection(&temp.db()).unwrap();
+src/state/schema/mod.rs:320:TEST?:.unwrap();
+src/state/schema/mod.rs:325:TEST?:.unwrap();
+src/state/schema/mod.rs:330:TEST?:.unwrap();
+src/state/schema/mod.rs:336:TEST?:.unwrap();
+src/state/schema/mod.rs:341:TEST?:.unwrap();
+src/state/schema/mod.rs:354:TEST?:.expect("rusqlite dependency is declared");
+src/state/schema/mod.rs:365:TEST?:let store = StateStore::initialize(temp.db()).unwrap();
+src/state/schema/mod.rs:367:TEST?:let connection = open_inspection(&temp.db()).unwrap();
+src/state/schema/mod.rs:371:TEST?:.unwrap();
+src/state/schema/mod.rs:404:TEST?:.unwrap();
+src/state/schema/mod.rs:412:TEST?:let store = StateStore::initialize(temp.db()).unwrap();
+src/state/schema/mod.rs:414:TEST?:let connection = open_inspection(&temp.db()).unwrap();
+src/state/schema/mod.rs:417:TEST?:.unwrap();
+src/state/schema/mod.rs:432:TEST?:let store = StateStore::initialize(temp.db()).unwrap();
+src/state/schema/mod.rs:434:TEST?:let connection = open_inspection(&temp.db()).unwrap();
+src/state/schema/mod.rs:438:TEST?:.unwrap();
+src/state/schema/mod.rs:441:TEST?:.unwrap()
+src/state/schema/mod.rs:443:TEST?:.unwrap();
+src/state/schema/mod.rs:453:TEST?:.unwrap();
+src/state/schema/mod.rs:478:TEST?:let store = StateStore::initialize(temp.db()).unwrap();
+src/state/schema/mod.rs:480:TEST?:let connection = open_inspection(&temp.db()).unwrap();
+src/state/schema/mod.rs:495:TEST?:let store = StateStore::initialize(temp.db()).unwrap();
+src/state/schema/mod.rs:500:TEST?:.unwrap();
+src/state/schema/mod.rs:502:TEST?:let connection = open_inspection(&temp.db()).unwrap();
+src/state/schema/mod.rs:515:TEST?:.unwrap();
+src/state/schema/mod.rs:535:TEST?:.unwrap();
+src/state/schema/mod.rs:538:TEST?:.unwrap()
+src/state/schema/mod.rs:540:TEST?:.unwrap();
+src/state/schema/mod.rs:555:TEST?:.unwrap();
+src/state/schema/mod.rs:558:TEST?:.unwrap()
+src/state/schema/mod.rs:560:TEST?:.unwrap()
+src/state/schema/mod.rs:574:TEST?:let store = StateStore::initialize(temp.db()).unwrap();
+src/state/schema/mod.rs:576:TEST?:let connection = open_inspection(&temp.db()).unwrap();
+src/state/schema/mod.rs:602:TEST?:migrations::initialize_at_version(&temp.db(), 1).expect("historical v1 fixture");
+src/state/schema/mod.rs:609:TEST?:.expect("user_version is readable")
+src/state/schema/mod.rs:630:TEST?:let connection = Connection::open(temp.db()).unwrap();
+src/state/schema/mod.rs:651:TEST?:.expect("seed a genuine version-1 snapshot");
+src/state/schema/mod.rs:659:TEST?:.unwrap()
+src/state/schema/mod.rs:661:TEST?:.unwrap();
+src/state/schema/mod.rs:662:TEST?:connection.close().unwrap();
+src/state/schema/mod.rs:664:TEST?:let store = StateStore::open_without_migrating(temp.db()).unwrap();
+src/state/schema/mod.rs:665:TEST?:let loaded = store.load().unwrap();
+src/state/schema/mod.rs:666:TEST?:assert_eq!(loaded.generation, DesiredGeneration::new(2).unwrap());
+src/state/schema/mod.rs:679:TEST?:let mut connection = Connection::open(temp.db()).unwrap();
+src/state/schema/mod.rs:680:TEST?:migrations::apply_migrations(&mut connection, MIGRATIONS).unwrap();
+src/state/schema/mod.rs:685:TEST?:connection.close().unwrap();
+src/state/schema/mod.rs:694:TEST?:let mut connection = Connection::open(temp.db()).expect("open the historical fixture");
+src/state/schema/mod.rs:701:TEST?:migrations::apply_migrations(&mut connection, MIGRATIONS).unwrap();
+src/state/schema/mod.rs:721:TEST?:.unwrap();
+src/state/schema/mod.rs:731:TEST?:.unwrap();
+src/state/schema/mod.rs:733:TEST?:connection.close().unwrap();
+src/state/schema/mod.rs:737:TEST?:.expect("a migrated database must open through the production path");
+src/state/schema/mod.rs:745:TEST?:let mut connection = Connection::open(temp.db()).unwrap();
+src/state/schema/mod.rs:746:TEST?:migrations::apply_migrations(&mut connection, &MIGRATIONS[..4]).unwrap();
+src/state/schema/mod.rs:754:TEST?:.unwrap();
+src/state/schema/mod.rs:763:TEST?:.unwrap();
+src/state/schema/mod.rs:770:TEST?:.unwrap();
+src/state/schema/mod.rs:772:TEST?:connection.close().unwrap();
+src/state/schema/mod.rs:774:TEST?:let store = StateStore::open(temp.db()).unwrap();
+src/state/schema/mod.rs:775:TEST?:assert_eq!(store.schema_version().unwrap(), 7);
+src/state/schema/mod.rs:776:TEST?:let metadata = store.installation_metadata().unwrap();
+src/state/schema/mod.rs:779:TEST?:let desired = store.load().unwrap();
+src/state/schema/mod.rs:781:TEST?:let product = store.load_product().unwrap();
+src/state/schema/mod.rs:788:TEST?:let connection = Connection::open(temp.db()).unwrap();
+src/state/schema/mod.rs:795:TEST?:.unwrap();
+src/state/schema/mod.rs:803:TEST?:let backup = Connection::open(&recovery).unwrap();
+src/state/schema/mod.rs:810:TEST?:migrations::initialize_at_version(&temp.db(), 4).unwrap();
+src/state/schema/mod.rs:811:TEST?:let mut connection = Connection::open(temp.db()).unwrap();
+src/state/schema/mod.rs:814:TEST?:.unwrap();
+src/state/schema/mod.rs:827:TEST?:.unwrap();
+src/state/schema/mod.rs:834:TEST?:migrations::initialize_at_version(&temp.db(), 5).unwrap();
+src/state/schema/mod.rs:835:TEST?:let mut connection = Connection::open(temp.db()).unwrap();
+src/state/schema/mod.rs:838:TEST?:.unwrap();
+src/state/schema/mod.rs:851:TEST?:.unwrap();
+src/state/schema/mod.rs:861:TEST?:migrations::initialize_at_version(&temp.db(), 6).unwrap();
+src/state/schema/mod.rs:862:TEST?:let mut connection = Connection::open(temp.db()).unwrap();
+src/state/schema/mod.rs:865:TEST?:.unwrap();
+src/state/schema/mod.rs:878:TEST?:.unwrap();
+src/state/schema/mod.rs:890:TEST?:let store = StateStore::open(temp.db()).unwrap();
+src/state/schema/mod.rs:891:TEST?:let metadata = store.installation_metadata().unwrap();
+src/state/schema/mod.rs:892:TEST?:let loaded = store.load().unwrap();
+src/state/schema/mod.rs:900:TEST?:DesiredGeneration::new(2).unwrap(),
+src/state/schema/mod.rs:905:TEST?:DesiredGeneration::new(2).unwrap(),
+src/state/schema/mod.rs:921:TEST?:let connection = Connection::open(temp.db()).unwrap();
+src/state/schema/mod.rs:922:TEST?:connection.execute("PRAGMA user_version = 8", []).unwrap();
+src/state/schema/mod.rs:925:TEST?:let mut connection = Connection::open(temp.db()).unwrap();
+src/state/schema/mod.rs:942:TEST?:migrations::initialize_at_version(&temp.db(), 1).unwrap();
+src/state/schema/mod.rs:943:TEST?:let mut connection = Connection::open(temp.db()).unwrap();
+src/state/schema/mod.rs:956:TEST?:.expect("seed a dangling client row");
+src/state/schema/mod.rs:968:TEST?:migrations::initialize_at_version(&temp.db(), 1).unwrap();
+src/state/schema/mod.rs:969:TEST?:let connection = Connection::open(temp.db()).unwrap();
+src/state/schema/mod.rs:972:TEST?:recovery_snapshot(&connection, &temp.db(), 1, 2).unwrap();
+src/state/schema/mod.rs:974:TEST?:let metadata = fs::symlink_metadata(&expected).expect("snapshot must exist");
+src/state/schema/mod.rs:987:TEST?:.unwrap();
+src/state/schema/mod.rs:995:TEST?:initialize_at_version(&temp.db(), 1).unwrap();
+src/state/schema/mod.rs:998:TEST?:.unwrap();
+src/state/schema/mod.rs:1001:TEST?:recovery_snapshot(&connection, &temp.db(), 1, 1).unwrap();
+src/state/schema/mod.rs:1005:TEST?:recovery_snapshot(&connection, &temp.db(), 0, 2).unwrap();
+src/state/store/product.rs:961:TEST?:fs::create_dir(&path).unwrap();
+src/state/store/product.rs:962:TEST?:fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+src/state/store/product.rs:975:TEST?:let store = StateStore::initialize(scratch.0.join("state.db")).unwrap();
+src/state/store/product.rs:976:TEST?:let generation = store.current_generation().unwrap();
+src/state/store/product.rs:977:TEST?:let mut connection = store.lock().unwrap();
+src/state/store/product.rs:980:TEST?:.unwrap();
+src/state/store/product.rs:996:TEST?:.unwrap()
+src/state/store/product.rs:1000:TEST?:transaction.commit().unwrap();
+src/state/store/product.rs:1005:TEST?:.unwrap()
+src/state/store/product.rs:1007:TEST?:.unwrap();
+src/state/store/product.rs:1009:TEST?:assert_eq!(store.audit_events(1).unwrap()[0].event_id, newest.unwrap());
+src/state/store/product.rs:1010:TEST?:assert_eq!(store.current_generation().unwrap(), generation);
+src/state/store/product.rs:1015:TEST?:let page = store.audit_events_page(1_000, cursor).unwrap();
+src/firewall/pf.rs:144:TEST?:"10.8.0.0/24".parse().unwrap(),
+src/firewall/pf.rs:145:TEST?:"2001:db8::/64".parse().unwrap(),
+src/firewall/pf.rs:160:TEST?:let egress: crate::domain::InterfaceName = "en0".parse().unwrap();
+src/firewall/pf.rs:161:TEST?:let tunnel: crate::domain::InterfaceName = "wg0".parse().unwrap();
+src/firewall/pf.rs:196:TEST?:let egress: crate::domain::InterfaceName = "en0".parse().unwrap();
+src/firewall/pf.rs:197:TEST?:let tunnel: crate::domain::InterfaceName = "wg0".parse().unwrap();
+src/firewall/planner.rs:317:TEST?:.unwrap(),
+src/firewall/planner.rs:323:TEST?:"wg0".parse().unwrap(),
+src/firewall/planner.rs:327:TEST?:egress_interface: "eth0".parse().unwrap(),
+src/firewall/planner.rs:328:TEST?:source_prefixes: vec!["10.8.0.0/24".parse().unwrap()],
+src/firewall/planner.rs:352:TEST?:let first = plan_firewall(&owner(), &interface, Some(&policy), &observation).unwrap();
+src/firewall/planner.rs:407:TEST?:.unwrap()
+src/firewall/planner.rs:428:TEST?:.unwrap()
+src/firewall/planner.rs:442:TEST?:.unwrap()["expr"][0]["match"]["right"] = serde_json::json!("wg-other");
+src/firewall/planner.rs:460:TEST?:.unwrap()
+src/firewall/planner.rs:473:TEST?:.push("2001:db8:42::/64".parse().unwrap());
+src/firewall/planner.rs:489:TEST?:let plan = plan_firewall(&owner(), &interface, Some(&policy), &observation).unwrap();
+src/firewall/planner.rs:505:TEST?:plan.desired_hash.as_deref().unwrap(),
+src/firewall/planner.rs:510:TEST?:.expect("IPv6 allow rule is rendered");
+src/firewall/planner.rs:522:TEST?:plan.desired_hash.as_deref().unwrap(),
+src/firewall/planner.rs:531:TEST?:plan.desired_hash.as_deref().unwrap(),
+src/firewall/planner.rs:542:TEST?:.unwrap()
+src/firewall/policy.rs:237:TEST?:"wg0".parse().unwrap(),
+src/firewall/policy.rs:241:TEST?:egress_interface: "eth0".parse().unwrap(),
+src/firewall/policy.rs:242:TEST?:source_prefixes: vec!["10.8.0.0/24".parse().unwrap()],
+src/firewall/policy.rs:284:TEST?:invalid.source_prefixes = vec!["2001:db8::/64".parse().unwrap()];
+src/firewall/policy.rs:290:TEST?:invalid.source_prefixes = vec!["0.0.0.0/0".parse().unwrap()];
+src/http/api.rs:87:PROD?:StatusCode::new(401).expect("401 Unauthorized is a valid HTTP status")
+src/http/api.rs:92:PROD?:StatusCode::new(429).expect("429 Too Many Requests is a valid HTTP status")
+src/http/api.rs:619:TEST?:headers.push_str("host", "127.0.0.1:8000").unwrap();
+src/http/api.rs:621:TEST?:headers.push_str(*name, *value).unwrap();
+src/http/api.rs:624:TEST?:Method::new(method).unwrap(),
+src/http/api.rs:625:TEST?:RequestTarget::parse(target).unwrap(),
+src/http/api.rs:633:TEST?:"127.0.0.1:8000".parse().unwrap(),
+src/http/api.rs:744:TEST?:headers.push_str("host", host).unwrap();
+src/http/api.rs:747:TEST?:RequestTarget::parse("/api/v1/session").unwrap(),
+src/http/api.rs:934:TEST?:.unwrap()
+src/http/api.rs:985:TEST?:csrf_token: CsrfToken::parse("correct-horse").unwrap(),
+src/http/api.rs:989:TEST?:digest: SessionTokenDigest::parse("a".repeat(64)).unwrap(),
+src/http/api.rs:1019:TEST?:let peer: SocketAddr = "127.0.0.1:40000".parse().unwrap();
+src/http/assets.rs:299:TEST?:assert!(asset("/assets/app.js").unwrap().mutates_the_document);
+src/http/assets.rs:300:TEST?:assert!(asset("/").unwrap().mutates_the_document);
+src/http/assets.rs:301:TEST?:assert!(!asset("/assets/app.css").unwrap().mutates_the_document);
+src/http/assets.rs:371:TEST?:let body = response_body(asset.path).expect("every inventory entry has a body");
+src/http/config.rs:124:PROD?:.expect("a literal socket address parses"),
+src/http/config.rs:284:TEST?:let runtime = limits.to_runtime_config().expect("valid defaults");
+src/http/config.rs:311:TEST?:let runtime = HttpLimits::default().to_runtime_config().unwrap();
+src/http/config.rs:370:TEST?:let config = ManagementHttpConfig::new("127.0.0.1:0").expect("port 0 is valid");
+src/http/headers.rs:194:TEST?:.unwrap(),
+src/http/headers.rs:305:TEST?:.unwrap(),
+src/http/headers.rs:335:TEST?:.expect("a table entry must name a valid header");
+src/http/origin.rs:326:PROD?:.expect("a socket address is a valid HTTP origin authority");
+src/http/origin.rs:553:TEST?:let parsed = CanonicalOrigin::parse("https://vpn.example.com").unwrap();
+src/http/origin.rs:560:TEST?:let plain = CanonicalOrigin::parse("http://127.0.0.1:8000").unwrap();
+src/http/origin.rs:567:TEST?:let explicit = CanonicalOrigin::parse("https://vpn.example.com:443").unwrap();
+src/http/origin.rs:595:TEST?:let parsed = CanonicalOrigin::parse("http://[::1]:8000").unwrap();
+src/http/origin.rs:651:TEST?:OriginPolicy::behind_https_proxy(bind(8000), "https://vpn.example.com").unwrap();
+src/http/origin.rs:676:TEST?:let routable: SocketAddr = "0.0.0.0:8000".parse().unwrap();
+src/http/origin.rs:688:TEST?:OriginPolicy::acknowledged_off_host(routable, "http://vpn.example.com:8000").unwrap();
+src/http/ratelimit.rs:318:TEST?:panic!("expected a refusal")
+src/http/readiness.rs:334:TEST?:generation: DesiredGeneration::new(1).unwrap(),
+src/http/readiness.rs:395:TEST?:tokens.push(single.public_token().expect("a degraded state is serving"));
+src/http/readiness.rs:414:TEST?:.expect("a degraded state is serving");
+src/http/response.rs:62:PROD?:.expect("a constant media type is a valid header")
+src/http/response.rs:64:PROD?:.expect("a constant cache policy is a valid header")
+src/http/response.rs:66:PROD?:.expect("a status was set")
+src/http/response.rs:178:TEST?:String::from_utf8(response.take_body().unwrap().into_bytes().unwrap()).unwrap()
+src/http/response.rs:206:TEST?:.expect("every management response sets cache-control");
+src/http/response.rs:207:TEST?:assert_eq!(cache.to_str().unwrap(), NO_STORE);
+src/http/serve.rs:414:TEST?:.unwrap()
+src/http/serve.rs:418:TEST?:fs::create_dir(&path).unwrap();
+src/http/serve.rs:419:TEST?:fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+src/http/serve.rs:429:TEST?:.expect("a loopback ephemeral port is a valid configuration")
+src/http/serve.rs:487:TEST?:.expect("an explicit origin makes this a real configuration");
+src/http/serve.rs:527:TEST?:.expect("a proxied loopback listener is the documented HTTPS shape");
+src/http/serve.rs:573:TEST?:fs::create_dir(&bogus).unwrap();
+src/http/serve.rs:604:TEST?:.expect("the run task itself must not panic")
+src/http/serve.rs:605:TEST?:.expect("a clean run");
+src/http/service.rs:375:PROD?:.expect("authentication resolved only from a presented cookie");
+src/http/service.rs:1070:PROD?:eggserve_primitives::StatusCode::new(value).expect("fixed HTTP status")
+src/http/service.rs:1254:TEST?:Route::Product(ProductRoute::Client, Some(ClientId::from_str(&id).unwrap()))
+src/http/service.rs:1258:TEST?:Route::Product(ProductRoute::Enable, Some(ClientId::from_str(&id).unwrap()))
+src/http/service.rs:1262:TEST?:Route::Product(ProductRoute::Config, Some(ClientId::from_str(&id).unwrap()))
+src/http/session_cookie.rs:165:TEST?:.unwrap()
+src/http/session_cookie.rs:169:TEST?:SessionToken::generate().unwrap()
+src/http/session_cookie.rs:176:TEST?:let header = session_set_cookie(&policy, &raw, 3600).unwrap();
+src/http/session_cookie.rs:194:TEST?:let header = session_set_cookie(&policy, &raw, 3600).unwrap();
+src/http/session_cookie.rs:212:TEST?:.unwrap()
+src/http/session_cookie.rs:215:TEST?:.unwrap()
+src/http/session_cookie.rs:235:TEST?:let header = session_expire_cookie(&policy).unwrap();
+src/http/session_cookie.rs:244:TEST?:let secure = session_expire_cookie(&proxy_policy()).unwrap();
+src/http/session_cookie.rs:253:TEST?:let header = session_set_cookie(&policy, &raw, 3600).unwrap();
+src/http/session_cookie.rs:254:TEST?:let request_cookie = header.split(';').next().unwrap();
+src/http/session_cookie.rs:290:TEST?:let header = session_set_cookie(&secure, &raw, 3600).unwrap();
+src/http/session_cookie.rs:291:TEST?:let request_cookie = header.split(';').next().unwrap();
+src/wireguard/backend.rs:342:TEST?:ip_addr: "10.8.0.2".parse().unwrap(),
+src/wireguard/backend.rs:347:TEST?:peer.endpoint = Some("192.0.2.1:51820".parse().unwrap());
+src/wireguard/backend.rs:357:TEST?:let observed = convert_observed("wg0".parse().unwrap(), &parsed).unwrap();
+src/wireguard/backend.rs:372:TEST?:let observed = convert_observed("wg0".parse().unwrap(), &parsed).unwrap();
+src/wireguard/darwin.rs:474:TEST?:let argv = HelperArgv::new(PathBuf::from("/bin/echo")).unwrap();
+src/wireguard/darwin.rs:490:TEST?:std::fs::create_dir(&dir).unwrap();
+src/wireguard/darwin.rs:492:TEST?:std::fs::write(&file, b"not the helper").unwrap();
+src/wireguard/darwin.rs:503:TEST?:base64_key_to_hex("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").unwrap(),
+src/wireguard/darwin.rs:507:TEST?:base64_key_to_hex("6LTHiAM4vgKEgi5vm30f/EBIEWFDmySkTc9EWCcIqEs=").unwrap(),
+src/wireguard/darwin.rs:525:TEST?:let rendered = render_uapi_set(Some(key), Some(51820), Some(&peer)).unwrap();
+src/wireguard/darwin.rs:543:TEST?:let rendered_removal = render_uapi_set(None, None, Some(&removal)).unwrap();
+src/wireguard/darwin.rs:547:TEST?:let endpoint: SocketAddr = "127.0.0.1:51821".parse().unwrap();
+src/wireguard/darwin.rs:548:TEST?:let allowed: IpNet = "10.200.0.2/32".parse().unwrap();
+src/wireguard/darwin.rs:555:TEST?:let rendered_full = render_uapi_set(None, None, Some(&full)).unwrap();
+src/wireguard/darwin.rs:561:TEST?:endpoint: Some("127.0.0.1:0".parse().unwrap()),
+src/wireguard/darwin.rs:577:TEST?:.unwrap();
+src/wireguard/darwin.rs:583:TEST?:let refused = parse_uapi_get("listen_port=1\nerrno=-22\n\n").unwrap();
+src/wireguard/darwin.rs:592:TEST?:.unwrap();
+src/wireguard/darwin.rs:594:TEST?:let fresh = parse_uapi_get("last_handshake_time_sec=0\nerrno=0\n\n").unwrap();
+src/wireguard/darwin.rs:596:TEST?:let kernel_shaped = parse_uapi_get("latest_handshake=1720000000\nerrno=0\n\n").unwrap();
+src/wireguard/darwin.rs:609:TEST?:let command = render_uapi_set(Some(key), Some(51820), None).unwrap();
+src/wireguard/darwin.rs:610:TEST?:let (mut client, mut server) = UnixStream::pair().unwrap();
+src/wireguard/darwin.rs:617:TEST?:server.read_exact(&mut byte).unwrap();
+src/wireguard/darwin.rs:623:TEST?:let text = std::str::from_utf8(&seen).unwrap();
+src/wireguard/darwin.rs:626:TEST?:server.write_all(b"listen_port=51820\nerrno=0\n\n").unwrap();
+src/wireguard/darwin.rs:628:TEST?:let device = uapi_round_trip(&mut client, &command).unwrap();
+src/wireguard/darwin.rs:631:TEST?:responder.join().unwrap();
+src/wireguard/darwin.rs:643:TEST?:std::fs::create_dir(&dir).unwrap();
+src/wireguard/darwin.rs:645:TEST?:std::fs::write(&mock, "#!/bin/sh\nsleep 5\n").unwrap();
+src/wireguard/darwin.rs:646:TEST?:std::fs::set_permissions(&mock, std::fs::Permissions::from_mode(0o700)).unwrap();
+src/wireguard/darwin.rs:647:TEST?:let argv = HelperArgv::new(mock.clone()).unwrap();
+src/wireguard/darwin.rs:649:TEST?:let mut helper = SupervisedHelper::spawn(&argv).unwrap();
+src/wireguard/darwin.rs:655:TEST?:let dead = HelperArgv::new(dead_bin).unwrap();
+src/wireguard/darwin.rs:668:TEST?:assert_eq!(interface_delta(&before, &after).unwrap(), "utun4");
+src/domain/auth.rs:122:PROD?:.expect("the management password policy is within Argon2's own limits")
+src/domain/auth.rs:455:TEST?:let verifier = PasswordVerifier::hash(PASSWORD).unwrap();
+src/domain/auth.rs:469:TEST?:let first = PasswordVerifier::hash(PASSWORD).unwrap();
+src/domain/auth.rs:470:TEST?:let second = PasswordVerifier::hash(PASSWORD).unwrap();
+src/domain/auth.rs:483:TEST?:let hashed = PasswordVerifier::hash(PASSWORD).unwrap();
+src/domain/auth.rs:485:TEST?:let adopted = PasswordVerifier::parse(stored).unwrap();
+src/domain/auth.rs:504:TEST?:let verifier = PasswordVerifier::hash(PASSWORD).unwrap();
+src/domain/auth.rs:505:TEST?:let token = SessionToken::generate().unwrap();
+src/domain/auth.rs:506:TEST?:let csrf = CsrfToken::generate().unwrap();
+src/domain/auth.rs:563:TEST?:let verifier = PasswordVerifier::hash(password).unwrap();
+src/domain/auth.rs:580:TEST?:let token = SessionToken::generate().unwrap();
+src/domain/auth.rs:604:TEST?:let token = SessionToken::generate().unwrap();
+src/domain/auth.rs:614:TEST?:let token = SessionToken::generate().unwrap();
+src/domain/auth.rs:616:TEST?:let parsed = SessionTokenDigest::parse(stored).unwrap();
+src/domain/auth.rs:629:TEST?:let csrf = CsrfToken::generate().unwrap();
+src/domain/auth.rs:633:TEST?:CsrfToken::generate().unwrap().expose_once()
+src/domain/auth.rs:635:TEST?:let adopted = CsrfToken::parse(csrf.expose_once()).unwrap();
+src/domain/generation.rs:124:TEST?:assert_eq!(first.to_string().parse::<InstallationId>().unwrap(), first);
+src/domain/generation.rs:133:TEST?:assert!(initial.next().unwrap() > initial);
+src/domain/generation.rs:147:TEST?:let generation = DesiredGeneration::from_storage(value).expect("valid");
+src/domain/identifiers.rs:53:TEST?:interface.to_string().parse::<InterfaceId>().unwrap(),
+src/domain/intent.rs:64:TEST?:serde_json::to_string(&OwnershipDeclaration::ObserveOnly).unwrap(),
+src/domain/intent.rs:68:TEST?:serde_json::to_string(&LinkLifecycle::Present).unwrap(),
+src/domain/intent.rs:72:TEST?:serde_json::to_string(&ResourcePresence::Absent).unwrap(),
+src/domain/intent.rs:82:TEST?:.unwrap();
+src/domain/intent.rs:88:TEST?:.unwrap();
+src/domain/interface_name.rs:109:TEST?:crate::platform::LogicalTunnel::new(installation, interface_id, "wg0".parse().unwrap());
+src/domain/keys.rs:55:TEST?:.unwrap();
+src/domain/keys.rs:56:TEST?:let private: [u8; 32] = private_bytes.try_into().unwrap();
+src/domain/keys.rs:67:TEST?:let pair = generate_keypair().unwrap();
+src/domain/network.rs:115:TEST?:let prefix: NetworkPrefix = "10.8.0.7/24".parse().unwrap();
+src/domain/network.rs:118:TEST?:let first: IpNet = "10.8.0.2/32".parse().unwrap();
+src/domain/network.rs:124:TEST?:let subnet: IpNet = "10.8.0.0/24".parse().unwrap();
+src/domain/network.rs:135:TEST?:"0.0.0.0/0".parse().unwrap(),
+src/domain/network.rs:136:TEST?:"::/0".parse().unwrap(),
+src/domain/network.rs:137:TEST?:"192.0.2.0/24".parse().unwrap(),
+src/domain/network.rs:138:TEST?:"2001:db8:1::/48".parse().unwrap(),
+src/domain/network.rs:148:TEST?:"192.0.2.0/24".parse().unwrap(),
+src/domain/network.rs:149:TEST?:"192.0.2.1/24".parse().unwrap(),
+src/domain/network.rs:159:TEST?:prefixes: vec![value.parse().unwrap()]
+src/domain/network.rs:167:TEST?:.map(|i| format!("10.{}.0.0/16", i).parse().unwrap())
+src/domain/network.rs:179:TEST?:serde_json::from_str(r#"{"prefixes":["192.0.2.7/24","192.0.2.99/24"]}"#).unwrap();
+src/domain/owner.rs:226:TEST?:let parsed: OwnerTag = original.as_str().parse().expect("round trip");
+src/domain/owner.rs:230:TEST?:assert_eq!(parsed, original.to_string().parse().unwrap());
+src/domain/secret.rs:121:TEST?:let private = PrivateKey::new(marker.clone()).unwrap();
+src/domain/secret.rs:122:TEST?:let preshared = PresharedKey::new(marker.clone()).unwrap();
+src/domain/state.rs:108:PROD?:.expect("peer id checked above");
+src/domain/state.rs:313:TEST?:PrivateKey::new("yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=".into()).unwrap()
+src/domain/state.rs:317:TEST?:let address: IpNet = "10.8.0.2/32".parse().unwrap();
+src/domain/state.rs:321:TEST?:name: "wg0".parse().unwrap(),
+src/domain/state.rs:327:TEST?:tunnel_prefixes: vec!["10.8.0.0/24".parse().unwrap()],
+src/domain/state.rs:334:TEST?:.unwrap(),
+src/domain/state.rs:367:TEST?:outside.clients[0].assigned_address = "192.0.2.1/32".parse().unwrap();
+src/domain/state.rs:379:TEST?:prefixes: vec!["::/0".parse().unwrap()],
+src/domain/state.rs:389:TEST?:.push(NetworkPrefix::new("fd77::/64".parse().unwrap()));

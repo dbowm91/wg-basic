@@ -12,12 +12,363 @@ cargo test --locked
 cargo +1.89.0 check --all-targets --locked
 ```
 
+### Checking the Linux-only code from a macOS workstation
+
+Several modules and test files exist only on Linux (`src/reconcile/service.rs`,
+the `linux-integration` suites, and the platform-gated helpers in
+`tests/doctor_readonly.rs`). A native macOS build never compiles them, so a
+macOS-only gate run cannot see a break in them.
+
+Cross-compile the Linux **test targets** — not just the library — to catch
+them. With [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild) and
+Zig installed:
+
+```sh
+cargo zigbuild --locked --target x86_64-unknown-linux-gnu --all-targets
+```
+
+To run Linux clippy for the same target, the C compiler needs the Rust triple
+translated into the one Zig understands:
+
+```sh
+cat > /tmp/zig-cc <<'SH'
+#!/bin/bash
+args=()
+for a in "$@"; do
+  case "$a" in
+    --target=x86_64-unknown-linux-gnu) args+=("--target=x86_64-linux-gnu") ;;
+    *) args+=("$a") ;;
+  esac
+done
+exec zig cc "${args[@]}"
+SH
+chmod +x /tmp/zig-cc
+CC_x86_64_unknown_linux_gnu=/tmp/zig-cc AR_x86_64_unknown_linux_gnu="zig ar" \
+  cargo clippy --locked --target x86_64-unknown-linux-gnu --all-targets -- -D warnings
+CC_x86_64_unknown_linux_gnu=/tmp/zig-cc AR_x86_64_unknown_linux_gnu="zig ar" \
+  cargo clippy --locked --target x86_64-unknown-linux-gnu --all-targets \
+  --features linux-integration -- -D warnings
+```
+
+The variant **with** `--features linux-integration` is the load-bearing one.
+The rootful suites are `#![cfg(all(target_os = "linux", feature =
+"linux-integration"))]`, so on a Darwin host they compile to nothing and no
+ordinary gate type-checks them: a change to a shared model can break every
+Linux job without any local gate failing. The feature variant does type-check
+them. Run it for any change to a shared model, type, or public API. It is a
+compilation check, not a substitute for the rootful suites.
+
+## macOS (Darwin) portability workflow (M001)
+
+The portable control-plane, product, authentication, state, and HTTP layers
+compile and test natively on Apple Silicon. Linux remains canonical;
+a Darwin compile is not a working VPN server (no `utun`, PF, or
+launchd support until M003–M006; Darwin `netd` IPC landed in M002 — see below).
+
+Apple silicon is the only Darwin target for this line (ADR-009). The installer
+refuses every other triple with an actionable error, so an Intel Mac is not an
+installable platform.
+
+```sh
+# Native Apple Silicon build/test (floor: macOS 13+).
+cargo check --target aarch64-apple-darwin --locked
+cargo clippy --target aarch64-apple-darwin --locked --all-targets -- -D warnings
+cargo test --locked
+cargo test --locked -p wg-basic-darwin-sys
+```
+
+Darwin `serve`/`admin`/`state`/`health`/`doctor` run against an intentionally
+unsupported host backend: startup reconciliation reports backend-unavailable
+degradation, `doctor` reports `netd` unknown, and `netd`/`system`/`update`
+refuse with an actionable unsupported error rather than converging. Requires
+Xcode Command Line Tools (SDK 26.5 used for M001); without an SDK the Darwin
+target check fails intentionally instead of silently skipping.
+
+```sh
+install -d -m 700 /tmp/wg-basic-runtime
+cargo run --locked -- state init --state /tmp/wg-basic-runtime/state.db
+printf '%s\n' 'an administrator password' | \
+  cargo run --locked -- admin set-password --password-stdin \
+    --state /tmp/wg-basic-runtime/state.db
+cargo run --locked -- serve \
+  --state /tmp/wg-basic-runtime/state.db \
+  --socket /tmp/wg-basic-runtime/netd.sock
+```
+
+## macOS privileged IPC (M002)
+
+Darwin `netd` serves the same narrow authorized UDS protocol as Linux, with
+`getpeereid(3)` peer credentials checked on every connection. Default policy
+is the current user only with no root bypass; pass `--allow-uid` explicitly
+for the management-service UID. Run both processes manually with documented
+identities (launchd service identities land in M006):
+
+```sh
+install -d -m 700 /tmp/wg-basic-runtime
+cargo run --locked -- netd --socket /tmp/wg-basic-runtime/netd.sock
+```
+
+In another terminal, `serve` reaches it only over the authorized socket, and
+`doctor --json` reports the Darwin capability snapshot (no Linux `CapEff`,
+Linux backends `unavailable`; helper/PF/launchd live behavior is qualified
+on disposable hosted runners, never on a development host — see below).
+Network operations beyond `ping`/`inspect_capabilities` return
+`UnsupportedBackend` until their milestone backends land.
+
+## macOS hosted live qualification (M003–M006)
+
+### Building the pinned wireguard-go helper
+
+The Darwin fixtures need the `wireguard-go` helper, and the helper's build
+input is **declared** in `helper/wireguard-go.provenance.json`: the upstream
+repository, an immutable commit, the MIT license marker, the Go toolchain
+version, the target triples, and the build flags. One script builds it and
+writes a provenance receipt:
+
+```sh
+python3 scripts/build-wireguard-go-helper.py \
+  --output-dir /tmp/wgb-helper --target aarch64-apple-darwin
+```
+
+The builder refuses to continue unless the clone resolves to the declared
+commit, the checkout is clean, the license marker is present, and `go` is the
+declared version. It writes three files: the helper, `wireguard-go.sha256`,
+and `wireguard-go.provenance.json` — the receipt, which records the source
+commit, the license and its digest, the toolchain, the target, the flags,
+the artifact digest, and the binary's embedded build settings (including its
+`vcs.revision` stamp). `go version go1.27.1` is the declared toolchain; a
+different version is refused rather than used.
+
+The declared build input names one Darwin target, so the helper is built for
+Apple silicon only (ADR-009); the same source and toolchain produce the same
+bytes for that target, and the qualification runs against a helper that differs
+only by build.
+
+Privileged Darwin fixtures run only on ephemeral GitHub-hosted runners
+(`macos-15`, arm64), never on a development machine: they
+create real `utun` interfaces, assign test-net addresses, load PF anchors,
+and bootstrap launchd jobs, all torn down afterwards. Workflow
+`.github/workflows/macos-qualification.yml` (gates + privileged fixtures
+with evidence artifacts); the hosted-runner fixtures live in
+`tests/wireguard_darwin_live.rs` (`#[ignore]`d, require
+`WGB_DARWIN_LIVE=1` as root plus `WGB_WIREGUARD_GO` pointing at a
+pinned-commit helper build and `WGB_BINARY` for the launchd cycle):
+
+```sh
+cargo test --locked --no-run --test wireguard_darwin_live
+sudo WGB_DARWIN_LIVE=1 WGB_WIREGUARD_GO=/path/to/wireguard-go \
+  WGB_HELPER_SHA256=<expected> WGB_BINARY=$PWD/target/debug/wg-basic \
+  WGB_EVIDENCE_DIR=/tmp/wgb-evidence \
+  ./target/debug/deps/wireguard_darwin_live-* --ignored --test-threads=1 --nocapture
+```
+
+Scope is binding: TEST-NET addresses (`192.0.2.0/24`, `2001:db8::/32`),
+loopback peering, per-run anchor/job names; no default-route surgery, no
+global forwarding change left behind, no `pfctl -e` left enabled, no
+`/etc/pf.conf` write, no NAT traffic claim. What hosted runners cannot
+provide (no reboot, no v6 uplink, main-ruleset attachment OS-refused) stays
+recorded as blocked in the milestone closures, not worked around.
+
+The host's `utun` namespace is not under the fixture's control: the host
+creates and destroys `utun` devices on its own and **recycles the indices**, so
+a device that existed when the fixture started may be gone before the product's
+own observation and the kernel may hand that same index to the helper the
+product spawns. Two host requirements follow.
+
+- **A device is identified only during a quiescent window.** The fixture waits
+  for the `utun` inventory to stop moving before it asks the product to
+  identify its device, and it retries a *contention* refusal — the product
+  finding more than one new device — a bounded number of times, recording
+  every attempt and every inventory. A refusal that is about identity or
+  executability is not retried.
+- **The managed device is proved new from the product's own observation**, not
+  from an inventory snapshot the fixture took at some other moment. The spawn
+  returns the inventory it read immediately before the helper started, and the
+  fixture compares against that.
+
+The ownership proof resolves the helper's path and the receipt's path to the
+files they name before comparing them, so a helper installed under a
+symlinked directory — `/tmp` is `/private/tmp` on every macOS host — still
+proves ownership. A path that cannot be resolved names nothing and fails the
+proof closed.
+
+The fixture identifies **its own** helper by the control socket the helper
+published, and it identifies that socket by its **device and inode** rather
+than by its path, because a respawned helper replaces the previous socket at
+exactly the same path with a new inode.
+
+Three controlled-host legs need a host that is not a hosted runner. Two of them
+live in a **separate test target** (`tests/wireguard_darwin_controlled.rs`),
+because the hosted job runs every `#[ignore]`d test in the
+`wireguard_darwin_live` target and a controlled-host fixture must never be
+picked up there. The routed-LAN leg has a target of its own
+(`tests/wireguard_darwin_routed.rs`) for the same reason. The targets share
+their helpers through `tests/darwin_live_common/mod.rs`.
+
+The **off-host peer** leg proves the product path against an independent
+Linux-kernel WireGuard implementation. The peer is reached through a driver
+script (`tests/fixtures/darwin-peer/wg-basic-peer.sh`) whose contract keeps
+the Rust fixture free of SSH and topology knowledge; the driver is selected
+with `WGB_PEER_COMMAND`, and `WGB_PEER_SSH_HOST`, `WGB_PEER_SSH_USER`, and
+`WGB_PEER_SSH_KEY` tell it where the peer is. The peer needs `wireguard-tools`
+and a loaded `wireguard.ko`, and its exported configuration has to be
+narrowed to the server's tunnel addresses, or the peer's own traffic is
+blackholed.
+
+```sh
+cargo test --locked --no-run --test wireguard_darwin_controlled
+sudo WGB_DARWIN_LIVE=1 WGB_WIREGUARD_GO=/path/to/wireguard-go \
+  WGB_HELPER_SHA256=<expected> WGB_BINARY=$PWD/target/debug/wg-basic \
+  WGB_EVIDENCE_DIR=/tmp/wgb-evidence \
+  WGB_PEER_COMMAND=$PWD/tests/fixtures/darwin-peer/wg-basic-peer.sh \
+  WGB_PEER_SSH_HOST=<peer> WGB_PEER_SSH_USER=<user> WGB_PEER_SSH_KEY=<key> \
+  ./target/debug/deps/wireguard_darwin_controlled-* \
+  live_c001_product_path_carries_traffic_to_an_off_host_linux_peer \
+  --ignored --exact --test-threads=1 --nocapture
+```
+
+The **cold reboot** leg proves that the deployment comes back from the system
+domain after a cold reboot. It has three phases, because a reboot ends the
+process that starts it: `arm` installs the deployment, enrolls a client
+through the real HTTP surface, records what has to survive, and installs a
+boot-time job that runs the verify phase; `reboot` takes the host down; and
+`verify` runs in the new boot, where it checks that both roles came back,
+that the management daemon still runs unprivileged, that the state database
+still holds the same client, that the network reconverged, and that the
+uninstall leaves no job behind.
+
+The verify phase **observes** the reboot rather than inferring it: the arm
+phase records the kernel's boot time (`kern.boottime`) with the other
+expectations, and the verify phase's first assertion is that the boot time
+advanced. Every other assertion in that phase — the roles came back, the
+management daemon is still unprivileged, the credential still authenticates,
+the network reconverged — is also satisfied by a host that never went down,
+so a run that did not reboot has to fail before it can be mistaken for a
+reboot proof. The boot-time job is installed by writing its plist and is
+**not** registered with `launchctl`: `launchctl bootstrap` starts a
+`RunAtLoad` job immediately, which would run the verify phase against a host
+that had not rebooted yet.
+
+The leg has been run end to end on a disposable arm64 macOS guest and
+**passes**. Two boot-path defects had to be corrected first, and both are
+worth knowing about because they are invisible to any qualification that does
+not actually reboot a host: macOS recreates `/var/run` at every boot, so the
+privileged daemon now creates its own runtime directory when it is missing,
+and `launchd` starts the two jobs concurrently, so the management daemon now
+waits, bounded, for the privileged daemon to answer before its startup
+reconciliation. The leg proves the Apple silicon path, which is the only
+supported Darwin target (ADR-009).
+
+```sh
+cargo test --locked --no-run --test wireguard_darwin_controlled
+WGB_C002_REBOOT_PHASE=arm   sudo ./target/debug/deps/wireguard_darwin_controlled-* \
+  live_c002_cold_reboot_persists_the_deployment --ignored --exact --nocapture
+WGB_C002_REBOOT_PHASE=reboot sudo ./target/debug/deps/wireguard_darwin_controlled-* \
+  live_c002_cold_reboot_persists_the_deployment --ignored --exact --nocapture
+# the host reboots; the boot-time job runs the verify phase and writes the evidence
+```
+
+The **routed LAN** leg proves the C003 contract: the off-host Linux-kernel peer
+sends traffic through the product's tunnel to an approved downstream LAN
+prefix, and the traffic comes back through the same tunnel. It is the third
+controlled-host leg and has a test target of its own
+(`tests/wireguard_darwin_routed.rs`). The test is `#[ignore]`d and needs
+`WGB_DARWIN_LIVE=1` as root, `WGB_BINARY` for the launchd cycle, and
+`WGB_PEER_COMMAND` for the peer driver, on a disposable macOS host:
+
+```sh
+cargo test --locked --no-run --test wireguard_darwin_routed
+sudo WGB_DARWIN_LIVE=1 WGB_WIREGUARD_GO=/path/to/wireguard-go \
+  WGB_HELPER_SHA256=<expected> WGB_BINARY=$PWD/target/debug/wg-basic \
+  WGB_EVIDENCE_DIR=/tmp/wgb-evidence \
+  WGB_PEER_COMMAND=$PWD/tests/fixtures/darwin-routed-peer/wg-basic-routed-peer.sh \
+  WGB_PEER_SSH_HOST=<peer> WGB_PEER_SSH_USER=<user> WGB_PEER_SSH_KEY=<key> \
+  WGB_UPSTREAM_GATEWAY=<the server host's address on the peer's network> \
+  WGB_LAN_PREFIX=10.20.20.0/24 WGB_LAN_ADDRESS=10.20.20.2 \
+  ./target/debug/deps/wireguard_darwin_routed-* \
+  live_c003_routed_lan_forwards_to_an_approved_downstream_prefix \
+  --ignored --exact --test-threads=1 --nocapture
+```
+
+The peer driver is `tests/fixtures/darwin-routed-peer/wg-basic-routed-peer.sh`.
+It gives the peer host three isolated roles — the `wgbpeer` namespace holding
+the Linux-kernel WireGuard peer, the `wgblan` namespace holding the downstream
+LAN host, and the root namespace acting as the upstream router that carries the
+administrator-installed route back to the tunnel pool — so the downstream
+traffic cannot take a shortcut around the routing path under test.
+
+Its subcommand contract is:
+
+| Subcommand | What it returns or does |
+|---|---|
+| `peer-address` | the peer host's address on the shared network |
+| `peer-tunnel-address` | the peer's outer address on the tunnel's LAN |
+| `lan-address` | the downstream LAN host's IPv4 address |
+| `lan-route` | the LAN host's routing table |
+| `lan-ping <address>` | ping from the LAN host to an address |
+| `ping-lan <address>` | ping from the peer to the downstream address |
+| `observed-source <address>` | the IPv4 source the downstream LAN host observed for the traffic towards the address |
+| `observed-source6 <address>` | the IPv6 source the downstream LAN host observed for the traffic towards the address |
+| `spoof <address>` | ping from the peer with a source that does not arrive through the tunnel |
+| `apply <config> <srv-v4> <srv-v6> <lan-prefix>` | install the config and bring the tunnel up |
+| `status` | the peer's `wg show` dump |
+| `handshake` | the peer's last handshake, in unix seconds |
+| `teardown` | bring the tunnel down and drop the config |
+
+The fixture needs `WGB_PEER_SSH_HOST` and `WGB_PEER_SSH_USER`, and the account
+has to be able to `sudo`. `WGB_PEER_SSH_KEY` selects the identity file,
+`WGB_UPSTREAM_GATEWAY` is the server host's address on the peer's network —
+the address the upstream route back to the tunnel pool points at — and
+`WGB_LAN_PREFIX` and `WGB_LAN_ADDRESS` name the approved downstream prefix and
+the LAN host's address (they default to `10.20.20.0/24` and `10.20.20.2`).
+
+This leg is the destructive one: it installs the product, creates real `utun`
+interfaces, assigns tunnel addresses, bootstraps launchd jobs, and — as the
+administrator, not as the product — enables the host's forwarding, installs the
+rules the product reported into the installation's anchor, and attaches that
+anchor.
+
+All three legs are destructive to the host they run on: they install the product,
+create real `utun` interfaces, assign tunnel addresses, and bootstrap launchd
+jobs. Use a disposable host. C003's traffic evidence is closed; what the leg
+still has to prove is its own host hygiene, and that is C014's — see below.
+
 The default unit/protocol suite does not require root or network namespace setup. The Linux WireGuard backend mutates only through typed requests to an existing device; real-kernel integration suites create temporary namespaces and fixture links and require root, `CAP_NET_ADMIN`, `iproute2`, `iputils-ping`, and kernel WireGuard support. Dual-stack tunnel addressing and explicit family-correct client route config are qualified by product and export tests. Hosted `product-management-rootful` exercises the authenticated full-tunnel export, real client handshake and dual-family tunnel traffic, disable/re-enable, and restart/reapply. The `network-control-e2e` fixture carries IPv4 and IPv6 full-tunnel traffic, then changes to split prefixes and proves selected destinations pass while destinations outside those prefixes do not. It also qualifies routed IPv6 forwarding, upstream return routing, foreign-state preservation, sticky forwarding, and absence of NAT66.
 
 The installed serve unit runs `doctor` as the management account before each
 start. `--allow-warnings` keeps advisory drift from blocking service recovery;
 required failures still block startup. For a fresh empty installation, doctor
 treats network convergence as not required until an interface is configured.
+
+### The routed leg restores the filter it loads
+
+The routed leg is the one fixture that installs an administrator filter on the
+host, so its teardown has to put the host's packet filter back. It now
+**measures** that instead of asserting it: the leg captures the host's filter
+state before it installs anything and again after its teardown — PF's enable
+state, the main filter and NAT rulesets, the managed anchor's own two
+rulesets, and the anchors-directory listing — and then asserts that the
+residue is empty.
+
+Two host requirements follow from that:
+
+- **Use a disposable macOS host whose filter may be inspected afterwards.**
+  The leg restores the filter it found, and the residue check is what proves
+  that it did.
+- **The guest's PF must be Disabled before the leg runs.** The leg restores the
+  enable state either way, and the hosted live fixture's own PF probe requires
+  PF to be Disabled, so a guest left Enabled breaks the next probe.
+
+The leg is qualified by being run **twice on the same guest**: the second
+run's baseline is the proof that the first run left nothing. The commands
+above are how to run it.
+
+The gateway mode's qualification is separate work. It needs the
+administrator's attachment and a PF enabled by the administrator, not by the
+product — see the
+[operations runbook](operations-runbook.md#internet-eit-gateway-on-macos). The
+gateway's packet evidence is C004's own and is **not finished**; nothing here
+claims it.
 
 ## Local netd
 
@@ -153,6 +504,73 @@ sudo -E cargo test --locked --features linux-integration --test wireguard_kernel
 ```
 
 The test starts its netd workers inside the two temporary network namespaces so each typed request controls the device in that namespace. CI runs this target on a rootful Linux runner; when `CI` is set, unavailable namespace/kernel prerequisites fail the test instead of silently skipping kernel evidence.
+
+## Running the rootful qualification on a controlled Linux host
+
+The hosted Linux CI runners are ephemeral and disposable. A **controlled Linux
+host** — a real machine the maintainer controls, under a real kernel — is the
+other place the rootful qualification runs, and it is the only place the
+canonical platform's own gate order has been run natively rather than
+cross-compiled.
+
+The controlled host used for the macOS native-server line is
+`sugarwookie@192.168.182.143` (Ubuntu 24.04.5, kernel 6.8, nftables, kernel
+WireGuard present). Two rules matter more than anything else there.
+
+**Use a dedicated `CARGO_HOME`.** `sudo` resets `HOME`, so the rootful
+invocation needs an explicit `CARGO_HOME`; point it at a directory of its own
+rather than the developer's `~/.cargo`, so that a root-owned file never lands
+in a Cargo home a person or another process is using:
+
+```sh
+export CARGO_HOME=/tmp/wg-basic-root-cargo
+```
+
+**Set `CI=true`.** With `CI` set, a suite whose namespace or kernel
+prerequisites are missing **fails** instead of skipping the kernel evidence.
+A green rootful run that silently skipped its kernel evidence is not evidence.
+
+The full set, each run as:
+
+```sh
+sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo CI=true \
+  cargo test --locked --features linux-integration --test <target> \
+  -- --test-threads=1 --nocapture
+```
+
+| Target | What it qualifies |
+|---|---|
+| `wireguard_kernel` | real kernel WireGuard handshake, telemetry, peer update, peer preservation |
+| `network_reconcile` | link, address, route, and reconciliation in a namespace |
+| `network_control_e2e` | forwarding, NAT, firewall ownership, foreign-state preservation |
+| `durable_owner` | owner tags and the generation-aware aggregate reconcile |
+| `durable_restart` | startup recovery against real processes, SQLite, and the kernel |
+| `durable_backup` | backup, restore, and a restored database driving real traffic |
+| `product_management_rootful` | the authenticated product surface against a real WireGuard device |
+| `maintenance_rootful` | CLI disable/re-enable through a real handshake, fail-closed purge |
+| `doctor_readonly` | doctor plan-only diagnostics and host-state preservation |
+| `service_rootful_e2e` | the privileged daemon and the management surface in a namespace |
+
+Serialize them: each creates disposable network namespaces with fixed names.
+`upgrade_rehearsal_rootful` is the rootful upgrade rehearsal and needs its two
+release binaries (see [Phase 9 old/new upgrade rehearsal](#phase-9-oldnew-upgrade-rehearsal)).
+
+**Two system-level destructive tests must not be run on a working host.**
+`tests/system_installation.rs`'s
+`systemd_installation_ownership_reinstall_and_service_credentials` and
+`tests/update_transaction_rootful.rs`'s
+`signed_systemd_update_rolls_back_and_retries` mutate the canonical
+installation paths (`/usr/local/bin/wg-basic`, `/etc/wg-basic`) and the host's
+systemd units. Their own annotations say *"disposable systemd VM only"*. Run
+them on a disposable runner, not on the controlled host.
+
+**Prove the host's unrelated state survived.** Capture the namespace list, the
+links, the IPv4 and IPv6 route tables, the nftables ruleset and table list,
+the systemd units matching `wg-basic*`, the canonical installation paths, and
+`wg show`, before and after, and diff them. On a machine with other workloads
+running, expect *some* ambient movement — a router advertisement's expiry
+counter counting down, another workload's packet counter — and read the diff
+rather than assuming it is empty.
 
 ## Durable ownership and restart fixtures
 

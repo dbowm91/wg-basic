@@ -1,0 +1,14 @@
+src/http/response.rs:76:pub enum Liveness {
+src/http/response.rs:83:impl Liveness {
+src/http/response.rs:142:pub fn liveness(answer: Liveness) -> Response {
+src/http/response.rs:184:            liveness(Liveness::Ok),
+src/http/response.rs:185:            liveness(Liveness::Degraded),
+src/http/response.rs:202:        let response = liveness(Liveness::Ok);
+src/http/response.rs:214:        assert_eq!(liveness(Liveness::Ok).status(), StatusCode::OK);
+src/http/response.rs:215:        assert_eq!(liveness(Liveness::Degraded).status(), StatusCode::OK);
+src/http/response.rs:216:        assert_eq!(body_text(liveness(Liveness::Ok)), "ok");
+src/http/response.rs:217:        assert_eq!(body_text(liveness(Liveness::Degraded)), "degraded");
+src/http/response.rs:251:        assert_eq!(Liveness::from_health(&healthy), Liveness::Ok);
+src/http/response.rs:260:        assert_eq!(Liveness::from_health(&degraded), Liveness::Degraded);
+src/http/service.rs:46:    response::{self, Liveness},
+src/http/service.rs:352:                Ok(health) => response::liveness(Liveness::from_readiness(

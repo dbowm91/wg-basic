@@ -1,0 +1,15 @@
+plans/macos-native-support
+AGENTS.md
+Cargo.lock
+Cargo.toml
+LICENSE
+README.md
+architecture
+docs
+plans
+release
+rust-toolchain.toml
+scripts
+src
+target
+tests

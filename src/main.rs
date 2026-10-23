@@ -160,6 +160,12 @@ enum SystemCommand {
         /// Optional staging executable; defaults to this running executable.
         #[arg(long)]
         candidate: Option<PathBuf>,
+        /// Optional pinned WireGuard helper executable (macOS only).
+        ///
+        /// The Darwin deployment installs a hash-pinned helper alongside the
+        /// product binary; Linux has no helper and ignores this argument.
+        #[arg(long)]
+        helper: Option<PathBuf>,
     },
     /// Read-only installation ownership and service status.
     Status,
@@ -278,10 +284,12 @@ fn main() {
     });
     #[cfg(target_os = "linux")]
     let result = run_linux(cli.command);
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    let result = run_darwin(cli.command);
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     let result: Result<(), String> = {
         let _ = cli.command;
-        Err("network service roles require Linux".into())
+        Err("network service roles require Linux or macOS".into())
     };
     if let Err(message) = result {
         wg_basic::operational::command_failure(&message);
@@ -289,12 +297,479 @@ fn main() {
     }
 }
 
+/// M001 Darwin entry point: portable roles run against an intentionally
+/// unsupported host backend; privileged/network-mutating roles fail closed.
+///
+/// `serve`, `admin`, `state`, `health`, `network status`, `doctor`, and
+/// `reconcile` execute with honest backend-unavailable degradation. `netd`,
+/// `system install/uninstall/status`, `update`, and mutating `network`
+/// paths that require a backend refuse with an actionable unsupported error
+/// rather than pretending convergence. No false-success receipt is possible:
+///
+/// - `serve` starts the loopback HTTP surface and records
+///   `BackendUnavailable` when netd is absent;
+/// - `reconcile`/`doctor` report unavailable instead of converging;
+/// - `state purge` refuses without a successful plan-only probe.
+#[cfg(target_os = "macos")]
+fn run_darwin(command: Option<Command>) -> Result<(), String> {
+    match command {
+        None => {
+            println!(
+                "wg-basic {}: use --help for runtime roles",
+                env!("CARGO_PKG_VERSION")
+            );
+            Ok(())
+        }
+        Some(Command::Serve {
+            state,
+            socket,
+            http_bind,
+            canonical_origin,
+            allow_non_loopback,
+        }) => serve(
+            state,
+            socket,
+            http_bind,
+            canonical_origin,
+            allow_non_loopback,
+        ),
+        Some(Command::Reconcile { state, socket }) => {
+            let runtime = wg_basic::management::ManagementRuntime::open(&state, &socket)
+                .map_err(|error| error.to_string())?;
+            match runtime
+                .reconcile_current()
+                .map_err(|error| error.to_string())?
+            {
+                None => println!("no managed interface; nothing to reconcile"),
+                Some(outcome) => println!(
+                    "generation {} -> {} ({:?})",
+                    outcome.applied_generation,
+                    if outcome.converged {
+                        "converged"
+                    } else {
+                        "not converged"
+                    },
+                    outcome.disposition
+                ),
+            }
+            Ok(())
+        }
+        Some(Command::System { action }) => match action {
+            SystemCommand::Install { candidate, helper } => {
+                let candidate = match candidate {
+                    Some(path) => path,
+                    None => wg_basic::distribution::current_executable()
+                        .map_err(|_| "could not identify the running executable".to_owned())?,
+                };
+                darwin_system_install(&candidate, helper.as_deref())
+            }
+            SystemCommand::Status => darwin_system_status(),
+            SystemCommand::Uninstall => darwin_system_uninstall(),
+        },
+        Some(Command::Update { action }) => {
+            let _ = action;
+            Err("update check/run/recover is not supported on macOS in M001: no Darwin release target or trust root; see M006".into())
+        }
+        Some(Command::Health { state, socket }) => {
+            let runtime = wg_basic::management::ManagementRuntime::open(&state, &socket)
+                .map_err(|error| error.to_string())?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&runtime.health())
+                    .map_err(|_| "could not format management health".to_owned())?
+            );
+            Ok(())
+        }
+        Some(Command::Doctor {
+            state,
+            socket,
+            json,
+            allow_warnings,
+            http_bind,
+            canonical_origin,
+            allow_non_loopback,
+        }) => run_darwin_doctor(
+            state,
+            socket,
+            json,
+            allow_warnings,
+            http_bind,
+            canonical_origin,
+            allow_non_loopback,
+        ),
+        Some(Command::Netd {
+            socket,
+            allowed_uids,
+            allowed_users,
+        }) => run_darwin_netd(socket, allowed_uids, allowed_users),
+        Some(Command::Admin { action }) => run_admin_action(action),
+        Some(Command::State { action }) => run_state_action(action),
+        Some(Command::Network { action }) => run_network_action(action),
+    }
+}
+
+/// Installs the stop handler and binds the privileged socket.
+///
+/// The stop handler is installed **before** the socket is bound. A daemon that
+/// is asked to stop while it is still starting up must still release the
+/// socket it just created: with the handler installed after the bind, the
+/// default signal action would kill the process and leave the socket file
+/// behind for the next start to trip over.
+///
+/// `None` means a stop request arrived while the socket was being bound, so
+/// the caller releases it and exits without claiming to have started.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn bind_privileged_socket(
+    socket: &std::path::Path,
+    policy: wg_basic::protocol::AuthorizationPolicy,
+    shutdown: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<Option<wg_basic::protocol::SocketServer>, String> {
+    use std::sync::atomic::Ordering;
+    let signal_shutdown = shutdown.clone();
+    ctrlc::set_handler(move || signal_shutdown.store(true, Ordering::Release))
+        .map_err(|_| "could not install graceful shutdown handler".to_owned())?;
+    let server = wg_basic::protocol::SocketServer::bind(socket, policy)
+        .map_err(|_| "could not safely bind the configured netd socket path".to_owned())?;
+    if shutdown.load(Ordering::Acquire) {
+        // The stop request arrived while the socket was being bound. Releasing
+        // the socket is the whole point of returning here.
+        drop(server);
+        return Ok(None);
+    }
+    Ok(Some(server))
+}
+
+/// M002 Darwin privileged network service.
+///
+/// Binds the same narrow, authorized Unix-domain request/response service as
+/// Linux, with the Apple-documented `getpeereid(3)` credential source, the
+/// same bounded framing, and the same socket ownership/stale-inode lifecycle.
+/// Default policy is the current user only with no root bypass; `--allow-uid`
+/// and `--allow-user` add explicit management-service identities. Network
+/// operations beyond `Ping`/`InspectCapabilities` report `UnsupportedBackend`
+/// through the typed errors until M003–M005 land their backends.
+#[cfg(target_os = "macos")]
+fn run_darwin_netd(
+    socket: std::path::PathBuf,
+    allowed_uids: Vec<u32>,
+    allowed_users: Vec<String>,
+) -> Result<(), String> {
+    use std::sync::{atomic::AtomicBool, Arc};
+    use wg_basic::protocol::AuthorizationPolicy;
+
+    let mut policy = AuthorizationPolicy::current_user();
+    policy.extend(allowed_uids);
+    let resolved = wg_basic::distribution::resolve_allowed_user_uids(&allowed_users)
+        .map_err(|_| "could not resolve a configured local netd user".to_owned())?;
+    policy.extend(resolved);
+    // The management identity is taken from the verified install receipt, so
+    // the account the privileged daemon admits is the account the installer
+    // bound and nobody else.
+    if let Some(identity) =
+        wg_basic::launchd::recorded_management_identity(std::path::Path::new("/"))
+    {
+        policy.extend(vec![identity.uid]);
+    }
+    let shutdown = Arc::new(AtomicBool::new(false));
+    // The socket's runtime directory lives under `/var/run`, which macOS
+    // recreates at every boot: the copy the installer writes does not survive
+    // a reboot. The daemon launchd starts at boot has to create it itself, or
+    // it can never bind its socket and the deployment does not come back.
+    let runtime_directory = socket
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .ok_or_else(|| "the netd socket path must have a parent directory".to_owned())?;
+    wg_basic::launchd::ensure_runtime_directory(&runtime_directory)
+        .map_err(|_| "could not create the netd runtime directory".to_owned())?;
+    let Some(server) = bind_privileged_socket(socket.as_path(), policy, &shutdown)? else {
+        // The daemon was asked to stop while it was still starting up. The
+        // socket it had just created is released; nothing is claimed to have
+        // started.
+        return Ok(());
+    };
+    // The socket is the whole path from the unprivileged management daemon to
+    // the privileged one, so it is bound to the management identity: root and
+    // that group only. When no management identity is recorded the socket
+    // stays root-only, because a socket left with the creating process's group
+    // would be reachable by every process in a group this product never chose.
+    match wg_basic::launchd::recorded_management_identity(std::path::Path::new("/")) {
+        Some(identity) => {
+            wg_basic::launchd::authorize_socket_group(&socket, &identity).map_err(|_| {
+                "could not bind the netd socket to the management identity".to_owned()
+            })?;
+        }
+        None => {
+            wg_basic::launchd::restrict_socket_to_owner(&socket)
+                .map_err(|_| "could not restrict the netd socket to its owner".to_owned())?;
+        }
+    }
+    wg_basic::operational::emit(
+        "netd.started",
+        wg_basic::operational::Severity::Info,
+        "netd",
+        "startup",
+        "ready",
+        None,
+        None,
+        Some("uds_listener"),
+    );
+    let result = server
+        .run_until_shutdown(&shutdown)
+        .map_err(|_| "netd listener stopped after a runtime error".to_owned());
+    wg_basic::operational::emit(
+        "netd.stopping",
+        wg_basic::operational::Severity::Info,
+        "netd",
+        "shutdown",
+        if result.is_ok() {
+            "graceful"
+        } else {
+            "runtime_error"
+        },
+        None,
+        None,
+        Some("uds_listener"),
+    );
+    result
+}
+
+/// Darwin `system install`: the launchd deployment (C002).
+///
+/// The installer writes the owned layout, resolves and binds the management
+/// service identity, registers the privileged daemon first and the management
+/// daemon second, and refuses to finish with a half-registered deployment.
+#[cfg(target_os = "macos")]
+fn darwin_system_install(
+    candidate: &std::path::Path,
+    helper: Option<&std::path::Path>,
+) -> Result<(), String> {
+    let helper = helper.ok_or(
+        "macOS installation requires the pinned WireGuard helper; pass --helper PATH".to_owned(),
+    )?;
+    let status = wg_basic::launchd_install::install(std::path::Path::new("/"), candidate, helper)
+        .map_err(|error| error.to_string())?;
+    println!(
+        "installed {} {} ({}) for management identity {}",
+        status.product,
+        status.version,
+        status.target,
+        status
+            .management_identity
+            .as_ref()
+            .map(|identity| format!("{}:{}", identity.user, identity.uid))
+            .unwrap_or_else(|| "unbound".to_owned())
+    );
+    Ok(())
+}
+
+/// Darwin `system status`: the owned layout and the launchd registration.
+#[cfg(target_os = "macos")]
+fn darwin_system_status() -> Result<(), String> {
+    let status = wg_basic::launchd_install::status(std::path::Path::new("/"));
+    println!(
+        "layout_verified={} netd_registered={} serve_registered={} version={} target={}",
+        status.layout.layout_verified,
+        status.netd_registered,
+        status.serve_registered,
+        status.layout.version,
+        status.layout.target
+    );
+    if let Some(identity) = &status.layout.management_identity {
+        println!(
+            "management_identity={} uid={} gid={}",
+            identity.user, identity.uid, identity.gid
+        );
+    }
+    Ok(())
+}
+
+/// Darwin `system uninstall`: stops both services and removes the owned
+/// program files while preserving the secret-bearing state.
+#[cfg(target_os = "macos")]
+fn darwin_system_uninstall() -> Result<(), String> {
+    wg_basic::launchd_install::uninstall(std::path::Path::new("/"))
+        .map_err(|error| error.to_string())?;
+    println!("uninstalled; state and receipt preserved for reinstall");
+    Ok(())
+}
+
+/// M002 Darwin doctor: the same read-only state checks as Linux, a real
+/// `getpeereid`-authenticated netd probe, and Darwin forwarding checks that
+/// never read `/proc`. With M002 netd running, `InspectCapabilities` reports
+/// the honest Darwin snapshot (no Linux `CapEff`, `network_namespaces` and
+/// Linux backends unavailable, helper/PF untested until M003/M005).
+#[cfg(target_os = "macos")]
+#[allow(clippy::too_many_arguments)]
+fn run_darwin_doctor(
+    state: std::path::PathBuf,
+    socket: std::path::PathBuf,
+    json: bool,
+    allow_warnings: bool,
+    http_bind: Option<String>,
+    canonical_origin: Option<String>,
+    allow_non_loopback: bool,
+) -> Result<(), String> {
+    use wg_basic::protocol::{RequestOperation, ResponseBody};
+
+    let (mut checks, state_snapshot) = doctor_state_checks(&state);
+    match wg_basic::protocol::request(&socket, RequestOperation::InspectCapabilities, 2) {
+        Ok(ResponseBody::Capabilities(snapshot)) => {
+            let ipc_ok = snapshot.runtime_directory_safe && snapshot.os == std::env::consts::OS;
+            checks.push(wg_basic::doctor::DoctorCheck::new(
+                wg_basic::doctor::DoctorCheckId::Netd,
+                if ipc_ok {
+                    wg_basic::doctor::DoctorDisposition::Pass
+                } else {
+                    wg_basic::doctor::DoctorDisposition::Fail
+                },
+                if ipc_ok {
+                    "netd answered over getpeereid-authorized IPC and reported its Darwin capabilities"
+                } else {
+                    "netd answered but its runtime-directory check failed"
+                },
+                format!(
+                    "uid {}; gid {}; CAP_NET_ADMIN {}; runtime directory {}; kernel {} ({})",
+                    snapshot.effective_uid,
+                    snapshot.effective_gid,
+                    snapshot
+                        .cap_net_admin
+                        .map_or("none (Darwin has no capabilities)", |value| if value {
+                            "present"
+                        } else {
+                            "absent"
+                        }),
+                    if snapshot.runtime_directory_safe {
+                        "safe"
+                    } else {
+                        "unsafe"
+                    },
+                    snapshot.kernel_release.as_deref().unwrap_or("unknown"),
+                    snapshot.architecture,
+                ),
+                if ipc_ok {
+                    "none; WireGuard helper (M003), routes (M004), and PF/NAT (M005) remain unqualified"
+                } else {
+                    "review netd runtime-directory ownership/mode"
+                },
+            ));
+        }
+        _ => checks.push(wg_basic::doctor::DoctorCheck::new(
+            wg_basic::doctor::DoctorCheckId::Netd,
+            wg_basic::doctor::DoctorDisposition::Unknown,
+            "netd capability state is unavailable",
+            "no safe capability response was received",
+            "start netd and verify its socket path and peer permissions",
+        )),
+    }
+    if let Some(snapshot) = state_snapshot.as_ref() {
+        append_network_plan_checks(&mut checks, &socket, snapshot);
+        append_forwarding_check(&mut checks, snapshot);
+        append_ipv6_forwarding_check(&mut checks, snapshot);
+    } else {
+        checks.push(wg_basic::doctor::DoctorCheck::new(
+            wg_basic::doctor::DoctorCheckId::NetworkOwnership,
+            wg_basic::doctor::DoctorDisposition::Unknown,
+            "managed network ownership has not been inspected",
+            "a validated state snapshot is unavailable",
+            "resolve the state diagnostic first, then rerun doctor",
+        ));
+        checks.push(wg_basic::doctor::DoctorCheck::new(
+            wg_basic::doctor::DoctorCheckId::Forwarding,
+            wg_basic::doctor::DoctorDisposition::Unknown,
+            "forwarding requirement is unknown",
+            "the state snapshot is unavailable",
+            "resolve the state diagnostic first, then rerun doctor",
+        ));
+        checks.push(wg_basic::doctor::DoctorCheck::new(
+            wg_basic::doctor::DoctorCheckId::Ipv6Forwarding,
+            wg_basic::doctor::DoctorDisposition::Unknown,
+            "IPv6 forwarding requirement is unknown",
+            "the state snapshot is unavailable",
+            "resolve the state diagnostic first, then rerun doctor",
+        ));
+    }
+    let lease = wg_basic::state::ServiceLease::is_held(&state);
+    checks.push(wg_basic::doctor::DoctorCheck::new(
+        wg_basic::doctor::DoctorCheckId::ServiceLease,
+        match lease {
+            Ok(true) => wg_basic::doctor::DoctorDisposition::Warn,
+            Ok(false) => wg_basic::doctor::DoctorDisposition::Pass,
+            Err(_) => wg_basic::doctor::DoctorDisposition::Unknown,
+        },
+        match lease {
+            Ok(true) => "a serve process currently holds the state lease",
+            Ok(false) => "the state service lease is free",
+            Err(_) => "the state service lease could not be inspected safely",
+        },
+        "advisory lock state was checked without trusting PID metadata",
+        "stop the active serve process before offline maintenance",
+    ));
+    if let Some(bind) = http_bind {
+        use wg_basic::http::ServeConfig;
+        let valid = match (canonical_origin.as_deref(), allow_non_loopback) {
+            (Some(origin), false) if origin.starts_with("https://") => {
+                ServeConfig::behind_https_proxy(state.clone(), socket.clone(), &bind, origin)
+                    .is_ok()
+            }
+            (Some(origin), true) => {
+                ServeConfig::acknowledged_off_host(state.clone(), socket.clone(), &bind, origin)
+                    .is_ok()
+            }
+            (None, false) => ServeConfig::new(state.clone(), socket.clone(), &bind).is_ok(),
+            _ => false,
+        };
+        checks.push(match valid {
+            true => wg_basic::doctor::DoctorCheck::new(
+                wg_basic::doctor::DoctorCheckId::HttpPolicy,
+                wg_basic::doctor::DoctorDisposition::Pass,
+                "HTTP bind and origin policy are valid",
+                "same ServeConfig policy as serve",
+                "none",
+            ),
+            false => wg_basic::doctor::DoctorCheck::new(
+                wg_basic::doctor::DoctorCheckId::HttpPolicy,
+                wg_basic::doctor::DoctorDisposition::Fail,
+                "HTTP bind and origin policy are invalid",
+                "ServeConfig rejected the supplied policy",
+                "correct the bind/origin and exposure acknowledgement",
+            ),
+        });
+    }
+    let report = wg_basic::doctor::DoctorReport::new(checks);
+    wg_basic::operational::emit(
+        "doctor.completed",
+        wg_basic::operational::Severity::Info,
+        "doctor",
+        "diagnose",
+        "report_ready",
+        None,
+        state_snapshot
+            .as_ref()
+            .map(|s| s.metadata.desired_generation.to_storage() as u64),
+        Some("checks"),
+    );
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .map_err(|_| "could not format diagnostic report")?
+        );
+    } else {
+        print!("{}", report.render_human());
+    }
+    let exit_code = if allow_warnings && report.overall == wg_basic::doctor::DoctorDisposition::Warn
+    {
+        0
+    } else {
+        report.exit_code()
+    };
+    std::process::exit(exit_code);
+}
+
 #[cfg(target_os = "linux")]
 fn run_linux(command: Option<Command>) -> Result<(), String> {
     use std::sync::{atomic::AtomicBool, Arc};
-    use wg_basic::protocol::{
-        request, AuthorizationPolicy, RequestOperation, ResponseBody, SocketServer,
-    };
+    use wg_basic::protocol::{request, AuthorizationPolicy, RequestOperation, ResponseBody};
 
     match command {
         None => {
@@ -341,12 +816,15 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
             Ok(())
         }
         Some(Command::System { action }) => match action {
-            SystemCommand::Install { candidate } => {
+            SystemCommand::Install { candidate, helper } => {
                 let candidate = match candidate {
                     Some(path) => path,
                     None => wg_basic::distribution::current_executable()
                         .map_err(|_| "could not identify the running executable".to_owned())?,
                 };
+                // The pinned helper is a macOS deployment artifact; the Linux
+                // systemd layout has no helper.
+                let _ = helper;
                 wg_basic::distribution::install_local(&candidate)
             }
             SystemCommand::Status => wg_basic::distribution::install_status(),
@@ -557,14 +1035,13 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
             let resolved = wg_basic::distribution::resolve_allowed_user_uids(&allowed_users)
                 .map_err(|_| "could not resolve a configured local netd user".to_owned())?;
             policy.extend(resolved);
-            let server = SocketServer::bind(&socket, policy)
-                .map_err(|_| "could not safely bind the configured netd socket path".to_owned())?;
             let shutdown = Arc::new(AtomicBool::new(false));
-            let signal_shutdown = shutdown.clone();
-            ctrlc::set_handler(move || {
-                signal_shutdown.store(true, std::sync::atomic::Ordering::Release)
-            })
-            .map_err(|_| "could not install graceful shutdown handler".to_owned())?;
+            let Some(server) = bind_privileged_socket(socket.as_path(), policy, &shutdown)? else {
+                // The daemon was asked to stop while it was still starting up.
+                // The socket it had just created is released; nothing is
+                // claimed to have started.
+                return Ok(());
+            };
             wg_basic::operational::emit(
                 "netd.started",
                 wg_basic::operational::Severity::Info,
@@ -606,7 +1083,9 @@ fn run_linux(command: Option<Command>) -> Result<(), String> {
 /// that opens the store directly, before any service is running. It still obeys
 /// the two rules that matter -- the password arrives only on stdin, and nothing
 /// here ever prints a verifier or a token.
-#[cfg(target_os = "linux")]
+///
+/// Portable (M001): the same credential surface runs on Darwin; it never
+/// touches the kernel.
 fn run_admin_action(action: AdminAction) -> Result<(), String> {
     use wg_basic::management;
 
@@ -654,7 +1133,8 @@ fn run_admin_action(action: AdminAction) -> Result<(), String> {
 
 /// Performs only read-only checks. In particular this deliberately avoids
 /// `StateStore::open`, whose normal contract is to apply pending migrations.
-#[cfg(target_os = "linux")]
+///
+/// Portable (M001): immutable SQLite inspection runs on Darwin unchanged.
 fn doctor_state_checks(
     path: &std::path::Path,
 ) -> (
@@ -800,7 +1280,8 @@ fn doctor_state_checks(
     (checks, inspection.ok())
 }
 
-#[cfg(target_os = "linux")]
+/// Portable (M001): the same plan-only request runs on Darwin; without netd
+/// it reports Unknown rather than converging.
 fn append_network_plan_checks(
     checks: &mut Vec<wg_basic::doctor::DoctorCheck>,
     socket: &std::path::Path,
@@ -858,6 +1339,10 @@ fn append_network_plan_checks(
     ) {
         Ok(ResponseBody::InstallationNetworkPlanned(plan)) => {
             append_plan_outcome(checks, &plan);
+            #[cfg(target_os = "macos")]
+            append_routed_lan_check(checks, &plan);
+            #[cfg(target_os = "macos")]
+            append_gateway_check(checks, &plan);
             checks.push(DoctorCheck::new(
                 Id::Rtnetlink,
                 D::Pass,
@@ -954,7 +1439,7 @@ fn append_network_plan_checks(
     }
 }
 
-#[cfg(target_os = "linux")]
+/// Portable (M001): plan-outcome rendering is backend-agnostic.
 fn append_plan_outcome(
     checks: &mut Vec<wg_basic::doctor::DoctorCheck>,
     plan: &wg_basic::protocol::InstallationNetworkPlanBody,
@@ -983,7 +1468,184 @@ fn append_plan_outcome(
     ));
 }
 
-#[cfg(target_os = "linux")]
+/// Renders the routed-LAN prerequisite verdict.
+///
+/// The verdict is the whole point of the routed-LAN contract: each reason
+/// names a different missing prerequisite, so the operator is told what to
+/// fix rather than that "routed LAN" is unavailable.
+#[cfg(target_os = "macos")]
+fn append_routed_lan_check(
+    checks: &mut Vec<wg_basic::doctor::DoctorCheck>,
+    plan: &wg_basic::protocol::InstallationNetworkPlanBody,
+) {
+    use wg_basic::doctor::{DoctorCheck, DoctorCheckId as Id, DoctorDisposition as D};
+    use wg_basic::firewall::RoutedLanVerdict;
+
+    let Some(verdict) = plan.firewall_plan.routed_lan else {
+        return;
+    };
+    // The rules travel as structured data on the check, not inside the
+    // bounded evidence string: a routed LAN's rule set outgrows the bound,
+    // and a truncated rule is not a rule an operator can install.
+    let rules = plan.firewall_plan.required_filter_rules.clone();
+    let rule_count = rules.len();
+    let (disposition, summary, evidence, remediation) = match verdict {
+        RoutedLanVerdict::Ready => (
+            D::Pass,
+            "the routed-LAN prerequisites are in place".to_owned(),
+            "host forwarding is enabled, the operator filter is attached and matches, and the routes are proven"
+                .to_owned(),
+            "none".to_owned(),
+        ),
+        RoutedLanVerdict::ForwardingDisabled => (
+            D::Fail,
+            "host forwarding is not enabled for a family this policy requires".to_owned(),
+            "read-only host forwarding observation did not show the required family as enabled"
+                .to_owned(),
+            "enable the host's global IPv4 or IPv6 forwarding through host configuration; wg-basic never writes it"
+                .to_owned(),
+        ),
+        RoutedLanVerdict::FilterMissing => (
+            D::Fail,
+            "the operator-managed filter is absent or is not attached".to_owned(),
+            format!(
+                "the installation anchor was not observed as attached to the main filter ruleset; {rule_count} rules must be installed"
+            ),
+            "install the rules shown above in the installation anchor and attach that anchor from your own pf configuration"
+                .to_owned(),
+        ),
+        RoutedLanVerdict::FilterDrift => (
+            D::Fail,
+            "the operator-managed filter does not match the rendered policy".to_owned(),
+            format!("the filter does not match the {rule_count} rules that must be installed"),
+            "reinstall the rules shown above in the installation anchor; wg-basic never repairs a drifted filter"
+                .to_owned(),
+        ),
+        RoutedLanVerdict::MissingReturnRoute => (
+            D::Fail,
+            "no observed route carries traffic back to the tunnel pool".to_owned(),
+            "the managed tunnel's pool has no route scoped to the managed device".to_owned(),
+            "restore the managed pool route, and make sure the upstream router routes the pool back to this host"
+                .to_owned(),
+        ),
+        RoutedLanVerdict::RouteConflict => (
+            D::Fail,
+            "a foreign or ambiguous route covers an approved destination".to_owned(),
+            "more than one route claims an approved destination prefix".to_owned(),
+            "remove the competing route, or narrow the approved destinations to the prefix this host routes"
+                .to_owned(),
+        ),
+        RoutedLanVerdict::UnsupportedTopology => (
+            D::Fail,
+            "the approved destinations are not reachable through the declared egress interface"
+                .to_owned(),
+            "no specific route reaches an approved destination, or only the default route does"
+                .to_owned(),
+            "install a specific route for each approved destination through the declared egress interface; wg-basic never takes over the default route"
+                .to_owned(),
+        ),
+        RoutedLanVerdict::TunnelUnavailable => (
+            D::Warn,
+            "the managed tunnel is not up, so its filter cannot be proven".to_owned(),
+            "no managed tunnel device is registered for this installation".to_owned(),
+            "start the managed network, then rerun doctor".to_owned(),
+        ),
+    };
+    checks.push(
+        DoctorCheck::new(Id::RoutedLan, disposition, summary, evidence, remediation)
+            .with_required_filter_rules(rules),
+    );
+}
+
+/// Renders the gateway prerequisite verdict.
+///
+/// The gateway is the one mode the product writes for, so its check names the
+/// administrator's PF attachment exactly: the three lines, and the fact that
+/// the anchor file has to exist before the parent is loaded, because a
+/// `load anchor` line naming a missing file makes the host's whole
+/// packet-filter configuration fail to load.
+#[cfg(target_os = "macos")]
+fn append_gateway_check(
+    checks: &mut Vec<wg_basic::doctor::DoctorCheck>,
+    plan: &wg_basic::protocol::InstallationNetworkPlanBody,
+) {
+    use wg_basic::doctor::{DoctorCheck, DoctorCheckId as Id, DoctorDisposition as D};
+    use wg_basic::firewall::{anchor_file_path, anchor_name, operator_attachment, GatewayVerdict};
+
+    let Some(verdict) = plan.firewall_plan.gateway else {
+        return;
+    };
+    let anchor = anchor_name(plan.installation_id);
+    let path = anchor_file_path(&anchor);
+    let attachment = operator_attachment(&anchor, &path.to_string_lossy());
+    let lines = attachment.lines().join("; ");
+    let (disposition, summary, evidence, remediation) = match verdict {
+        GatewayVerdict::Ready => (
+            D::Pass,
+            "the gateway prerequisites are in place".to_owned(),
+            "host forwarding is enabled, the administrator's parent invokes the installation anchor in both rule classes, and the anchor's rules match the rendered policy"
+                .to_owned(),
+            "none".to_owned(),
+        ),
+        GatewayVerdict::ForwardingDisabled => (
+            D::Fail,
+            "host forwarding is not enabled for a family this policy requires".to_owned(),
+            "read-only host forwarding observation did not show the required family as enabled"
+                .to_owned(),
+            "enable the host's global IPv4 or IPv6 forwarding through host configuration; wg-basic never writes it"
+                .to_owned(),
+        ),
+        GatewayVerdict::AttachmentMissing => (
+            D::Fail,
+            "the administrator's PF configuration does not invoke the installation anchor in both rule classes"
+                .to_owned(),
+            format!(
+                "the installation anchor was not observed as invoked by both the filter table's parent and the NAT table's parent; the lines are: {lines}"
+            ),
+            format!(
+                "create {} first, then add the nat-anchor line in the translation section of /etc/pf.conf and the anchor and load anchor lines at the end, then run pfctl -f /etc/pf.conf",
+                path.display()
+            ),
+        ),
+        GatewayVerdict::FilterDrift => (
+            D::Fail,
+            "the managed anchor's filter rules do not match the rendered policy".to_owned(),
+            "the installation anchor holds filter rules the product did not render".to_owned(),
+            "remove the foreign rules from the installation anchor; wg-basic never repairs a drifted anchor by guessing"
+                .to_owned(),
+        ),
+        GatewayVerdict::NatDrift => (
+            D::Fail,
+            "the managed anchor's NAT rules do not match the rendered policy".to_owned(),
+            "the installation anchor holds translation rules the product did not render".to_owned(),
+            "remove the foreign translation rules from the installation anchor; an anchor that translates traffic the policy never approved is drift"
+                .to_owned(),
+        ),
+        GatewayVerdict::TunnelUnavailable => (
+            D::Warn,
+            "the managed tunnel is not up, so its anchor cannot be proven".to_owned(),
+            "no managed tunnel device is registered for this installation".to_owned(),
+            "start the managed network, then rerun doctor".to_owned(),
+        ),
+        GatewayVerdict::ApplyRefused => (
+            D::Fail,
+            "the host's packet filter could not be read".to_owned(),
+            "the packet filter's state could not be observed, so the gateway's convergence cannot be claimed"
+                .to_owned(),
+            "run doctor with the privileges required to read the host's packet filter"
+                .to_owned(),
+        ),
+    };
+    checks.push(DoctorCheck::new(
+        Id::Gateway,
+        disposition,
+        summary,
+        evidence,
+        remediation,
+    ));
+}
+
+/// Portable (M001): listen-port comparison is backend-agnostic.
 fn append_listen_port_check(
     checks: &mut Vec<wg_basic::doctor::DoctorCheck>,
     intended: Option<u16>,
@@ -1073,6 +1735,44 @@ fn append_forwarding_check(
     ));
 }
 
+/// M001 Darwin IPv4 forwarding check: no `/proc` read, no sysctl mutation.
+/// Reports Unknown when forwarding is required (M005 owns the Darwin
+/// forwarding/PF decision) and Pass only when nothing is required.
+#[cfg(not(target_os = "linux"))]
+fn append_forwarding_check(
+    checks: &mut Vec<wg_basic::doctor::DoctorCheck>,
+    snapshot: &wg_basic::state::StateDiagnostic,
+) {
+    use wg_basic::doctor::{DoctorCheck, DoctorCheckId as Id, DoctorDisposition as D};
+    let required = snapshot
+        .desired
+        .state
+        .network_policy
+        .as_ref()
+        .is_some_and(|policy| policy.ipv4_forwarding_required);
+    let (disposition, summary, evidence, remediation) = match required {
+        false => (
+            D::Pass,
+            "IPv4 forwarding is not required by desired state",
+            "no forwarding observation required".to_owned(),
+            "none",
+        ),
+        true => (
+            D::Unknown,
+            "IPv4 forwarding requirement cannot be verified on Darwin in M001",
+            "darwin forwarding backends are not implemented; see M005".to_owned(),
+            "no Darwin gateway support is claimed in M001; Linux remains canonical",
+        ),
+    };
+    checks.push(DoctorCheck::new(
+        Id::Forwarding,
+        disposition,
+        summary,
+        evidence,
+        remediation,
+    ));
+}
+
 #[cfg(target_os = "linux")]
 fn append_ipv6_forwarding_check(
     checks: &mut Vec<wg_basic::doctor::DoctorCheck>,
@@ -1121,6 +1821,43 @@ fn append_ipv6_forwarding_check(
     ));
 }
 
+/// M001 Darwin IPv6 forwarding check: same fail-closed posture as IPv4.
+/// No `/proc` read; required forwarding reports Unknown until M005.
+#[cfg(not(target_os = "linux"))]
+fn append_ipv6_forwarding_check(
+    checks: &mut Vec<wg_basic::doctor::DoctorCheck>,
+    snapshot: &wg_basic::state::StateDiagnostic,
+) {
+    use wg_basic::doctor::{DoctorCheck, DoctorCheckId as Id, DoctorDisposition as D};
+    let required = snapshot
+        .desired
+        .state
+        .network_policy
+        .as_ref()
+        .is_some_and(|policy| policy.ipv6_forwarding_required);
+    let (disposition, summary, evidence, remediation) = match required {
+        false => (
+            D::Pass,
+            "IPv6 forwarding is not required by desired state",
+            "no forwarding observation required".to_owned(),
+            "none",
+        ),
+        true => (
+            D::Unknown,
+            "IPv6 forwarding requirement cannot be verified on Darwin in M001",
+            "darwin forwarding backends are not implemented; see M005".to_owned(),
+            "no Darwin gateway support is claimed in M001; Linux remains canonical",
+        ),
+    };
+    checks.push(DoctorCheck::new(
+        Id::Ipv6Forwarding,
+        disposition,
+        summary,
+        evidence,
+        remediation,
+    ));
+}
+
 /// Reads a password from standard input, trimming exactly one trailing newline.
 ///
 /// Only the trailing newline a terminal or `echo` adds is removed; every other
@@ -1128,7 +1865,8 @@ fn append_ipv6_forwarding_check(
 /// operator did not choose and would have to debug by guessing. A password that
 /// genuinely ends in a newline can still be supplied through a pipe that does not
 /// append one.
-#[cfg(target_os = "linux")]
+///
+/// Portable (M001): stdin-only secrets hold on every OS; never argv/env.
 fn read_password_from_stdin() -> Result<String, String> {
     use std::io::Read as _;
 
@@ -1151,7 +1889,10 @@ fn read_password_from_stdin() -> Result<String, String> {
 /// The signal is delivered by a one-shot rather than an `AtomicBool` so the
 /// ordering — stop accepting, drain, stop the worker, release the store — lives
 /// in one place instead of being re-implemented here.
-#[cfg(target_os = "linux")]
+///
+/// Portable (M001): the same loopback management surface runs on Darwin;
+/// startup reconciliation reports backend-unavailable degradation instead of
+/// claiming convergence.
 fn serve(
     state: PathBuf,
     socket: PathBuf,
@@ -1161,7 +1902,7 @@ fn serve(
 ) -> Result<(), String> {
     use wg_basic::http::ServeConfig;
 
-    #[cfg(feature = "update-test-fixtures")]
+    #[cfg(all(target_os = "linux", feature = "update-test-fixtures"))]
     fail_fixture_candidate_start()?;
 
     // Three shapes, and only three. Each is chosen by what the operator stated,
@@ -1456,7 +2197,8 @@ fn run_state_action(action: StateCommand) -> Result<(), String> {
     }
 }
 
-#[cfg(target_os = "linux")]
+/// Portable (M001): purge preconditions run on Darwin; without netd the
+/// plan-only probe fails closed and purge is refused rather than converging.
 fn purge_state(
     state: PathBuf,
     socket: PathBuf,
@@ -1566,7 +2308,7 @@ fn purge_state(
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+/// Portable (M001): purge reporting is backend-agnostic.
 fn print_purge_report(
     state: &std::path::Path,
     installation_id: wg_basic::domain::InstallationId,
@@ -1599,7 +2341,7 @@ fn print_purge_report(
     println!("  other files in the state directory, including operator backups/configuration");
 }
 
-#[cfg(target_os = "linux")]
+/// Portable (M001): purge path enumeration uses Unix metadata on both OSes.
 fn purge_paths(state: &std::path::Path, schema_version: i64) -> Result<Vec<PathBuf>, String> {
     use std::os::unix::fs::MetadataExt;
     let mut paths = vec![state.to_path_buf()];
@@ -1654,7 +2396,9 @@ fn purge_paths(state: &std::path::Path, schema_version: i64) -> Result<Vec<PathB
     Ok(paths)
 }
 
-#[cfg(target_os = "linux")]
+/// Portable (M001): `network status` is read-only SQLite on both OSes;
+/// disable/enable commit product state and report backend-unavailable
+/// degradation on Darwin instead of claiming convergence.
 fn run_network_action(action: NetworkCommand) -> Result<(), String> {
     use wg_basic::state::ServiceLease;
     match action {
@@ -1699,7 +2443,8 @@ fn run_network_action(action: NetworkCommand) -> Result<(), String> {
     }
 }
 
-#[cfg(target_os = "linux")]
+/// Portable (M001): product commit runs on Darwin; enforcement degrades
+/// honestly without netd.
 fn set_network_enabled(state: PathBuf, socket: PathBuf, enabled: bool) -> Result<(), String> {
     use wg_basic::{
         management::ManagementRuntime,
@@ -1823,15 +2568,18 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn doctor_state_check_does_not_change_the_database_or_create_sidecars() {
-        use std::{os::unix::fs::PermissionsExt, time::SystemTime};
+        use std::os::unix::fs::PermissionsExt;
+        // The wall clock is too coarse to tell two concurrent tests apart, so
+        // the scratch path is suffixed with a per-process counter instead of
+        // a timestamp.
+        static SCRATCH_SEQUENCE: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
         let root = std::path::Path::new("/tmp").join(format!(
             "wg-basic-doctor-{}-{}",
             std::process::id(),
-            SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            SCRATCH_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
+        let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir(&root).unwrap();
         std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
         let path = root.join("state.db");

@@ -1,4 +1,8 @@
 //! Bounded process resource and row-growth smoke qualification for the long-lived serve role.
+//!
+//! M001 note: `/proc` sampling is Linux-only; the HTTP/row-growth contract is
+//! portable. `ProcSample` is dead code on Darwin by construction.
+#![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 use std::{
     fs,
     io::{Read, Write},
@@ -53,6 +57,18 @@ struct ProcSample {
     rss_kib: u64,
 }
 
+/// The bound the harness gives the management daemon to come up: the
+/// product's own backend startup wait plus five seconds of slack. On Linux
+/// the wait is zero, so the bound is five seconds; on Darwin it is the wait
+/// the boot-race fix needs.
+fn startup_deadline() -> Duration {
+    wg_basic::management::BACKEND_STARTUP_WAIT + Duration::from_secs(5)
+}
+
+/// Linux-only: `/proc/<pid>` sampling; no `/proc` on Darwin. Darwin resource
+/// qualification in M001 is via the manual smoke test (RSS via `ps`); the
+/// HTTP/row-growth contract below is portable and runs on both OSes.
+#[cfg(target_os = "linux")]
 fn sample(pid: u32) -> ProcSample {
     let root = format!("/proc/{pid}");
     let status = fs::read_to_string(format!("{root}/status")).unwrap();
@@ -126,7 +142,13 @@ fn repeated_valid_and_rejected_http_requests_have_bounded_resource_and_row_growt
             .spawn()
             .unwrap(),
     );
-    let deadline = Instant::now() + Duration::from_secs(5);
+    // The harness's own "it hung" bound. The management daemon waits,
+    // bounded, for the privileged daemon before its startup reconciliation on
+    // the platforms that need it, so the listener can come up after that
+    // budget when no backend is running. The bound therefore follows the
+    // product's own startup wait plus the harness's slack, so a delay that
+    // the product does not have is not tolerated here.
+    let deadline = Instant::now() + startup_deadline();
     loop {
         if TcpStream::connect_timeout(&addr, Duration::from_millis(25)).is_ok() {
             break;
@@ -138,27 +160,34 @@ fn repeated_valid_and_rejected_http_requests_have_bounded_resource_and_row_growt
         thread::sleep(Duration::from_millis(10));
     }
 
-    let before = sample(child.0.id());
     let before_rows = rows(&state);
+    #[cfg(target_os = "linux")]
+    let before = sample(child.0.id());
+    #[cfg(not(target_os = "linux"))]
+    let _child_id = child.0.id();
     let valid_host = format!("127.0.0.1:{}", addr.port());
     for _ in 0..200 {
         assert_eq!(request(addr, &valid_host), 200);
         assert_eq!(request(addr, "not-the-configured-host.invalid"), 403);
     }
-    let after = sample(child.0.id());
     let after_rows = rows(&state);
-    assert!(
-        after.descriptors <= before.descriptors + 2,
-        "FD growth: {before:?} -> {after:?}"
-    );
-    assert_eq!(
-        after.threads, before.threads,
-        "thread count grew: {before:?} -> {after:?}"
-    );
-    assert!(
-        after.rss_kib <= before.rss_kib + 16 * 1024,
-        "RSS growth exceeded 16 MiB: {before:?} -> {after:?}"
-    );
+    // Linux-only resource bounds; row-growth invariance holds on both OSes.
+    #[cfg(target_os = "linux")]
+    {
+        let after = sample(child.0.id());
+        assert!(
+            after.descriptors <= before.descriptors + 2,
+            "FD growth: {before:?} -> {after:?}"
+        );
+        assert_eq!(
+            after.threads, before.threads,
+            "thread count grew: {before:?} -> {after:?}"
+        );
+        assert!(
+            after.rss_kib <= before.rss_kib + 16 * 1024,
+            "RSS growth exceeded 16 MiB: {before:?} -> {after:?}"
+        );
+    }
     assert_eq!(
         after_rows, before_rows,
         "read-only HTTP stress changed retained rows"

@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "run_id": "17985452-ccf0-4c35-973f-ebf18bdf6ba5",
+  "kind": "raw_shell",
+  "invocation": {
+    "command": "python3 - <<'EOF'\nimport os, re\nroot = \"src\"\nhits = []\nfor dp, dn, fns in os.walk(root):\n    for f in sorted(fns):\n        if not f.endswith(\".rs\"): continue\n        p = os.path.join(dp, f)\n        lines = open(p, errors=\"replace\").read().splitlines()\n        intest = False\n        depth = 0\n        for i, l in enumerate(lines):\n            s = l.strip()\n            if re.match(r'#\\[cfg\\(test\\)\\]', s): intest = True\n            if intest and s.startswith('}') and depth == 0:\n                pass\n            if re.search(r'\\.(unwrap|expect)\\(\\s*\\)|panic!|unimplemented!|todo!|unreachable!', l) and not s.startswith('//'):\n                fn = ''\n                for j in range(i, max(-1, i-40), -1):\n                    m = re.match(r'\\s*(?:pub(?:\\([^)]*\\))?\\s+)?(?:async\\s+)?fn\\s+(\\w+)', lines[j])\n                    if m: fn = m.group(1); break\n                hits.append((p, i+1, fn, intest, s[:140]))\nprint(f\"TOTAL_HITS={len(hits)}\")\nprod = [h for h in hits if not h[3]]\nprint(f\"PROD_CONTEXT_HITS={len(prod)}\")\nfor h in prod: print(\"PROD\", h)\nEOF",
+    "argv": [
+      "sh",
+      "-c",
+      "python3 - <<'EOF'\nimport os, re\nroot = \"src\"\nhits = []\nfor dp, dn, fns in os.walk(root):\n    for f in sorted(fns):\n        if not f.endswith(\".rs\"): continue\n        p = os.path.join(dp, f)\n        lines = open(p, errors=\"replace\").read().splitlines()\n        intest = False\n        depth = 0\n        for i, l in enumerate(lines):\n            s = l.strip()\n            if re.match(r'#\\[cfg\\(test\\)\\]', s): intest = True\n            if intest and s.startswith('}') and depth == 0:\n                pass\n            if re.search(r'\\.(unwrap|expect)\\(\\s*\\)|panic!|unimplemented!|todo!|unreachable!', l) and not s.startswith('//'):\n                fn = ''\n                for j in range(i, max(-1, i-40), -1):\n                    m = re.match(r'\\s*(?:pub(?:\\([^)]*\\))?\\s+)?(?:async\\s+)?fn\\s+(\\w+)', lines[j])\n                    if m: fn = m.group(1); break\n                hits.append((p, i+1, fn, intest, s[:140]))\nprint(f\"TOTAL_HITS={len(hits)}\")\nprod = [h for h in hits if not h[3]]\nprint(f\"PROD_CONTEXT_HITS={len(prod)}\")\nfor h in prod: print(\"PROD\", h)\nEOF"
+    ]
+  },
+  "started_at": "2026-10-15T21:15:03.551716Z",
+  "completed_at": "2026-10-15T21:15:03.600532Z",
+  "status": "complete",
+  "workspace_root": "/Users/davidbowman/projects/wg-basic",
+  "cwd": "/Users/davidbowman/projects/wg-basic",
+  "backend": {
+    "family": "bash",
+    "detail": "raw_shell"
+  },
+  "risk": {
+    "level": "low",
+    "has_subprocess": true,
+    "has_git_mutation": false,
+    "has_destructive_mutation": false
+  },
+  "permissions": [],
+  "artifacts": [
+    {
+      "artifact_id": "65ab5172-9415-4529-83c2-0bfeb69e70c6",
+      "kind": "stdout",
+      "relative_path": "stdout.log",
+      "mime_type": "text/plain",
+      "byte_length": 1556,
+      "sha256": "e418cda3e111b1ee1bb1a3efb29af8a19025f3e496dd3754965db7b067a0f354",
+      "truncated": false,
+      "redacted": false,
+      "created_at": "2026-10-15T21:15:03.590298Z",
+      "safe_for_model": false
+    }
+  ],
+  "changes": [],
+  "planned_backend": "raw_shell",
+  "actual_backend": "raw_shell",
+  "ownership": "Caller",
+  "asset_provenance": {
+    "generation": 2,
+    "fingerprint": "27f640185cfad6aba107a7e3eb7ceff85c4eeb3d8f7fce8d98cc1c10b4e7d26f"
+  }
+}

@@ -1,0 +1,4 @@
+src/main.rs:4:const DEFAULT_SOCKET: &str = "/run/wg-basic/netd.sock";
+src/main.rs:390:        }) => run_darwin_netd(socket, allowed_uids, allowed_users),
+src/main.rs:421:        .map_err(|_| "could not safely bind the configured netd socket path".to_owned())?;
+src/main.rs:898:                .map_err(|_| "could not safely bind the configured netd socket path".to_owned())?;

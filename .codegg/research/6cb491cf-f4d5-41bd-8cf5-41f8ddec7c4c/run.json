@@ -1,0 +1,14 @@
+{
+  "run_id": "6cb491cf-f4d5-41bd-8cf5-41f8ddec7c4c",
+  "status": "completed",
+  "started_at": "2026-10-15T21:28:07.575396Z",
+  "finished_at": "2026-10-15T21:28:11.935454Z",
+  "artifact_dir": "/Users/davidbowman/projects/wg-basic/.codegg/research/6cb491cf-f4d5-41bd-8cf5-41f8ddec7c4c",
+  "error": null,
+  "counts": {
+    "sources": 30,
+    "evidence_spans": 49,
+    "claims": 49,
+    "contradictions": 0
+  }
+}

@@ -199,6 +199,26 @@ pub enum MutationKind {
     DeleteLink,
 }
 
+impl MutationKind {
+    /// The stable, lowercase name of the mutation kind.
+    ///
+    /// The name is what a diagnostic event carries, so that a refused apply
+    /// says *which* action it stopped at rather than only that it stopped.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MutationKind::CreateWireGuardLink => "create_wireguard_link",
+            MutationKind::ConfigureWireGuard => "configure_wireguard",
+            MutationKind::AddAddress => "add_address",
+            MutationKind::RemoveAddress => "remove_address",
+            MutationKind::AddRoute => "add_route",
+            MutationKind::RemoveRoute => "remove_route",
+            MutationKind::SetLinkUp => "set_link_up",
+            MutationKind::SetLinkDown => "set_link_down",
+            MutationKind::DeleteLink => "delete_link",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlannedAction {
@@ -224,6 +244,21 @@ pub enum ApplyStatus {
     VerificationFailed,
 }
 
+impl ApplyStatus {
+    /// Whether the apply reached the desired state.
+    ///
+    /// The absence of an error is not the same thing: an apply that stopped at
+    /// a failed mutation, or that failed its verification, returns a receipt
+    /// rather than an error, and a caller that treats the receipt as success
+    /// would claim a convergence that was never observed.
+    pub fn converged(self) -> bool {
+        matches!(
+            self,
+            ApplyStatus::NoChange | ApplyStatus::Applied | ApplyStatus::AlreadyConverged
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SafeFailureCategory {
@@ -232,6 +267,23 @@ pub enum SafeFailureCategory {
     Conflict,
     KernelRejected,
     BackendFailure,
+}
+
+impl SafeFailureCategory {
+    /// The stable, lowercase name of the failure category.
+    ///
+    /// The category is what a diagnostic event carries, so that a refused
+    /// apply says *why* it was refused and not only which action it stopped
+    /// at.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SafeFailureCategory::PermissionDenied => "permission_denied",
+            SafeFailureCategory::Unsupported => "unsupported",
+            SafeFailureCategory::Conflict => "conflict",
+            SafeFailureCategory::KernelRejected => "kernel_rejected",
+            SafeFailureCategory::BackendFailure => "backend_failure",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -272,4 +324,19 @@ pub enum ReconcileError {
     BackendFailure,
     #[error("wireguard configuration is invalid")]
     WireGuard(#[from] WireGuardValidationError),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ApplyStatus;
+
+    #[test]
+    fn only_a_reached_desired_state_counts_as_converged() {
+        assert!(ApplyStatus::NoChange.converged());
+        assert!(ApplyStatus::Applied.converged());
+        assert!(ApplyStatus::AlreadyConverged.converged());
+        assert!(!ApplyStatus::FailedBeforeMutation.converged());
+        assert!(!ApplyStatus::PartialFailure.converged());
+        assert!(!ApplyStatus::VerificationFailed.converged());
+    }
 }

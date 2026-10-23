@@ -49,6 +49,9 @@
             <label class="check"><input name="ipv6_forwarding_required" type="checkbox" /> Enable host-wide IPv6 forwarding</label>
             <span class="help">IPv6 forwarding is opt-in. IPv6 client routes require an IPv6 tunnel range and client address, plus working routed IPv6 egress. Linux applies forwarding globally; disabling this network leaves it enabled. NAT66 is not used.</span>
             <label class="check"><input name="masquerade" type="checkbox" checked /> Masquerade IPv4 client internet traffic</label>
+            <label>Network policy mode <select name="network_mode"><option value="auto" selected>Automatic (from the forwarding settings)</option><option value="routed_lan">Routed LAN (approved destinations only)</option></select></label>
+            <label>Routed LAN destinations <input name="destination_prefixes" placeholder="192.168.9.0/24, 192.168.10.0/24" /></label>
+            <span class="help">A routed LAN forwards authorized client traffic to the approved downstream prefixes only, never masquerades, and is implemented on macOS only. The filter that bounds it is operator-managed: the product reports the exact rules it observed and refuses to converge when they are missing or have drifted.</span>
           </details>
           <button type="submit">Save server settings</button>
         </form>

@@ -374,6 +374,33 @@ async fn the_worker_queue_is_bounded_and_refuses_rather_than_queueing() {
     let scratch = Scratch::new();
     set_password_at(scratch.db(), USERNAME, PASSWORD).expect("provisioning succeeds");
 
+    // Calibrate one verification on this hardware first: the shutdown drain
+    // below waits behind whatever the burst admitted, and each admitted
+    // command costs about one verification even after its caller gave up, so
+    // the drain bound must scale with hardware speed, not a fixed clock
+    // (slow shared runners drain ~33 serial Argon2id verifications past any
+    // fixed 30s assumption). A fresh worker runs the burst afterwards, so
+    // calibration backlog cannot contaminate the queue under test.
+    let calibration = spawn(WorkerConfig::new(scratch.db(), scratch.absent_socket()))
+        .expect("calibration worker starts");
+    let single_started = Instant::now();
+    let single_outcome = calibration
+        .client()
+        .authenticate(USERNAME.to_owned(), "wrong on purpose".to_owned())
+        .await;
+    let single_cost = single_started.elapsed();
+    assert!(
+        single_outcome.is_err(),
+        "a deliberately wrong password must never authenticate"
+    );
+    tokio::time::timeout(
+        single_cost * 4 + Duration::from_secs(30),
+        calibration.stop(),
+    )
+    .await
+    .expect("calibration worker must stop")
+    .expect("calibration stop is decisive");
+
     let startup =
         spawn(WorkerConfig::new(scratch.db(), scratch.absent_socket())).expect("the worker starts");
     let client: WorkerClient = startup.client().clone();
@@ -442,10 +469,14 @@ async fn the_worker_queue_is_bounded_and_refuses_rather_than_queueing() {
     // behind the backlog and its *confirmation* can miss the five-second reply
     // deadline. What does not happen is a refused shutdown: `stop` joins the
     // worker thread unconditionally, so the thread ends and the state store is
-    // released either way. The wait is bounded by the queue draining, not by the
-    // deadline, and not by anything the client can influence.
+    // released either way. The wait is bounded by the queue draining — the
+    // backlog the burst actually admitted times the calibrated verification
+    // cost, with headroom for contention — not by the deadline, and not by
+    // anything the client can influence.
+    let admitted = (count("rejected") + count("timed out")).max(1) as u32;
+    let drain_bound = single_cost * admitted * 4 + Duration::from_secs(30);
     let shutdown_started = Instant::now();
-    let outcome = tokio::time::timeout(DEADLINE, startup.stop())
+    let outcome = tokio::time::timeout(drain_bound, startup.stop())
         .await
         .expect("a saturated queue must not leave the worker thread running forever");
     assert!(
@@ -454,8 +485,9 @@ async fn the_worker_queue_is_bounded_and_refuses_rather_than_queueing() {
          confirmation missed its deadline, not a refusal: {outcome:?}"
     );
     assert!(
-        shutdown_started.elapsed() < DEADLINE,
-        "the drain must be bounded by the queue, not by the client: {:?}",
+        shutdown_started.elapsed() < drain_bound,
+        "the drain must be bounded by the queue, not by the client: {:?} \
+         (bound {drain_bound:?} for {admitted} admitted at {single_cost:?} each)",
         shutdown_started.elapsed()
     );
 
@@ -491,6 +523,13 @@ async fn worker_overload_is_never_reported_as_a_credential_refusal() {
         match result {
             Err(WorkerError::Saturated) => {}
             Err(WorkerError::Rejected) => {}
+            // Admitted, then queued behind enough verifications to outlive
+            // the reply deadline: the documented fourth answer (see
+            // `the_worker_queue_is_bounded...`), actionable as a retry and
+            // never a credential signal. Slow or loaded hardware produces it
+            // where fast hardware would not; the property under test is that
+            // overload is never reported as a credential refusal.
+            Err(WorkerError::TimedOut) => {}
             other => {
                 panic!("an overload burst produced {other:?}, which a caller could not act on")
             }

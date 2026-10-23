@@ -12,7 +12,7 @@ use std::{
     path::PathBuf,
     process::{Child, Command, Stdio},
     thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 
 const CANDIDATE_FROM_TEST_BUILD: &str = env!("CARGO_BIN_EXE_wg-basic");
@@ -21,14 +21,17 @@ struct Scratch(PathBuf);
 
 impl Scratch {
     fn new() -> Self {
+        // The wall clock is too coarse to tell two concurrent tests apart, so
+        // the scratch path is suffixed with a per-process counter instead of
+        // a timestamp.
+        static SCRATCH_SEQUENCE: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
         let path = std::env::temp_dir().join(format!(
             "wg-basic-upgrade-rehearsal-{}-{}",
             std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            SCRATCH_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
+        let _ = fs::remove_dir_all(&path);
         fs::create_dir(&path).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
         Self(path)
@@ -429,7 +432,13 @@ fn real_v4_state_migrates_refuses_old_binary_and_rolls_back_with_v4_artifact() {
     // Starting candidate serve against the v4 file is the real migration path.
     let (candidate_serve, candidate_addr) = start_serve(candidate, &state, &socket);
     let migrated = status_text(candidate, &state);
-    assert!(migrated.contains("schema version:     7"), "{migrated}");
+    assert!(
+        migrated.contains(&format!(
+            "schema version:     {}",
+            wg_basic::state::current_schema_version()
+        )),
+        "{migrated}"
+    );
     assert!(migrated.contains(&installation_line));
     assert!(migrated.contains(&generation_line));
     assert!(state.with_file_name("state.db.pre-migration-v4").exists());
@@ -538,7 +547,13 @@ fn real_v4_state_migrates_refuses_old_binary_and_rolls_back_with_v4_artifact() {
     drop(restored_serve);
 
     let reupgraded = status_text(candidate, &state);
-    assert!(reupgraded.contains("schema version:     7"), "{reupgraded}");
+    assert!(
+        reupgraded.contains(&format!(
+            "schema version:     {}",
+            wg_basic::state::current_schema_version()
+        )),
+        "{reupgraded}"
+    );
     assert!(reupgraded.contains(&installation_line));
     assert!(reupgraded.contains(&generation_line));
     let (reupgraded_serve, reupgraded_addr) = start_serve(candidate, &state, &socket);

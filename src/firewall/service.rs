@@ -45,6 +45,7 @@ impl FirewallService {
     ) -> Result<FirewallPlanSummary, FirewallError> {
         if let Some(policy) = policy {
             policy.validate(wireguard_interface)?;
+            require_supported_mode(policy)?;
         }
         let owner = FirewallOwner::new(installation_id);
         let observation = observe_firewall(&owner, requires_ipv6_forwarding(policy))?;
@@ -59,6 +60,7 @@ impl FirewallService {
     ) -> Result<FirewallApplyReceipt, FirewallError> {
         if let Some(policy) = policy {
             policy.validate(wireguard_interface)?;
+            require_supported_mode(policy)?;
         }
         let owner = FirewallOwner::new(installation_id);
         let _guard = self
@@ -175,6 +177,19 @@ impl FirewallService {
     }
 }
 
+/// Refuses a routing mode the Linux backend does not implement.
+///
+/// The Linux nftables backend forwards to any destination. A routed LAN is a
+/// bounded contract, and applying a bounded policy as an unbounded one would
+/// be exactly the silent widening the typed mode exists to prevent, so the
+/// mode is refused rather than approximated.
+fn require_supported_mode(policy: &DesiredNetworkPolicy) -> Result<(), FirewallError> {
+    if policy.mode == crate::domain::NetworkPolicyMode::RoutedLan {
+        return Err(FirewallError::Unsupported);
+    }
+    Ok(())
+}
+
 fn failure_from(error: &FirewallError) -> FirewallFailure {
     match error {
         FirewallError::PermissionDenied => FirewallFailure::PermissionDenied,
@@ -185,6 +200,20 @@ fn failure_from(error: &FirewallError) -> FirewallFailure {
         FirewallError::InvalidPolicy
         | FirewallError::BackendFailure
         | FirewallError::ResourceLimitExceeded => FirewallFailure::BackendFailure,
+        // The routed-LAN and gateway refusals are Darwin's; the Linux backend
+        // never produces them, and a receipt that named one would claim a
+        // check this backend never made.
+        FirewallError::ForwardingDisabled
+        | FirewallError::FilterMissing
+        | FirewallError::FilterDrift
+        | FirewallError::MissingReturnRoute
+        | FirewallError::RouteConflict
+        | FirewallError::GatewayAttachmentMissing
+        | FirewallError::NatDrift
+        | FirewallError::UnsupportedTopology => FirewallFailure::Unsupported,
+        // An anchor whose ownership cannot be proven is an ownership
+        // conflict, exactly as a table whose ownership cannot be proven is.
+        FirewallError::AnchorConflict => FirewallFailure::Conflict,
     }
 }
 

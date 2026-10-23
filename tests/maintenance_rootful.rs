@@ -118,6 +118,8 @@ fn purge_requires_confirmed_disabled_noop_network_and_preserves_operator_files()
             ipv4_forwarding_required: false,
             ipv6_forwarding_required: false,
             masquerade: false,
+            mode: None,
+            destination_prefixes: Vec::new(),
             default_client_route_policy: ClientRoutePolicy::default(),
         })
         .unwrap();

@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "run_id": "04f1cf4f-5ef5-4b24-a1d8-f67a30f163eb",
+  "kind": "raw_shell",
+  "invocation": {
+    "command": "grep -rn --include='*.rs' -E '\\.unwrap\\(\\)|\\.expect\\(|panic!\\(|unimplemented!|todo!|unreachable!' src/ | grep -v -E '#\\[cfg\\(test|mod tests|/tests? |assert' | grep -v -E '^\\s*//' | awk -F: '$1 !~ /test/ {print}' | grep -vE 'src/.*:(.*#\\[|.*//)' | head -n 5; echo ===NONTEST-FILTER-ATTEMPT===; grep -rn --include='*.rs' -E '\\.unwrap\\(\\)|\\.expect\\(' src/http/ratelimit.rs src/http/origin.rs src/http/headers.rs src/http/session_cookie.rs src/http/config.rs src/domain/auth.rs | head -n 40",
+    "argv": [
+      "sh",
+      "-c",
+      "grep -rn --include='*.rs' -E '\\.unwrap\\(\\)|\\.expect\\(|panic!\\(|unimplemented!|todo!|unreachable!' src/ | grep -v -E '#\\[cfg\\(test|mod tests|/tests? |assert' | grep -v -E '^\\s*//' | awk -F: '$1 !~ /test/ {print}' | grep -vE 'src/.*:(.*#\\[|.*//)' | head -n 5; echo ===NONTEST-FILTER-ATTEMPT===; grep -rn --include='*.rs' -E '\\.unwrap\\(\\)|\\.expect\\(' src/http/ratelimit.rs src/http/origin.rs src/http/headers.rs src/http/session_cookie.rs src/http/config.rs src/domain/auth.rs | head -n 40"
+    ]
+  },
+  "started_at": "2026-10-15T21:14:21.038593Z",
+  "completed_at": "2026-10-15T21:14:21.080413Z",
+  "status": "complete",
+  "workspace_root": "/Users/davidbowman/projects/wg-basic",
+  "cwd": "/Users/davidbowman/projects/wg-basic",
+  "backend": {
+    "family": "bash",
+    "detail": "raw_shell"
+  },
+  "risk": {
+    "level": "low",
+    "has_subprocess": true,
+    "has_git_mutation": false,
+    "has_destructive_mutation": false
+  },
+  "permissions": [],
+  "artifacts": [
+    {
+      "artifact_id": "3682ef83-a99a-4c2e-8960-e7341b5dcfe0",
+      "kind": "stdout",
+      "relative_path": "stdout.log",
+      "mime_type": "text/plain",
+      "byte_length": 3971,
+      "sha256": "e4b439ea85895f19e887e5ef80aa2c09d666fce5173be446faea3f6ca2f69d8c",
+      "truncated": false,
+      "redacted": false,
+      "created_at": "2026-10-15T21:14:21.070472Z",
+      "safe_for_model": false
+    }
+  ],
+  "changes": [],
+  "planned_backend": "raw_shell",
+  "actual_backend": "raw_shell",
+  "ownership": "Caller",
+  "asset_provenance": {
+    "generation": 2,
+    "fingerprint": "27f640185cfad6aba107a7e3eb7ceff85c4eeb3d8f7fce8d98cc1c10b4e7d26f"
+  }
+}
