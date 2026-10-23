@@ -2,12 +2,12 @@
 
 Status: **active**; the implementation is in this branch and the closure
 evidence is in `plans/closure/product-management/007-status.md`.
-Baseline: `plans/m006-operator-shell-sign-in-corrective@825d449` (itself based
-on `plans/macos-native-support@b2e5541`).
+Baseline: `plans/m006-operator-shell-sign-in-corrective@f7386ac` (itself based
+on `plans/macos-native-support@3d8a59a`).
 Source: `plans/implementation/product-management/005-embedded-product-ui-and-phase8-qualification.md`;
 `plans/closure/product-management/005-status.md` (implementation head `8b20a7c`);
 `plans/implementation/product-management/006-operator-shell-sign-in-and-visibility-corrective.md`;
-`plans/closure/product-management/006-status.md` (implementation head `62bbc2b`).
+`plans/closure/product-management/006-status.md` (implementation head `61cb753`).
 Canonical requirements and ADRs: ADR-004 (the product mutation, enrollment and
 API semantics); `plans/000-long-term-specification.md` §1 (the product
 definition names "scan a QR code") and §2 goal 4 ("render QR enrollment").
