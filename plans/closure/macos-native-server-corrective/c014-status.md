@@ -249,8 +249,9 @@ Darwin live fixtures, the Darwin controlled-host legs, the Darwin routed-LAN
 leg, the upgrade-rehearsal fixtures, the canonical-path systemd installation
 fixture, and the unrelated-uid IPC privilege check.
 
-At the **final head** (`bc70125`) — the tree that adds C004's gateway evidence
-leg and both closure records — the same gate order was re-run: **44 binaries,
+At the head that carries this milestone's evidence leg and both closure
+records (`bc70125`; the commit after it changes these two records and
+nothing else) the same gate order was re-run: **44 binaries,
 750 passed, 0 failed, 16 ignored**, with `fmt`, `check`, `clippy` and the MSRV
 check green. The sixteenth ignored test is C004's own live gateway leg, which
 the ordinary suite may not run and which the controlled host ran instead. The

@@ -259,8 +259,9 @@ running the leg against a real host.
 `cargo clippy --all-targets --locked -- -D warnings`,
 `cargo test --locked` (43 binaries, **732 passed**, 0 failed, 15 ignored) and
 `cargo +1.89.0 check --all-targets --locked` (MSRV) — all green at `5e35a4a`.
-At the **final head** the same gate order was re-run over the tree that adds
-this milestone's evidence leg and its closure records: **44 binaries, 750
+At the head that carries this milestone's evidence leg and its closure
+records (`bc70125`; the commit after it changes the two closure records and
+nothing else) the same gate order was re-run: **44 binaries, 750
 passed, 0 failed, 16 ignored**, with `fmt`, `check`, `clippy` and the MSRV
 check green. The Linux
 feature-bearing cross-clippy with the zig toolchain
