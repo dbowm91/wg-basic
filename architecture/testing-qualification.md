@@ -54,6 +54,7 @@ Targets with `linux-integration` only compile/run under
 | `darwin_ipc` | none, macOS only | Native `getpeereid` IPC auth, framing, socket lifecycle, SIGTERM/restart against the real `netd` binary |
 | `wireguard_darwin_live` | root, macOS only, `#[ignore]`d, needs `WGB_DARWIN_LIVE=1` + `WGB_WIREGUARD_GO` (+ `WGB_BINARY` for launchd) | Ephemeral-hosted-runner fixtures only: loopback handshake/traffic/counters (v4+v6), route inventory preservation, PF anchor lifecycle (with the attachment controls — the real positive, collision, and negative cases against live `pfctl` output), forwarding/PF cycle, launchd bootstrap/reinstall, production backend ownership, unprivileged management daemon, backend convergence; `--test-threads=1` |
 | `wireguard_darwin_controlled` | root, macOS only, `#[ignore]`d, needs `WGB_DARWIN_LIVE=1` + `WGB_WIREGUARD_GO` + `WGB_BINARY` (+ `WGB_PEER_COMMAND` for the off-host peer, `WGB_C002_REBOOT_PHASE` for the reboot leg) | Disposable controlled-host fixtures only, in a separate target so the hosted runner never picks them up: product path against an off-host Linux-kernel peer, and the three-phase cold-reboot leg; `--test-threads=1` |
+| `wireguard_darwin_routed` | root, macOS only, `#[ignore]`d, needs `WGB_DARWIN_LIVE=1` + `WGB_WIREGUARD_GO` + `WGB_BINARY` (+ `WGB_PEER_COMMAND` for the peer driver) | Disposable controlled-host fixture only, in a separate target: the routed-LAN leg against an approved downstream prefix, and the host's filter state before the leg and after its teardown; `--test-threads=1` |
 
 ### What the hosted live fixture proves about the managed device
 
@@ -220,3 +221,80 @@ qualification workflow has one architecture.
 |---|---|
 | `gates-arm64` (`macos-15`) | `cargo fmt --all -- --check`, `cargo check --all-targets --locked`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`, the `aarch64-apple-darwin` target check, MSRV check |
 | `live-arm64` | Pinned-helper build (tag + commit + license verified) then the ignored `wireguard_darwin_live` target as root with `WGB_DARWIN_LIVE=1`: all eight fixtures, evidence artifacts uploaded |
+
+The routed-LAN leg (`wireguard_darwin_routed`) is **not** in the workflow: it
+needs a disposable macOS host, a second WireGuard implementation for the peer
+host, and a real PF, and a hosted runner cannot produce that.
+
+## The routed-LAN leg restores the filter it loaded (C014)
+
+The routed-LAN leg is a disposable controlled-host fixture
+(`tests/wireguard_darwin_routed.rs`). Its traffic assertions are unchanged —
+the forwarded traffic, the spoofed-source rejection, the unapproved-destination
+rejection, and the helper-recovery leg all stay as they are. What changed is
+what the leg leaves behind.
+
+### The defect it corrected
+
+The C003 leg **left the host's packet filter loaded**. Its teardown removed
+the anchor's `load anchor` line from `/etc/pf.conf` and deleted the anchor
+file, which restores the *ruleset* but not the anchor's **loaded rules**:
+macOS keeps them across `pfctl -f` and `pfctl -F all`. The leg also ran
+`pfctl -e` and never put PF back, and it left the `.drift` file it wrote for
+the drift control in `/etc/pf.anchors/`.
+
+Measured on the disposable guest immediately after the leg was re-run against
+`d26c886` — recorded in
+`plans/closure/macos-native-server-corrective/c003-status.md` §12.1: PF was
+still **Enabled**, the managed anchor still held **eight** loaded rules, and
+`/etc/pf.anchors/` still held the `.drift` sibling.
+
+Two of the eight leftover rules matched on `utun0`. macOS recycles `utun`
+indices, so a later tunnel that is handed that index inherits the previous
+leg's rules, on a device the previous leg never saw. The `.drift` file is
+the drift control's own artifact — the leg writes a drifting rule to it and
+loads that file into the anchor — and it is the same file the residue check
+now looks for.
+
+### What the leg measures now
+
+The leg **measures** the host's filter state before it installs anything and
+again after it tears down:
+
+- PF's enable state;
+- the main filter and NAT rulesets;
+- the managed anchor's own two rulesets;
+- the anchors-directory listing.
+
+The teardown empties the managed anchor's **filter class and NAT class**
+separately, removes the anchor's lines from `/etc/pf.conf` and reloads the
+main ruleset, removes the anchor file and its `.drift` sibling, restores PF's
+enable state, and then asserts that the residue is empty. The restoration runs
+even when the leg fails part-way — or is cancelled part-way: the filter
+context is recorded before the filter is installed, so a leg that fails
+between the install and the end is restored too.
+
+The `-F rules` / `-F nat` split is not a detail. **`-F rules` alone leaves the
+NAT rules loaded**, so a restoration that flushes only the filter class leaves
+a translation rule evaluated on the host. macOS keeps a loaded anchor's
+**rules** across `pfctl -f` and `pfctl -F all`, and `pfctl -F all` without
+`-a` flushes the **main** ruleset, not every anchor — so the leg's own
+`pfctl -a <anchor> -F all` did not stop the anchor's rules from being loaded
+again afterwards, and the eight rules survived the final
+`pfctl -f /etc/pf.conf`.
+
+The scoped flush also works on an anchor that is **detached** from the main
+ruleset — measured on the disposable guest: `pfctl -a <anchor> -F rules` exits
+0 with `rules cleared`, and `-F nat` likewise.
+
+### How it is qualified
+
+The leg is qualified by being run **twice on the same guest**. The second
+run's baseline is the proof that the first run left nothing: that baseline is
+the host's own filter state before the second run, and it has to show no
+loaded rules in the leg's anchor, no file of the leg's in the anchors
+directory, the original PF enable state, and the original main rulesets.
+
+The restoration planner and the residue check are pure functions, so their
+regressions run in the ordinary gate order on a Darwin host — they need no PF
+and no root.
