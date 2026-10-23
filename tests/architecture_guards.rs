@@ -1551,6 +1551,56 @@ fn the_asset_shell_needs_no_csp_concession_and_no_build_step() {
 }
 
 #[test]
+fn the_operator_shell_cannot_outrank_its_own_hidden_attribute_or_omit_a_credential_name() {
+    // Two ways the embedded shell could ship broken and still satisfy every
+    // other guard: a form control with no `name` (so `FormData` silently drops
+    // it and the request body is empty), and an author `display` rule that
+    // outranks the user-agent's `[hidden]{display:none}` (so an element marked
+    // hidden is still on screen).
+    //
+    // The first is how the login form shipped: `new FormData(form)` returned an
+    // empty set, the panel posted `{}`, and no operator could ever sign in with
+    // a correct password. The second is how the create form and both
+    // empty-state notes shipped: they rendered on top of a populated client
+    // table and a populated activity log.
+    let css = source_of("src/http/assets/app.css");
+    let hidden_rule = css
+        .split('}')
+        .find(|rule| rule.contains("[hidden]"))
+        .expect("the stylesheet declares how the hidden attribute renders");
+    assert!(
+        (hidden_rule.contains("display:none") || hidden_rule.contains("display: none"))
+            && hidden_rule.contains("!important"),
+        "the hidden attribute must win over any author display rule, or a marked-hidden \
+         element stays on screen: {hidden_rule}"
+    );
+
+    let shell = source_of("src/http/assets/index.html");
+    let login = shell
+        .split_once("<form id=\"login-form\"")
+        .and_then(|(_, rest)| rest.split_once("</form>"))
+        .map(|(form, _)| form)
+        .expect("the shell has a login form");
+    let controls = login
+        .match_indices("<input")
+        .map(|(index, _)| &login[index..]);
+    let mut seen = 0;
+    for control in controls {
+        let tag = &control[..control.find('>').expect("an input tag ends")];
+        assert!(
+            tag.contains("name="),
+            "every login form control needs a name attribute: FormData drops unnamed \
+             controls, so the panel would post an empty body and reject a correct password"
+        );
+        seen += 1;
+    }
+    assert!(
+        seen >= 2,
+        "the login form has a username and a password control"
+    );
+}
+
+#[test]
 fn no_build_toolchain_is_required_to_produce_the_shell() {
     // What is committed is what is served. A shell that needs a bundler is a
     // shell that will eventually be built and served out of band, and the

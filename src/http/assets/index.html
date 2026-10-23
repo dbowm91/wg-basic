@@ -15,15 +15,15 @@
         <button type="button" class="secondary" id="logout" hidden>Sign out</button>
       </header>
 
-      <p id="banner" role="alert" aria-live="polite" hidden></p>
+      <div id="banner-slot"><p id="banner" role="status" aria-live="polite" hidden></p></div>
 
       <section id="login-pane">
         <h2>Sign in</h2>
         <form id="login-form" autocomplete="on">
           <label for="username">Username</label>
-          <input type="text" id="username" autocomplete="username" autocapitalize="none" required />
+          <input type="text" id="username" name="username" autocomplete="username" autocapitalize="none" required />
           <label for="password">Password</label>
-          <input type="password" id="password" autocomplete="current-password" required />
+          <input type="password" id="password" name="password" autocomplete="current-password" required />
           <button type="submit">Sign in</button>
         </form>
         <p class="note">Set or reset the administrator password locally with <code>wg-basic admin set-password --password-stdin</code>.</p>

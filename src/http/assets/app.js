@@ -11,8 +11,19 @@
   const $ = (id) => document.getElementById(id);
   const form = (id) => Object.fromEntries(new FormData($(id)).entries());
   const setVisible = (id, value) => { $(id).hidden = !value; };
-  const clearBanner = () => { $("banner").textContent = ""; setVisible("banner", false); };
-  const message = (text) => { $("banner").textContent = text; setVisible("banner", true); };
+  const banner = () => $("banner");
+  const clearBanner = () => { const el = banner(); el.textContent = ""; el.hidden = true; };
+  const message = (text, level = "info") => {
+    const el = banner();
+    el.dataset.level = level;
+    el.setAttribute("aria-live", level === "danger" ? "assertive" : "polite");
+    el.textContent = text;
+    el.hidden = false;
+  };
+  // The status banner follows the operator's attention: while the client editor
+  // is open it lives inside the dialog, so a conflict or a pending-enforcement
+  // notice is read where it was raised rather than behind the modal backdrop.
+  const moveBanner = (host) => { const el = banner(); if (el.parentElement !== host) host.insertBefore(el, host.firstElementChild); };
   const json = (response) => response.json().catch(() => ({}));
 
   async function api(method, path, body) {
@@ -47,14 +58,14 @@
 
   function explainMutation(response, result, removing) {
     if (response.status === 409) {
-      void loadConsole().then(() => message("Configuration changed elsewhere. Current state has been refreshed; review it and try again."));
+      void loadConsole().then(() => message("Configuration changed elsewhere. Current state has been refreshed; review it and try again.", "warning"));
       return false;
     }
-    if (!response.ok) { message("The change could not be saved. Check the values and try again."); return false; }
+    if (!response.ok) { message("The change could not be saved. Check the values and try again.", "danger"); return false; }
     if (response.status === 202 || result.enforcement !== "converged") {
       message(removing
         ? "Saved, but network access has not been confirmed revoked. The server is still applying this change."
-        : "Saved; network application is pending or degraded. The server is still applying this change.");
+        : "Saved; network application is pending or degraded. The server is still applying this change.", "warning");
     } else clearBanner();
     generation = result.generation;
     return true;
@@ -63,9 +74,10 @@
   async function refreshAfterMutation(response, result, removing) {
     if (!explainMutation(response, result, removing)) return false;
     const pending = response.status === 202 || result.enforcement !== "converged";
-    const notice = pending ? $("banner").textContent : "";
+    const notice = pending ? banner().textContent : "";
+    const level = pending ? banner().dataset.level : "info";
     await loadConsole();
-    if (notice) message(notice);
+    if (notice) message(notice, level);
     return true;
   }
 
@@ -101,7 +113,7 @@
     clearBanner();
     const healthResponse = await api("GET", "/api/v1/health");
     const serverResponse = await api("GET", "/api/v1/server");
-    if (!serverResponse.ok) { message("The server settings could not be loaded."); return; }
+    if (!serverResponse.ok) { message("The server settings could not be loaded.", "danger"); return; }
     const summary = await json(serverResponse);
     generation = summary.generation;
     if (!summary.server) {
@@ -141,7 +153,7 @@
 
   async function loadClients() {
     const response = await api("GET", "/api/v1/clients");
-    if (!response.ok) { message("Clients could not be loaded."); return; }
+    if (!response.ok) { message("Clients could not be loaded.", "danger"); return; }
     const data = await json(response); generation = data.generation; clients = data.clients;
     renderClients();
   }
@@ -244,7 +256,7 @@
   async function submitCreate(event) {
     event.preventDefault(); clearBanner(); const data = form("create-form");
     const serverResponse = await api("GET", "/api/v1/server");
-    if (!serverResponse.ok) { message("The configured server could not be loaded; try again."); return; }
+    if (!serverResponse.ok) { message("The configured server could not be loaded; try again.", "danger"); return; }
     const server = await json(serverResponse);
     const body = { expected_generation: generation, interface_id: server.server.interface_id, label: data.label };
     if (data.ipv6_address.trim()) body.ipv6_address = data.ipv6_address.trim();
@@ -259,7 +271,7 @@
     edit.elements.ipv6_address.value = client.assigned_ipv6_address?.split("/")[0] ?? "";
     setRouteFields(edit, client.route_policy); edit.elements.dns_servers.value = client.dns_servers.join(", ");
     edit.elements.client_keepalive_seconds.value = client.settings.client_keepalive_seconds ?? "";
-    $("artifact").replaceChildren(); setVisible("artifact", false); $("client-dialog").showModal();
+    $("artifact").replaceChildren(); setVisible("artifact", false); moveBanner($("client-dialog")); $("client-dialog").showModal();
   }
 
   function clearArtifact() {
@@ -293,19 +305,19 @@
 
   async function artifact(kind) {
     const id = $("edit-form").elements.client_id.value; if (!id) return;
-    clearArtifact(); const target = $("artifact"); setVisible("artifact", true);
+    clearBanner(); clearArtifact(); const target = $("artifact"); setVisible("artifact", true);
     if (kind === "config") {
       const response = await api("GET", `/api/v1/clients/${id}/config`);
-      if (!response.ok) { target.textContent = "Configuration export is unavailable."; return; }
+      if (!response.ok) { message("Configuration export is unavailable.", "danger"); return; }
       artifactUrl = URL.createObjectURL(await response.blob());
       const link = document.createElement("a"); link.href = artifactUrl; link.download = `wg-client-${id}.conf`; link.textContent = "Download client configuration"; target.append(link);
     } else if (kind === "qr") {
       const image = document.createElement("img"); image.src = `/api/v1/clients/${id}/qr`; image.alt = "WireGuard client configuration QR code"; image.className = "qr-image";
-      image.addEventListener("error", () => { image.remove(); target.textContent = "QR export is unavailable."; }, { once: true }); target.append(image);
+      image.addEventListener("error", () => { image.remove(); message("QR export is unavailable.", "danger"); }, { once: true }); target.append(image);
     } else {
       const response = await api("POST", `/api/v1/clients/${id}/enrollment-links`, { expires_in_seconds: 600 });
       const link = await json(response);
-      if (!response.ok) { target.textContent = "A one-time link could not be created."; return; }
+      if (!response.ok) { message("A one-time link could not be created.", "danger"); return; }
       const heading = document.createElement("p"); heading.textContent = `Share this link once. It reveals VPN credentials and expires ${new Date(link.expires_at * 1000).toLocaleString()}.`;
       const value = document.createElement("code"); value.className = "share-link"; value.textContent = link.share_url;
       const copy = document.createElement("button"); copy.type = "button"; copy.textContent = "Copy link"; copy.addEventListener("click", async () => { await navigator.clipboard.writeText(link.share_url); copy.textContent = "Copied"; });
@@ -319,12 +331,12 @@
     event.preventDefault(); clearBanner(); const data = form("login-form");
     const response = await api("POST", "/api/v1/login", { username: data.username, password: data.password });
     $("login-form").elements.password.value = "";
-    if (!response.ok) { message("Those credentials were not accepted."); return; }
+    if (!response.ok) { message("Those credentials were not accepted.", "danger"); return; }
     await loadConsole();
   }
 
   async function logout() {
-    await api("POST", "/api/v1/logout"); await showSignedOut(); message("You have signed out.");
+    await api("POST", "/api/v1/logout"); await showSignedOut(); message("You have signed out.", "info");
   }
 
   function main() {
@@ -339,11 +351,11 @@
     $("client-rows").addEventListener("click", (event) => { const button = event.target.closest("button[data-action]"); if (button) void mutateClient(button); });
     $("more-audit").addEventListener("click", () => loadAudit(false));
     document.querySelectorAll(".close-dialog").forEach((button) => button.addEventListener("click", closeClientDialog));
-    $("client-dialog").addEventListener("close", clearArtifact);
+    $("client-dialog").addEventListener("close", () => { clearArtifact(); moveBanner($("banner-slot")); });
     document.querySelectorAll("[data-artifact]").forEach((button) => button.addEventListener("click", () => artifact(button.dataset.artifact)));
     document.addEventListener("visibilitychange", () => { if (document.hidden) stopPolling(); else if (csrf) { void loadTelemetry(); startPolling(); } });
     window.addEventListener("focus", () => { if (!csrf) void loadConsole(); });
-    void loadConsole().catch(() => message("The management service could not be reached."));
+    void loadConsole().catch(() => message("The management service could not be reached.", "danger"));
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", main); else main();
