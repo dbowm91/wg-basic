@@ -1,0 +1,151 @@
+src/domain:
+auth.rs
+generation.rs
+identifiers.rs
+intent.rs
+interface_name.rs
+keys.rs
+mod.rs
+network.rs
+owner.rs
+secret.rs
+state.rs
+
+src/firewall:
+mod.rs
+nft.rs
+pf.rs
+planner.rs
+policy.rs
+service.rs
+service_darwin.rs
+
+src/http:
+api.rs
+assets
+assets.rs
+config.rs
+headers.rs
+mod.rs
+origin.rs
+ratelimit.rs
+readiness.rs
+response.rs
+serve.rs
+service.rs
+session_cookie.rs
+
+src/management:
+auth.rs
+coordinator.rs
+error.rs
+health.rs
+mod.rs
+runtime.rs
+worker.rs
+
+src/platform:
+darwin.rs
+linux.rs
+mod.rs
+
+src/product:
+allocator.rs
+enrollment.rs
+export.rs
+mod.rs
+model.rs
+service.rs
+
+src/protocol:
+auth.rs
+capability.rs
+client.rs
+dispatch.rs
+framing.rs
+mod.rs
+socket.rs
+wire.rs
+
+src/reconcile:
+darwin.rs
+linux.rs
+mod.rs
+model.rs
+planner.rs
+service.rs
+service_darwin.rs
+
+src/state:
+backup.rs
+diagnostic.rs
+error.rs
+inuse.rs
+migrations
+mod.rs
+model.rs
+projection.rs
+schema
+service_lease.rs
+store
+
+src/wireguard:
+backend.rs
+darwin.rs
+
+tests:
+architecture_guards.rs
+auth_sessions.rs
+authenticated_api.rs
+darwin_ipc.rs
+distribution_state_init.rs
+doctor_readonly.rs
+durable_backup.rs
+durable_owner.rs
+durable_restart.rs
+fixtures
+maintenance_rootful.rs
+management_http.rs
+network_control_e2e.rs
+network_reconcile.rs
+operational_events.rs
+privileged_protocol.rs
+product_management.rs
+product_management_rootful.rs
+release_signing_handoff.rs
+runtime_stability.rs
+service_e2e.rs
+service_footprint.rs
+service_lease.rs
+service_resource_limits.rs
+===
+     254 src/product/export.rs
+      34 src/product/mod.rs
+     819 src/product/model.rs
+    1185 src/product/service.rs
+     104 src/protocol/auth.rs
+     141 src/protocol/capability.rs
+      70 src/protocol/client.rs
+     212 src/protocol/dispatch.rs
+      74 src/protocol/framing.rs
+      37 src/protocol/mod.rs
+     577 src/protocol/socket.rs
+     326 src/protocol/wire.rs
+     364 src/reconcile/darwin.rs
+     459 src/reconcile/linux.rs
+      51 src/reconcile/mod.rs
+     275 src/reconcile/model.rs
+     773 src/reconcile/planner.rs
+     284 src/reconcile/service.rs
+      54 src/reconcile/service_darwin.rs
+     787 src/state/backup.rs
+     435 src/state/diagnostic.rs
+     157 src/state/error.rs
+      91 src/state/inuse.rs
+      78 src/state/mod.rs
+     110 src/state/model.rs
+     424 src/state/projection.rs
+     232 src/state/service_lease.rs
+     376 src/wireguard/backend.rs
+     734 src/wireguard/darwin.rs
+   34114 total

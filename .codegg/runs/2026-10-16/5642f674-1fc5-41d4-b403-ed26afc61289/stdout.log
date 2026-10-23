@@ -1,0 +1,6 @@
+src/http/service.rs:1088:    degraded_status: u16,
+src/http/service.rs:1092:    let (enforcement, degraded) = match receipt.enforcement {
+src/http/service.rs:1096:            ("degraded", Some(category.as_str()))
+src/http/service.rs:1099:    let code = if degraded.is_some() {
+src/http/service.rs:1100:        degraded_status
+src/http/service.rs:1106:        &serde_json::json!({"data":value,"generation":receipt.generation,"enforcement":enforcement,"degraded_category":degraded,"revocation_confirmed":degraded.is_none()}),

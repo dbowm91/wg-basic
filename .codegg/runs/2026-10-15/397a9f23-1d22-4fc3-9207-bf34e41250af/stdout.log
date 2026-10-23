@@ -1,0 +1,150 @@
+//! Bounded in-memory admission control for login attempts.
+//!
+//! # This runs *before* Argon2, and that ordering is the whole point
+//!
+//! Measured at ~300 ms per verification and 19 MiB (M002 closure), one worker
+//! thread can service roughly sixteen verifications inside the five-second reply
+//! deadline. Everything beyond that is already a `503`. A limiter placed *after*
+//! hashing would therefore let an attacker spend 300 ms of the appliance's CPU
+//! per request before anything refused it — which is a denial of service wearing
+//! a rate limit's clothes.
+//!
+//! So [`LoginLimiter::check`] is the first thing a login request does, before the
+//! command is admitted to the worker queue. `limiter_before_hashing` in
+//! `tests/authenticated_api.rs` proves the ordering by asserting that a
+//! saturated limiter produces `429` without any Argon2 work having occurred.
+//!
+//! # Shape: a token bucket with a bounded peer map
+//!
+//! Two independent limiters, because they defend against different things:
+//!
+//! * **Global** — caps the appliance's total verification rate. This is the one
+//!   that protects the worker thread, and it is what the ~300 ms figure sizes.
+//! * **Per transport peer** — stops one host from consuming the whole global
+//!   budget, which is what a distributed guess looks like from the listener's
+//!   point of view.
+//!
+//! The peer map is **bounded**. An unbounded map keyed by client address is a
+//! memory exhaustion vector all by itself: an attacker with many source
+//! addresses fills it and the process grows until it is killed. When the map is
+//! full the least-recently-touched entry is evicted, so the limiter degrades to
+//! approximately-global rather than to unbounded memory.
+//!
+//! # No persistent account lockout
+//!
+//! Counters live in memory and die with the process. A lockout persisted to disk
+//! would be a denial-of-service primitive: anyone who can reach the login form
+//! could permanently lock the operator out by guessing wrong a few times.
+
+use std::{
+    collections::HashMap,
+    net::{IpAddr, SocketAddr},
+    sync::Mutex,
+    time::{Duration, Instant},
+};
+
+/// The token-bucket shape used by both limiters.
+///
+/// `Eq`/`PartialEq` are hand-written because the refill rate is an `f64`: a
+/// derived `Eq` does not exist, and a derived `PartialEq` would compare a
+/// double exactly, which two arithmetic-equivalent rates need not satisfy.
+/// Only tests compare these, and they compare the meaningful fields.
+#[derive(Clone, Copy, Debug)]
+pub struct Bucket {
+    /// How much work is allowed in a full window.
+    pub capacity: u32,
+    /// How fast the bucket refills, as attempts per second.
+    pub refill_per_second: f64,
+}
+
+impl Bucket {
+    /// Builds a bucket with a whole-number refill rate.
+    pub fn per_second(capacity: u32, refill_per_second: u32) -> Self {
+        Self {
+            capacity,
+            refill_per_second: refill_per_second as f64,
+        }
+    }
+
+    /// Whether two buckets have the same shape.
+    pub fn same_shape(&self, other: &Self) -> bool {
+        self.capacity == other.capacity
+            && (self.refill_per_second - other.refill_per_second).abs() < f64::EPSILON
+    }
+
+    /// The smallest interval at which the bucket is fully refilled.
+    pub fn full_refill_interval(&self) -> Duration {
+        if self.refill_per_second <= 0.0 {
+            // A bucket that never refills is a permanent block, not a limiter.
+            // Callers construct these with a positive rate; this is the floor
+            // that keeps an arithmetic mistake from becoming a denial of service.
+            return Duration::from_secs(1);
+        }
+        Duration::from_secs_f64(self.capacity as f64 / self.refill_per_second)
+    }
+}
+
+/// What the limiter decided about one attempt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Admission {
+    /// Allowed, and how much of the bucket is left.
+    Allowed { remaining: u32 },
+    /// Refused. `retry_after` is what the `Retry-After` header will carry.
+    Refused { retry_after_seconds: u64 },
+}
+
+impl Admission {
+    /// Whether this attempt may proceed to Argon2.
+    pub fn is_allowed(&self) -> bool {
+        matches!(self, Self::Allowed { .. })
+    }
+}
+
+/// One peer's bucket.
+#[derive(Clone, Copy, Debug)]
+struct PeerBucket {
+    /// Fractional tokens available.
+    tokens: f64,
+    /// When this bucket was last used; drives eviction order.
+    last_seen: Instant,
+}
+
+/// Bounded login admission control.
+///
+/// Cheap to clone: every clone shares the same counters through a mutex, so
+/// cloning cannot widen the limit.
+#[derive(Debug)]
+pub struct LoginLimiter {
+    global: Bucket,
+    per_peer: Bucket,
+    max_peers: usize,
+    state: Mutex<LimiterState>,
+}
+
+#[derive(Debug)]
+struct LimiterState {
+    global_tokens: f64,
+    global_seen: Instant,
+    peers: HashMap<IpAddr, PeerBucket>,
+}
+
+impl LoginLimiter {
+    /// Builds a limiter.
+    ///
+    /// `max_peers` is the memory bound. It must be at least one; a zero bound
+    /// would mean no per-peer tracking at all, which is a configuration mistake
+    /// rather than a policy.
+    pub fn new(global: Bucket, per_peer: Bucket, max_peers: usize) -> Self {
+        let max_peers = max_peers.max(1);
+        Self {
+            global,
+            per_peer,
+            max_peers,
+            state: Mutex::new(LimiterState {
+                global_tokens: global.capacity as f64,
+                global_seen: Instant::now(),
+                peers: HashMap::with_capacity(max_peers.min(1024)),
+            }),
+        }
+    }
+

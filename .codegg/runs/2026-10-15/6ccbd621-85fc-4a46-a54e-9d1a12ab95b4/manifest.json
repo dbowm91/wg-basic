@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "run_id": "6ccbd621-85fc-4a46-a54e-9d1a12ab95b4",
+  "kind": "raw_shell",
+  "invocation": {
+    "command": "cargo clippy --all-targets --locked -- -D warnings 2>&1 | tail -n 60; echo \"CLIPPY_EXIT:${PIPESTATUS[0]}\"",
+    "argv": [
+      "sh",
+      "-c",
+      "cargo clippy --all-targets --locked -- -D warnings 2>&1 | tail -n 60; echo \"CLIPPY_EXIT:${PIPESTATUS[0]}\""
+    ]
+  },
+  "started_at": "2026-10-15T21:06:52.878876Z",
+  "completed_at": "2026-10-15T21:06:52.953446Z",
+  "status": "complete",
+  "workspace_root": "/Users/davidbowman/projects/wg-basic",
+  "cwd": "/Users/davidbowman/projects/wg-basic",
+  "backend": {
+    "family": "bash",
+    "detail": "raw_shell"
+  },
+  "risk": {
+    "level": "low",
+    "has_subprocess": true,
+    "has_git_mutation": false,
+    "has_destructive_mutation": false
+  },
+  "permissions": [],
+  "artifacts": [
+    {
+      "artifact_id": "705b914c-deb9-4b36-b02a-9302f0cc3fb9",
+      "kind": "stdout",
+      "relative_path": "stdout.log",
+      "mime_type": "text/plain",
+      "byte_length": 86,
+      "sha256": "679f4ec88fad72ded3d8c1a0b3642103f2927be4a0368cce2b0084484ba1f1f7",
+      "truncated": false,
+      "redacted": false,
+      "created_at": "2026-10-15T21:06:52.944625Z",
+      "safe_for_model": false
+    }
+  ],
+  "changes": [],
+  "planned_backend": "raw_shell",
+  "actual_backend": "raw_shell",
+  "ownership": "Caller",
+  "asset_provenance": {
+    "generation": 2,
+    "fingerprint": "27f640185cfad6aba107a7e3eb7ceff85c4eeb3d8f7fce8d98cc1c10b4e7d26f"
+  }
+}

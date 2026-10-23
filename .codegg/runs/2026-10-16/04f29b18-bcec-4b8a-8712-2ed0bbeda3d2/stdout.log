@@ -1,0 +1,12 @@
+build-bindings.toml
+consumer-validators.json
+distribution.toml
+github-policy.json
+github-template.json
+install-policy.toml
+install.ps1
+install.sh
+installer-presentation.json
+pack.toml
+qualification-bindings.toml
+workflow-shape.json

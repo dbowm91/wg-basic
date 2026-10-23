@@ -1,0 +1,6 @@
+src/main.rs:357:            Err("update check/run/recover is not supported on macOS in M001: no Darwin release target or trust root; see M006".into())
+---
+src/main.rs:290:        std::process::exit(2);
+src/main.rs:626:    std::process::exit(exit_code);
+src/main.rs:883:            std::process::exit(exit_code);
+src/main.rs:2253:            std::process::id(),

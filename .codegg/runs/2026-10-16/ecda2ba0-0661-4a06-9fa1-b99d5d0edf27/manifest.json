@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "run_id": "ecda2ba0-0661-4a06-9fa1-b99d5d0edf27",
+  "kind": "raw_shell",
+  "invocation": {
+    "command": "grep -rn \"exit.*0\\|exit(0)\" src/main.rs src/http/serve.rs src/operational.rs 2>/dev/null | grep -v \"test\\|assert\\|//\\|exit_code\\|exit(2)\" | head -10",
+    "argv": [
+      "sh",
+      "-c",
+      "grep -rn \"exit.*0\\|exit(0)\" src/main.rs src/http/serve.rs src/operational.rs 2>/dev/null | grep -v \"test\\|assert\\|//\\|exit_code\\|exit(2)\" | head -10"
+    ]
+  },
+  "started_at": "2026-10-16T02:06:34.281503Z",
+  "completed_at": "2026-10-16T02:06:34.290351Z",
+  "status": "complete",
+  "workspace_root": "/Users/davidbowman/projects/wg-basic",
+  "cwd": "/Users/davidbowman/projects/wg-basic",
+  "backend": {
+    "family": "bash",
+    "detail": "raw_shell"
+  },
+  "risk": {
+    "level": "low",
+    "has_subprocess": true,
+    "has_git_mutation": false,
+    "has_destructive_mutation": false
+  },
+  "permissions": [],
+  "artifacts": [],
+  "changes": [],
+  "planned_backend": "raw_shell",
+  "actual_backend": "raw_shell",
+  "ownership": "Caller",
+  "asset_provenance": {
+    "generation": 2,
+    "fingerprint": "3f460529ea76f722c42a807f6a0531c6c954180525ac19ae60e772c4d5179498"
+  }
+}

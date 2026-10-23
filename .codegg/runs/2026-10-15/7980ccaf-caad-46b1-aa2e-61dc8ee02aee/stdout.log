@@ -1,0 +1,137 @@
+        expected_uid: u32,
+    ) -> Result<Self, StateError> {
+        Self::with_expected_owner(path.as_ref(), OpenIntent::Reopen, expected_uid)
+    }
+
+    fn with_expected_owner(
+        path: &Path,
+        intent: OpenIntent,
+        expected_uid: u32,
+    ) -> Result<Self, StateError> {
+        let connection = schema::open_connection(path, intent, expected_uid)?;
+        if intent == OpenIntent::Initialize {
+            schema::seed_installation(
+                &connection,
+                &InstallationId::new(),
+                INITIAL_DESIRED_GENERATION,
+            )?;
+        }
+        // Checked after seeding, so "exactly one row" holds for a brand-new
+        // store and a missing installation row fails closed on reopen.
+        schema::enforce_singleton(&connection)?;
+        super::inuse::register(path);
+        Ok(Self {
+            path: path.to_path_buf(),
+            connection: Mutex::new(connection),
+        })
+    }
+
+    /// Opens an existing store **without** running any migration.
+    ///
+    /// Only for building a genuine historical fixture. Every production entry
+    /// point migrates on open, so a version-1 database could not otherwise be
+    /// populated with real rows before something upgraded it -- and a fixture
+    /// that jumped the boundary would not prove that a real upgrade preserves
+    /// data. This never runs in a shipped binary.
+    #[cfg(test)]
+    pub(crate) fn open_without_migrating(path: impl AsRef<Path>) -> Result<Self, StateError> {
+        let path = path.as_ref();
+        let connection = schema::open_connection_without_migrating(path, current_uid())?;
+        schema::enforce_singleton(&connection)?;
+        super::inuse::register(path);
+        Ok(Self {
+            path: path.to_path_buf(),
+            connection: Mutex::new(connection),
+        })
+    }
+
+    /// The schema version this database currently declares.
+    pub fn schema_version(&self) -> Result<i64, StateError> {
+        let connection = self.lock()?;
+        connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .map_err(StateError::database)
+    }
+
+    /// The path this store was opened from.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The single synchronization boundary every query crosses.
+    pub(crate) fn lock(&self) -> Result<MutexGuard<'_, Connection>, StateError> {
+        self.connection
+            .lock()
+            .map_err(|_| StateError::Corrupt("state store mutex poisoned"))
+    }
+}
+
+/// The uid the store refuses to share a database with.
+fn current_uid() -> u32 {
+    // The management role runs unprivileged; the store refuses a database or
+    // parent directory it does not own rather than widening access to it.
+    // Portable (M001): `geteuid` works on Linux and Darwin; the prior
+    // `/proc/self` metadata read was Linux-only.
+    nix::unistd::geteuid().as_raw()
+}
+====
+//! Process-wide accounting of which state databases this process has open.
+//!
+//! Restore is an offline, exclusive operation: it must never write into a
+//! database that a live [`StateStore`](super::store::StateStore) still owns.
+//! Within one process that is provable, because every store registers its path
+//! on open and unregisters it on drop.
+//!
+//! This is deliberately a *per-process* guarantee, not a host-wide one. Two
+//! independent wg-basic processes are outside its reach, which is exactly why
+//! restore also refuses to run unless the operator has stopped the management
+//! service.
+
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
+};
+
+fn open_databases() -> &'static Mutex<HashSet<PathBuf>> {
+    static OPEN: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+    OPEN.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Records that this process holds `path` open.
+pub(crate) fn register(path: &Path) {
+    if let Ok(mut open) = open_databases().lock() {
+        open.insert(path.to_path_buf());
+    }
+}
+
+/// Records that this process no longer holds `path` open.
+pub(crate) fn unregister(path: &Path) {
+    if let Ok(mut open) = open_databases().lock() {
+        open.remove(path);
+    }
+}
+
+/// Whether this process currently holds `path` open.
+///
+/// Normalizes the path first, so `/a/b` and `/a/./b` are recognized as the same
+/// database rather than looking like two unrelated files.
+pub(crate) fn is_open_in_this_process(path: &Path) -> bool {
+    let normalized = normalize(path);
+    open_databases()
+        .lock()
+        .map(|open| open.iter().any(|entry| normalize(entry) == normalized))
+        .unwrap_or(true)
+}
+
+/// Best-effort lexical normalization.
+///
+/// This deliberately does not resolve symlinks or touch the filesystem: it only
+/// removes `.` segments and collapses repeated separators so two spellings of
+/// one path compare equal.
+fn normalize(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            other => normalized.push(other.as_os_str()),

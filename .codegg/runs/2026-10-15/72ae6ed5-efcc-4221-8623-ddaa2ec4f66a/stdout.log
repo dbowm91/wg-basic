@@ -1,0 +1,35 @@
+=== architecture/testing-qualification darwin mentions ===
+architecture/testing-qualification.md:53:| `darwin_ipc` | none, macOS only | Native `getpeereid` IPC auth, framing, socket lifecycle, SIGTERM/restart against the real `netd` binary |
+architecture/testing-qualification.md:54:| `wireguard_darwin_live` | root, macOS only, `#[ignore]`d, needs `WGB_DARWIN_LIVE=1` + `WGB_WIREGUARD_GO` (+ `WGB_BINARY` for launchd) | Disposable-host fixtures only: loopback handshake/traffic/counters (v4+v6), route inventory preservation, PF anchor lifecycle, forwarding/PF cycle, launchd bootstrap/reinstall; `--test-threads=1` |
+architecture/testing-qualification.md:171:## macOS qualification mapping (`.github/workflows/macos-qualification.yml`)
+architecture/testing-qualification.md:175:| `gates-arm64` (`macos-15`) / `gates-intel` (`macos-15-intel`) | `cargo fmt --all -- --check`, `cargo check --all-targets --locked`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`, both Darwin target triples, MSRV check |
+architecture/testing-qualification.md:176:| `live-arm64` | Pinned-helper build (tag + commit + license verified) then the ignored `wireguard_darwin_live` target as root with `WGB_DARWIN_LIVE=1`: all five fixtures, evidence artifacts uploaded |
+architecture/testing-qualification.md:177:| `live-intel-tunnel` | Same helper build for `darwin/amd64`, then tunnel/route/platform-probe fixtures only (no launchd job on Intel) |
+architecture/privilege-boundary.md:5:`wg-basic netd` binds only a Unix-domain stream socket. It serves one connection at a time, with at most 16 queued connections, one bounded request per connection, and a two-second read/write timeout. On Linux it authenticates the kernel-reported peer UID with `SO_PEERCRED`; on macOS (M002) it uses the Apple-documented `getpeereid(3)` via the audited `nix::unistd::getpeereid` wrapper, rechecked on every connection, and accepted streams are forced to blocking mode so one slow peer occupies the server for at most the timeout on both OSes. It supports `ping`, `inspect_capabilities`, `observe_wireguard_device`, and `apply_wireguard_device`. The protocol uses JSON in a four-byte big-endian length frame capped at 64 KiB. Major protocol version and request ID are checked; malformed input is closed without reflecting request bytes.
+architecture/privilege-boundary.md:9:By default Linux netd authorizes its own effective UID and root, while macOS netd (M002) authorizes only its own effective UID with no root bypass; `--allow-uid UID` adds explicit management-service UIDs on both, and `--allow-user` resolves local account names. Root on macOS is rejected unless explicitly allowlisted. The protocol carries no UID/PID authorization fields. `serve` is the unprivileged management role: it hosts the authenticated HTTP API and embedded product UI, and reaches the durable store and netd only through its bounded worker. `reconcile` and `health` are one-shot management commands: `reconcile` opens the durable state store, projects the current desired generation, and submits it to netd over the authorized socket; `health` reports the same convergence state without contacting netd. None of these roles escalates privilege, mutates the kernel directly, or spawns netd — a missing or unprivileged `netd` is reported as an unavailable backend, never worked around locally. `doctor` asks netd for the capability snapshot. A dedicated management user should be supplied to netd with `--allow-uid` and granted access to the socket's group as needed.
+architecture/privilege-boundary.md:11:The snapshot reports the OS, architecture, effective UID/GID, runtime-directory safety, and — on Linux — whether `CAP_NET_ADMIN` appears in `/proc/self/status` plus the kernel release from `/proc`. On macOS there are no Linux capabilities (`cap_net_admin` is absent) and the kernel release comes from `uname`; Linux backend fields report `unavailable` while the Darwin WireGuard helper (M003), routes (M004), and PF/NAT (M005) remain unqualified. Namespace, WireGuard, and nftables capability fields remain `unknown` on Linux until their owning backends provide authoritative probes. Capability inspection does not create links/namespaces, load modules, change sysctls, or install firewall objects. WireGuard and link/address/route operations use typed Rust netlink backends. Firewall policy uses a typed protocol operation and a bounded direct `nft` subprocess; it does not invoke a shell or accept raw nft source. Forwarding writes are fixed to `/proc/sys/net/ipv4/ip_forward` and explicitly requested `/proc/sys/net/ipv6/conf/all/forwarding`.
+=== Cargo.toml version ===
+2:name = "wg-basic"
+3:version = "0.1.0"
+93:name = "wg-basic"
+=== release/trust README head ===
+# Release trust root and installer bootstrap
+
+By maintainer decision (2026-10-11) there is no production Minisign public
+key and none is planned: releases are checksums-only. No placeholder key
+is committed or trusted by production code. Release verification tests inject a
+separate fixture public key. Production self-update is permanently
+unavailable; every release requires a fresh install.
+
+The generated `install-exact.sh` is an integrity bootstrap: it is bound to one
+release tag and verifies the selected binary's exact size and SHA-256. The
+product `install.sh --version` path downloads that exact-version bootstrap over
+HTTPS and runs it as root. It is a lower-assurance convenience path; HTTPS and
+an embedded checksum do not authenticate the script or manifest. The wrapper
+prints this limitation and uses a fixed system `PATH` and private `/tmp`
+staging directory.
+
+Without a trust root there is no signature-authenticated installation path.
+The strongest available installation checks the live tag/source and artifact
+identity and passes the selected artifact's exact size and SHA-256 to the
+wrapper with a local candidate. The copy staged for root execution is

@@ -1,0 +1,13 @@
+src/http/serve.rs:14://! 4. Report readiness — including the degraded/fatal distinction, which an
+src/http/serve.rs:15://!    operator needs and `/healthz` deliberately withholds.
+src/http/serve.rs:244:    //    failure here and a degraded outcome return here; only a degraded one
+src/http/serve.rs:255:                "serve.degraded",
+src/http/serve.rs:291:        if startup_readiness.is_degraded() {
+src/http/serve.rs:292:            "degraded"
+src/http/serve.rs:304:        if startup_readiness.is_degraded() {
+src/http/serve.rs:316:    if startup_readiness.is_degraded() {
+src/http/serve.rs:318:            "serve.degraded",
+src/http/serve.rs:330:            "serve.degraded",
+src/http/serve.rs:619:        // `/healthz` is the *live* classification, and on this same run it says
+src/http/serve.rs:620:        // `degraded`: there is no recorded evidence that netd ever answered. A
+src/http/serve.rs:621:        // fresh install is therefore "ready at startup, degraded at runtime",

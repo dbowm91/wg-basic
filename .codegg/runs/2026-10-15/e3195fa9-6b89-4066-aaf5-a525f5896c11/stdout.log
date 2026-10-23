@@ -1,0 +1,30 @@
+=== README links exist? ===
+OK  docs/installation.md
+OK  docs/release-signing.md
+OK  docs/development.md
+OK  docs/operations-runbook.md
+OK  docs/state-backup-restore.md
+OK  docs/client-enrollment.md
+OK  architecture/overview.md
+OK  plans/registry.md
+=== registry references install? ===
+22:| `plans/adr/006-distribution-install-authenticity-and-update.md` | accepted Phase 10 release/install/authenticity/update architecture |
+36:wg-basic is a Linux-first, low-overhead WireGuard management appliance inspired by wg-easy's ease of use but canonically distributed as a small Rust binary/service installation rather than a Docker/Node runtime.
+47:Current production code state: **Network control and Phases 6–11 are technically closed. The authenticated product API and embedded UI provide server setup, client lifecycle, config/QR export, one-time enrollment, live telemetry, bounded audit history, operational diagnostics, safe maintenance/recovery, and a proven old/new database rollback contract.** Phase 10 is release-mechanically complete: native x86_64/aarch64 systemd install, signed-fixture update/recovery, state-preserving uninstall/reinstall, and guarded purge are qualified. Phase 11 dual-stack tunnel addressing, IPv6 forwarding/firewall ownership, client route policy/product surface, and dual-stack end-to-end qualification are strictly closed. Releases are checksums-only by maintainer decision (`v0.1.0` stable, unsigned); self-update is permanently fail-closed and every release needs a fresh install.
+76:| Distribution/install/update | closed (technical) | `plans/subsystems/distribution-install-update-roadmap.md` | M001–M005 closed; production release remains blocked on signing |
+96:| M005 forwarding, PF/NAT and Apple policy review | **blocked** (narrowed 2026-10-14; hosted live, run `38524007872`) | `plans/implementation/macos-native-server/005-forwarding-pf-nat-and-platform-policy.md`; closure `plans/closure/macos-native-server/005-status.md` — TN3165 decision evidence-backed; anchor/forwarding/PF-cycle qualified; effective NAT + v6 egress need admin-integrated host; installer MUST NOT auto-configure PF |
+98:| M006 launchd, installer, helper provenance and recovery | **blocked** (narrowed 2026-10-14; hosted live arm64, run `38524007872`) | `plans/implementation/macos-native-server/006-launchd-installation-distribution-and-recovery.md`; closure `plans/closure/macos-native-server/006-status.md` — bootstrap/KeepAlive/bootout/reinstall/DB-free qualified; reboot + post-reboot traffic need rebootable host |
+109:| Release readiness/security | R003 verified first-install trust | closed (repository engineering) at `1e034d0` | `plans/implementation/release-readiness/003-bootstrap-installer-trust-and-root-execution-boundary.md` | First signed install is R004 evidence |
+117:| Distribution/install/update | Production signing and public release | R004 operation | `plans/subsystems/release-readiness-security-roadmap.md` and R002/R004 checklists | Maintainer key custody, tag, signed draft, current CI, install check, and explicit publication authorization |
+119:The initial 2026-10-09 release-readiness review at `main@ff40f85` found shell interpolation in the generated workflow and no independent source/run proof. Eggpack M003k closed the producer finding at `1103a1affc62a210f1102a769457db80d9188bc8` (hosted run `38027470046`); it validates and resolves the release tag before checkout and freezes the selected commit. Consumer regeneration, security regressions, and settings evidence are recorded in the dated follow-up below. No production key was generated, installed or stored, and no release was staged or published.
+121:R001–R003 repository implementation pins Eggpack M003k and regenerates the workflow with pre-checkout canonical tag resolution, rejects injection payloads, records source-run/asset provenance, adds a signer preflight, hardens and labels the convenience installer, and documents the signed first-install process. Earlier hosted CI `38022851605` and Distribution Foundation `38022853831` passed at `bd7c085`; this follow-up has local qualification but awaits exact-head hosted checks. GitHub has protected `main` (zero required approvals; maintainer merges after green checks)/immutable `v*` tag rules, selected Actions allowlist/read-only default permissions, and a single-maintainer `release-staging` approval with self-approval allowed. R001–R003 close on exact-head hosted evidence; the first live staging, key/draft, and signed install are R004 operations. No production key was generated or installed; no release was staged or published. No second reviewer is required anywhere.
+148:  bootout, KeepAlive re-supervision, DB-free state, reinstall cycle
+161:- macOS M006 blocked 2026-10-13: installation scope at `8a063de`
+163:  explicit-root install/verify/state-preserving-uninstall fixtures; 4 unit
+164:  tests; no signing claims). Native install/boot/reboot/recovery
+168:  anchor model at `be077d1` (installation-scoped anchors, masquerade without
+171:  gateway traffic unqualified — shared privileged-host blocker; installer
+216:  `1e034d0`: authenticated install procedure, ordering regression,
+217:  truthful convenience-mode labels; first signed-install run is R004
+304:- Linux-native non-container canonical installation;
+333:Durable-state M001 is closed at `88f10f9` (CI run `37619412663`): hardened SQLite state store, installation identity, monotonic desired generation with CAS mutation, deterministic projection.

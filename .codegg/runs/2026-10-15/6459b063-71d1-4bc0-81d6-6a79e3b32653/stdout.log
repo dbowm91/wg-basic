@@ -1,0 +1,35 @@
+=== ServeConfig::new signature ===
+src/http/api.rs:187:    pub fn new(policy: Arc<OriginPolicy>) -> Self {
+src/http/api.rs:315:    pub fn new(
+src/http/api.rs:619:        headers.push_str("host", "127.0.0.1:8000").unwrap();
+src/http/api.rs:633:            "127.0.0.1:8000".parse().unwrap(),
+src/http/api.rs:674:            "http://127.0.0.1:8001",
+src/http/api.rs:675:            "https://127.0.0.1:8000",
+src/http/api.rs:690:                &[("origin", "http://127.0.0.1:8000")]
+src/http/api.rs:698:        let same_origin = [("origin", "http://127.0.0.1:8000")];
+src/http/api.rs:711:                        ("origin", "http://127.0.0.1:8000"),
+src/http/api.rs:726:                            ("origin", "http://127.0.0.1:8000"),
+src/http/api.rs:742:        for host in ["evil.example.com", "evil.example.com:8000", ""] {
+src/http/api.rs:1019:        let peer: SocketAddr = "127.0.0.1:40000".parse().unwrap();
+src/http/config.rs:56:pub const DEFAULT_BIND: &str = "127.0.0.1:8000";
+src/http/config.rs:247:    pub fn new(bind: impl fmt::Display) -> Result<Self, HttpError> {
+src/http/config.rs:370:        let config = ManagementHttpConfig::new("127.0.0.1:0").expect("port 0 is valid");
+src/http/headers.rs:68:pub const STRICT_TRANSPORT_SECURITY: &str = "max-age=63072000";
+src/http/origin.rs:20://! | Loopback HTTP (default) | `127.0.0.1:8000` | `http://127.0.0.1:8000` | host-only, **not** `Secure` |
+src/http/origin.rs:21://! | Loopback + HTTPS proxy | `127.0.0.1:8000` | `https://vpn.example.com` | `__Host-` prefix, `Secure` |
+src/http/origin.rs:22://! | Explicit non-loopback | `0.0.0.0:8000` | stated explicitly | as per origin scheme |
+src/http/origin.rs:251:    /// `Host: 127.0.0.1:45123` and a policy that only knows `127.0.0.1:0` would
+src/http/origin.rs:261:    /// default bind is `127.0.0.1:8000`.
+src/http/origin.rs:269:/// `Host: 127.0.0.1:evil` does not slip through as a bare `127.0.0.1`.
+src/http/origin.rs:316:    /// Builds the default policy: loopback only, `http://127.0.0.1:<port>`.
+src/http/origin.rs:318:    /// The allowed-host set contains both `127.0.0.1` and `[::1]` forms and the
+src/http/origin.rs:330:            allowed_hosts: allowed_hosts_for(&canonical, &["127.0.0.1", "[::1]"]),
+src/http/origin.rs:560:        let plain = CanonicalOrigin::parse("http://127.0.0.1:8000").unwrap();
+src/http/origin.rs:561:        assert_eq!(plain.port, 8000);
+src/http/origin.rs:562:        assert_eq!(plain.as_header_value(), "http://127.0.0.1:8000");
+src/http/origin.rs:563:        assert_eq!(plain.implied_host_header(), "127.0.0.1:8000");
+src/http/origin.rs:595:        let parsed = CanonicalOrigin::parse("http://[::1]:8000").unwrap();
+
+=== find ServeConfig def ===
+src/http/serve.rs:67:pub struct ServeConfig {
+src/http/serve.rs:78:impl ServeConfig {

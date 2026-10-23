@@ -1,0 +1,18 @@
+{
+  "status": "Passed",
+  "argv": [
+    "cargo",
+    "test"
+  ],
+  "cwd": "/Users/davidbowman/projects/wg-basic",
+  "duration_ms": 39741,
+  "exit_code": 0,
+  "summary": "610 passed",
+  "failures": [],
+  "timeout": null,
+  "log_dir": "/Users/davidbowman/projects/wg-basic/.codegg/test-runs/20261015T211306Z-7e9e6f85",
+  "stdout_log": "/Users/davidbowman/projects/wg-basic/.codegg/test-runs/20261015T211306Z-7e9e6f85/stdout.log",
+  "stderr_log": "/Users/davidbowman/projects/wg-basic/.codegg/test-runs/20261015T211306Z-7e9e6f85/stderr.log",
+  "output_truncated": true,
+  "scope_label": "bash-dispatch"
+}
