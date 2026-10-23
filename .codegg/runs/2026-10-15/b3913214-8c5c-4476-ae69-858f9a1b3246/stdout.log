@@ -1,0 +1,29 @@
+    }
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn retention_never_deletes_new_event_and_pages_the_retained_boundary() {
+        let scratch = Scratch::new();
+        let store = StateStore::initialize(scratch.0.join("state.db")).unwrap();
+        let generation = store.current_generation().unwrap();
+        let mut connection = store.lock().unwrap();
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        let mut newest = None;
+        for timestamp in 1..=(MAX_AUDIT_EVENTS + 5) {
+            newest = Some(
+                insert_audit_event(
+                    &transaction,
+                    None,
+                    ProductAudit {
+                        action: AuditAction::ClientUpdate,
+                        resource_kind: AuditResourceKind::Client,
+                        resource_id: None,
+====
+src/state/store/mod.rs:105:    fn with_expected_owner(
+src/state/store/mod.rs:161:    pub(crate) fn lock(&self) -> Result<MutexGuard<'_, Connection>, StateError> {

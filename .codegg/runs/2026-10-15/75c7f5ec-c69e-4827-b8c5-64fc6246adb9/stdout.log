@@ -1,0 +1,100 @@
+        &self,
+        desired: &DesiredManagedInterface,
+    ) -> Result<ReconcilePlanSummary, ReconcileError> {
+        desired.validate()?;
+        let observed = self
+            .backend
+            .observe(&desired.interface, &desired.owner_tag)?;
+        plan_managed_interface(desired, &observed)
+    }
+
+    pub fn apply(&self, desired: &DesiredManagedInterface) -> Result<ApplyReceipt, ReconcileError> {
+        desired.validate()?;
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| ReconcileError::BackendFailure)?;
+        apply_with_backend(desired, &self.backend)
+    }
+}
+
+pub(crate) trait ReconcileBackend {
+    fn observe(
+        &self,
+        interface: &InterfaceName,
+        owner_tag: &OwnerTag,
+    ) -> Result<ObservedManagedInterface, ReconcileError>;
+    fn apply(&self, interface: &InterfaceName, mutation: Mutation) -> Result<(), ReconcileError>;
+}
+
+fn apply_with_backend(
+    desired: &DesiredManagedInterface,
+    backend: &impl ReconcileBackend,
+) -> Result<ApplyReceipt, ReconcileError> {
+    let before = backend.observe(&desired.interface, &desired.owner_tag)?;
+    let plan = plan_execution(desired, &before)?;
+    if plan.mutations.is_empty() {
+        return Ok(ApplyReceipt {
+            interface: desired.interface.clone(),
+            status: ApplyStatus::NoChange,
+            planned_actions: Vec::new(),
+            completed_actions: 0,
+====
+        applied: StdMutex<usize>,
+    }
+
+    impl ReconcileBackend for FakeBackend {
+        fn observe(
+            &self,
+            _: &InterfaceName,
+            _: &OwnerTag,
+        ) -> Result<ObservedManagedInterface, ReconcileError> {
+            self.state
+                .lock()
+                .map(|state| state.clone())
+                .map_err(|_| ReconcileError::BackendFailure)
+        }
+
+        fn apply(&self, _: &InterfaceName, mutation: Mutation) -> Result<(), ReconcileError> {
+            let mut applied = self
+                .applied
+                .lock()
+                .map_err(|_| ReconcileError::BackendFailure)?;
+            *applied += 1;
+            if *applied == self.fail_once_at {
+                return Err(ReconcileError::BackendFailure);
+            }
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| ReconcileError::BackendFailure)?;
+            match mutation {
+                Mutation::AddAddress(address) => state.addresses.push(address),
+                Mutation::SetLinkUp(up) => state.admin_up = Some(up),
+                _ => return Err(ReconcileError::BackendFailure),
+            }
+            Ok(())
+        }
+    }
+====
+    /// Returns the commit result and the reconciliation outcome separately: a
+    /// committed database transaction does not mean the kernel converged.
+    pub fn commit_and_reconcile(
+        &self,
+        expected: DesiredGeneration,
+        update: impl FnOnce(&DesiredState) -> Result<DesiredState, StateError>,
+    ) -> Result<(DesiredGeneration, Option<ReconcileOutcome>), ManagementError> {
+        let committed = self.store.mutate(expected, update)?;
+        let mut coordinator = self
+            .coordinator
+            .lock()
+            .map_err(|_| ManagementError::Conflict)?;
+        coordinator.enqueue(committed.generation);
+        drop(coordinator);
+
+        let outcome = self.reconcile_current()?;
+        Ok((committed.generation, outcome))
+    }
+
+    /// Projects current health without contacting netd.
+    pub fn health(&self) -> ManagementHealth {

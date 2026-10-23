@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "run_id": "b0b6b00b-05c1-4001-8e88-6a66e9366805",
+  "kind": "raw_shell",
+  "invocation": {
+    "command": "echo \"=== README mtimes vs macOS milestones ===\" && stat -f \"%Sm %N\" README.md docs/development.md plans/closure/macos-native-server/00{3,4,5,6,7}-status.md src/main.rs 2>/dev/null; echo \"=== does registry mention macOS as roadmap ===\" && grep -n \"macos-native-server-roadmap\\|macOS\" plans/registry.md | head -20; echo \"=== docs mentioning macOS/Darwin ===\" && grep -rn -il \"darwin\\|macos\" docs/ README.md",
+    "argv": [
+      "sh",
+      "-c",
+      "echo \"=== README mtimes vs macOS milestones ===\" && stat -f \"%Sm %N\" README.md docs/development.md plans/closure/macos-native-server/00{3,4,5,6,7}-status.md src/main.rs 2>/dev/null; echo \"=== does registry mention macOS as roadmap ===\" && grep -n \"macos-native-server-roadmap\\|macOS\" plans/registry.md | head -20; echo \"=== docs mentioning macOS/Darwin ===\" && grep -rn -il \"darwin\\|macos\" docs/ README.md"
+    ]
+  },
+  "started_at": "2026-10-15T22:49:23.102601Z",
+  "completed_at": "2026-10-15T22:49:23.134227Z",
+  "status": "complete",
+  "workspace_root": "/Users/davidbowman/projects/wg-basic",
+  "cwd": "/Users/davidbowman/projects/wg-basic",
+  "backend": {
+    "family": "bash",
+    "detail": "raw_shell"
+  },
+  "risk": {
+    "level": "low",
+    "has_subprocess": true,
+    "has_git_mutation": false,
+    "has_destructive_mutation": false
+  },
+  "permissions": [],
+  "artifacts": [
+    {
+      "artifact_id": "d532df22-a606-4de8-ad56-f52cc38b0682",
+      "kind": "stdout",
+      "relative_path": "stdout.log",
+      "mime_type": "text/plain",
+      "byte_length": 3304,
+      "sha256": "ae0c138539b1506f0c6e2de5ee16fc1fcf4a507014f7e38c11539bd0523d28af",
+      "truncated": false,
+      "redacted": false,
+      "created_at": "2026-10-15T22:49:23.124278Z",
+      "safe_for_model": false
+    }
+  ],
+  "changes": [],
+  "planned_backend": "raw_shell",
+  "actual_backend": "raw_shell",
+  "ownership": "Caller",
+  "asset_provenance": {
+    "generation": 2,
+    "fingerprint": "27f640185cfad6aba107a7e3eb7ceff85c4eeb3d8f7fce8d98cc1c10b4e7d26f"
+  }
+}

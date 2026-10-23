@@ -1,0 +1,61 @@
+=== main.rs (serve/admin/netd/version) ===
+4:const DEFAULT_SOCKET: &str = "/run/wg-basic/netd.sock";
+6:/// The Phase 7 local administrator's login name.
+7:const DEFAULT_ADMIN_USERNAME: &str = "admin";
+12:    version = wg_basic::release::PACKAGE_VERSION,
+31:    /// Unprivileged management role: serves the loopback management HTTP surface
+34:    /// This role never escalates privileges and never spawns or elevates netd.
+56:        /// Binding off-host serves the management surface to the network. Phase 7
+57:        /// serves no TLS, so this is only acceptable behind a proxy the operator
+103:    /// Local administrator credentials.
+120:    /// Durable state inspection, backup, and restore.
+129:    /// Inspect or change the whole server's network availability.
+139:    /// Fail-closed authenticated update commands; mutation requires effective root.
+152:    /// Recover an interrupted update transaction.
+172:    /// Creates the local administrator, or resets an existing password.
+178:        /// The administrator's login name.
+191:    /// Prints the safe administrator projection: identity, enabled state, and
+213:    /// Emit the updater's secret-free typed compatibility identity as JSON.
+231:    /// management service first: a cross-process lease refuses an active serve
+297:/// `serve`, `admin`, `state`, `health`, `network status`, `doctor`, and
+298:/// `reconcile` execute with honest backend-unavailable degradation. `netd`,
+299:/// `system install/uninstall/status`, `update`, and mutating `network`
+303:/// - `serve` starts the loopback HTTP surface and records
+304:///   `BackendUnavailable` when netd is absent;
+305:/// - `reconcile`/`doctor` report unavailable instead of converging;
+323:        }) => serve(
+357:            Err("update check/run/recover is not supported on macOS in M001: no Darwin release target or trust root; see M006".into())
+377:        }) => run_darwin_doctor(
+390:        }) => run_darwin_netd(socket, allowed_uids, allowed_users),
+391:        Some(Command::Admin { action }) => run_admin_action(action),
+407:fn run_darwin_netd(
+418:        .map_err(|_| "could not resolve a configured local netd user".to_owned())?;
+420:    let server = SocketServer::bind(&socket, policy)
+421:        .map_err(|_| "could not safely bind the configured netd socket path".to_owned())?;
+427:        "netd.started",
+429:        "netd",
+436:    let result = server
+438:        .map_err(|_| "netd listener stopped after a runtime error".to_owned());
+440:        "netd.stopping",
+442:        "netd",
+456:/// M002 Darwin doctor: the same read-only state checks as Linux, a real
+457:/// `getpeereid`-authenticated netd probe, and Darwin forwarding checks that
+458:/// never read `/proc`. With M002 netd running, `InspectCapabilities` reports
+463:fn run_darwin_doctor(
+474:    let (mut checks, state_snapshot) = doctor_state_checks(&state);
+478:            checks.push(wg_basic::doctor::DoctorCheck::new(
+479:                wg_basic::doctor::DoctorCheckId::Netd,
+481:                    wg_basic::doctor::DoctorDisposition::Pass
+483:                    wg_basic::doctor::DoctorDisposition::Fail
+486:                    "netd answered over getpeereid-authorized IPC and reported its Darwin capabilities"
+488:                    "netd answered but its runtime-directory check failed"
+495:                        .cap_net_admin
+512:                    "review netd runtime-directory ownership/mode"
+516:        _ => checks.push(wg_basic::doctor::DoctorCheck::new(
+517:            wg_basic::doctor::DoctorCheckId::Netd,
+518:            wg_basic::doctor::DoctorDisposition::Unknown,
+519:            "netd capability state is unavailable",
+521:            "start netd and verify its socket path and peer permissions",
+529:        checks.push(wg_basic::doctor::DoctorCheck::new(
+530:            wg_basic::doctor::DoctorCheckId::NetworkOwnership,
+531:            wg_basic::doctor::DoctorDisposition::Unknown,

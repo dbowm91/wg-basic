@@ -1,0 +1,32 @@
+src/reconcile/service.rs:54:            .lock()
+src/reconcile/service.rs:235:                .lock()
+src/reconcile/service.rs:243:                .lock()
+src/reconcile/service.rs:251:                .lock()
+src/management/runtime.rs:335:            .lock()
+src/state/backup.rs:167:        let connection = self.lock()?;
+src/state/inuse.rs:26:    if let Ok(mut open) = open_databases().lock() {
+src/state/inuse.rs:33:    if let Ok(mut open) = open_databases().lock() {
+src/state/inuse.rs:45:        .lock()
+src/state/store/convergence.rs:29:        let connection = self.lock()?;
+src/state/store/convergence.rs:61:        let connection = self.lock()?;
+src/state/store/convergence.rs:82:        let connection = self.lock()?;
+src/state/store/convergence.rs:104:        let mut connection = self.lock()?;
+src/state/store/auth.rs:123:        let connection = self.lock()?;
+src/state/store/auth.rs:157:        let mut connection = self.lock()?;
+src/state/store/auth.rs:186:        let connection = self.lock()?;
+src/state/store/auth.rs:237:        let connection = self.lock()?;
+src/state/store/auth.rs:278:        let connection = self.lock()?;
+src/state/store/auth.rs:295:        let mut connection = self.lock()?;
+src/state/store/auth.rs:352:        let mut connection = self.lock()?;
+src/state/store/auth.rs:415:        let connection = self.lock()?;
+src/state/store/auth.rs:430:        let connection = self.lock()?;
+src/state/store/auth.rs:441:        let connection = self.lock()?;
+src/state/store/auth.rs:449:        let connection = self.lock()?;
+src/state/store/auth.rs:461:        let connection = self.lock()?;
+src/state/store/auth.rs:478:        let connection = self.lock()?;
+src/state/store/desired.rs:35:        let connection = self.lock()?;
+src/state/store/desired.rs:46:        let connection = self.lock()?;
+src/state/store/desired.rs:61:        let mut connection = self.lock()?;
+src/state/store/mod.rs:149:        let connection = self.lock()?;
+===POISON-HANDLING===
+src/state/store/product.rs:977:        let mut connection = store.lock().unwrap();

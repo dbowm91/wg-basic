@@ -1,0 +1,18 @@
+{
+  "scope": "API investigation: How does OpenAI Codex (the Codex CLI / coding agent) sandbox or isolate code execution on Windows? What specific Windows sandboxing primitives does it use — Windows Sandbox, Hyper-V isolation, WSL, AppContainer, job objects, restricted tokens? What are the known limitations and design decisions?. Examining interfaces, contracts, and integration patterns.",
+  "comparison_axes": [],
+  "source_classes": [
+    "Local"
+  ],
+  "exclusion_criteria": [
+    "Exclude vendored/generated code unless explicitly requested",
+    "Exclude test fixtures unless relevant to question"
+  ],
+  "stopping_conditions": [
+    "Budget limits reached (max 30 sources)",
+    "All requested comparison axes covered"
+  ],
+  "expected_outputs": [
+    "AgentAnswer"
+  ]
+}

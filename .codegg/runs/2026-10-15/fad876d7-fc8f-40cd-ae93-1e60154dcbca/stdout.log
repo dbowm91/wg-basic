@@ -1,0 +1,46 @@
+=== does docs/development.md have a 'local netd' anchor? ===
+1:# Development
+15:## macOS (Darwin) portability workflow (M001)
+23:# Native Apple Silicon build/test plus Intel compile (M001 floor: macOS 13+).
+48:## macOS privileged IPC (M002)
+68:## macOS hosted live qualification (M003–M006)
+102:## Local netd
+133:## Local administrator credentials
+152:## Serving the management surface
+181:### Behind a TLS-terminating reverse proxy
+237:## Durable ownership and restart fixtures
+276:## Doctor read-only namespace fixture
+289:## Operational maintenance fixtures
+309:## Phase 9 old/new upgrade rehearsal
+331:## Phase 7 service suites
+365:### The rootful service fixture
+386:### What the abort/resource cases actually prove
+405:## Release candidate qualification
+422:## Release workflow and signing trust checks
+462:### M004 updater qualification
+
+=== set_password_at / status_at definitions ===
+src/management/auth.rs:111:pub fn set_password_at(
+src/management/auth.rs:125:pub fn status_at(path: impl AsRef<std::path::Path>) -> Result<Option<AdminStatus>, AuthError> {
+
+=== does state init happen implicitly? ===
+src/management/auth.rs:111:pub fn set_password_at(
+src/management/auth.rs:116:    let store = open_or_initialize(path).map_err(|_| AuthError::StorageUnavailable)?;
+src/management/auth.rs:126:    let store = open_or_initialize(path).map_err(|_| AuthError::StorageUnavailable)?;
+src/management/auth.rs:135:/// initialize arm, `wg-basic admin set-password` failed on exactly the fresh
+src/management/auth.rs:142:fn open_or_initialize(
+src/management/auth.rs:146:    match StateStore::open(path) {
+src/management/auth.rs:148:        Err(crate::state::StateError::MissingParent { .. }) => StateStore::initialize(path),
+src/management/auth.rs:149:        Err(crate::state::StateError::DatabaseAlreadyExists { .. }) => StateStore::open(path),
+src/management/auth.rs:448:        let store = StateStore::initialize(dir.db()).unwrap();
+src/management/auth.rs:820:        // itself. It did not: both one-shot commands used `StateStore::open`,
+src/management/auth.rs:827:        let provisioned = set_password_at(&path, "admin", PASSWORD)
+src/management/auth.rs:839:        let reset = set_password_at(&path, "admin", "a different password").expect("reset");
+src/management/auth.rs:842:            AuthService::new(&StateStore::open(&path).unwrap())
+src/management/mod.rs:68:    set_password_at, status_at, AdminStatus, AuthError, AuthService, IssuedSession,
+src/management/runtime.rs:577:    match StateStore::open(path) {
+src/management/runtime.rs:580:            // A first start initializes the store; migrations run inside the
+src/management/runtime.rs:581:            // canonical initializer either way.
+src/management/runtime.rs:582:            StateStore::initialize(path)
+src/management/runtime.rs:584:        Err(StateError::DatabaseAlreadyExists { .. }) => StateStore::open(path),
+src/management/worker.rs:1410:        let store = StateStore::initialize(temp.db()).unwrap();

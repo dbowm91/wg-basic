@@ -1,0 +1,6 @@
+fc51146 macos(line): record hosted qualification dispositions for M003-M007
+a10b4c2 macos(qual): accept any answering echo target for the egress probe
+e43faf3 macos(qual): stage NAT file into the anchor instead of asserting refusal
+6ab4497 macos(qual): pin NAT-staging refusal instead of loading NAT rules
+dcf1e97 macos(qual): prove no-forwarding-without-attachment instead of NAT egress
+?? .codegg/

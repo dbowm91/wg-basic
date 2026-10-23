@@ -1,0 +1,13 @@
+src/main.rs:1:use clap::{Parser, Subcommand, ValueEnum};
+src/main.rs:29:#[derive(Subcommand)]
+src/main.rs:30:enum Command {
+src/main.rs:146:#[derive(Subcommand)]
+src/main.rs:147:enum UpdateCommand {
+src/main.rs:156:#[derive(Subcommand)]
+src/main.rs:157:enum SystemCommand {
+src/main.rs:170:#[derive(Subcommand)]
+src/main.rs:199:#[derive(Subcommand)]
+src/main.rs:200:enum StateCommand {
+src/main.rs:253:#[derive(Subcommand)]
+src/main.rs:254:enum NetworkCommand {
+src/main.rs:273:fn main() {

@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "run_id": "defe5623-8f4e-48bf-ab87-e377563d92a0",
+  "kind": "raw_shell",
+  "invocation": {
+    "command": "sed -n '100,160p' src/domain/auth.rs; echo ----; sed -n '1,100p' src/management/auth.rs",
+    "argv": [
+      "sh",
+      "-c",
+      "sed -n '100,160p' src/domain/auth.rs; echo ----; sed -n '1,100p' src/management/auth.rs"
+    ]
+  },
+  "started_at": "2026-10-15T21:15:32.618964Z",
+  "completed_at": "2026-10-15T21:15:32.642915Z",
+  "status": "complete",
+  "workspace_root": "/Users/davidbowman/projects/wg-basic",
+  "cwd": "/Users/davidbowman/projects/wg-basic",
+  "backend": {
+    "family": "bash",
+    "detail": "raw_shell"
+  },
+  "risk": {
+    "level": "low",
+    "has_subprocess": true,
+    "has_git_mutation": false,
+    "has_destructive_mutation": false
+  },
+  "permissions": [],
+  "artifacts": [
+    {
+      "artifact_id": "68769d27-db74-4538-bb18-2a5890bcf7f8",
+      "kind": "stdout",
+      "relative_path": "stdout.log",
+      "mime_type": "text/plain",
+      "byte_length": 6527,
+      "sha256": "1d09e91986ee329fb88e2789ac22f19ffefc3dfcca4ac6e4713fba41906c1f38",
+      "truncated": false,
+      "redacted": false,
+      "created_at": "2026-10-15T21:15:32.634932Z",
+      "safe_for_model": false
+    }
+  ],
+  "changes": [],
+  "planned_backend": "raw_shell",
+  "actual_backend": "raw_shell",
+  "ownership": "Caller",
+  "asset_provenance": {
+    "generation": 2,
+    "fingerprint": "27f640185cfad6aba107a7e3eb7ceff85c4eeb3d8f7fce8d98cc1c10b4e7d26f"
+  }
+}

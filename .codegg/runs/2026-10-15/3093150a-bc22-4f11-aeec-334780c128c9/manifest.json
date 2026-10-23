@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "run_id": "3093150a-bc22-4f11-aeec-334780c128c9",
+  "kind": "raw_shell",
+  "invocation": {
+    "command": "ls -la && echo \"--- src ---\" && ls src 2>/dev/null && echo \"--- rust-toolchain ---\" && cat rust-toolchain.toml 2>/dev/null && echo \"--- git status ---\" && git status --short",
+    "argv": [
+      "sh",
+      "-c",
+      "ls -la && echo \"--- src ---\" && ls src 2>/dev/null && echo \"--- rust-toolchain ---\" && cat rust-toolchain.toml 2>/dev/null && echo \"--- git status ---\" && git status --short"
+    ]
+  },
+  "started_at": "2026-10-15T22:48:24.908258Z",
+  "completed_at": "2026-10-15T22:48:24.945698Z",
+  "status": "complete",
+  "workspace_root": "/Users/davidbowman/projects/wg-basic",
+  "cwd": "/Users/davidbowman/projects/wg-basic",
+  "backend": {
+    "family": "bash",
+    "detail": "raw_shell"
+  },
+  "risk": {
+    "level": "low",
+    "has_subprocess": true,
+    "has_git_mutation": false,
+    "has_destructive_mutation": false
+  },
+  "permissions": [],
+  "artifacts": [
+    {
+      "artifact_id": "1b801768-9445-42c7-93e2-6bc7e1fe881b",
+      "kind": "stdout",
+      "relative_path": "stdout.log",
+      "mime_type": "text/plain",
+      "byte_length": 1675,
+      "sha256": "f3d3f270ebc924014a0d6d8963f65d503ec21b2f32538935d8cbedbb47baf312",
+      "truncated": false,
+      "redacted": false,
+      "created_at": "2026-10-15T22:48:24.935665Z",
+      "safe_for_model": false
+    }
+  ],
+  "changes": [],
+  "planned_backend": "raw_shell",
+  "actual_backend": "raw_shell",
+  "ownership": "Caller",
+  "asset_provenance": {
+    "generation": 2,
+    "fingerprint": "27f640185cfad6aba107a7e3eb7ceff85c4eeb3d8f7fce8d98cc1c10b4e7d26f"
+  }
+}

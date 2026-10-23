@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "run_id": "f55f06f6-8e16-419d-994a-97e809f657bf",
+  "kind": "raw_shell",
+  "invocation": {
+    "command": "ls bugs.md 2>&1; python3 - <<'EOF'\nimport os, re\nroot = \"src\"\npat = re.compile(r'\\.(unwrap|expect)\\(|panic!|unimplemented!|todo!|unreachable!|unsafe\\s*\\{|transmute|catch_unwind|mem::forget|ManuallyDrop|ptr::|ffi::')\nfor dp, dn, fns in os.walk(root):\n    for f in sorted(fns):\n        if not f.endswith(\".rs\"): continue\n        p = os.path.join(dp, f)\n        lines = open(p, errors=\"replace\").read().splitlines()\n        # find test module start lines\n        teststarts = set()\n        for i, l in enumerate(lines):\n            if re.search(r'#\\[cfg\\(test\\)\\]|mod tests?\\s*\\{', l): teststarts.add(i)\n        for i, l in enumerate(lines):\n            s = l.strip()\n            if s.startswith(\"//\"): continue\n            m = pat.search(l)\n            if m:\n                intest = any(t < i and (i - t) < 4000 for t in teststarts)  # rough\n                print(f\"{p}:{i+1}:{'TEST?' if intest else 'PROD?'}:{s[:150]}\")\nEOF",
+    "argv": [
+      "sh",
+      "-c",
+      "ls bugs.md 2>&1; python3 - <<'EOF'\nimport os, re\nroot = \"src\"\npat = re.compile(r'\\.(unwrap|expect)\\(|panic!|unimplemented!|todo!|unreachable!|unsafe\\s*\\{|transmute|catch_unwind|mem::forget|ManuallyDrop|ptr::|ffi::')\nfor dp, dn, fns in os.walk(root):\n    for f in sorted(fns):\n        if not f.endswith(\".rs\"): continue\n        p = os.path.join(dp, f)\n        lines = open(p, errors=\"replace\").read().splitlines()\n        # find test module start lines\n        teststarts = set()\n        for i, l in enumerate(lines):\n            if re.search(r'#\\[cfg\\(test\\)\\]|mod tests?\\s*\\{', l): teststarts.add(i)\n        for i, l in enumerate(lines):\n            s = l.strip()\n            if s.startswith(\"//\"): continue\n            m = pat.search(l)\n            if m:\n                intest = any(t < i and (i - t) < 4000 for t in teststarts)  # rough\n                print(f\"{p}:{i+1}:{'TEST?' if intest else 'PROD?'}:{s[:150]}\")\nEOF"
+    ]
+  },
+  "started_at": "2026-10-15T21:14:42.510289Z",
+  "completed_at": "2026-10-15T21:14:42.578673Z",
+  "status": "complete",
+  "workspace_root": "/Users/davidbowman/projects/wg-basic",
+  "cwd": "/Users/davidbowman/projects/wg-basic",
+  "backend": {
+    "family": "bash",
+    "detail": "raw_shell"
+  },
+  "risk": {
+    "level": "low",
+    "has_subprocess": true,
+    "has_git_mutation": false,
+    "has_destructive_mutation": false
+  },
+  "permissions": [],
+  "artifacts": [
+    {
+      "artifact_id": "710b6ad3-f53e-4430-b9ba-d63ec694c79e",
+      "kind": "stdout",
+      "relative_path": "stdout.log",
+      "mime_type": "text/plain",
+      "byte_length": 50000,
+      "sha256": "258f8b1103d1903776e37c9a27e0ab20d9ab3aadd93db168cab05507deecf06d",
+      "truncated": false,
+      "redacted": false,
+      "created_at": "2026-10-15T21:14:42.570721Z",
+      "safe_for_model": false
+    }
+  ],
+  "changes": [],
+  "planned_backend": "raw_shell",
+  "actual_backend": "raw_shell",
+  "ownership": "Caller",
+  "asset_provenance": {
+    "generation": 2,
+    "fingerprint": "27f640185cfad6aba107a7e3eb7ceff85c4eeb3d8f7fce8d98cc1c10b4e7d26f"
+  }
+}

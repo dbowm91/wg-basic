@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "run_id": "2fb5e2aa-334f-40c5-914c-0e8b35b3511f",
+  "kind": "raw_shell",
+  "invocation": {
+    "command": "grep -rn \"Healthz\\|healthz\" src/http/service.rs | grep -v \"test\\|//\\|assert\" | head -20",
+    "argv": [
+      "sh",
+      "-c",
+      "grep -rn \"Healthz\\|healthz\" src/http/service.rs | grep -v \"test\\|//\\|assert\" | head -20"
+    ]
+  },
+  "started_at": "2026-10-16T02:05:08.142076Z",
+  "completed_at": "2026-10-16T02:05:08.171419Z",
+  "status": "complete",
+  "workspace_root": "/Users/davidbowman/projects/wg-basic",
+  "cwd": "/Users/davidbowman/projects/wg-basic",
+  "backend": {
+    "family": "bash",
+    "detail": "raw_shell"
+  },
+  "risk": {
+    "level": "low",
+    "has_subprocess": true,
+    "has_git_mutation": false,
+    "has_destructive_mutation": false
+  },
+  "permissions": [],
+  "artifacts": [
+    {
+      "artifact_id": "d226b88f-5a71-4942-b91d-b789a5361005",
+      "kind": "stdout",
+      "relative_path": "stdout.log",
+      "mime_type": "text/plain",
+      "byte_length": 465,
+      "sha256": "1d1ffe752ccf8934a563de9fce67d9717697c47fff654856cdbf874def09d92c",
+      "truncated": false,
+      "redacted": false,
+      "created_at": "2026-10-16T02:05:08.161496Z",
+      "safe_for_model": false
+    }
+  ],
+  "changes": [],
+  "planned_backend": "raw_shell",
+  "actual_backend": "raw_shell",
+  "ownership": "Caller",
+  "asset_provenance": {
+    "generation": 2,
+    "fingerprint": "3f460529ea76f722c42a807f6a0531c6c954180525ac19ae60e772c4d5179498"
+  }
+}

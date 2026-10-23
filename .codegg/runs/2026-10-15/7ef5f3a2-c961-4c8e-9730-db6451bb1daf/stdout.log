@@ -1,0 +1,24 @@
+src/http/config.rs:26:pub const DEFAULT_MAX_CONNECTIONS: usize = 64;
+src/http/config.rs:29:pub const DEFAULT_MAX_IN_FLIGHT_REQUESTS: usize = 128;
+src/http/config.rs:32:pub const DEFAULT_MAX_HEADERS: usize = 32;
+src/http/config.rs:35:pub const DEFAULT_MAX_HEADER_BYTES: usize = 8 * 1024;
+src/http/config.rs:38:pub const DEFAULT_MAX_REQUEST_TARGET_BYTES: usize = 1024;
+src/http/config.rs:41:pub const DEFAULT_MAX_REQUEST_BODY_BYTES: u64 = 16 * 1024;
+src/http/config.rs:44:pub const MIN_BUF_SIZE: usize = 8 * 1024;
+src/http/config.rs:80:pub const DEFAULT_MAX_REQUESTS_PER_CONNECTION: u64 = 256;
+src/http/config.rs:125:            max_connections: DEFAULT_MAX_CONNECTIONS,
+src/http/config.rs:126:            max_in_flight_requests: DEFAULT_MAX_IN_FLIGHT_REQUESTS,
+src/http/config.rs:127:            max_headers: DEFAULT_MAX_HEADERS,
+src/http/config.rs:128:            max_header_bytes: DEFAULT_MAX_HEADER_BYTES,
+src/http/config.rs:129:            max_request_target_bytes: DEFAULT_MAX_REQUEST_TARGET_BYTES,
+src/http/config.rs:130:            max_request_body_bytes: DEFAULT_MAX_REQUEST_BODY_BYTES,
+src/http/config.rs:139:            max_requests_per_connection: DEFAULT_MAX_REQUESTS_PER_CONNECTION,
+src/http/ratelimit.rs:185:            .saturating_duration_since(state.global_seen)
+src/http/ratelimit.rs:202:        let peer_elapsed = now.saturating_duration_since(entry.last_seen).as_secs_f64();
+src/product/allocator.rs:89:            .checked_add(size - 1)
+src/product/allocator.rs:157:            if (low.saturating_sub(1)..=high.saturating_add(1)).contains(&value) {
+src/product/allocator.rs:243:        let mut candidate = network.checked_add(1).ok_or(AllocationError::Exhausted)?;
+src/product/allocator.rs:249:                candidate = candidate.checked_add(1).ok_or(AllocationError::Exhausted)?;
+src/management/worker.rs:209:pub const CLIENT_TELEMETRY_LIMIT: usize = 1_024;
+src/management/worker.rs:211:pub const AUDIT_PAGE_LIMIT: usize = 100;
+src/management/worker.rs:1037:                latest_handshake_age_seconds: latest.map(|time| observed_at.saturating_sub(time)),

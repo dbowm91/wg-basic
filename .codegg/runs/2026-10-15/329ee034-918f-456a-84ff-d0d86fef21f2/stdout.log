@@ -1,0 +1,19 @@
+src/state/schema/mod.rs:158:            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+src/state/schema/mod.rs:534:                    .prepare(&format!("SELECT name FROM pragma_table_info('{table}')"))
+src/state/schema/validation.rs:178:        .query_row(&format!("PRAGMA {name}"), [], |row| row.get(0))
+src/state/store/desired.rs:450:            .execute(&format!("DELETE FROM {table}"), [])
+src/state/store/product.rs:768:            .execute(&format!("DELETE FROM {table}"), [])
+===LOCK-UNWRAP===
+src/reconcile/service.rs:35:            mutation_lock: Mutex::new(()),
+src/reconcile/service.rs:269:            state: StdMutex::new(observed()),
+src/reconcile/service.rs:271:            applied: StdMutex::new(0),
+src/management/runtime.rs:69:            coordinator: std::sync::Mutex::new(ReconcileCoordinator::default()),
+src/state/inuse.rs:21:    OPEN.get_or_init(|| Mutex::new(HashSet::new()))
+src/state/store/mod.rs:124:            connection: Mutex::new(connection),
+src/state/store/mod.rs:143:            connection: Mutex::new(connection),
+src/state/store/product.rs:977:        let mut connection = store.lock().unwrap();
+src/aggregate.rs:244:            mutation_lock: Mutex::new(()),
+src/aggregate.rs:245:            accepted: Mutex::new(Accepted::default()),
+src/firewall/service.rs:31:            mutation_lock: Mutex::new(()),
+src/http/ratelimit.rs:143:            state: Mutex::new(LimiterState {
+src/main.rs:1626:    let signal = std::sync::Mutex::new(Some(signal));

@@ -1,0 +1,27 @@
+        });
+    }
+    // `trusted_schema` reports 0 when disabled. A connection that cannot express
+    // the setting is rejected rather than accepted with unknown behavior.
+    let trusted_schema: i64 = read_pragma(connection, "trusted_schema")?;
+    if trusted_schema != 0 {
+        return Err(StateError::PragmaNotApplied {
+            pragma: "trusted_schema",
+        });
+    }
+    Ok(())
+}
+
+fn read_pragma<T: rusqlite::types::FromSql>(
+    connection: &Connection,
+    name: &str,
+) -> Result<T, StateError> {
+    connection
+        .query_row(&format!("PRAGMA {name}"), [], |row| row.get(0))
+        .map_err(|_| StateError::PragmaNotApplied {
+            pragma: "unreadable",
+        })
+}
+====
+18:/// `PRAGMA synchronous` value for `FULL`.
+149:    // `PRAGMA synchronous` reports a numeric code: 0=OFF, 1=NORMAL, 2=FULL.
+178:        .query_row(&format!("PRAGMA {name}"), [], |row| row.get(0))

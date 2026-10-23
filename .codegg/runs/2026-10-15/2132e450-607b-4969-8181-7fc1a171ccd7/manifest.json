@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "run_id": "2132e450-607b-4969-8181-7fc1a171ccd7",
+  "kind": "raw_shell",
+  "invocation": {
+    "command": "echo \"=== run_admin_action / set-password ===\"; grep -n \"set-password\\|SetPassword\\|set_password\\|state init\\|StateInit\\|init\" src/main.rs | head -30; echo; echo \"=== serve default host/port ===\"; grep -n \"127.0.0.1\\|8000\\|bind\\|default_host\\|default_port\" src/main.rs | head -30",
+    "argv": [
+      "sh",
+      "-c",
+      "echo \"=== run_admin_action / set-password ===\"; grep -n \"set-password\\|SetPassword\\|set_password\\|state init\\|StateInit\\|init\" src/main.rs | head -30; echo; echo \"=== serve default host/port ===\"; grep -n \"127.0.0.1\\|8000\\|bind\\|default_host\\|default_port\" src/main.rs | head -30"
+    ]
+  },
+  "started_at": "2026-10-15T22:50:05.085289Z",
+  "completed_at": "2026-10-15T22:50:05.114947Z",
+  "status": "complete",
+  "workspace_root": "/Users/davidbowman/projects/wg-basic",
+  "cwd": "/Users/davidbowman/projects/wg-basic",
+  "backend": {
+    "family": "bash",
+    "detail": "raw_shell"
+  },
+  "risk": {
+    "level": "low",
+    "has_subprocess": true,
+    "has_git_mutation": false,
+    "has_destructive_mutation": false
+  },
+  "permissions": [],
+  "artifacts": [
+    {
+      "artifact_id": "f430c5ce-d04f-46ce-90c1-a699e93481f1",
+      "kind": "stdout",
+      "relative_path": "stdout.log",
+      "mime_type": "text/plain",
+      "byte_length": 2387,
+      "sha256": "651168fe352214ce208ae7754278f5c9314774b90ed2f621269a2683836e51b7",
+      "truncated": false,
+      "redacted": false,
+      "created_at": "2026-10-15T22:50:05.106141Z",
+      "safe_for_model": false
+    }
+  ],
+  "changes": [],
+  "planned_backend": "raw_shell",
+  "actual_backend": "raw_shell",
+  "ownership": "Caller",
+  "asset_provenance": {
+    "generation": 2,
+    "fingerprint": "27f640185cfad6aba107a7e3eb7ceff85c4eeb3d8f7fce8d98cc1c10b4e7d26f"
+  }
+}
