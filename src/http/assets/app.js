@@ -303,6 +303,11 @@
     await refreshAfterMutation(response, result, deleting || disabling);
   }
 
+  function revealArtifact(target) {
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    target.scrollIntoView({ block: "center", behavior: reduced ? "auto" : "smooth" });
+  }
+
   async function artifact(kind) {
     const id = $("edit-form").elements.client_id.value; if (!id) return;
     clearBanner(); clearArtifact(); const target = $("artifact"); setVisible("artifact", true);
@@ -311,9 +316,12 @@
       if (!response.ok) { message("Configuration export is unavailable.", "danger"); return; }
       artifactUrl = URL.createObjectURL(await response.blob());
       const link = document.createElement("a"); link.href = artifactUrl; link.download = `wg-client-${id}.conf`; link.textContent = "Download client configuration"; target.append(link);
+      revealArtifact(target);
     } else if (kind === "qr") {
       const image = document.createElement("img"); image.src = `/api/v1/clients/${id}/qr`; image.alt = "WireGuard client configuration QR code"; image.className = "qr-image";
+      image.addEventListener("load", () => revealArtifact(target), { once: true });
       image.addEventListener("error", () => { image.remove(); message("QR export is unavailable.", "danger"); }, { once: true }); target.append(image);
+      if (image.complete && image.naturalWidth > 0) revealArtifact(target);
     } else {
       const response = await api("POST", `/api/v1/clients/${id}/enrollment-links`, { expires_in_seconds: 600 });
       const link = await json(response);
@@ -324,6 +332,7 @@
       const revoke = document.createElement("button"); revoke.type = "button"; revoke.className = "secondary"; revoke.textContent = "Revoke link";
       revoke.addEventListener("click", async () => { const result = await api("DELETE", `/api/v1/enrollment-links/${link.capability_id}`); if (result.ok) { value.textContent = "Link revoked"; copy.disabled = true; revoke.disabled = true; } });
       target.append(heading, value, copy, revoke);
+      revealArtifact(target);
     }
   }
 
