@@ -160,7 +160,9 @@ tunnel. It is selected in the server setup — `mode` is `routed_lan` and
 `destination_prefixes` names the approved prefixes, in the management UI's
 "Network policy mode" and "Routed LAN destinations" fields, or in the
 `POST /api/v1/setup` body — and it is implemented on macOS only. A routed-LAN
-policy never masquerades. The internet-exit gateway mode is refused on macOS.
+policy never masquerades. The internet-exit gateway mode is a different
+contract, with its own PF ownership and its own operator procedure, and it is
+described below.
 
 The product does not configure the host for a routed LAN. It observes the host,
 reports what it observed, and refuses to converge while a prerequisite is
@@ -332,6 +334,155 @@ verdict names a different missing prerequisite:
 The rendered rules name the tunnel device and the egress interface explicitly,
 so they have to be reinstalled when the helper is renumbered and its `utun`
 device changes.
+
+## Internet-eit gateway on macOS
+
+The gateway mode carries the tunnel's IPv4 traffic out to the internet with
+the host's own address as the source, and it routes IPv6 without translating
+it. It is an **advanced-administrator opt-in** under Apple TN3165: you attach
+the installation's anchor to your own PF configuration, and PF and the host's
+forwarding are your switches, not the product's. General consumer macOS
+gateway support is not claimed and not advertised.
+
+The mode is selected in the server setup — `mode` is `gateway` — and it is
+implemented on macOS only. The gateway's own packet-level qualification is
+separate work and is not finished; what this section gives you is the
+procedure, and the procedure is what makes the mode work.
+
+### 1. Create the anchor file first
+
+The anchor is named after the installation, and `wg-basic state status` prints
+that installation id:
+
+```sh
+wg-basic state status --state /var/db/wg-basic/state.db
+```
+
+The anchor's file is `/etc/pf.anchors/wg-basic-v1-<installation-id>`. Create
+it **before** you add the `load anchor` line:
+
+```sh
+sudo touch /etc/pf.anchors/wg-basic-v1-<installation-id>
+```
+
+This is not optional. With the `load anchor` line in place and the file
+missing, `pfctl -f /etc/pf.conf` **fails**:
+
+```text
+No such file or directory
+cannot open the main config file!
+pf rules not loaded
+```
+
+and the kernel keeps the previous ruleset, so the host's whole packet-filter
+configuration goes stale — not just this installation's anchor. An empty file
+is enough; the product writes the rules into it afterwards.
+
+That path is the product's: it writes the file whole when it installs the
+anchor's rules, so it must not be a file you also manage as an operator
+filter of your own.
+
+### 2. Add the three lines to your own `/etc/pf.conf`
+
+```text
+nat-anchor "wg-basic-v1-<installation-id>" all
+anchor "wg-basic-v1-<installation-id>" all
+load anchor "wg-basic-v1-<installation-id>" from "/etc/pf.anchors/wg-basic-v1-<installation-id>"
+```
+
+**The placement matters.** PF requires the rules of one ruleset to appear in
+the order *options, normalization, queueing, translation, filtering*.
+
+- The `nat-anchor` line goes in the ruleset's **translation** section —
+  before the stock `anchor "com.apple/*"` line.
+- The `anchor` line and the `load anchor` line go at the **end**, in the
+  filtering section.
+
+Appending all three to the end of `/etc/pf.conf` makes the main ruleset fail
+to load:
+
+```text
+/etc/pf.conf:29: Rules must be in order: options, normalization, queueing, translation, filtering
+pf rules not loaded
+```
+
+The load exits 1 and the kernel keeps the previous ruleset, so the host's
+whole packet-filter configuration is then stale. Load the configuration once
+the lines are in place:
+
+```sh
+sudo pfctl -f /etc/pf.conf
+```
+
+### 3. Enable the host's forwarding
+
+The host's global IPv4 forwarding has to be on, and IPv6 forwarding too if the
+policy names IPv6. Those switches are shared with everything else that routes
+packets on the machine, so wg-basic **reads** them (`net.inet.ip.forwarding`,
+`net.inet6.ip6.forwarding`) and **reports** them, and it **never writes
+them**. Enable them in the host's own configuration — `/etc/sysctl.conf` for
+a setting that must survive a reboot, or `sysctl -w` for the current boot:
+
+```sh
+sudo sysctl -w net.inet.ip.forwarding=1
+sudo sysctl -w net.inet6.ip6.forwarding=1
+```
+
+### 4. Enable PF
+
+PF has to be enabled for the anchor to have any effect, and the administrator
+enables it:
+
+```sh
+sudo pfctl -e
+```
+
+wg-basic never enables or disables PF and never toggles it globally. Read the
+state with `sudo pfctl -s info`.
+
+### 5. Read the verdict
+
+The doctor's `gateway` check appears when the plan carries a gateway verdict,
+and its verdict is per prerequisite:
+
+| Verdict | What doctor reports | What to do |
+|---|---|---|
+| `ready` | the gateway prerequisites are in place | none |
+| `forwarding_disabled` | host forwarding is not enabled for a family this policy requires | enable it through host configuration |
+| `attachment_missing` | the administrator's PF configuration does not invoke the installation anchor in both rule classes | create the anchor file, add the three lines in the two sections, and reload |
+| `filter_drift` | the managed anchor's filter rules do not match the rendered policy | remove the foreign rules; wg-basic never repairs a drifted anchor by guessing |
+| `nat_drift` | the managed anchor's NAT rules do not match the rendered policy | remove the foreign translation rules |
+| `tunnel_unavailable` | the managed tunnel is not up, so its anchor cannot be proven | start the managed network, then rerun doctor |
+| `apply_refused` | the host's packet filter could not be read | run doctor with the privileges required to read the host's packet filter |
+
+The `attachment_missing` verdict names the three lines and the file that has
+to exist, so the remedy is in the check itself:
+
+```sh
+wg-basic doctor --state /var/db/wg-basic/state.db \
+  --socket /var/run/wg-basic/netd.sock --json \
+  | jq -r '.checks[] | select(.id == "gateway")'
+```
+
+### What the egress looks like
+
+IPv4 leaves the host with a **translated source**: the far side sees the
+host's own address, not the tunnel pool address. IPv6 is **routed and never
+NAT66** — the far side sees the client's own IPv6 address.
+
+### The teardown
+
+Disabling the managed network empties the anchor's rules in both rule classes
+and rewrites the anchor file to its marker line alone. The file is left in
+place on purpose, so your `load anchor` line keeps resolving; a removed file
+would make your next `pfctl -f /etc/pf.conf` fail outright.
+
+When you decommission the installation, remove your three lines from
+`/etc/pf.conf` and reload:
+
+```sh
+sudo pfctl -f /etc/pf.conf
+```
 
 ## When the helper dies
 

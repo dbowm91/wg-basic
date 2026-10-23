@@ -37,8 +37,8 @@ other platform.
 The Linux nftables backend forwards to any destination, so it **refuses** a
 routed-LAN policy with `FirewallError::Unsupported` instead of applying a
 bounded policy as an unbounded one. The Darwin service implements the
-host-only and the routed-LAN contracts, and still refuses the gateway mode,
-which is a different contract with a different filter and NAT surface.
+host-only and the routed-LAN contracts, and the gateway mode is a third
+contract of its own, with a different filter and NAT surface.
 
 ## nftables boundary
 
@@ -81,11 +81,13 @@ honest:
 2. it **reports** the host's global forwarding state, which is host-global
    state this product does not own and never changes.
 
-Nothing in the Darwin path writes PF state, forwarding sysctls, or host
+Nothing in the **host-only** path writes PF state, forwarding sysctls, or host
 routes. The read-only `pfctl` observation backend landed with the routed-LAN
-corrective; the product still never writes PF state, and any PF write path
-stays behind an explicit distribution decision. The service's second
-contract — the routed LAN — is described below.
+corrective, and the host-only contract still never writes PF state. The
+service's second contract — the routed LAN — is described below, and it is
+free of PF writes as well, because its filter is operator-managed. The third
+contract — the administrator-attached gateway — is the one mode in which the
+product writes PF state, and its scope is stated below.
 
 ## Darwin routed-LAN contract (C003)
 
@@ -174,10 +176,10 @@ matched and the state flags it applied, and prints them (`pass in on utun0
 inet from 10.77.0.0/24 to 10.20.20.0/24 flags S/SA keep state`). An operator
 who installed exactly the reported rules must not be told the filter drifted.
 
-### The read-only `pfctl` observation boundary
+### The `pfctl` boundary
 
-`src/firewall/pfctl.rs` is the only place the Darwin product observes the
-host's packet filter. It is bounded and read-only:
+`src/firewall/pfctl.rs` is the only place the Darwin product touches the
+host's packet filter. Its observation half is bounded and read-only:
 
 - it runs `/sbin/pfctl` with fixed argument vectors only — `-s rules`, `-s
   nat`, and `-a <anchor> -s rules`;
@@ -189,14 +191,20 @@ The observation answers two different questions: the parent rulesets say
 whether the managed anchor is attached at all, and the anchor's own content
 says whether the attached rules are the ones this policy needs.
 
+The same module carries the gateway mode's bounded apply path. It is scoped
+to the installation's own anchor and the installation's own file, and it is
+described under *Darwin gateway contract (C004)* below. It never loads the
+root ruleset, never flushes a table, never edits `/etc/pf.conf`, and never
+enables or disables PF.
+
 ## Darwin PF attachment verification (C007)
 
 The PF model in `src/firewall/pf.rs` is a **pure** module: it renders the
 installation-scoped anchor's rules, digests them for drift detection, and
 verifies that an administrator's parent configuration actually attaches the
 anchor. It performs no I/O, spawns nothing, and mutates no host state; the
-live `pfctl` observation lives in `src/firewall/pfctl.rs`, which is strictly
-read-only.
+live `pfctl` observation lives in `src/firewall/pfctl.rs`, whose observation
+half is strictly read-only.
 
 Attachment verification is **per rule class and token-exact**:
 
@@ -220,3 +228,130 @@ anchor that invokes the managed anchor (the positive case), a parent that
 invokes a longer name (the collision case), the host's own invocations, and
 the uninvoiced main ruleset — and asserts that the fixture leaves the main
 ruleset exactly as it found it.
+
+## Darwin gateway contract (C004)
+
+The gateway mode is the one mode in which the product writes to the host's
+packet filter, and the write is deliberately narrow: the product owns **one**
+installation-scoped anchor and **one** anchor file, and nothing else. It is an
+advanced-administrator opt-in under Apple TN3165 — general consumer macOS
+gateway support is not claimed and not advertised.
+
+The PF behaviour stated here was **measured on a disposable macOS guest on
+2026-10-23**. The packet-level qualification — an IPv4 peer whose source is
+translated at the far side, and an IPv6 peer whose source is not — is C004's
+own evidence work and is **not closed** at the time of writing. What follows
+is the contract, the ownership, the mechanism, and the operator procedure;
+it claims no packet evidence.
+
+### What the product owns
+
+- **One anchor**, named `wg-basic-v1-<installation-id>`. The name is derived
+  from the installation identity and is never chosen by a caller.
+- **One anchor file**, `/etc/pf.anchors/<anchor>`. The path is derived from
+  the anchor's own name and is never caller-supplied.
+- **Nothing else.** The product writes neither `/etc/pf.conf` nor any foreign
+  anchor, and it never loads the root ruleset.
+
+The administrator's parent invokes the anchor in **both** rule classes: the
+filter table's parent and the NAT table's parent, each by its own rule. A
+filter-only parent does not satisfy a masquerading policy, and the
+verification described under *Darwin PF attachment verification (C007)* above
+says so exactly. The parent's `load anchor` line populates **both** of the
+anchor's rulesets, so the administrator's own reload of `/etc/pf.conf`
+restores both classes without the product re-loading them.
+
+### The install and the removal
+
+The install is one invocation:
+
+```text
+pfctl -a <anchor> -f /etc/pf.anchors/<anchor>
+```
+
+It loads the file into the anchor's **filter and NAT** rulesets. The **root
+ruleset is byte-identical before and after** — `pfctl -s rules` and `pfctl -s
+nat` are unchanged — no table is flushed, and PF is not toggled.
+
+The removal is two invocations, and **both** are required:
+
+```text
+pfctl -a <anchor> -F rules
+pfctl -a <anchor> -F nat
+```
+
+`-F rules` alone leaves the **NAT** rules loaded. PF keeps a loaded anchor's
+rules across `pfctl -f` and `pfctl -F all`, so emptying the anchor's own
+rules is the only way to remove them; a removal that empties only the filter
+class leaves a translation rule in effect on the host.
+
+A **failed load is fail-closed**: `pfctl` exits non-zero, prints `pf rules not
+loaded`, and the anchor's existing filter and NAT content is left intact.
+`pfctl` also prints `Use of -f option, could result in flushing of rules
+present in the main ruleset added by the system at startup.` on stderr for
+**every** load, including an anchor-scoped one. It is not an error — the exit
+status is 0 and the root ruleset is provably preserved — so it is never
+reported as a refusal.
+
+### Rule order inside the anchor file
+
+PF requires the rules of one ruleset to appear in the order *options,
+normalization, queueing, translation, filtering*. A `nat` rule must precede
+any `pass`/`block` rule in the same file; a file in the wrong order is refused
+with `Rules must be in order: options, normalization, queueing, translation,
+filtering` and exit 1. The product's anchor file therefore carries its
+**translation rules first**, because a renderer that emitted the filtering
+rules first would produce a rule set that cannot be installed at all.
+
+### An absent anchor is not an emptied one
+
+macOS signals an anchor that does not exist with **exit 0** and
+`pfctl: DIOCGETRULES: Invalid argument` on stderr, so the exit status alone
+cannot tell an absent anchor from an emptied one — the message is the only
+signal. The two are different facts: an absent anchor means the
+administrator has not installed the managed anchor, and an emptied one means
+the installed rules were removed.
+
+### Ownership is provable from the host's state
+
+The anchor file the product writes carries a marker comment that the product
+writes and recognises:
+
+```text
+# wg-basic-v1 managed anchor for installation <installation-id>
+```
+
+It is a comment, so it changes no rule and no rule digest, and it is what
+makes the file's ownership provable from the host's state alone. The
+routed-LAN mode's filter belongs to the administrator and carries no marker,
+so the product never removes it — it reports the residue instead.
+
+### The teardown keeps the administrator's attachment resolvable
+
+The teardown empties the anchor's rules in **both** classes and **rewrites the
+anchor file to its marker line alone** rather than removing it. The
+administrator's `load anchor` line names that file, and a missing file makes
+the next `pfctl -f /etc/pf.conf` fail outright — which would break the host's
+whole packet-filter configuration, not just this installation's anchor. PF
+never destroys an anchor object: `pfctl -s Anchors` enumerates every anchor
+object in the kernel — 62 on the disposable guest, including ones that are
+not attached to the main ruleset — and an anchor object is only ever emptied,
+never removed. "The managed anchor's removal" can therefore only ever mean
+the anchor's **rules**, and the file has to survive as a valid, empty rules
+file for the administrator's `load anchor` line to keep resolving.
+
+### What the product never does
+
+The gateway mode does not widen the product's PF ownership beyond the anchor
+it owns. It never:
+
+- loads the root ruleset;
+- flushes a table;
+- enables or disables PF, or toggles it globally;
+- takes or restores the global forwarding switches — they are host-global and
+  shared with everything else on the machine, so the product reads and reports
+  them and never writes them (ADR-007);
+- writes `/etc/pf.conf`, or any foreign anchor.
+
+Every `pfctl` invocation is a fixed argument vector to the fixed system path
+`/sbin/pfctl`, with no shell, a bounded output, and a bounded runtime.

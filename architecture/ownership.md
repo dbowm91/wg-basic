@@ -138,3 +138,73 @@ two devices must never carry the same durable proof.
 The asymmetry is deliberate. Failing closed is right when a resource might
 belong to somebody else, and refusing to recreate a tunnel whose helper died
 would leave the installation unable to bring it back at all.
+
+## Darwin PF ownership (C004)
+
+The Darwin host-only and routed-LAN contracts own **no** PF state: the first
+refuses everything that would need it, and the second observes the host's
+filter without writing it. The gateway contract owns exactly one PF resource:
+its own installation-scoped anchor, and the file that anchor is loaded from.
+
+### The anchor file is a managed resource
+
+| Property | Value |
+|---|---|
+| Anchor name | `wg-basic-v1-<installation-id>`, from the installation identity |
+| Anchor file | `/etc/pf.anchors/<anchor>`, from the anchor's own name |
+| Ownership marker | the file's first line, written by the product |
+| Ownership proof | that marker line, read from the host's state |
+
+The marker is:
+
+```text
+# wg-basic-v1 managed anchor for installation <installation-id>
+```
+
+The name and the path are both derived, never caller-supplied: there is no
+API through which a caller could name another installation's anchor, a path
+outside the anchor directory, or a foreign anchor. Two installations on one
+host therefore never share an anchor.
+
+The marker is what makes the ownership **provable from the host's state**,
+which matters because the product removes resources. It is a comment, so it
+changes no rule and no rule digest, and it is the product's own line, written
+and recognised by the product. A file that does not carry the marker is not
+the product's file: the routed-LAN mode's filter belongs to the administrator
+and carries no marker, so the product never removes it and reports it as
+residue instead (`routed_lan_filter_residue_observed`). The same rule applies
+inside the managed anchor — rules the product did not install are reported as
+`managed_anchor_residue_observed` and left alone.
+
+The teardown empties the anchor's rules in both rule classes and rewrites the
+file to its marker line alone. The file is deliberately **not** removed: the
+administrator's `load anchor` line names it, and a missing file makes the next
+`pfctl -f /etc/pf.conf` fail outright, which would break the host's whole
+packet-filter configuration rather than this installation's anchor.
+
+### The receipt
+
+The gateway's firewall receipt records the install and the removal as the
+action kinds `install_managed_pf_anchor` and `remove_managed_pf_anchor`. The
+install kind is the macOS gateway mode's **only** PF write: it names the
+installation's own anchor and the installation's own file, and it never loads
+the root ruleset and never touches a foreign anchor. The receipt's warnings
+carry the residue findings by name, so a receipt says what was left behind
+rather than only that something converged.
+
+### The administrator's parent is foreign state
+
+The `anchor`, `nat-anchor`, and `load anchor` lines in the administrator's
+`/etc/pf.conf` are the **administrator's**. The product never writes them,
+never edits them, and never reorders them; they are the attachment the
+product reads to decide whether its own anchor is in effect, in both rule
+classes.
+
+A missing or incomplete attachment is therefore a **degraded state with an
+actionable error**, not something the product writes itself. The plan's
+verdict is `GatewayVerdict::AttachmentMissing` (`attachment_missing`), the
+failure it reports is `FirewallFailure::GatewayAttachmentMissing`, and the
+refusal it returns is `FirewallError::GatewayAttachmentMissing`; the doctor
+names the three lines the administrator has to add and the file that has to
+exist before the parent is loaded. The product repairs the administrator's
+configuration for nobody.
