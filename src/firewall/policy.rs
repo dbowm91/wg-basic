@@ -259,6 +259,15 @@ pub enum FirewallActionKind {
     EnableIpv6Forwarding,
     ReplaceOwnedNftablesTable,
     RemoveOwnedNftablesTable,
+    /// The product wrote its own anchor's rules and loaded them into its own
+    /// anchor.
+    ///
+    /// This is the macOS gateway mode's only write. It names the installation's
+    /// own anchor and the installation's own anchor file; it never loads the
+    /// root ruleset and never touches a foreign anchor.
+    InstallManagedPfAnchor,
+    /// The product emptied its own anchor's rules in both rule classes.
+    RemoveManagedPfAnchor,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -274,6 +283,12 @@ pub enum FirewallWarning {
     /// The product does not own that filter, so it reports the residue
     /// instead of removing it. Removing it is the operator's action.
     RoutedLanFilterResidueObserved,
+    /// The managed anchor still holds rules the product did not install.
+    ///
+    /// The product owns exactly one anchor file, and it proves that ownership
+    /// from the file's own marker. A file without the marker belongs to
+    /// somebody else, so the product reports the residue and leaves it alone.
+    ManagedAnchorResidueObserved,
 }
 
 /// The verdict of a routed-LAN prerequisite check.
@@ -304,6 +319,41 @@ pub enum RoutedLanVerdict {
     TunnelUnavailable,
 }
 
+/// The verdict of a gateway prerequisite check.
+///
+/// The verdict is what turns "the gateway is not available here" into an
+/// actionable statement. Each reason names a different administrator action,
+/// so they are never collapsed into one.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GatewayVerdict {
+    /// Every prerequisite is in place.
+    Ready,
+    /// The host's global forwarding is not enabled for a family the policy
+    /// requires.
+    ForwardingDisabled,
+    /// The administrator's parent does not invoke the managed anchor in both
+    /// rule classes.
+    ///
+    /// The filter class and the NAT class are verified independently, exactly
+    /// as C007's verifier does, and a parent that invokes only one of them
+    /// never satisfies the requirement for both.
+    AttachmentMissing,
+    /// The managed anchor's filter rules are not the rendered policy.
+    FilterDrift,
+    /// The managed anchor's NAT rules are not the rendered policy.
+    ///
+    /// The NAT class is a different table from the filter class and is
+    /// verified separately: an anchor that carries the right filter rules and
+    /// the wrong translation rule translates traffic the policy never
+    /// approved.
+    NatDrift,
+    /// The managed tunnel is not up, so its device cannot be bound.
+    TunnelUnavailable,
+    /// The product could not install or remove its anchor.
+    ApplyRefused,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FirewallPlanSummary {
@@ -326,6 +376,13 @@ pub struct FirewallPlanSummary {
     /// prerequisite instead of reporting a bare failure.
     #[serde(default)]
     pub routed_lan: Option<RoutedLanVerdict>,
+    /// The gateway prerequisite verdict, when the policy is a gateway.
+    ///
+    /// A plan reports what it observed; the apply is what refuses. That
+    /// split is what lets the diagnostics name the exact missing
+    /// prerequisite instead of reporting a bare failure.
+    #[serde(default)]
+    pub gateway: Option<GatewayVerdict>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -347,6 +404,13 @@ pub enum FirewallFailure {
     RouteConflict,
     /// The approved destinations are not reachable through the declared egress.
     UnsupportedTopology,
+    /// The administrator's parent does not invoke the managed anchor in both
+    /// rule classes.
+    GatewayAttachmentMissing,
+    /// The managed anchor's NAT rules are not the rendered policy.
+    NatDrift,
+    /// The managed anchor carries rules whose ownership cannot be proven.
+    AnchorConflict,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -389,6 +453,12 @@ pub enum FirewallError {
     RouteConflict,
     #[error("the approved destinations are not reachable through the declared egress interface")]
     UnsupportedTopology,
+    #[error("the administrator's PF configuration does not invoke the installation anchor in both rule classes")]
+    GatewayAttachmentMissing,
+    #[error("the managed anchor's NAT rules do not match the rendered policy")]
+    NatDrift,
+    #[error("the managed anchor carries rules whose ownership cannot be proven")]
+    AnchorConflict,
 }
 
 #[cfg(test)]

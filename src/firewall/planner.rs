@@ -117,6 +117,7 @@ pub(crate) fn plan_firewall(
             },
             required_filter_rules: Vec::new(),
             routed_lan: None,
+            gateway: None,
         },
         desired_hash,
     })

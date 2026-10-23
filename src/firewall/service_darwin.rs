@@ -32,12 +32,36 @@
 //! Each of those failures has its own refusal, because "routed LAN is not
 //! available here" and "the upstream route back to the pool is missing" call
 //! for different operator actions.
+//!
+//! **Gateway (C004).** The managed tunnel is an IPv4 Internet-egress gateway:
+//! the client's traffic leaves with a translated source, and IPv6 is routed and
+//! never NAT66. This is the one mode in which the product **writes** anything,
+//! and what it writes is bounded to the installation's own anchor:
+//!
+//! 1. the product owns one installation-scoped anchor and one anchor file,
+//!    and it writes neither `/etc/pf.conf` nor any foreign anchor;
+//! 2. the **administrator** attaches the parent. The filter table's parent
+//!    must invoke the managed anchor and the NAT table's parent must invoke
+//!    it, independently, as whole tokens. Without both the backend reports
+//!    degraded and applies nothing;
+//! 3. PF is never enabled or disabled by the product, no table is ever
+//!    flushed, and the root ruleset is never loaded;
+//! 4. the host's global forwarding switches are read-only to the product,
+//!    sticky, and left as the administrator set them (ADR-007);
+//! 5. IPv4 masquerade is IPv4 only. IPv6 is routed and never translated.
+//!
+//! The product's ownership of the anchor file is **provable from the host's
+//! state**: the file carries a marker comment that the product writes and
+//! recognises. The routed-LAN mode's filter belongs to the administrator and
+//! carries no marker, so the product never removes it and reports it as
+//! residue instead.
 
 use super::pf;
 use super::pfctl;
 use super::policy::{
-    DesiredNetworkPolicy, FirewallApplyReceipt, FirewallError, FirewallPlanSummary,
-    FirewallWarning, Ipv4Forwarding, Ipv6Forwarding, RoutedLanVerdict,
+    DesiredNetworkPolicy, FirewallActionKind, FirewallApplyReceipt, FirewallError,
+    FirewallPlanSummary, FirewallWarning, GatewayVerdict, Ipv4Forwarding, Ipv6Forwarding, NatMode,
+    RoutedLanVerdict,
 };
 use crate::domain::{InstallationId, InterfaceName, NetworkPolicyMode};
 use crate::reconcile::ApplyStatus;
@@ -93,10 +117,21 @@ impl FirewallService {
         policy.validate(wireguard_interface)?;
         match policy.mode {
             NetworkPolicyMode::HostOnly => Ok(empty_plan(wireguard_interface)),
-            // The internet exit gateway is a different contract with a
-            // different filter and NAT surface. It is refused rather than
-            // half-applied.
-            NetworkPolicyMode::Gateway => Err(FirewallError::Unsupported),
+            // The internet exit gateway is the one mode the product writes
+            // for: it installs the installation's own anchor's rules, and it
+            // refuses when the administrator has not attached the parent.
+            NetworkPolicyMode::Gateway => {
+                let device = self.tunnel_device(wireguard_interface);
+                let verdict = self.observe_gateway(installation_id, policy, device.as_deref());
+                Ok(FirewallPlanSummary {
+                    wireguard_interface: wireguard_interface.clone(),
+                    actions: Vec::new(),
+                    warnings: Vec::new(),
+                    required_filter_rules: Vec::new(),
+                    routed_lan: None,
+                    gateway: Some(verdict),
+                })
+            }
             NetworkPolicyMode::RoutedLan => {
                 let device = self.tunnel_device(wireguard_interface);
                 let verdict = self.observe_routed_lan(installation_id, policy, device.as_deref());
@@ -109,6 +144,7 @@ impl FirewallService {
                         .map(|device| render_routed_rules(policy, device))
                         .unwrap_or_default(),
                     routed_lan: Some(verdict),
+                    gateway: None,
                 })
             }
         }
@@ -130,26 +166,68 @@ impl FirewallService {
     ) -> Result<FirewallApplyReceipt, FirewallError> {
         let plan = self.plan(installation_id, wireguard_interface, policy)?;
         let mut warnings = plan.warnings.clone();
+        let mut actions = plan.actions.clone();
+        let mut status = ApplyStatus::NoChange;
         if let Some(policy) = policy {
-            if policy.mode == NetworkPolicyMode::RoutedLan {
-                // The apply is what refuses. The plan only reports.
-                let device = self.tunnel_device(wireguard_interface);
-                let verdict = self.observe_routed_lan(installation_id, policy, device.as_deref());
-                if let Some(error) = verdict.error() {
-                    return Err(error);
+            match policy.mode {
+                NetworkPolicyMode::RoutedLan => {
+                    // The product releases whatever it installed itself before
+                    // it looks at the operator's filter: the routed-LAN filter
+                    // belongs to the administrator, and the product's own
+                    // gateway rules would otherwise still be live.
+                    self.release_if_owned(
+                        installation_id,
+                        &mut warnings,
+                        &mut actions,
+                        &mut status,
+                    )?;
+                    // The apply is what refuses. The plan only reports.
+                    let device = self.tunnel_device(wireguard_interface);
+                    let verdict =
+                        self.observe_routed_lan(installation_id, policy, device.as_deref());
+                    if let Some(error) = verdict.error() {
+                        return Err(error);
+                    }
+                    // A teardown does not remove the operator-managed filter; it
+                    // reports the residue so the operator can act on it.
+                    if self.operator_filter_residue(installation_id).is_some() {
+                        warnings.push(FirewallWarning::RoutedLanFilterResidueObserved);
+                    }
                 }
-            } else {
-                // A teardown does not remove the operator-managed filter; it
-                // reports the residue so the operator can act on it.
-                if self.operator_filter_residue(installation_id).is_some() {
-                    warnings.push(FirewallWarning::RoutedLanFilterResidueObserved);
+                NetworkPolicyMode::Gateway => {
+                    let device = self.tunnel_device(wireguard_interface);
+                    let verdict = self.observe_gateway(installation_id, policy, device.as_deref());
+                    if let Some(error) = verdict.error() {
+                        return Err(error);
+                    }
+                    let Some(device) = device else {
+                        return Err(FirewallError::BackendFailure);
+                    };
+                    self.install_gateway_anchor(installation_id, policy, &device)?;
+                    actions.push(FirewallActionKind::InstallManagedPfAnchor);
+                    status = ApplyStatus::Applied;
+                }
+                NetworkPolicyMode::HostOnly => {
+                    // The product owns nothing in this mode except what it
+                    // installed itself, and it proves that ownership from the
+                    // anchor file's own marker.
+                    self.release_if_owned(
+                        installation_id,
+                        &mut warnings,
+                        &mut actions,
+                        &mut status,
+                    )?;
                 }
             }
+        } else {
+            // A teardown: the managed network is being removed, so the
+            // product's own anchor goes with it.
+            self.release_if_owned(installation_id, &mut warnings, &mut actions, &mut status)?;
         }
         Ok(FirewallApplyReceipt {
             wireguard_interface: wireguard_interface.clone(),
-            status: ApplyStatus::NoChange,
-            actions: plan.actions,
+            status,
+            actions,
             forwarding_changed: false,
             table_changed: false,
             failure: None,
@@ -231,6 +309,143 @@ impl FirewallService {
         Ok(())
     }
 
+    /// Proves that the gateway prerequisites are in place, and reports which
+    /// one is missing.
+    ///
+    /// Every check is an observation. Nothing here writes PF state, a
+    /// forwarding sysctl, or a host route.
+    fn observe_gateway(
+        &self,
+        installation_id: InstallationId,
+        policy: &DesiredNetworkPolicy,
+        device: Option<&str>,
+    ) -> GatewayVerdict {
+        let forwarding_ok = require_forwarding(policy).is_ok();
+        let anchor = pf::anchor_name(installation_id);
+        let expected = device.map(|device| render_gateway_rules(policy, device));
+        let observation = pfctl::observe(&anchor).ok();
+        gateway_verdict(
+            forwarding_ok,
+            &anchor,
+            observation.as_ref(),
+            expected.as_ref(),
+        )
+    }
+
+    /// Installs the installation's own anchor's rules and proves they took.
+    ///
+    /// The product writes one file, loads it into one anchor, and then
+    /// re-observes both rule classes. It claims convergence only when the
+    /// loaded rules are exactly the rules it wrote: a rule set that PF
+    /// refused, or that something else overwrote, is reported rather than
+    /// repaired by guessing.
+    fn install_gateway_anchor(
+        &self,
+        installation_id: InstallationId,
+        policy: &DesiredNetworkPolicy,
+        device: &str,
+    ) -> Result<(), FirewallError> {
+        let anchor = pf::anchor_name(installation_id);
+        let expected = render_gateway_rules(policy, device);
+        let content = pf::anchor_file_content(installation_id, &expected);
+        pfctl::install_anchor(&anchor, &content).map_err(map_apply_error)?;
+        let observation = pfctl::observe(&anchor).map_err(map_observation_error)?;
+        let filter = observation.anchor_filter.as_deref().unwrap_or_default();
+        if !pf::anchor_content_matches(filter, &expected) {
+            return Err(FirewallError::FilterDrift);
+        }
+        let nat = observation.anchor_nat.as_deref().unwrap_or_default();
+        if !pf::nat_content_matches(nat, &expected) {
+            return Err(FirewallError::NatDrift);
+        }
+        Ok(())
+    }
+
+    /// Empties the installation's own anchor when the product owns it.
+    ///
+    /// The product proves that ownership from the anchor file's own marker. A
+    /// file without the marker belongs to somebody else — the administrator's
+    /// routed-LAN filter, most often — so the product leaves it alone and
+    /// reports the residue instead.
+    ///
+    /// The file is **not** removed. The administrator's `load anchor` line
+    /// names it, and a missing file makes the next `pfctl -f /etc/pf.conf`
+    /// fail outright, which would break the host's whole packet-filter
+    /// configuration. The file is rewritten to its marker line alone, which is
+    /// a valid, empty rules file, and PF never destroys an anchor object
+    /// anyway — the kernel accumulates them.
+    ///
+    /// A file the product **cannot read** is not evidence of anything: the
+    /// product does not claim a residue it did not observe, and it does not
+    /// remove an anchor it cannot prove it owns. A process that cannot read
+    /// the anchor file could not have written it either.
+    fn release_managed_anchor(
+        &self,
+        installation_id: InstallationId,
+    ) -> Result<AnchorRelease, FirewallError> {
+        let anchor = pf::anchor_name(installation_id);
+        let file = match pfctl::read_anchor_file(&anchor) {
+            Ok(file) => file,
+            Err(_) => return Ok(AnchorRelease::Nothing),
+        };
+        let owns = file
+            .as_deref()
+            .is_some_and(|content| pf::owns_anchor_file(content, installation_id));
+        if owns {
+            let marker_only = format!("{}\n", pf::anchor_file_marker(installation_id));
+            pfctl::clear_anchor(&anchor, &marker_only).map_err(map_apply_error)?;
+            return Ok(AnchorRelease::Released);
+        }
+        // The file is not the product's, or there is no file at all. Anything
+        // the anchor still holds belongs to somebody else, and the product
+        // does not remove it. A packet filter that cannot be read is not
+        // evidence of residue either.
+        let observation = match pfctl::observe(&anchor) {
+            Ok(observation) => observation,
+            Err(_) => return Ok(AnchorRelease::Nothing),
+        };
+        let holds_rules = observation
+            .anchor_filter
+            .as_deref()
+            .is_some_and(|content| !content.trim().is_empty())
+            || observation
+                .anchor_nat
+                .as_deref()
+                .is_some_and(|content| !content.trim().is_empty());
+        Ok(if holds_rules {
+            AnchorRelease::Foreign
+        } else {
+            AnchorRelease::Nothing
+        })
+    }
+
+    /// Releases the managed anchor when the product owns it, and records what
+    /// it did.
+    ///
+    /// The three outcomes are three different facts and each one says
+    /// something different: the product's own anchor was emptied, somebody
+    /// else's anchor holds rules and is left alone, or there was nothing of the
+    /// product's to release.
+    fn release_if_owned(
+        &self,
+        installation_id: InstallationId,
+        warnings: &mut Vec<FirewallWarning>,
+        actions: &mut Vec<FirewallActionKind>,
+        status: &mut ApplyStatus,
+    ) -> Result<(), FirewallError> {
+        match self.release_managed_anchor(installation_id)? {
+            AnchorRelease::Released => {
+                actions.push(FirewallActionKind::RemoveManagedPfAnchor);
+                *status = ApplyStatus::Applied;
+            }
+            AnchorRelease::Foreign => {
+                warnings.push(FirewallWarning::ManagedAnchorResidueObserved);
+            }
+            AnchorRelease::Nothing => {}
+        }
+        Ok(())
+    }
+
     /// Whether the operator-managed filter still exists and still names the
     /// managed tunnel's pool.
     fn operator_filter_residue(&self, installation_id: InstallationId) -> Option<String> {
@@ -305,6 +520,7 @@ fn empty_plan(wireguard_interface: &InterfaceName) -> FirewallPlanSummary {
         warnings: Vec::new(),
         required_filter_rules: Vec::new(),
         routed_lan: None,
+        gateway: None,
     }
 }
 
@@ -317,6 +533,87 @@ fn render_routed_rules(policy: &DesiredNetworkPolicy, device: &str) -> Vec<Strin
         &tunnel_interface(device),
     )
     .filter
+}
+
+/// The gateway verdict, decided from facts already gathered.
+///
+/// The facts are passed in rather than read here, because "which prerequisite
+/// is missing" is a decision, and a decision that can only be made on a live
+/// host is a decision nobody can test.
+///
+/// The order matters. Forwarding is the first thing a gateway needs, the
+/// administrator's attachment is the second, and the anchor's own content is
+/// the third: an administrator who has not attached the parent has not had a
+/// chance to install anything, so reporting drift before the attachment would
+/// name the wrong problem.
+fn gateway_verdict(
+    forwarding_ok: bool,
+    anchor: &str,
+    observation: Option<&pfctl::PfObservation>,
+    expected: Option<&pf::PfRuleSet>,
+) -> GatewayVerdict {
+    if !forwarding_ok {
+        return GatewayVerdict::ForwardingDisabled;
+    }
+    let Some(expected) = expected else {
+        // Without a proven managed tunnel there is no device to bind the rules
+        // to, so the anchor's contract cannot be checked at all.
+        return GatewayVerdict::TunnelUnavailable;
+    };
+    let Some(observation) = observation else {
+        return GatewayVerdict::ApplyRefused;
+    };
+    // The administrator's parent has to invoke the managed anchor in the
+    // filter table and in the NAT table, independently. A parent that invokes
+    // only one of them never satisfies the requirement for both.
+    if !pf::attachment_verified(
+        &observation.parent_filter,
+        &observation.parent_nat,
+        anchor,
+        pf::RequiredAttachments::FILTER_AND_NAT,
+    ) {
+        return GatewayVerdict::AttachmentMissing;
+    }
+    // An anchor that holds no rules at all is not drift: it is an anchor the
+    // product has yet to install into. An anchor that holds rules the product
+    // did not render is drift, and the two classes are checked separately
+    // because the NAT table is a different table.
+    if let Some(content) = observation.anchor_filter.as_deref() {
+        if !content.trim().is_empty() && !pf::anchor_content_matches(content, expected) {
+            return GatewayVerdict::FilterDrift;
+        }
+    }
+    if let Some(content) = observation.anchor_nat.as_deref() {
+        if !content.trim().is_empty() && !pf::nat_content_matches(content, expected) {
+            return GatewayVerdict::NatDrift;
+        }
+    }
+    GatewayVerdict::Ready
+}
+
+/// The rules the product installs for one gateway policy.
+///
+/// The gateway translates IPv4 and routes IPv6: the masquerade is decided by
+/// the policy's NAT mode, and the renderer never emits a translation rule for
+/// an IPv6 prefix.
+fn render_gateway_rules(policy: &DesiredNetworkPolicy, device: &str) -> pf::PfRuleSet {
+    pf::render_policy(
+        &policy.source_prefixes,
+        &policy.egress_interface,
+        &tunnel_interface(device),
+        policy.nat == NatMode::Masquerade,
+    )
+}
+
+/// What releasing the managed anchor did.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AnchorRelease {
+    /// The product owned the anchor and emptied it.
+    Released,
+    /// Nothing of the product's was installed.
+    Nothing,
+    /// The anchor belongs to somebody else; the product left it alone.
+    Foreign,
 }
 
 /// The interface name for a kernel tunnel device.
@@ -418,6 +715,39 @@ fn map_observation_error(error: pfctl::ObservationError) -> FirewallError {
     }
 }
 
+/// Maps a PF apply failure onto the firewall's error vocabulary.
+///
+/// Every failure keeps its own category. A refusal by the host's packet
+/// filter, a file the product could not write, and an anchor name the
+/// product may not use are different facts and call for different operator
+/// actions.
+fn map_apply_error(error: pfctl::ApplyError) -> FirewallError {
+    match error {
+        pfctl::ApplyError::Unavailable => FirewallError::PermissionDenied,
+        pfctl::ApplyError::OutputTooLarge => FirewallError::ResourceLimitExceeded,
+        pfctl::ApplyError::TimedOut => FirewallError::BackendFailure,
+        pfctl::ApplyError::Refused(_) => FirewallError::BackendFailure,
+        pfctl::ApplyError::WriteFailed => FirewallError::BackendFailure,
+        pfctl::ApplyError::DigestMismatch => FirewallError::BackendFailure,
+        pfctl::ApplyError::InvalidAnchor => FirewallError::AnchorConflict,
+    }
+}
+
+impl GatewayVerdict {
+    /// The refusal this verdict produces when the apply refuses it.
+    pub(crate) fn error(self) -> Option<FirewallError> {
+        match self {
+            GatewayVerdict::Ready => None,
+            GatewayVerdict::ForwardingDisabled => Some(FirewallError::ForwardingDisabled),
+            GatewayVerdict::AttachmentMissing => Some(FirewallError::GatewayAttachmentMissing),
+            GatewayVerdict::FilterDrift => Some(FirewallError::FilterDrift),
+            GatewayVerdict::NatDrift => Some(FirewallError::NatDrift),
+            GatewayVerdict::TunnelUnavailable => Some(FirewallError::BackendFailure),
+            GatewayVerdict::ApplyRefused => Some(FirewallError::BackendFailure),
+        }
+    }
+}
+
 impl RoutedLanVerdict {
     /// The refusal this verdict produces when the apply refuses it.
     pub(crate) fn error(self) -> Option<FirewallError> {
@@ -493,17 +823,107 @@ mod tests {
         assert!(plan.required_filter_rules.is_empty());
     }
 
+    fn gateway_policy() -> DesiredNetworkPolicy {
+        DesiredNetworkPolicy {
+            mode: NetworkPolicyMode::Gateway,
+            ipv4_forwarding: Ipv4Forwarding::Required,
+            ipv6_forwarding: Ipv6Forwarding::NotRequired,
+            egress_interface: InterfaceName::new("en0").unwrap(),
+            source_prefixes: vec!["10.77.0.0/24".parse::<NetworkPrefix>().unwrap()],
+            destination_prefixes: Vec::new(),
+            nat: super::super::policy::NatMode::Masquerade,
+        }
+    }
+
     #[test]
-    fn a_gateway_policy_is_refused_rather_than_ignored() {
+    fn a_gateway_policy_is_reported_rather_than_refused() {
         let service = FirewallService::new();
-        let mut policy = host_only_policy();
-        policy.mode = NetworkPolicyMode::Gateway;
-        policy.ipv4_forwarding = Ipv4Forwarding::Required;
+        let policy = gateway_policy();
+        // The gateway mode is no longer refused outright: the plan reports
+        // which prerequisite is missing, and the apply is what refuses. The
+        // verdict itself depends on the host, so the decision is exercised by
+        // `the_gateway_verdict_names_the_missing_prerequisite` below.
+        let plan = service
+            .plan(installation(), &interface(), Some(&policy))
+            .unwrap();
+        assert!(plan.gateway.is_some());
+        assert!(plan.routed_lan.is_none());
+    }
+
+    #[test]
+    fn the_gateway_verdict_names_the_missing_prerequisite() {
+        let anchor = "wg-basic-v1-1c0ffee";
+        let expected = render_gateway_rules(&gateway_policy(), "utun7");
+        let attached = pfctl::PfObservation {
+            parent_filter: format!("anchor \"com.apple/*\" all\nanchor \"{anchor}\" all\n"),
+            parent_nat: format!("nat-anchor \"com.apple/*\" all\nnat-anchor \"{anchor}\" all\n"),
+            anchor_filter: None,
+            anchor_nat: None,
+        };
+
+        // Forwarding comes first: it is the first thing a gateway needs, and
+        // an administrator who has not enabled it cannot have attached the
+        // parent either.
         assert_eq!(
-            service
-                .plan(installation(), &interface(), Some(&policy))
-                .unwrap_err(),
-            FirewallError::Unsupported
+            gateway_verdict(false, anchor, Some(&attached), Some(&expected)),
+            GatewayVerdict::ForwardingDisabled
+        );
+        // Without a managed tunnel there is no device to bind the rules to.
+        assert_eq!(
+            gateway_verdict(true, anchor, Some(&attached), None),
+            GatewayVerdict::TunnelUnavailable
+        );
+        // A packet filter that cannot be read cannot be proven.
+        assert_eq!(
+            gateway_verdict(true, anchor, None, Some(&expected)),
+            GatewayVerdict::ApplyRefused
+        );
+
+        // A parent that invokes the anchor in only one rule class is not
+        // enough: the NAT table is a different table.
+        let filter_only = pfctl::PfObservation {
+            parent_filter: attached.parent_filter.clone(),
+            parent_nat: "nat-anchor \"com.apple/*\" all\n".to_owned(),
+            anchor_filter: None,
+            anchor_nat: None,
+        };
+        assert_eq!(
+            gateway_verdict(true, anchor, Some(&filter_only), Some(&expected)),
+            GatewayVerdict::AttachmentMissing
+        );
+
+        // An anchor with nothing in it is an anchor the product has yet to
+        // install into, not drift.
+        assert_eq!(
+            gateway_verdict(true, anchor, Some(&attached), Some(&expected)),
+            GatewayVerdict::Ready
+        );
+
+        // An anchor holding rules the product did not render is drift, and the
+        // two rule classes are judged separately.
+        let filter_drifted = pfctl::PfObservation {
+            parent_filter: attached.parent_filter.clone(),
+            parent_nat: attached.parent_nat.clone(),
+            anchor_filter: Some(
+                "pass in on utun7 inet from 10.88.0.0/24 to any flags S/SA keep state\n".to_owned(),
+            ),
+            anchor_nat: None,
+        };
+        assert_eq!(
+            gateway_verdict(true, anchor, Some(&filter_drifted), Some(&expected)),
+            GatewayVerdict::FilterDrift
+        );
+        let nat_drifted = pfctl::PfObservation {
+            parent_filter: attached.parent_filter.clone(),
+            parent_nat: attached.parent_nat.clone(),
+            anchor_filter: None,
+            anchor_nat: Some(
+                "nat on en0 inet from 10.88.0.0/24 to any -> (en0) round-robin\n".to_owned(),
+            ),
+        };
+        assert_eq!(
+            gateway_verdict(true, anchor, Some(&nat_drifted), Some(&expected)),
+            GatewayVerdict::NatDrift
         );
     }
 

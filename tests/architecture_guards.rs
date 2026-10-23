@@ -2251,12 +2251,28 @@ fn the_darwin_pf_model_renders_without_executing() {
         "rules_digest",
         "teardown_order",
         "is_ipv4",
+        // C004: the anchor file's renderer and its ownership marker, and the
+        // NAT class's own comparator. The NAT table is a different table from
+        // the filter table and PF prints its rules in a different shape, so
+        // the two classes are verified separately.
+        "anchor_file_content",
+        "anchor_file_marker",
+        "owns_anchor_file",
+        "nat_content_matches",
     ] {
         assert!(
             pf.contains(required),
             "src/firewall/pf.rs must model {required}"
         );
     }
+    // C004: the anchor file's translation rules have to precede its filtering
+    // rules. PF refuses a rules file whose translation rules follow its
+    // filtering rules, so a renderer that emitted them the other way round
+    // would produce a rule set that cannot be installed at all.
+    assert!(
+        pf.contains("rules.nat.iter().chain(rules.filter.iter())"),
+        "the anchor file must carry the translation rules before the filtering rules"
+    );
 }
 
 #[test]
@@ -2423,11 +2439,33 @@ fn the_darwin_firewall_refuses_what_it_cannot_prove() {
             "the Darwin firewall must be able to report {refusal}"
         );
     }
-    // The internet exit gateway is a different contract with a different
-    // filter and NAT surface, so it stays refused rather than half-applied.
+    // C004: the internet exit gateway is no longer refused. It is the one mode
+    // the product writes for, and each of its prerequisites has its own
+    // refusal, because "the administrator has not attached the anchor" and
+    // "the anchor's translation rules are not the rendered policy" call for
+    // different operator actions.
+    for refusal in [
+        "FirewallError::ForwardingDisabled",
+        "FirewallError::FilterMissing",
+        "FirewallError::GatewayAttachmentMissing",
+        "FirewallError::FilterDrift",
+        "FirewallError::NatDrift",
+        "FirewallError::MissingReturnRoute",
+        "FirewallError::RouteConflict",
+        "FirewallError::UnsupportedTopology",
+    ] {
+        assert!(
+            firewall.contains(refusal),
+            "the Darwin firewall must be able to report {refusal}"
+        );
+    }
     assert!(
-        firewall.contains("NetworkPolicyMode::Gateway => Err(FirewallError::Unsupported)"),
-        "the gateway mode must stay refused on Darwin"
+        firewall.contains("NetworkPolicyMode::Gateway"),
+        "the Darwin firewall must handle the gateway mode"
+    );
+    assert!(
+        !firewall.contains("NetworkPolicyMode::Gateway => Err(FirewallError::Unsupported)"),
+        "the gateway mode must not stay refused on Darwin"
     );
     // The host's global forwarding is read, never written, and the product
     // never edits the host's packet-filter configuration.
@@ -2440,10 +2478,12 @@ fn the_darwin_firewall_refuses_what_it_cannot_prove() {
 }
 
 #[test]
-fn the_darwin_pf_observation_is_read_only_and_bounded() {
-    // C003: the product observes the operator-managed filter. It never loads a
-    // ruleset, never flushes an anchor, never edits the main ruleset, and
-    // never enables or disables PF.
+fn the_darwin_pf_apply_is_scoped_to_the_installations_own_anchor_and_bounded() {
+    // C004: the product now applies to the host's packet filter, and the scope
+    // of that apply is the whole contract. It may install the installation's
+    // own anchor's rules and it may empty them again. It may not load the
+    // root ruleset, flush a table, enable or disable PF, or name the
+    // administrator's own configuration file.
     let pfctl = shippable(source_of("src/firewall/pfctl.rs"));
     assert!(
         pfctl.contains("const PFCTL: &str = \"/sbin/pfctl\""),
@@ -2453,31 +2493,123 @@ fn the_darwin_pf_observation_is_read_only_and_bounded() {
         "&[\"-s\", \"rules\"]",
         "&[\"-s\", \"nat\"]",
         "&[\"-a\", anchor, \"-s\", \"rules\"]",
+        "&[\"-a\", anchor, \"-s\", \"nat\"]",
     ] {
         assert!(
             pfctl.contains(required),
             "the PF observation must read the filter state with {required}"
         );
     }
+
+    // The module runs exactly one program, at a fixed path, with no shell and
+    // no privilege escalation of its own.
+    assert_eq!(
+        pfctl.matches("Command::new").count(),
+        1,
+        "the PF module must run exactly one program"
+    );
+    assert!(
+        pfctl.contains("Command::new(PFCTL)"),
+        "the PF module must run pfctl itself, never a shell"
+    );
     for forbidden in [
-        "\"-f\"",
-        "\"-F\"",
-        "\"-e\"",
-        "\"-d\"",
-        "\"-X\"",
-        "\"-t\"",
         "Command::new(\"sh\")",
         "Command::new(\"bash\")",
         "Command::new(\"sudo\")",
     ] {
         assert!(
             !pfctl.contains(forbidden),
-            "the PF observation must not contain {forbidden}"
+            "the PF module must not contain {forbidden}"
         );
     }
-    // The observation is bounded in both output and runtime.
+
+    // Every pfctl verb the module uses is one of the four it is allowed to
+    // use: read a ruleset, name an anchor, load a file, flush a rule class.
+    // The verbs that would change the host globally — enabling or disabling
+    // PF, releasing a reference, naming a table — are not among them.
+    for verb in pfctl_verbs(&pfctl) {
+        assert!(
+            ["-s", "-a", "-f", "-F"].contains(&verb.as_str()),
+            "the PF module must not use the pfctl verb {verb}"
+        );
+    }
+
+    // Every load and every flush is scoped to an anchor: the anchor's own verb
+    // precedes it in the same argument vector. A load or a flush without it
+    // would replace or empty the host's root ruleset.
+    for index in pfctl
+        .match_indices("\"-f\"")
+        .chain(pfctl.match_indices("\"-F\""))
+        .map(|(index, _)| index)
+    {
+        let start = index.saturating_sub(160);
+        let window = &pfctl[start..index];
+        assert!(
+            window.contains("\"-a\""),
+            "every PF load and flush must be scoped to the installation's own anchor"
+        );
+    }
+
+    // The observation and the apply are bounded in both output and runtime.
     assert!(pfctl.contains("MAX_PFCTL_OUTPUT"));
     assert!(pfctl.contains("PFCTL_TIMEOUT"));
+}
+
+/// The pfctl verbs a module's executable code names.
+///
+/// The scan reads quoted dash-verbs out of the code, so a documentation
+/// comment that names a forbidden verb does not trip the guard — and a
+/// forbidden verb in the code does. The verb is returned without its quotes,
+/// so it is the verb itself that the guard compares.
+fn pfctl_verbs(source: &str) -> Vec<String> {
+    let mut verbs = Vec::new();
+    let bytes = source.as_bytes();
+    let mut index = 0;
+    while index + 3 < bytes.len() {
+        if bytes[index] == b'"' && bytes[index + 1] == b'-' && bytes[index + 3] == b'"' {
+            verbs.push(source[index + 1..index + 3].to_owned());
+            index += 4;
+        } else {
+            index += 1;
+        }
+    }
+    verbs
+}
+
+#[test]
+fn the_darwin_gateway_owns_one_anchor_and_never_the_hosts_own_configuration() {
+    // C004: the gateway mode is the one mode the product writes for, and what
+    // it writes is bounded to the installation's own anchor. The product's
+    // ownership of the anchor file has to be provable from the host's state
+    // alone — the file's own marker — because the routed-LAN mode's filter
+    // belongs to the administrator and the product must never remove it.
+    let firewall = shippable(source_of("src/firewall/service_darwin.rs"));
+    for required in [
+        "anchor_file_content",
+        "owns_anchor_file",
+        "install_anchor",
+        "clear_anchor",
+        "read_anchor_file",
+        "nat_content_matches",
+        "FILTER_AND_NAT",
+    ] {
+        assert!(
+            firewall.contains(required),
+            "the Darwin gateway must use {required}"
+        );
+    }
+    // The administrator's parent attachment is foreign state: the product
+    // observes it and reports it, and never writes it.
+    assert!(
+        !firewall.contains("/etc/pf.conf"),
+        "the Darwin firewall must never write the administrator's PF configuration"
+    );
+    // The product never writes a host route and never writes a forwarding
+    // switch.
+    assert!(
+        !firewall.contains("route add") && !firewall.contains("sysctl -w"),
+        "the Darwin firewall must not write host routes or forwarding switches"
+    );
 }
 
 #[test]

@@ -1341,6 +1341,8 @@ fn append_network_plan_checks(
             append_plan_outcome(checks, &plan);
             #[cfg(target_os = "macos")]
             append_routed_lan_check(checks, &plan);
+            #[cfg(target_os = "macos")]
+            append_gateway_check(checks, &plan);
             checks.push(DoctorCheck::new(
                 Id::Rtnetlink,
                 D::Pass,
@@ -1553,6 +1555,94 @@ fn append_routed_lan_check(
         DoctorCheck::new(Id::RoutedLan, disposition, summary, evidence, remediation)
             .with_required_filter_rules(rules),
     );
+}
+
+/// Renders the gateway prerequisite verdict.
+///
+/// The gateway is the one mode the product writes for, so its check names the
+/// administrator's PF attachment exactly: the three lines, and the fact that
+/// the anchor file has to exist before the parent is loaded, because a
+/// `load anchor` line naming a missing file makes the host's whole
+/// packet-filter configuration fail to load.
+#[cfg(target_os = "macos")]
+fn append_gateway_check(
+    checks: &mut Vec<wg_basic::doctor::DoctorCheck>,
+    plan: &wg_basic::protocol::InstallationNetworkPlanBody,
+) {
+    use wg_basic::doctor::{DoctorCheck, DoctorCheckId as Id, DoctorDisposition as D};
+    use wg_basic::firewall::{anchor_file_path, anchor_name, operator_attachment, GatewayVerdict};
+
+    let Some(verdict) = plan.firewall_plan.gateway else {
+        return;
+    };
+    let anchor = anchor_name(plan.installation_id);
+    let path = anchor_file_path(&anchor);
+    let attachment = operator_attachment(&anchor, &path.to_string_lossy());
+    let lines = attachment.lines().join("; ");
+    let (disposition, summary, evidence, remediation) = match verdict {
+        GatewayVerdict::Ready => (
+            D::Pass,
+            "the gateway prerequisites are in place".to_owned(),
+            "host forwarding is enabled, the administrator's parent invokes the installation anchor in both rule classes, and the anchor's rules match the rendered policy"
+                .to_owned(),
+            "none".to_owned(),
+        ),
+        GatewayVerdict::ForwardingDisabled => (
+            D::Fail,
+            "host forwarding is not enabled for a family this policy requires".to_owned(),
+            "read-only host forwarding observation did not show the required family as enabled"
+                .to_owned(),
+            "enable the host's global IPv4 or IPv6 forwarding through host configuration; wg-basic never writes it"
+                .to_owned(),
+        ),
+        GatewayVerdict::AttachmentMissing => (
+            D::Fail,
+            "the administrator's PF configuration does not invoke the installation anchor in both rule classes"
+                .to_owned(),
+            format!(
+                "the installation anchor was not observed as invoked by both the filter table's parent and the NAT table's parent; the lines are: {lines}"
+            ),
+            format!(
+                "create {} first, then add the nat-anchor line in the translation section of /etc/pf.conf and the anchor and load anchor lines at the end, then run pfctl -f /etc/pf.conf",
+                path.display()
+            ),
+        ),
+        GatewayVerdict::FilterDrift => (
+            D::Fail,
+            "the managed anchor's filter rules do not match the rendered policy".to_owned(),
+            "the installation anchor holds filter rules the product did not render".to_owned(),
+            "remove the foreign rules from the installation anchor; wg-basic never repairs a drifted anchor by guessing"
+                .to_owned(),
+        ),
+        GatewayVerdict::NatDrift => (
+            D::Fail,
+            "the managed anchor's NAT rules do not match the rendered policy".to_owned(),
+            "the installation anchor holds translation rules the product did not render".to_owned(),
+            "remove the foreign translation rules from the installation anchor; an anchor that translates traffic the policy never approved is drift"
+                .to_owned(),
+        ),
+        GatewayVerdict::TunnelUnavailable => (
+            D::Warn,
+            "the managed tunnel is not up, so its anchor cannot be proven".to_owned(),
+            "no managed tunnel device is registered for this installation".to_owned(),
+            "start the managed network, then rerun doctor".to_owned(),
+        ),
+        GatewayVerdict::ApplyRefused => (
+            D::Fail,
+            "the host's packet filter could not be read".to_owned(),
+            "the packet filter's state could not be observed, so the gateway's convergence cannot be claimed"
+                .to_owned(),
+            "run doctor with the privileges required to read the host's packet filter"
+                .to_owned(),
+        ),
+    };
+    checks.push(DoctorCheck::new(
+        Id::Gateway,
+        disposition,
+        summary,
+        evidence,
+        remediation,
+    ));
 }
 
 /// Portable (M001): listen-port comparison is backend-agnostic.

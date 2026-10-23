@@ -50,6 +50,12 @@ pub enum DoctorCheckId {
     Ipv6Forwarding,
     NetworkOwnership,
     RoutedLan,
+    /// The gateway's prerequisite verdict.
+    ///
+    /// A gateway policy is the one mode the product writes for, so its check
+    /// names the administrator's PF attachment and the translation the policy
+    /// declares.
+    Gateway,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
