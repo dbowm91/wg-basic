@@ -156,6 +156,102 @@ pub fn render_routed_policy(
     }
 }
 
+/// The directory the host's packet filter reads anchor rules from.
+pub const ANCHOR_FILE_DIRECTORY: &str = "/etc/pf.anchors";
+
+/// The path of one installation's anchor file.
+///
+/// The path is derived from the anchor name and is never supplied by a
+/// caller. The product writes exactly one anchor file and names it after the
+/// anchor it owns, so there is no path a caller can choose.
+pub fn anchor_file_path(anchor: &str) -> std::path::PathBuf {
+    std::path::Path::new(ANCHOR_FILE_DIRECTORY).join(anchor)
+}
+
+/// The first line of the installation's own anchor file.
+///
+/// It is a comment, so it changes no rule and no rule digest. It is what makes
+/// the file's ownership provable from the host's state alone: the product
+/// writes this file in the gateway mode and removes it on teardown, and the
+/// routed-LAN mode's file belongs to the administrator and carries no marker.
+/// A file that does not carry the marker is not the product's, and the product
+/// does not remove it.
+pub fn anchor_file_marker(installation_id: crate::domain::InstallationId) -> String {
+    format!("# wg-basic-v1 managed anchor for installation {installation_id}")
+}
+
+/// The installation's own anchor file, exactly as the product writes it.
+///
+/// The NAT (translation) rules come **first**. PF requires the rules of one
+/// ruleset to appear in the order *options, normalization, queueing,
+/// translation, filtering*, and refuses a file whose translation rules follow
+/// its filtering rules with `Rules must be in order: options, normalization,
+/// queueing, translation, filtering` — so a renderer that emitted the
+/// filtering rules first would produce a rule set that cannot be installed at
+/// all.
+pub fn anchor_file_content(
+    installation_id: crate::domain::InstallationId,
+    rules: &PfRuleSet,
+) -> String {
+    let mut content = anchor_file_marker(installation_id);
+    content.push('\n');
+    for rule in rules.nat.iter().chain(rules.filter.iter()) {
+        content.push_str(rule);
+        content.push('\n');
+    }
+    content
+}
+
+/// Whether the observed anchor file content is the product's own file.
+///
+/// The product only ever writes this file in the gateway mode. A file without
+/// the marker belongs to somebody else — the administrator's routed-LAN
+/// filter, most often — and the product reports it as residue instead of
+/// removing it.
+pub fn owns_anchor_file(content: &str, installation_id: crate::domain::InstallationId) -> bool {
+    let marker = anchor_file_marker(installation_id);
+    content.lines().next().map(str::trim) == Some(marker.as_str())
+}
+
+/// The administrator's attachment lines for one installation anchor.
+///
+/// PF requires the rules of one ruleset to appear in the order *options,
+/// normalization, queueing, translation, filtering*, so the NAT-class line
+/// belongs in the ruleset's **translation** section — before the stock
+/// `anchor "com.apple/*"` line — and the filter-class lines belong at the
+/// **end**. Appending all three lines to the end of `/etc/pf.conf` makes the
+/// main ruleset fail to load, and a main ruleset that fails to load leaves
+/// the kernel holding the previous one.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OperatorAttachment {
+    /// The line the administrator adds in the translation section.
+    pub nat_anchor: String,
+    /// The line the administrator adds in the filtering section.
+    pub filter_anchor: String,
+    /// The line the administrator adds after the filtering rules.
+    pub load_anchor: String,
+}
+
+impl OperatorAttachment {
+    /// The three lines, in the order the two sections require them.
+    pub fn lines(&self) -> [&str; 3] {
+        [
+            self.nat_anchor.as_str(),
+            self.filter_anchor.as_str(),
+            self.load_anchor.as_str(),
+        ]
+    }
+}
+
+/// The administrator's attachment lines for one installation anchor.
+pub fn operator_attachment(anchor: &str, anchor_file: &str) -> OperatorAttachment {
+    OperatorAttachment {
+        nat_anchor: format!("nat-anchor \"{anchor}\" all"),
+        filter_anchor: format!("anchor \"{anchor}\" all"),
+        load_anchor: format!("load anchor \"{anchor}\" from \"{anchor_file}\""),
+    }
+}
+
 /// One normalized filter rule.
 ///
 /// The product renders a deliberately small rule grammar, so the observed
@@ -266,6 +362,130 @@ pub fn anchor_content_matches(observed: &str, expected: &PfRuleSet) -> bool {
     }
     observed_rules.sort();
     let mut expected_rules = expected_rules;
+    expected_rules.sort();
+    observed_rules == expected_rules
+}
+
+/// One normalized NAT rule.
+///
+/// The NAT table is a different table from the filter table and PF prints its
+/// rules in a different shape, so the two classes get their own normalization
+/// rather than sharing one.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct NatRule {
+    interface: String,
+    source: String,
+    destination: String,
+    egress: String,
+}
+
+/// The address family a source prefix belongs to, as PF names it.
+fn address_family(source: &str) -> Option<&'static str> {
+    let prefix: crate::domain::NetworkPrefix = source.parse().ok()?;
+    Some(if prefix.network().addr().is_ipv4() {
+        "inet"
+    } else {
+        "inet6"
+    })
+}
+
+/// Parses one line of observed NAT anchor content into a normalized rule.
+///
+/// The observed content is PF's own canonical rendering of the rule. PF
+/// resolves the address family the rule matched and prints it (`inet`,
+/// `inet6`), and it annotates a masquerade rule with the pool it round-robins
+/// over (`-> (en0) round-robin`) that the product never renders. The parser
+/// therefore accepts the family keyword and the pool annotation, and requires
+/// the printed family to agree with the family of the source prefix: a rule
+/// that claims `inet6` for an IPv4 source is not the rule the product wrote.
+///
+/// Returns `None` for anything the product's grammar does not cover, which
+/// makes the comparison fail closed: an anchor carrying a NAT rule the product
+/// did not render is drift, not a near miss.
+fn parse_nat_rule(line: &str) -> Option<NatRule> {
+    let tokens: Vec<&str> = line.split_whitespace().collect();
+    if tokens.len() < 9 || tokens[0] != "nat" || tokens[1] != "on" {
+        return None;
+    }
+    let interface = tokens[2].to_owned();
+    let mut index = 3;
+    // PF prints the address family the rule resolved to.
+    if matches!(tokens.get(index), Some(&"inet") | Some(&"inet6")) {
+        let printed = tokens[index];
+        index += 1;
+        if tokens.get(index) != Some(&"from") {
+            return None;
+        }
+        if address_family(tokens.get(index + 1)?)? != printed {
+            return None;
+        }
+    }
+    if tokens.get(index) != Some(&"from") {
+        return None;
+    }
+    let source = (*tokens.get(index + 1)?).to_owned();
+    if tokens.get(index + 2) != Some(&"to") {
+        return None;
+    }
+    let destination = (*tokens.get(index + 3)?).to_owned();
+    index += 4;
+    if tokens.get(index) != Some(&"->") {
+        return None;
+    }
+    // The translation target is printed in parentheses: `-> (en0)`.
+    let egress_token = (*tokens.get(index + 1)?).to_owned();
+    let egress = egress_token
+        .strip_prefix('(')
+        .and_then(|target| target.strip_suffix(')'))?
+        .to_owned();
+    index += 2;
+    // The product never renders a translation pool, so the one annotation PF
+    // adds on its own is tolerated and nothing else is.
+    let tail = &tokens[index..];
+    if !tail.is_empty() && tail != ["round-robin"] {
+        return None;
+    }
+    Some(NatRule {
+        interface,
+        source,
+        destination,
+        egress,
+    })
+}
+
+/// Whether the observed anchor's NAT content is exactly the rendered NAT policy.
+///
+/// The comparison is a multiset equality over the normalized rules, exactly as
+/// the filter comparison is: a missing rule, an extra rule, a different
+/// interface, a different prefix, or a different translation target all make
+/// the observed content drift. Nothing is repaired by guessing.
+///
+/// A policy that renders no NAT rule matches an anchor that holds no NAT rule,
+/// and only that: an anchor holding a NAT rule is drift for a policy that
+/// never translates.
+pub fn nat_content_matches(observed: &str, expected: &PfRuleSet) -> bool {
+    let mut observed_rules = Vec::new();
+    for line in observed.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some(rule) = parse_nat_rule(line) else {
+            return false;
+        };
+        observed_rules.push(rule);
+    }
+    let mut expected_rules = Vec::new();
+    for line in &expected.nat {
+        let Some(rule) = parse_nat_rule(line) else {
+            return false;
+        };
+        expected_rules.push(rule);
+    }
+    if observed_rules.len() != expected_rules.len() {
+        return false;
+    }
+    observed_rules.sort();
     expected_rules.sort();
     observed_rules == expected_rules
 }
@@ -397,11 +617,16 @@ fn invokes_anchor(ruleset_output: &str, keyword: &str, anchor: &str) -> bool {
 /// Digest of the exact rendered rules for drift detection. Any observed
 /// anchor content that does not digest-match is foreign/drifted: fail
 /// closed, never repair by guessing.
+///
+/// The digest covers the rule lines in the order the anchor file carries them
+/// — the translation rules first, then the filtering rules — so the digest and
+/// the file are the same rule set in the same order, and a digest computed
+/// over one can be compared with a digest computed over the other.
 pub fn rules_digest(rules: &PfRuleSet) -> String {
     use sha2::{Digest, Sha256};
 
     let mut hasher = Sha256::new();
-    for rule in rules.filter.iter().chain(rules.nat.iter()) {
+    for rule in rules.nat.iter().chain(rules.filter.iter()) {
         hasher.update(rule.as_bytes());
         hasher.update(b"\n");
     }
@@ -925,6 +1150,191 @@ pass out on en0 inet6 from 2001:db8:77::/64 to 2001:db8:20::/64 flags S/SA keep 
         assert!(!anchor_content_matches(
             "pass in on utun7 from 10.77.0.0/24 to 192.168.9.0/24\n",
             &rendered
+        ));
+    }
+
+    /// A gateway policy: the pool is translated on the egress interface.
+    fn gateway() -> PfRuleSet {
+        let egress: crate::domain::InterfaceName = "en0".parse().unwrap();
+        let tunnel: crate::domain::InterfaceName = "utun7".parse().unwrap();
+        let sources = vec!["10.77.0.0/24".parse().unwrap()];
+        render_policy(&sources, &egress, &tunnel, true)
+    }
+
+    /// The real macOS 26.6.2 rendering of a masquerade rule, as
+    /// `pfctl -a <anchor> -s nat` printed it on a live host after the product
+    /// installed the file it wrote.
+    ///
+    /// PF resolves the address family the rule matched and prints it, and it
+    /// annotates a masquerade rule with the pool it round-robins over. Neither
+    /// is part of what the product wrote, and both have to survive the
+    /// comparison.
+    const REAL_MACOS_MASQUERADE_RULESET: &str = "\
+nat on en0 inet from 10.77.0.0/24 to any -> (en0) round-robin
+";
+
+    #[test]
+    fn the_pf_canonical_rendering_of_a_masquerade_rule_is_not_drift() {
+        let rendered = gateway();
+        assert!(nat_content_matches(
+            REAL_MACOS_MASQUERADE_RULESET,
+            &rendered
+        ));
+    }
+
+    #[test]
+    fn a_nat_rule_that_differs_from_the_rendered_policy_is_drift() {
+        let rendered = gateway();
+
+        // A different translation target is drift: the traffic would leave
+        // through the wrong interface.
+        assert!(!nat_content_matches(
+            "nat on en0 inet from 10.77.0.0/24 to any -> (en1) round-robin\n",
+            &rendered
+        ));
+
+        // A different source prefix is drift.
+        assert!(!nat_content_matches(
+            "nat on en0 inet from 10.88.0.0/24 to any -> (en0) round-robin\n",
+            &rendered
+        ));
+
+        // An extra translation rule widens the policy and is never accepted.
+        assert!(!nat_content_matches(
+            "nat on en0 inet from 10.77.0.0/24 to any -> (en0) round-robin\n\
+             nat on en0 inet from 10.88.0.0/24 to any -> (en0) round-robin\n",
+            &rendered
+        ));
+
+        // A rule that claims the wrong address family for its source is drift.
+        assert!(!nat_content_matches(
+            "nat on en0 inet6 from 10.77.0.0/24 to any -> (en0) round-robin\n",
+            &rendered
+        ));
+
+        // A translation pool the product never rendered is drift.
+        assert!(!nat_content_matches(
+            "nat on en0 inet from 10.77.0.0/24 to any -> (en0) random\n",
+            &rendered
+        ));
+    }
+
+    #[test]
+    fn a_policy_that_never_translates_matches_only_an_anchor_that_holds_no_nat_rule() {
+        let egress: crate::domain::InterfaceName = "en0".parse().unwrap();
+        let tunnel: crate::domain::InterfaceName = "utun7".parse().unwrap();
+        let sources = vec!["10.77.0.0/24".parse().unwrap()];
+        let rendered = render_policy(&sources, &egress, &tunnel, false);
+        assert!(rendered.nat.is_empty());
+
+        assert!(nat_content_matches("", &rendered));
+        assert!(
+            !nat_content_matches(REAL_MACOS_MASQUERADE_RULESET, &rendered),
+            "an anchor that translates is drift for a policy that never translates"
+        );
+    }
+
+    #[test]
+    fn the_anchor_file_carries_the_translation_rules_first() {
+        // PF refuses a file whose translation rules follow its filtering
+        // rules, so the order is part of the contract and not a style choice.
+        let installation = installation();
+        let rendered = gateway();
+        let content = anchor_file_content(installation, &rendered);
+        let lines: Vec<&str> = content.lines().collect();
+
+        assert_eq!(lines[0], anchor_file_marker(installation));
+        assert_eq!(lines[1], "nat on en0 from 10.77.0.0/24 to any -> (en0)");
+        assert_eq!(
+            lines[2],
+            "pass in on utun7 from 10.77.0.0/24 to any keep state"
+        );
+        assert_eq!(
+            lines[3],
+            "pass out on en0 from 10.77.0.0/24 to any keep state"
+        );
+
+        let translation = lines
+            .iter()
+            .position(|line| line.starts_with("nat "))
+            .expect("the file carries a translation rule");
+        let filtering = lines
+            .iter()
+            .position(|line| line.starts_with("pass "))
+            .expect("the file carries a filtering rule");
+        assert!(
+            translation < filtering,
+            "the translation rules must precede the filtering rules"
+        );
+    }
+
+    #[test]
+    fn the_anchor_file_is_marked_as_the_products_own() {
+        let own = installation();
+        let content = anchor_file_content(own, &gateway());
+        assert!(owns_anchor_file(&content, own));
+
+        // The administrator's own file carries no marker, so the product does
+        // not own it and does not remove it.
+        assert!(!owns_anchor_file(
+            "pass in on utun0 inet from 10.77.0.0/24 to any flags S/SA keep state\n",
+            own
+        ));
+
+        // Another installation's file is not this installation's file.
+        assert!(!owns_anchor_file(&content, installation()));
+
+        // An empty file is not the product's file.
+        assert!(!owns_anchor_file("", own));
+    }
+
+    #[test]
+    fn the_digest_covers_the_rules_in_the_order_the_file_carries_them() {
+        let rendered = gateway();
+        let digest = rules_digest(&rendered);
+        assert_eq!(digest, rules_digest(&rendered));
+
+        // The digest is over the rule lines the file carries, in the file's
+        // order, so the two agree on the same rule set.
+        let installation = installation();
+        let content = anchor_file_content(installation, &rendered);
+        let rule_lines: String = content
+            .lines()
+            .skip(1)
+            .map(|line| format!("{line}\n"))
+            .collect();
+        assert_eq!(
+            digest,
+            rules_digest(&PfRuleSet {
+                filter: rendered.filter.clone(),
+                nat: rendered.nat.clone(),
+            })
+        );
+        assert!(rule_lines.starts_with("nat on en0"));
+    }
+
+    #[test]
+    fn the_operator_attachment_names_the_anchor_in_both_rule_classes() {
+        let attachment = operator_attachment("wg-basic-v1-abc", "/etc/pf.anchors/wg-basic-v1-abc");
+        assert_eq!(attachment.nat_anchor, "nat-anchor \"wg-basic-v1-abc\" all");
+        assert_eq!(attachment.filter_anchor, "anchor \"wg-basic-v1-abc\" all");
+        assert_eq!(
+            attachment.load_anchor,
+            "load anchor \"wg-basic-v1-abc\" from \"/etc/pf.anchors/wg-basic-v1-abc\""
+        );
+
+        // The verifier reads these lines as whole tokens, so the quoted form
+        // is the one that has to be produced.
+        let parent_filter = format!("anchor \"com.apple/*\" all\n{}\n", attachment.filter_anchor);
+        let parent_nat = format!(
+            "nat-anchor \"com.apple/*\" all\n{}\n",
+            attachment.nat_anchor
+        );
+        assert!(attachment_verified(
+            &parent_filter,
+            &parent_nat,
+            "wg-basic-v1-abc",
+            RequiredAttachments::FILTER_AND_NAT
         ));
     }
 }

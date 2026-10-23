@@ -112,17 +112,60 @@ Two consequences the evidence must respect:
   product's translation would be masked. C004's evidence is a LAN far side,
   which the plan's "observable LAN/Internet egress endpoints" allows, and the
   closure record states it plainly.
-- **The operator step grows a NAT class.** The guest's `/etc/pf.conf` must
-  carry, for the managed anchor:
+- **The operator step grows a NAT class, and the placement is not
+  interchangeable.** The guest's `/etc/pf.conf` must carry, for the managed
+  anchor, a `nat-anchor` line **and** an `anchor` line **and** a `load anchor`
+  line — but PF requires the rules of one ruleset to appear in the order
+  *options, normalization, queueing, **translation**, **filtering***. A
+  `nat-anchor` line placed **after** the stock `anchor "com.apple/*"` line is a
+  translation rule after a filtering rule, and the main ruleset then **fails to
+  load** (`/etc/pf.conf:29: Rules must be in order: options, normalization,
+  queueing, translation, filtering`, exit 1, `pf rules not loaded`). Measured on
+  the disposable guest 2026-10-23; three placements were tried and only the two
+  that put the `nat-anchor` line in the translation section loaded.
+
+  The operator's attachment is therefore:
 
   ```
-  anchor "wg-basic-v1-<id>" all
+  # in the translation section, before the stock `anchor "com.apple/*"` line:
   nat-anchor "wg-basic-v1-<id>" all
+  # at the end, in the filtering section:
+  anchor "wg-basic-v1-<id>" all
   load anchor "wg-basic-v1-<id>" from "/etc/pf.anchors/wg-basic-v1-<id>"
   ```
 
   A filter-only parent does not satisfy a masquerading policy, and C007's
-  verifier says so exactly.
+  verifier says so exactly. The runbook states the two placements explicitly,
+  because appending the three lines to the end of `/etc/pf.conf` does not work.
+
+  **The anchor file has to exist before the parent's `load anchor` line is
+  loaded.** Measured on the disposable guest: with the attachment in place but
+  `/etc/pf.anchors/<anchor>` absent, `pfctl -f /etc/pf.conf` **fails**
+  (`No such file or directory`, `cannot open the main config file!`, `pf rules
+  not loaded`) and the kernel keeps the previous ruleset. An empty file is
+  enough: the main ruleset then loads, the anchor is attached in both classes,
+  and the anchor's rulesets are empty. So the administrator's procedure is:
+
+  1. create the anchor file — `sudo touch /etc/pf.anchors/<anchor>` is enough;
+  2. add the three lines to `/etc/pf.conf`, the `nat-anchor` line in the
+     translation section and the other two at the end;
+  3. `sudo pfctl -f /etc/pf.conf`;
+  4. the product then writes the rules into that file and loads them into the
+     anchor.
+
+  The product's refusal for a missing attachment names this procedure, because
+  attaching the parent without the file breaks the host's **entire** PF
+  configuration, not just this installation's anchor.
+
+  **The teardown must not leave the administrator's `load anchor` line
+  dangling.** The product therefore empties the anchor's rules in **both**
+  classes and rewrites the anchor file to its marker line alone, rather than
+  removing the file. A removed file would make the administrator's next
+  `pfctl -f /etc/pf.conf` fail exactly as above. PF never destroys an anchor
+  object — the kernel accumulates them, 62 of them on the disposable guest — so
+  "the managed anchor's own removal" can only ever mean the anchor's **rules**,
+  and the file has to survive as a valid, empty rules file for the
+  administrator's `load anchor` line to keep resolving.
 
 The guest currently carries three accumulated `wg-basic-v1-<uuid>` anchors from
 the C003/C011 legs, and the restore script does not remove them. The leg must
@@ -135,11 +178,25 @@ match.
 - `src/firewall/pfctl.rs`: a bounded, scoped **apply** path alongside the
   read-only observation, with the module's contract updated to state exactly
   what it may and may not do. The observation grows an `anchor_nat` field so
-  the installed NAT rules can be verified, not assumed.
+  the installed NAT rules can be verified, not assumed, and it is corrected to
+  tell an **absent** anchor from an **emptied** one (macOS signals both with
+  exit 0). The apply path writes the installation's own anchor file under
+  `/etc/pf.anchors/`, loads it into the installation's own anchor with
+  `pfctl -a <anchor> -f <file>`, and removes it with `pfctl -a <anchor> -F
+  rules` and `-F nat` followed by the file's removal. It never writes
+  `/etc/pf.conf`, never loads the root ruleset, never flushes a table, never
+  enables or disables PF, and never names a path or an anchor that is not the
+  installation's own.
 - `src/firewall/pf.rs`: the gateway plan's rule set (already rendered by
   `render_policy`) becomes installable, with the canonical AST, the digest
   comparison, and the reversible removal order (already modelled by
-  `teardown_order`).
+  `teardown_order`). It gains the anchor **file** renderer — NAT rules first,
+  because PF refuses a file whose translation rules follow its filtering rules
+  — and the **NAT** content comparator, which is a different normalization from
+  the filter comparator: PF prints a NAT rule with its resolved address family
+  and a `round-robin` annotation (`nat on en0 inet from 10.77.0.0/24 to any ->
+  (en0) round-robin`) that the rendered rule does not carry. It stays pure: no
+  I/O, nothing spawned, no host state mutated.
 - `src/firewall/service_darwin.rs`: `NetworkPolicyMode::Gateway` becomes a
   plan instead of `Unsupported`, and it fails closed when the attachment, the
   egress, or the forwarding prerequisites are not proven.
@@ -155,6 +212,40 @@ match.
    The constraint is the contract, not the mechanism: the root ruleset is
    never loaded, no table is flushed, PF is never toggled. If no such
    invocation exists that preserves foreign state, **stop** (§Stop conditions).
+
+   **Done — measured on the disposable macOS guest on 2026-10-23.** The
+   mechanism exists, and no stop condition is triggered. The measurements:
+
+   | Question | Measurement |
+   |---|---|
+   | The install invocation | `pfctl -a <anchor> -f <file>` loads the file into the anchor's **filter and NAT** rulesets. Exit 0. The **root ruleset is byte-identical before and after** — `pfctl -s rules` and `pfctl -s nat` are unchanged. No table is flushed and PF is not toggled. |
+   | The remove invocation | `pfctl -a <anchor> -F rules` clears the **filter** class and `pfctl -a <anchor> -F nat` clears the **NAT** class. `-F rules` alone leaves the NAT rules loaded, so **both** are required. |
+   | Rule order inside the anchor file | PF requires *options, normalization, queueing, **translation**, **filtering***. A `nat` rule must precede any `pass`/`block` rule in the same file; a file in the wrong order is refused ("Rules must be in order…", exit 1). The product's rendered file puts the NAT rules first. |
+   | The parent's `load anchor` line | `load anchor "<id>" from "<file>"` populates **both** the anchor's filter and NAT rulesets, so an administrator's own reload of `/etc/pf.conf` restores both classes without the product re-loading. |
+   | A failed load | exits 1, prints `pf rules not loaded`, and **leaves the anchor's existing filter and NAT content intact**. The apply path is fail-closed. |
+   | An anchor that does not exist | `pfctl -a <name> -s rules` exits **0** and prints `pfctl: DIOCGETRULES: Invalid argument` on stderr. The exit code does not distinguish an absent anchor; the message does. |
+   | The `pfctl -f` warning | `pfctl` always prints `Use of -f option, could result in flushing of rules present in the main ruleset added by the system at startup.` on stderr, even for an anchor-scoped load. It is **not** an error — the exit code is 0 and the root ruleset is provably preserved. The product must not treat it as a failure. |
+   | Anchor objects accumulate | `pfctl -s Anchors` enumerates **every** anchor object in the kernel — 62 on the guest — including ones that are not attached to the main ruleset. An anchor object is never destroyed, only emptied. The product scopes by its own anchor name and never enumerates or touches a foreign anchor. |
+
+   Two consequences for the implementation:
+
+   - **The observation cannot report an absent anchor today.** `pfctl.rs`
+     classifies a missing anchor from a non-zero exit and the message
+     `does not exist`, but on macOS the exit code is **0** and the message is
+     `DIOCGETRULES: Invalid argument`, so `anchor_filter` is `Some("")` for an
+     anchor that does not exist. An absent anchor and an emptied anchor are
+     different facts — one is "the administrator has not installed it", the
+     other is "the installed rules were removed" — and the observation has to
+     tell them apart. The observation is corrected as part of this milestone.
+   - **The rendered anchor file's order is part of the contract.** The
+     canonical renderer emits the NAT rules first, and a file in the wrong
+     order is refused by PF, so a naive renderer would produce a rule set that
+     cannot be installed at all.
+
+   The operator's parent lines, their required placement, and the fact that
+   appending all three to the end of `/etc/pf.conf` makes the main ruleset fail
+   to load are recorded under *The qualification environment* above.
+
 2. **The bounded apply backend.** Fixed argument vectors, the fixed system
    path, bounded output and runtime, no shell, no caller-supplied path or
    text, an exact digest comparison before writing, and a re-observation after

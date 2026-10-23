@@ -126,6 +126,10 @@ fn map_firewall_error(error: FirewallError) -> ProtocolError {
         FirewallError::PermissionDenied => ProtocolError::PermissionDenied,
         FirewallError::Unsupported => ProtocolError::UnsupportedBackend,
         FirewallError::BackendFailure => ProtocolError::BackendFailure,
+        // An anchor whose ownership cannot be proven is an ownership
+        // conflict, exactly as a table whose ownership cannot be proven is:
+        // somebody else's rules are in the way.
+        FirewallError::AnchorConflict => ProtocolError::Conflict,
         // The host is not in a state that can carry the requested forwarding.
         // That is a host-state precondition, not a malformed request, and the
         // operator has to change the host rather than the request.
@@ -134,7 +138,13 @@ fn map_firewall_error(error: FirewallError) -> ProtocolError {
         | FirewallError::FilterDrift
         | FirewallError::MissingReturnRoute
         | FirewallError::RouteConflict
-        | FirewallError::UnsupportedTopology => ProtocolError::UnsupportedBackend,
+        | FirewallError::UnsupportedTopology
+        // The administrator's PF configuration does not invoke the
+        // installation anchor in both rule classes, and the anchor's NAT
+        // rules are not the rendered policy. Both are host-state
+        // preconditions that the operator has to change.
+        | FirewallError::GatewayAttachmentMissing
+        | FirewallError::NatDrift => ProtocolError::UnsupportedBackend,
     }
 }
 

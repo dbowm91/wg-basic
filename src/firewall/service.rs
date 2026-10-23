@@ -200,15 +200,20 @@ fn failure_from(error: &FirewallError) -> FirewallFailure {
         FirewallError::InvalidPolicy
         | FirewallError::BackendFailure
         | FirewallError::ResourceLimitExceeded => FirewallFailure::BackendFailure,
-        // The routed-LAN refusals are Darwin's; the Linux backend never
-        // produces them, and a receipt that named one would claim a check
-        // this backend never made.
+        // The routed-LAN and gateway refusals are Darwin's; the Linux backend
+        // never produces them, and a receipt that named one would claim a
+        // check this backend never made.
         FirewallError::ForwardingDisabled
         | FirewallError::FilterMissing
         | FirewallError::FilterDrift
         | FirewallError::MissingReturnRoute
         | FirewallError::RouteConflict
+        | FirewallError::GatewayAttachmentMissing
+        | FirewallError::NatDrift
         | FirewallError::UnsupportedTopology => FirewallFailure::Unsupported,
+        // An anchor whose ownership cannot be proven is an ownership
+        // conflict, exactly as a table whose ownership cannot be proven is.
+        FirewallError::AnchorConflict => FirewallFailure::Conflict,
     }
 }
 

@@ -11,11 +11,12 @@
 //!   module's owner-table claims);
 //! - [`service`] serializes application and reports the receipt (Linux
 //!   backend);
-//! - [`pfctl`] reads the host's packet filter without changing it (Darwin
-//!   only, strictly read-only);
-//! - [`service_darwin`] owns the Darwin host-only (C001) and routed-LAN (C003)
-//!   contracts: it refuses any policy it cannot prove, and never writes PF
-//!   state, forwarding sysctls, or host routes.
+//! - [`pfctl`] reads the host's packet filter and applies the installation's
+//!   own anchor to it (Darwin only; scoped, never the root ruleset, never a
+//!   foreign anchor, never a global toggle);
+//! - [`service_darwin`] owns the Darwin host-only (C001), routed-LAN (C003), and
+//!   gateway (C004) contracts: it refuses any policy it cannot prove, and
+//!   writes only the installation's own anchor file and anchor.
 //!
 //! On Linux `nft` is invoked directly with internally rendered input. No caller
 //! can supply nft source, and the sole owned table is `inet wg_basic`. Do not
@@ -39,14 +40,16 @@ mod service_darwin;
 mod service_other;
 
 pub use pf::{
-    anchor_content_matches, anchor_name, attachment_verified, observe_attachments, render_policy,
-    render_routed_policy, rules_digest, teardown_order, Attachment, AttachmentObservation, PfError,
-    PfRuleSet, RequiredAttachments, ANCHOR_PREFIX, IPV4_FORWARDING_SYSCTL, IPV6_FORWARDING_SYSCTL,
+    anchor_content_matches, anchor_file_content, anchor_file_marker, anchor_file_path, anchor_name,
+    attachment_verified, nat_content_matches, observe_attachments, operator_attachment,
+    owns_anchor_file, render_policy, render_routed_policy, rules_digest, teardown_order,
+    Attachment, AttachmentObservation, OperatorAttachment, PfError, PfRuleSet, RequiredAttachments,
+    ANCHOR_FILE_DIRECTORY, ANCHOR_PREFIX, IPV4_FORWARDING_SYSCTL, IPV6_FORWARDING_SYSCTL,
 };
 
 pub use policy::{
     DesiredNetworkPolicy, FirewallActionKind, FirewallApplyReceipt, FirewallError, FirewallFailure,
-    FirewallPlanSummary, FirewallWarning, Ipv4Forwarding, Ipv6Forwarding, NatMode,
+    FirewallPlanSummary, FirewallWarning, GatewayVerdict, Ipv4Forwarding, Ipv6Forwarding, NatMode,
     RoutedLanVerdict,
 };
 #[cfg(target_os = "linux")]
