@@ -307,6 +307,8 @@ Its subcommand contract is:
 | `lan-route` | the LAN host's routing table |
 | `lan-ping <address>` | ping from the LAN host to an address |
 | `ping-lan <address>` | ping from the peer to the downstream address |
+| `observed-source <address>` | the IPv4 source the downstream LAN host observed for the traffic towards the address |
+| `observed-source6 <address>` | the IPv6 source the downstream LAN host observed for the traffic towards the address |
 | `spoof <address>` | ping from the peer with a source that does not arrive through the tunnel |
 | `apply <config> <srv-v4> <srv-v6> <lan-prefix>` | install the config and bring the tunnel up |
 | `status` | the peer's `wg show` dump |

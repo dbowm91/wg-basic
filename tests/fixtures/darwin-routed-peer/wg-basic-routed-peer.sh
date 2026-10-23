@@ -37,6 +37,10 @@
 #   ping-lan <addr>        -> ping from the peer to the downstream host
 #   ping-lan6 <addr>       -> ping from the peer to the downstream host (v6)
 #   spoof <addr>           -> ping from the peer with a source outside the pool
+#   observed-source <addr> -> the IPv4 source the downstream LAN host observed
+#                             for the traffic towards <addr>
+#   observed-source6 <addr>-> the IPv6 source the downstream LAN host observed
+#                             for the traffic towards <addr>
 #   teardown               -> bring the tunnel down, drop the config
 #
 # Required environment:
@@ -76,6 +80,20 @@ LAN_PREFIX6="${WGB_LAN_PREFIX6:-2001:db8:20::/64}"
 TUNNEL_PREFIX="${WGB_TUNNEL_PREFIX:-10.77.0.0/24}"
 TUNNEL_PREFIX6="${WGB_TUNNEL_PREFIX6:-2001:db8:77::/64}"
 REMOTE_CONFIG="/etc/wireguard/${PEER_IFACE}.conf"
+LAN_IFACE="${WGB_LAN_IFACE:-vethl1}"
+
+# The observation capture.
+#
+# Only the downstream LAN host can say what arrived. The appliance's own state
+# table shows what it translated, and a leg that reads only the appliance's own
+# view cannot tell a translated source from an untranslated one. The capture
+# therefore runs inside the LAN namespace, on the packets that actually arrived
+# there, and records the source address of every ICMP and ICMPv6 packet the
+# LAN host received. The capture is a packet-socket reader, so it copies the
+# frames without taking them from the stack.
+OBSERVED_SCRIPT="/tmp/wg-observed.py"
+OBSERVED_LOG="/tmp/wg-observed.log"
+OBSERVED_PID="/tmp/wg-observed.pid"
 
 SSH=(ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new)
 SCP=(scp -q -o BatchMode=yes -o StrictHostKeyChecking=accept-new)
@@ -114,6 +132,84 @@ upstream_gateway() {
 
 upstream_gateway6() {
   remote "ip -6 route show default | awk '{print \$3}'"
+}
+
+# Install the capture that records what the far side observed.
+#
+# The sniffer prints "<source> <destination>" for every ICMP and ICMPv6 packet
+# the interface received. The peer host's python3 is the only thing it needs.
+install_observation_capture() {
+  remote_root "cat > ${OBSERVED_SCRIPT}" <<'PYTHON'
+import socket
+import struct
+import sys
+
+interface = sys.argv[1]
+reader = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0003))
+reader.bind((interface, 0))
+while True:
+    try:
+        frame = reader.recv(65535)
+    except OSError:
+        break
+    if len(frame) < 34:
+        continue
+    kind = struct.unpack("!H", frame[12:14])[0]
+    offset = 14
+    if kind == 0x8100:
+        kind = struct.unpack("!H", frame[16:18])[0]
+        offset = 18
+    if kind == 0x0800:
+        if frame[offset + 9] != 1:
+            continue
+        source = socket.inet_ntop(socket.AF_INET, frame[offset + 12:offset + 16])
+        destination = socket.inet_ntop(socket.AF_INET, frame[offset + 16:offset + 20])
+    elif kind == 0x86DD:
+        if frame[offset + 6] != 58:
+            continue
+        source = socket.inet_ntop(socket.AF_INET6, frame[offset + 8:offset + 24])
+        destination = socket.inet_ntop(socket.AF_INET6, frame[offset + 24:offset + 40])
+    else:
+        continue
+    print(source, destination, flush=True)
+PYTHON
+}
+
+# Start the capture inside the LAN namespace.
+#
+# The capture is detached from the session and writes to a file, so it holds
+# no channel open and its output never mixes with the driver's own. Its
+# process id is recorded rather than matched by name: the capture's own path
+# appears in the very command line that would start it, so a name match would
+# find the starting shell as well.
+start_observation_capture() {
+  stop_observation_capture
+  remote_root "rm -f ${OBSERVED_LOG}; \
+          nohup ip netns exec ${LAN_NS} python3 -u ${OBSERVED_SCRIPT} ${LAN_IFACE} \
+          > ${OBSERVED_LOG} 2>&1 < /dev/null & echo \$! > ${OBSERVED_PID}"
+}
+
+# Stop the capture, if it is running.
+stop_observation_capture() {
+  remote_root "if [ -f ${OBSERVED_PID} ]; then kill \$(cat ${OBSERVED_PID}) 2>/dev/null; fi; \
+          rm -f ${OBSERVED_PID}"
+}
+
+# The source address the far side observed for the traffic towards an address.
+#
+# The capture's own log is read here rather than parsed on the peer host, so
+# the filter stays a plain local expression and the far side's observation is
+# reported exactly as it was recorded.
+observed_source() {
+  local address="${1:?the destination address is required}"
+  local observed
+  observed="$(remote_root "cat ${OBSERVED_LOG}" 2>/dev/null | \
+    awk -v want="${address}" '$2 == want { source = $1 } END { print source }' || true)"
+  if [ -z "${observed}" ]; then
+    echo "the far side observed no traffic towards ${address}" >&2
+    return 1
+  fi
+  printf '%s\n' "${observed}"
 }
 
 command="${1:?a peer subcommand is required}"
@@ -208,6 +304,9 @@ ip netns list
 ip route show
 ip -6 route show
 REMOTE
+    # The far side's own observation of the traffic that arrives at it.
+    install_observation_capture
+    start_observation_capture
     ;;
   peer-address)
     remote "ip -4 -o addr show scope global | awk '{print \$4}' | cut -d/ -f1 | head -1"
@@ -291,7 +390,11 @@ REMOTE
   handshake)
     remote_root "ip netns exec ${PEER_NS} wg show ${PEER_IFACE} latest-handshakes | awk '{print \$2}' | head -1"
     ;;
+  observed-source|observed-source6)
+    observed_source "${1:?the destination address is required}"
+    ;;
   teardown)
+    stop_observation_capture
     remote_root "ip netns exec ${PEER_NS} wg-quick down ${PEER_IFACE} 2>/dev/null || true; \
             rm -f ${REMOTE_CONFIG} /tmp/${PEER_IFACE}.conf"
     ;;
