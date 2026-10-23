@@ -183,7 +183,7 @@ The claims, and the evidence for each:
 |---|---|
 | The IPv4 far side observes the **translated** source | "the far side observed the IPv4 source **192.168.64.4** (the gateway's egress address is 192.168.64.4, the client's tunnel address is 10.77.0.2)" — the far side saw the gateway's egress address, not the client's tunnel address. The observation is taken **in the downstream LAN namespace**, on the packet that actually arrived there, by a packet-socket capture the peer driver runs there. |
 | The IPv6 far side observes the **untranslated** source | "the far side observed the IPv6 source **2001:db8:77::2** (the client's tunnel address is 2001:db8:77::2)" — no NAT66: the client's own IPv6 address is what arrived. |
-| The return path works | the far side's replies came back through the tunnel and the leg's own probes succeeded in both directions; the leg's IPv4 and IPv6 traffic assertions are in the evidence transcript. |
+| The return path works | the peer's probes to the far side answered in **both** families: "64 bytes from 10.20.20.2: icmp_seq=1 ttl=61", "3 packets transmitted, 3 received, 0% packet loss" for IPv4, and "64 bytes from 2001:db8:20::2: icmp_seq=1 ttl=61" for IPv6. |
 | The root ruleset is never loaded, PF is never toggled, no table is flushed | the inventory before the run: "the packet filter is disabled"; the main filter ruleset held only `scrub-anchor "com.apple/*" all fragment reassemble` and `anchor "com.apple/*" all`; the main NAT ruleset held only `nat-anchor "com.apple/*" all` and `rdr-anchor "com.apple/*" all`; `/etc/pf.anchors` held only `com.apple`; the only non-empty anchor was `com.apple` with 2 filter rules and 0 NAT rules. The residue after the run: "the residue the leg left on the host's packet filter: **[]**". |
 | The forwarding switches are untouched by the product | the leg set `net.inet.ip.forwarding` and `net.inet6.ip6.forwarding` to 0 and read them back; the product's own remediation for a disabled switch says "wg-basic never writes it". The switches are the administrator's and the product only reads them. |
 | The gateway converges | the verdict: "the gateway's disposition: **pass** — the gateway prerequisites are in place — host forwarding is enabled, the administrator's parent invokes the installation anchor in both rule classes, and the anchor's rules match the rendered policy". |
@@ -271,17 +271,20 @@ feature-bearing cross-clippy with the zig toolchain
 
 **On a controlled Linux host** (`sugarwookie@192.168.182.143`): the same gate
 order green — `fmt`, `check`, `clippy`, `clippy` with the Linux feature,
-`test` (**43 binaries, 672 passed**, 0 failed, 3 ignored) and MSRV — and all
-**eleven** rootful suites green: `wireguard_kernel`, `network_reconcile`,
+`test` (43 binaries, **672 passed**, 0 failed, 3 ignored at `5e35a4a`; **44
+binaries, 672 passed**, 0 failed, 3 ignored at the final head) and MSRV — and
+all **eleven** rootful suites green: `wireguard_kernel`, `network_reconcile`,
 `network_control_e2e`, `durable_owner`, `durable_restart`, `durable_backup`,
 `product_management_rootful`, `maintenance_rootful`, `doctor_readonly`,
 `service_rootful_e2e`, `upgrade_rehearsal_rootful`. The host's namespaces,
 links, nftables tables, units and canonical installation paths were unchanged
 before and after; only the route expiry timers and the nftables counters moved.
 
-**Hosted CI:** every job green except `dependency-audit`, which is **red** and
-must never be claimed green — upstream `eggup-archive` pins `zip ^6.0.0`. It is
-routed to C005/M007.
+**Hosted CI at the final head** (`bc70125`): the `CI` workflow's **only**
+failing job is `dependency-audit`, which is **red** and must never be claimed
+green — upstream `eggup-archive` pins `zip ^6.0.0`. It is routed to
+C005/M007. The `macOS qualification` workflow and the `Distribution
+foundation` workflow both **succeed**.
 
 ## 8. Documentation
 
