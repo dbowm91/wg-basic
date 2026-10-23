@@ -2724,3 +2724,42 @@ fn the_darwin_management_daemon_is_never_root() {
         "the rendered plists must declare the service identity"
     );
 }
+
+#[test]
+fn the_operator_shell_must_bring_a_rendered_artifact_into_view() {
+    // The client editor is a scrollable dialog (`max-height:90vh;overflow:auto`)
+    // and the artifact area is its last child, below the edit form. A QR code
+    // rendered there therefore landed *below the dialog's visible region*: the
+    // operator pressed "Show QR code" and saw nothing at all, and in a taller
+    // window the dialog's bottom edge cut the code in half, so no camera could
+    // read it. The rendered pixels failed to decode where the same SVG decoded
+    // perfectly on its own, which is what exposed it.
+    //
+    // The invariant is that a rendered artifact is brought into view, and that
+    // the QR branch waits for the image to load before measuring.
+    let js = source_of("src/http/assets/app.js");
+    let artifact = js
+        .split_once("async function artifact(")
+        .and_then(|(_, rest)| rest.split_once("\n  }"))
+        .map(|(body, _)| body)
+        .expect("the shell renders artifacts in the client editor");
+
+    assert!(
+        artifact.contains("revealArtifact("),
+        "a rendered artifact must be brought into view: it is rendered into the last \
+         child of a scrollable dialog, so it lands below the visible region and the \
+         operator never sees the QR code: {artifact}"
+    );
+
+    assert!(
+        js.contains("scrollIntoView") && js.contains("block: \"center\""),
+        "the reveal must scroll the artifact into the middle of the editor's visible \
+         area, so the whole code is on screen rather than flush against an edge"
+    );
+
+    assert!(
+        artifact.contains("addEventListener(\"load\""),
+        "the QR image loads asynchronously: revealing before it has loaded measures \
+         the artifact area without the code in it, and the code stays out of view"
+    );
+}
