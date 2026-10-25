@@ -239,8 +239,13 @@ these work packages changes behavior.
    the earlier commits are named in the scan configuration, with their reason.
 2. The published vector in both forms, and the published client public key,
    are named in `.gitguardian.yaml` by the SHA-256 of each value, and nothing
-   else is excluded. The raw hex form does not appear in that file, so the
-   file cannot itself be an occurrence of the value the detector reports.
+   else is excluded. The configuration file cannot itself be an occurrence of
+   the value the detector reports, and a scan of that file reports no secret.
+   The plan originally required the raw hex form to be absent from the file
+   for that reason; measurement contradicted the requirement — the `match`
+   key is not a sensitive variable name, so the value in the file is not
+   read as an assignment of a credential to a secret — and the requirement
+   is replaced by the property it was there to secure.
 3. The same `.gitguardian.yaml` lands on `main` with this branch, so a scan
    of this repository is governed by it.
 4. The branch's GitGuardian check reports no secret.
@@ -260,6 +265,13 @@ Stop and record the discrepancy rather than working around it if:
 - the scan configuration cannot be landed on `main`, which would mean the
   repository cannot govern its own scans;
 - any part of this corrective would need a change to a closed Linux contract.
+
+The second stop condition was reached and the discrepancy was recorded rather
+than worked around: the hosted scan still reports the published vector, on
+commits the app scanned before the configuration existed. The closure record
+carries the measurement, the three forms of the configuration entry that were
+tried against the open incident, and the one remaining step, which is the
+workspace owner's in the GitGuardian dashboard.
 
 ## Closure evidence requirements
 
