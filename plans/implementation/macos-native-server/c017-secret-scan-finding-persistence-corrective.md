@@ -154,12 +154,18 @@ configuration.
    minimum. The assembled value is byte-for-byte unchanged, and the three
    affected tests keep their assertions.
 2. `.gitguardian.yaml` names each published value by the SHA-256 of that
-   value, which is the form GitGuardian documents for `ignored_matches`. The
-   hex forms are recorded by hash only, because the value the detector
-   reports is a prefix of the vector's hex form: a configuration file that
-   reproduced the whole hex form would itself carry that value and would read
-   as another occurrence of it. The base64 form and the client public key are
-   reproduced, because neither contains that prefix.
+   value, which is the form GitGuardian documents for `ignored_matches`, and
+   names it by the value itself as well. The hex forms are written literally
+   as well as by hash, because the value the detector reports is the
+   sixty-one character prefix of the vector's hex form, and the SHA-256 of
+   the whole sixty-four character form does not match a prefix. The base64
+   form and the client public key are reproduced for the same reason. The
+   plan originally proposed to keep the hex forms out of the file, on the
+   reasoning that a configuration file reproducing the whole hex form would
+   itself carry that value and would read as another occurrence of it.
+   Measurement contradicted that reasoning: the `match` key is not a
+   sensitive variable name, so the value in the file is not read as an
+   occurrence of it, and the file's own scan reports no secret.
 3. The same `.gitguardian.yaml` lands on `main`, because the file that governs
    a scan is the one on the default branch. It lands with this branch's
    merge rather than in a pull request of its own: `main` still carries
@@ -172,8 +178,8 @@ configuration.
 
 1. Rewrite the vector's pieces in `src/wireguard/darwin.rs` so no contiguous
    run reaches the detector's minimum.
-2. Extend `.gitguardian.yaml` to name each published value by its SHA-256,
-   and keep the raw hex form out of the file.
+2. Extend `.gitguardian.yaml` to name each published value by its SHA-256
+   and by the value itself.
 3. Land the same `.gitguardian.yaml` on `main`, with this branch's merge.
 4. Run the gate order and the local detector reproduction.
 5. Push and let the hosted checks re-run, including the app's scan.
