@@ -169,7 +169,7 @@ impl StateStore {
 fn current_uid() -> u32 {
     // The management role runs unprivileged; the store refuses a database or
     // parent directory it does not own rather than widening access to it.
-    std::os::unix::fs::MetadataExt::uid(
-        &std::fs::metadata("/proc/self").expect("effective uid is readable from /proc/self"),
-    )
+    // Portable (M001): `geteuid` works on Linux and Darwin; the prior
+    // `/proc/self` metadata read was Linux-only.
+    nix::unistd::geteuid().as_raw()
 }

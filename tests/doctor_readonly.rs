@@ -1,9 +1,12 @@
+// M001 note: the read-only doctor fixture is Linux-only until M002 (netd +
+// `/proc`). Helpers are dead code on Darwin by construction.
+#![cfg_attr(not(target_os = "linux"), allow(dead_code, unused_imports))]
 use std::{
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 use wg_basic::{doctor::DoctorReport, state::StateStore};
 
@@ -13,14 +16,17 @@ struct TempDirectory(PathBuf);
 
 impl TempDirectory {
     fn new() -> Self {
+        // The wall clock is too coarse to tell two concurrent tests apart, so
+        // the scratch path is suffixed with a per-process counter instead of
+        // a timestamp.
+        static SCRATCH_SEQUENCE: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
         let path = Path::new("/tmp").join(format!(
             "wg-basic-doctor-readonly-{}-{}",
             std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            SCRATCH_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
+        let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir(&path).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
         Self(path)
@@ -42,6 +48,7 @@ impl Drop for ChildGuard {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn doctor_json_does_not_change_database_or_host_network_state() {
     let temporary = TempDirectory::new();
@@ -153,6 +160,7 @@ fn link_state_snapshot() -> Vec<(String, Vec<(String, String)>)> {
 #[test]
 fn doctor_plan_only_diagnoses_managed_drift_without_mutating_the_namespace() {
     use std::os::unix::fs::MetadataExt;
+    use std::time::{SystemTime, UNIX_EPOCH};
     use wg_basic::{
         domain::{ClientRoutePolicy, DesiredGeneration, NetworkPrefix},
         management::set_password_at,
@@ -202,6 +210,8 @@ fn doctor_plan_only_diagnoses_managed_drift_without_mutating_the_namespace() {
             ipv4_forwarding_required: false,
             ipv6_forwarding_required: false,
             masquerade: false,
+            mode: None,
+            destination_prefixes: Vec::new(),
             default_client_route_policy: ClientRoutePolicy::default(),
         })
         .unwrap();

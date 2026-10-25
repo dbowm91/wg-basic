@@ -66,7 +66,22 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "ipv6_forwarding_policy",
         sql: include_str!("../migrations/007_ipv6_forwarding_policy.sql"),
     },
+    Migration {
+        version: 8,
+        name: "routed_lan_mode",
+        sql: include_str!("../migrations/008_routed_lan_mode.sql"),
+    },
 ];
+
+/// The schema version a current binary writes.
+///
+/// This is the head of the migration list, without the update-fixture
+/// override: that override exists so an *old* fixture binary refuses a
+/// newer state, while a rehearsal that asserts the version a migrated
+/// state carries needs the version a *current* binary writes.
+pub fn current_schema_version() -> i64 {
+    MIGRATIONS.last().map_or(0, |m| m.version)
+}
 
 /// The highest schema version this binary understands.
 pub(crate) fn supported_version() -> i64 {
@@ -76,7 +91,7 @@ pub(crate) fn supported_version() -> i64 {
             return 4;
         }
     }
-    MIGRATIONS.last().map_or(0, |m| m.version)
+    current_schema_version()
 }
 /// Creates a recovery snapshot before a schema-changing migration runs.
 ///
@@ -248,8 +263,17 @@ fn foreign_key_check(transaction: &rusqlite::Transaction<'_>) -> Result<(), rusq
 /// builds a real v1 store -- the boundary a real user would be upgrading from.
 #[cfg(test)]
 pub(super) fn initialize_at_version(path: &Path, through_version: i64) -> Result<(), StateError> {
+    // Portable (M001): canonicalize macOS symlink components before NOFOLLOW.
+    let canonical = (|| -> Result<std::path::PathBuf, StateError> {
+        let parent = path.parent().ok_or(StateError::MissingPath)?;
+        let canonical_parent =
+            std::fs::canonicalize(parent).map_err(|_| StateError::DatabaseOpenFailed)?;
+        let file_name = path.file_name().ok_or(StateError::MissingPath)?;
+        Ok(canonical_parent.join(file_name))
+    })();
+    let canonical = canonical?;
     let connection = Connection::open_with_flags(
-        path,
+        &canonical,
         OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX

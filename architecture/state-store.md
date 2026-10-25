@@ -91,8 +91,9 @@ The initial schema is created entirely by migration 1. Singleton rows are enforc
 | `clients` | identity, owning interface, peer, required IPv4 and optional IPv6 assigned tunnel addresses |
 | `client_route_prefixes` | client-side route policy, deliberately separate from server AllowedIPs |
 | `client_global_route_prefixes` | client routes not attached to a single client |
-| `network_policy` | singleton IPv4/optional IPv6 forwarding, NAT, and egress intent |
+| `network_policy` | singleton routing mode, IPv4/optional IPv6 forwarding, NAT, and egress intent |
 | `network_policy_source_prefixes` | explicit policy prefixes |
+| `network_policy_destination_prefixes` | the approved downstream prefixes of a routed-LAN policy |
 | `network_operational_state` | durable whole-server enabled/disabled projection, keyed by interface identity |
 | `convergence_state` | reconciliation evidence: attempted generation, converged generation, attempt timestamp, and a disposition category |
 
@@ -118,6 +119,21 @@ Schema v7 adds `network_policy.ipv6_forwarding_required`, defaulting existing
 rows to false. IPv6 forwarding is never inferred from an assigned tunnel
 address; enabling it requires the explicit server policy and managed IPv6
 prefix.
+
+Schema v8 adds the typed routing mode: `network_policy.mode` is a non-null
+`TEXT` column restricted to `host_only`, `routed_lan`, or `gateway`, and
+`network_policy_destination_prefixes` holds the approved downstream prefixes
+of a routed-LAN policy. The mode is persisted rather than inferred from the
+forwarding flags, because a routed LAN and a gateway are different contracts
+and the mode's own rules are checked together.
+
+Existing rows keep the behaviour they already had: a policy that asks for
+forwarding or masquerade becomes `gateway`, one that asks for neither becomes
+`host_only`, and no existing row becomes `routed_lan`, because nothing before
+this migration could express one. No existing row loses a destination
+allowlist, because none had one. A binary that predates the mode refuses a
+database that carries it: the runner rejects a newer-than-binary version
+rather than opening a store whose shape it does not understand.
 
 Session storage is bounded to 32 live sessions per principal; expired sessions
 are pruned at serve startup and before successful issuance. Enrollment storage

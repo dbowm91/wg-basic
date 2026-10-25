@@ -523,10 +523,12 @@ fn server_desired_state(keys: &Keys, interface_id: InterfaceId) -> DesiredState 
         // Masquerade out of v-e, so the client can reach the internet namespace.
         network_policy: Some(DesiredNetworkPolicy {
             wireguard_interface: "wg-server".parse().unwrap(),
+            mode: wg_basic::domain::NetworkPolicyMode::Gateway,
             ipv4_forwarding_required: true,
             ipv6_forwarding_required: false,
             egress_interface: "v-e".parse().unwrap(),
             source_prefixes: vec![NetworkPrefix::new("10.8.0.0/24".parse().unwrap())],
+            destination_prefixes: Vec::new(),
             masquerade: true,
         }),
     }

@@ -1,0 +1,92 @@
+name: macOS qualification
+
+# Native macOS server-line qualification on disposable GitHub-hosted runners.
+# Scope (binding): Apple silicon only (ADR-009) — the managed server's
+# supported Darwin target is aarch64-apple-darwin, and the installer refuses
+# every other triple. Ephemeral runners only, TEST-NET-1 addresses, loopback
+# peering, per-run anchor/job names. No default-route surgery, no global
+# forwarding change, no `pfctl -e`, no /etc/pf.conf write, no NAT traffic.
+# Forwarded/NAT traffic, reboot/reinstall, and any release stay unqualified.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [plans/macos-native-support]
+
+permissions:
+  contents: read
+
+jobs:
+  gates-arm64:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: clippy, rustfmt
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo check --all-targets --locked
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+      - run: cargo check --target aarch64-apple-darwin --locked --all-targets
+      - run: cargo +1.89.0 check --all-targets --locked
+
+  live-arm64:
+    needs: [gates-arm64]
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: clippy, rustfmt
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - name: Install the declared Go toolchain without third-party actions
+        run: |
+          go_version=$(python3 -c "import json;print(json.load(open('helper/wireguard-go.provenance.json'))['toolchain']['go_version'])")
+          if command -v go >/dev/null 2>&1 && [ "$(go version 2>/dev/null | awk '{print $3}')" = "go${go_version}" ]; then
+            go version
+          else
+            curl -fsSL -o "$RUNNER_TEMP/go${go_version}.darwin-arm64.tar.gz" "https://go.dev/dl/go${go_version}.darwin-arm64.tar.gz"
+            mkdir -p "$RUNNER_TEMP/gotools"
+            tar -xzf "$RUNNER_TEMP/go${go_version}.darwin-arm64.tar.gz" -C "$RUNNER_TEMP/gotools"
+            echo "$RUNNER_TEMP/gotools/go/bin" >> "$GITHUB_PATH"
+            "$RUNNER_TEMP/gotools/go/bin/go" version
+          fi
+      - name: Build the declared wireguard-go helper and record its provenance
+        run: |
+          python3 scripts/build-wireguard-go-helper.py --output-dir "$RUNNER_TEMP/helper" --target aarch64-apple-darwin
+          cat "$RUNNER_TEMP/helper/wireguard-go.provenance.json"
+      - name: Build the wg-basic binary and the live test target
+        run: |
+          cargo build --locked --bin wg-basic
+          cargo test --locked --no-run --test wireguard_darwin_live
+      - name: Qualify M003/M004/M005/M006 live fixtures as root (disposable host)
+        run: |
+          test_binary=$(find "$PWD/target/debug/deps" -maxdepth 1 -name 'wireguard_darwin_live-*' ! -name '*.*' | head -1)
+          echo "live test binary: $test_binary"
+          sudo \
+            "WGB_DARWIN_LIVE=1" \
+            "WGB_WIREGUARD_GO=$RUNNER_TEMP/helper/wireguard-go" \
+            "WGB_HELPER_SHA256=$(cut -d' ' -f1 "$RUNNER_TEMP/helper/wireguard-go.sha256")" \
+            "WGB_BINARY=$PWD/target/debug/wg-basic" \
+            "WGB_EVIDENCE_DIR=$RUNNER_TEMP/wgb-evidence" \
+            "$test_binary" --ignored --test-threads=1 --nocapture
+      - name: Upload live evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-live-evidence-arm64
+          path: ${{ runner.temp }}/wgb-evidence
+          if-no-files-found: warn
+      - name: Upload the helper provenance receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-helper-provenance-arm64
+          path: ${{ runner.temp }}/helper/wireguard-go.provenance.json
+          if-no-files-found: warn

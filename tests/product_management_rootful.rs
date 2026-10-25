@@ -409,6 +409,8 @@ impl Installation {
                 ipv4_forwarding_required: false,
                 ipv6_forwarding_required: false,
                 masquerade: false,
+                mode: None,
+                destination_prefixes: Vec::new(),
                 default_client_route_policy: ClientRoutePolicy::default(),
             })
             .await

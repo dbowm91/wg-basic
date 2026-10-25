@@ -6,14 +6,19 @@
 //! sockets are preserved and treated as conflicts. A stale netd-owned socket may
 //! be removed only after a failed connect plus an inode/owner recheck. Shutdown
 //! removes the socket only if device, inode, and owner still match.
+//!
+//! Peer identity is kernel-derived on both OSes (`SO_PEERCRED` on Linux,
+//! `getpeereid(3)` on Darwin via `auth::peer_identity`) and is rechecked on
+//! every connection. M002 ports this file unchanged in lifecycle semantics;
+//! only the credential source is platform-selected.
 
-use super::auth::AuthorizationPolicy;
+use super::auth::{peer_identity, AuthorizationPolicy};
 use super::framing::{read_frame, write_frame};
 use super::wire::RequestEnvelope;
 use crate::{
     firewall::FirewallService, reconcile::ReconciliationService, wireguard::WireGuardBackend,
 };
-use nix::sys::socket::{getsockopt, listen, sockopt::PeerCredentials, Backlog};
+use nix::sys::socket::{listen, Backlog};
 use std::{
     fs, io,
     os::unix::{
@@ -50,6 +55,22 @@ pub(crate) struct SocketIdentity {
     pub(crate) device: u64,
     pub(crate) inode: u64,
     pub(crate) uid: u32,
+}
+
+/// Builds the platform's WireGuard backend.
+///
+/// Linux talks to the kernel module directly and needs no construction. Darwin
+/// needs the managed-runtime registry that records the durable ownership
+/// claim, so it builds the backend over the registry netd shares
+/// process-wide.
+#[cfg(target_os = "linux")]
+fn platform_wireguard_backend() -> WireGuardBackend {
+    WireGuardBackend
+}
+
+#[cfg(target_os = "macos")]
+fn platform_wireguard_backend() -> WireGuardBackend {
+    WireGuardBackend::shared()
 }
 
 impl SocketServer {
@@ -106,7 +127,7 @@ impl SocketServer {
             identity,
             runtime_directory,
             authorization,
-            wireguard: WireGuardBackend,
+            wireguard: platform_wireguard_backend(),
             reconciliation: ReconciliationService::default(),
             firewall: FirewallService::default(),
             aggregate: crate::aggregate::AggregateCoordinator::default(),
@@ -144,15 +165,18 @@ impl SocketServer {
     }
 
     fn handle_connection(&self, mut stream: UnixStream) -> io::Result<()> {
+        // Portable (M002): accepted streams inherit the listener's
+        // nonblocking mode on Darwin, which would make `read_exact` return
+        // `WouldBlock` immediately instead of honoring the 2s bound. Force
+        // blocking so one slow peer occupies the single server for at most
+        // `IO_TIMEOUT` on both OSes; on Linux this is already blocking.
+        stream.set_nonblocking(false)?;
         stream.set_read_timeout(Some(IO_TIMEOUT))?;
         stream.set_write_timeout(Some(IO_TIMEOUT))?;
-        let credentials = getsockopt(&stream, PeerCredentials).map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "could not verify local peer credentials",
-            )
-        })?;
-        if !self.authorization.permits(credentials.uid()) {
+        // Kernel-derived peer identity on every connection; never request
+        // content, pid files, or socket path labels.
+        let (uid, _gid) = peer_identity(&stream)?;
+        if !self.authorization.permits(uid) {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "local peer is not authorized",
@@ -297,8 +321,18 @@ mod tests {
         };
         assert_eq!(snapshot.effective_uid, nix::unistd::geteuid().as_raw());
         assert!(snapshot.runtime_directory_safe);
-        assert_eq!(snapshot.wireguard_control, CapabilityState::Unknown);
-        assert_eq!(snapshot.nftables, CapabilityState::Unknown);
+        // Linux defers backend probes as Unknown; Darwin reports Linux
+        // backends as Unavailable (helper/PF qualify in M003/M005).
+        #[cfg(target_os = "linux")]
+        {
+            assert_eq!(snapshot.wireguard_control, CapabilityState::Unknown);
+            assert_eq!(snapshot.nftables, CapabilityState::Unknown);
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            assert_eq!(snapshot.wireguard_control, CapabilityState::Unavailable);
+            assert_eq!(snapshot.nftables, CapabilityState::Unavailable);
+        }
 
         shutdown.store(true, Ordering::Release);
         handle.join().unwrap().unwrap();

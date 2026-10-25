@@ -118,6 +118,7 @@ fn desired_state(interface_id: InterfaceId) -> DesiredState {
         client_routes: Default::default(),
         network_policy: Some(DesiredNetworkPolicy {
             wireguard_interface: "wg-backup".parse().unwrap(),
+            mode: wg_basic::domain::NetworkPolicyMode::Gateway,
             ipv4_forwarding_required: false,
             ipv6_forwarding_required: true,
             egress_interface: "eth0".parse().unwrap(),
@@ -125,6 +126,7 @@ fn desired_state(interface_id: InterfaceId) -> DesiredState {
                 NetworkPrefix::new("10.77.0.0/24".parse().unwrap()),
                 NetworkPrefix::new("2001:db8:77::/64".parse().unwrap()),
             ],
+            destination_prefixes: Vec::new(),
             masquerade: false,
         }),
     }

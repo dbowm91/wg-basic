@@ -442,6 +442,14 @@ Candidates:
 
 None is required for the initial product identity.
 
+## 14A. Post-Phase-11 — Native macOS headless server support
+
+Status: planned, independent optional platform expansion; Linux Phase 1–11 technical closure remains in force.
+
+Owner: `plans/subsystems/macos-native-server-roadmap.md`; architecture decision `plans/adr/008-macos-headless-platform-backends.md`, amended by `plans/adr/009-apple-silicon-only-darwin-target.md`. M001–M007 stage portability, Darwin IPC, userspace WireGuard/utun, native link/route reconciliation, PF/forwarding/NAT decision and implementation, launchd distribution, and Apple silicon real-host qualification. M001 is ready for handoff; the others have explicit predecessor gates. The existing Linux kernel, nftables, systemd and release pipelines remain unchanged until separately qualified implementation. Apple TN3165 limits PF distribution claims; no macOS Internet gateway promise exists before M005's explicit policy decision and real traffic evidence.
+
+**Amended 2026-10-21 (ADR-009):** the macOS line's qualification architecture is Apple silicon only; native Intel is dropped as a target, and an Intel Mac is refused at install time. The Linux architecture targets are unchanged.
+
 ## 15. Eggstack adoption constraints
 
 Eggstack reuse is contract-driven.
@@ -504,3 +512,4 @@ Before the first public production claim:
 | 10 distribution/update | closed — release-mechanically complete, public publication blocked | `plans/subsystems/distribution-install-update-roadmap.md` | `plans/closure/distribution/005-status.md`; production signing pending |
 | 11 IPv6/route-policy qualification | closed | `plans/subsystems/ipv6-route-policy-roadmap.md`; `plans/closure/ipv6-route-policy/004-status.md` | — |
 | 12 advanced capabilities | deferred | separate future research | explicit product decision |
+| Native macOS server expansion | planned, M001 ready | `plans/subsystems/macos-native-server-roadmap.md` | M002–M007 dependencies; M005 PF/Apple compatibility gate |

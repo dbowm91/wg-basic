@@ -25,7 +25,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-pub use migrations::recovery_snapshot_path;
+pub use migrations::{current_schema_version, recovery_snapshot_path};
+
 /// The highest schema version this binary understands.
 ///
 /// Re-exported so a caller outside this module reads the version through the
@@ -57,7 +58,13 @@ pub fn open_connection(
     intent: OpenIntent,
     expected_uid: u32,
 ) -> Result<Connection, StateError> {
-    validation::verify_path(path, intent, expected_uid)?;
+    // Portable (M001): on macOS the system temp and `/var` paths contain
+    // symlink components (`/var` -> `private/var`, `/tmp` -> `private/tmp`).
+    // `SQLITE_OPEN_NOFOLLOW` refuses to open through them, so resolve the
+    // parent before verifying/opening. The final file itself must still not be
+    // a symlink; that check stays in `verify_path`.
+    let canonical = canonical_db_path(path)?;
+    validation::verify_path(&canonical, intent, expected_uid)?;
 
     let mut flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
     flags |= OpenFlags::SQLITE_OPEN_NOFOLLOW;
@@ -65,16 +72,44 @@ pub fn open_connection(
         flags |= OpenFlags::SQLITE_OPEN_CREATE;
     }
 
-    let mut connection =
-        Connection::open_with_flags(path, flags).map_err(|_| StateError::DatabaseOpenFailed)?;
+    let mut connection = Connection::open_with_flags(&canonical, flags)
+        .map_err(|_| StateError::DatabaseOpenFailed)?;
 
     validation::configure(&connection)?;
     let starting_version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(StateError::database)?;
-    migrations::recovery_snapshot(&connection, path, starting_version, supported_version())?;
+    migrations::recovery_snapshot(
+        &connection,
+        &canonical,
+        starting_version,
+        supported_version(),
+    )?;
     migrations::run_migrations(&mut connection)?;
     Ok(connection)
+}
+
+/// Resolves symlink components in the database parent directory.
+///
+/// Returns the canonical database path (canonical parent + original file
+/// name). The file itself is never resolved: for `Initialize` it does not
+/// exist yet, and for `Reopen` resolving it would follow a symlink the
+/// caller must instead refuse.
+fn canonical_db_path(path: &Path) -> Result<std::path::PathBuf, StateError> {
+    let parent = path.parent().ok_or(StateError::MissingPath)?;
+    let canonical_parent =
+        std::fs::canonicalize(parent).map_err(|_| StateError::MissingParent {
+            path: parent.display().to_string(),
+        })?;
+    let file_name = path.file_name().ok_or(StateError::MissingPath)?;
+    Ok(canonical_parent.join(file_name))
+}
+
+/// Canonicalizes an existing database path, resolving macOS symlink
+/// components (`/var`, `/tmp`) before `NOFOLLOW` opens.
+#[cfg(test)]
+fn fs_canonicalize_existing(path: &Path) -> Result<std::path::PathBuf, StateError> {
+    std::fs::canonicalize(path).map_err(|_| StateError::DatabaseOpenFailed)
 }
 
 /// Applies the hardened connection contract without running any migration.
@@ -89,9 +124,11 @@ pub(crate) fn open_connection_without_migrating(
 ) -> Result<Connection, StateError> {
     // Every check `open_connection` performs is still performed here; only the
     // snapshot-and-migrate tail is skipped.
-    validation::verify_path(path, OpenIntent::Reopen, expected_uid)?;
+    // Portable (M001): canonicalize macOS symlink components before NOFOLLOW.
+    let canonical = fs_canonicalize_existing(path)?;
+    validation::verify_path(&canonical, OpenIntent::Reopen, expected_uid)?;
     let connection = Connection::open_with_flags(
-        path,
+        &canonical,
         OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX
             | OpenFlags::SQLITE_OPEN_NOFOLLOW,
@@ -172,7 +209,7 @@ pub(crate) fn now_seconds() -> i64 {
 mod tests {
     use super::migrations::{
         apply_migrations, initialize_at_version, recovery_snapshot, recovery_snapshot_path,
-        MIGRATIONS,
+        Migration, MIGRATIONS,
     };
     use super::validation::DATABASE_MODE;
     use super::*;
@@ -268,9 +305,8 @@ mod tests {
     }
 
     fn current_test_uid() -> u32 {
-        std::os::unix::fs::MetadataExt::uid(
-            &fs::metadata("/proc/self").expect("effective uid is readable from /proc/self"),
-        )
+        // Portable (M001): `geteuid` on Linux and Darwin; no `/proc` read.
+        nix::unistd::geteuid().as_raw()
     }
 
     #[test]
@@ -336,7 +372,7 @@ mod tests {
             .unwrap();
         assert_eq!(user_version, migrations::supported_version());
         assert_eq!(
-            user_version, 7,
+            user_version, 8,
             "a fresh database is created at the current head, never behind it"
         );
 
@@ -386,7 +422,7 @@ mod tests {
             StateStore::open(temp.db()),
             Err(StateError::SchemaTooNew {
                 found: 9999,
-                supported: 7
+                supported: 8
             })
         ));
     }
@@ -664,7 +700,7 @@ mod tests {
         );
 
         migrations::apply_migrations(&mut connection, MIGRATIONS).unwrap();
-        assert_eq!(user_version_of(&connection), 7);
+        assert_eq!(user_version_of(&connection), 8);
 
         // Every version the upgrade ran through must actually have created its
         // schema.
@@ -737,7 +773,7 @@ mod tests {
         connection.close().unwrap();
 
         let store = StateStore::open(temp.db()).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 7);
+        assert_eq!(store.schema_version().unwrap(), 8);
         let metadata = store.installation_metadata().unwrap();
         assert_eq!(metadata.installation_id, identity);
         assert_eq!(metadata.desired_generation.to_storage(), before_generation);
@@ -881,14 +917,43 @@ mod tests {
         let temp = TempDir::new();
         historical_v1(&temp);
 
-        // The production list stops at version 7, so a database stamped 8 comes
+        // The production list stops at version 8, so a database stamped 9 comes
         // from a future binary.
         let connection = Connection::open(temp.db()).unwrap();
-        connection.execute("PRAGMA user_version = 8", []).unwrap();
+        connection.execute("PRAGMA user_version = 9", []).unwrap();
         drop(connection);
 
         let mut connection = Connection::open(temp.db()).unwrap();
         let error = apply_migrations(&mut connection, MIGRATIONS).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                StateError::SchemaTooNew {
+                    found: 9,
+                    supported: 8
+                }
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn a_version_8_database_is_refused_by_a_version_7_binary() {
+        // C003's old-binary refusal rehearsal. The typed routing mode is a
+        // schema change, so a binary that predates it has to refuse a
+        // database that carries it rather than read a mode it does not
+        // understand and act on the wrong contract.
+        let temp = TempDir::new();
+        let store = StateStore::initialize(temp.db()).unwrap();
+        drop(store);
+
+        let mut connection = Connection::open(temp.db()).unwrap();
+        let older: Vec<Migration> = MIGRATIONS
+            .iter()
+            .filter(|migration| migration.version <= 7)
+            .cloned()
+            .collect();
+        let error = apply_migrations(&mut connection, &older).unwrap_err();
         assert!(
             matches!(
                 error,

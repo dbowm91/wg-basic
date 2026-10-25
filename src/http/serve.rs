@@ -376,7 +376,27 @@ pub async fn run_publishing(
 
     // 7. Stop the worker and release the store. Done last and unconditionally, so
     //    a database close always follows a successful bind.
-    worker.stop().await?;
+    //
+    //    The stop is bounded. A worker that will not exit must not keep the
+    //    service alive holding the state lease and the write-ahead log: the
+    //    process exits instead, the lease is released with it, and the
+    //    write-ahead log is crash-safe, so the next start recovers it.
+    match worker.stop().await {
+        Ok(()) => {}
+        Err(error) => {
+            crate::operational::emit(
+                "serve.stopping",
+                crate::operational::Severity::Warn,
+                "serve",
+                "shutdown",
+                "worker_stuck",
+                None,
+                report.reconcile.generation().map(|g| g.to_storage() as u64),
+                Some("worker"),
+            );
+            let _ = error;
+        }
+    }
 
     Ok(report)
 }
@@ -402,6 +422,15 @@ mod tests {
     use super::*;
     use std::{fs, os::unix::fs::PermissionsExt};
 
+    /// A per-process scratch-path counter.
+    ///
+    /// The wall clock is too coarse to tell two concurrent tests apart: on
+    /// macOS consecutive `SystemTime::now()` calls routinely return the same
+    /// nanosecond value, so a timestamped scratch path is not unique and one
+    /// test's directory collides with another's. A counter is unique by
+    /// construction within the process, and the pid separates processes.
+    static SCRATCH_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
     struct Scratch(PathBuf);
 
     impl Scratch {
@@ -409,10 +438,7 @@ mod tests {
             let path = std::env::temp_dir().join(format!(
                 "wg-basic-serve-{}-{}",
                 std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
+                SCRATCH_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             ));
             let _ = fs::remove_dir_all(&path);
             fs::create_dir(&path).unwrap();

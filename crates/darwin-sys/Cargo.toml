@@ -1,0 +1,18 @@
+[package]
+name = "wg-basic-darwin-sys"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+publish = false
+description = "Audited Darwin kernel control surface for wg-basic: the single isolated unsafe OS boundary."
+license = "Apache-2.0"
+
+# This crate exists to hold every `unsafe` block the Darwin backend needs.
+# The main crate keeps `#![forbid(unsafe_code)]`; only this crate relaxes it,
+# and only inside one audited module. See `src/lib.rs`.
+[dependencies]
+ipnet = "2.11"
+libc = "0.2"
+
+[lints.rust]
+unsafe_code = "deny"

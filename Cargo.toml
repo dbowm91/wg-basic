@@ -1,3 +1,13 @@
+# The Darwin kernel backends need audited FFI. Rather than weakening this
+# package's crate-wide `#![forbid(unsafe_code)]` (src/lib.rs), the FFI lives in
+# one tiny workspace member whose only unsafe module is the OS boundary. The
+# M002 implementation plan anticipated exactly this: "isolate audited unsafe in
+# a tiny OS boundary via explicit ADR/lint exception rather than weakening
+# crate-wide forbid(unsafe_code)".
+[workspace]
+members = ["crates/darwin-sys"]
+default-members = [".", "crates/darwin-sys"]
+
 [package]
 name = "wg-basic"
 version = "0.1.0"
@@ -24,6 +34,21 @@ clap = { version = "4.5", features = ["derive"] }
 # the repository's 1.89. Used for correct Set-Cookie attribute handling rather
 # than for parsing: every cookie this surface accepts is one it wrote itself.
 cookie = "0.18"
+# Graceful shutdown for the long-running roles. The `termination` feature is what
+# makes `SIGTERM` and `SIGHUP` reach the same handler as `SIGINT`: without it
+# only Ctrl-C stops these roles, and no process supervisor sends Ctrl-C. A
+# `SIGTERM` that the process did not handle killed `serve` mid-flight, skipping
+# the stop-accepts / drain / stop-worker / close-DB ordering entirely.
+# Portable across Linux and Darwin (M001 macOS foundation).
+ctrlc = { version = "3.4", features = ["termination"] }
+# Phase 7 (ADR-003): the two direct EggServe crates and nothing above them. The
+# router layer, the static-asset layer, and every framework surface are
+# deliberately absent: the management service owns its own routing and embeds
+# its own assets. `tests/architecture_guards.rs` enforces that.
+# Portable: the macOS management surface reuses the same loopback HTTP stack.
+eggserve-primitives = "0.2.2"
+eggserve-server = "0.4"
+futures-util = "0.3"
 # Session bearer and CSRF token entropy comes from the OS CSPRNG directly, so
 # the randomness source is an explicit, auditable dependency rather than a
 # feature of a transitive crate.
@@ -36,33 +61,14 @@ eggup-curl = "=0.1.2"
 eggup-eggpack = "=0.1.3"
 eggup-service = "=0.1.3"
 minisign-verify = "=0.3.0"
+nix = { version = "0.30", features = ["fs", "socket", "user"] }
 qrcodegen = "1.8.0"
 rusqlite = { version = "0.40", default-features = false, features = ["bundled", "backup"] }
 # SHA-256 session-token digests. The raw token never reaches SQLite.
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 sha2 = "0.11"
 thiserror = "2.0"
-uuid = { version = "1.18", features = ["v4", "serde"] }
-zeroize = "1.8"
-
-[target.'cfg(target_os = "linux")'.dependencies]
-# Graceful shutdown for the long-running roles. The `termination` feature is what
-# makes `SIGTERM` and `SIGHUP` reach the same handler as `SIGINT`: without it
-# only Ctrl-C stops these roles, and no process supervisor sends Ctrl-C. A
-# `SIGTERM` that the process did not handle killed `serve` mid-flight, skipping
-# the stop-accepts / drain / stop-worker / close-DB ordering entirely.
-ctrlc = { version = "3.4", features = ["termination"] }
-# Phase 7 (ADR-003): the two direct EggServe crates and nothing above them. The
-# router layer, the static-asset layer, and every framework surface are
-# deliberately absent: the management service owns its own routing and embeds
-# its own assets. `tests/architecture_guards.rs` enforces that.
-eggserve-primitives = "0.2.2"
-eggserve-server = "0.4"
-futures-util = "0.3"
-nl-wireguard = "0.3.0"
-nix = { version = "0.30", features = ["fs", "socket", "user"] }
-rtnetlink = "0.23.0"
-serde_json = "1.0"
 tokio = { version = "1.44", features = [
     "macros",
     "net",
@@ -71,7 +77,18 @@ tokio = { version = "1.44", features = [
     "sync",
     "time",
 ] }
+uuid = { version = "1.18", features = ["v4", "serde"] }
 x25519-dalek = { version = "2.0.1", features = ["getrandom", "static_secrets", "zeroize"] }
+zeroize = "1.8"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+nl-wireguard = "0.3.0"
+rtnetlink = "0.23.0"
+
+# The audited Darwin kernel boundary. macOS-only: the Linux build never
+# compiles it, so no Darwin syscall is reachable from a Linux binary.
+[target.'cfg(target_os = "macos")'.dependencies]
+wg-basic-darwin-sys = { path = "crates/darwin-sys" }
 
 [lints.rust]
 unsafe_code = "deny"

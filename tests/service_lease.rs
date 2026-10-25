@@ -1,3 +1,6 @@
+// M001 note: the fd/thread leak tail is Linux-only (`/proc`); `proc_entries`
+// is dead code on Darwin by construction.
+#![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 use std::{
     fs,
     net::{TcpListener, TcpStream},
@@ -45,6 +48,14 @@ impl Drop for ChildGuard {
     }
 }
 
+/// The bound the harness gives the management daemon to come up: the
+/// product's own backend startup wait plus five seconds of slack. On Linux
+/// the wait is zero, so the bound is five seconds; on Darwin it is the wait
+/// the boot-race fix needs.
+fn startup_deadline() -> Duration {
+    wg_basic::management::BACKEND_STARTUP_WAIT + Duration::from_secs(5)
+}
+
 fn serve(state: &Path, socket: &Path, bind: &str) -> Child {
     Command::new(BINARY)
         .args(["serve", "--state"])
@@ -59,7 +70,13 @@ fn serve(state: &Path, socket: &Path, bind: &str) -> Child {
 }
 
 fn wait_for_lease(state: &Path, child: &mut Child) {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    // The harness's own "it hung" bound. The management daemon waits,
+    // bounded, for the privileged daemon before its startup reconciliation on
+    // the platforms that need it, so the listener can come up after that
+    // budget when no backend is running. The bound therefore follows the
+    // product's own startup wait plus the harness's slack, so a delay that
+    // the product does not have is not tolerated here.
+    let deadline = Instant::now() + startup_deadline();
     loop {
         if ServiceLease::is_held(state).unwrap() {
             return;
@@ -74,7 +91,7 @@ fn wait_for_lease(state: &Path, child: &mut Child) {
 
 fn wait_for_listener(bind: &str, child: &mut Child) {
     let address = bind.parse().unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + startup_deadline();
     loop {
         if TcpStream::connect_timeout(&address, Duration::from_millis(20)).is_ok() {
             return;
@@ -191,27 +208,33 @@ fn serve_is_singleton_and_sigkill_releases_the_advisory_lease() {
     restarted.0.wait().unwrap();
     drop(restarted);
 
-    let file_descriptors = proc_entries("/proc/self/fd");
-    let threads = proc_entries("/proc/self/task");
-    for _ in 0..20 {
-        let port_listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let cycle_bind = port_listener.local_addr().unwrap().to_string();
-        drop(port_listener);
-        let mut child = ChildGuard(serve(&state, &socket, &cycle_bind));
-        wait_for_lease(&state, &mut child.0);
-        wait_for_listener(&cycle_bind, &mut child.0);
-        child.0.kill().unwrap();
-        child.0.wait().unwrap();
-        drop(child);
-        assert!(!ServiceLease::is_held(&state).unwrap());
+    // Linux-only: fd/thread leak check via `/proc`; no `/proc` on Darwin.
+    // The singleton/lease/restore/restart contract above is portable and runs
+    // on Darwin; leak accounting is re-qualified on Linux CI.
+    #[cfg(target_os = "linux")]
+    {
+        let file_descriptors = proc_entries("/proc/self/fd");
+        let threads = proc_entries("/proc/self/task");
+        for _ in 0..20 {
+            let port_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let cycle_bind = port_listener.local_addr().unwrap().to_string();
+            drop(port_listener);
+            let mut child = ChildGuard(serve(&state, &socket, &cycle_bind));
+            wait_for_lease(&state, &mut child.0);
+            wait_for_listener(&cycle_bind, &mut child.0);
+            child.0.kill().unwrap();
+            child.0.wait().unwrap();
+            drop(child);
+            assert!(!ServiceLease::is_held(&state).unwrap());
+        }
+        assert!(
+            proc_entries("/proc/self/fd") <= file_descriptors + 1,
+            "repeated serve crashes leaked file descriptors"
+        );
+        assert_eq!(
+            proc_entries("/proc/self/task"),
+            threads,
+            "repeated serve crashes leaked threads"
+        );
     }
-    assert!(
-        proc_entries("/proc/self/fd") <= file_descriptors + 1,
-        "repeated serve crashes leaked file descriptors"
-    );
-    assert_eq!(
-        proc_entries("/proc/self/task"),
-        threads,
-        "repeated serve crashes leaked threads"
-    );
 }

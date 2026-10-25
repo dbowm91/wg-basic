@@ -36,5 +36,6 @@ pub use owner::{AliasMatch, OwnerTag, OwnerTagError, MAX_OWNER_TAG_LENGTH};
 pub use secret::{KeyError, PresharedKey, PrivateKey, PublicKey};
 pub use state::{
     validate_desired_state, DesiredClient, DesiredInterface, DesiredNetworkPolicy, DesiredPeer,
-    DesiredState, ObservedInterface, StateValidationError,
+    DesiredState, NetworkPolicyMode, ObservedInterface, StateValidationError,
+    MAX_ROUTED_LAN_DESTINATIONS,
 };
