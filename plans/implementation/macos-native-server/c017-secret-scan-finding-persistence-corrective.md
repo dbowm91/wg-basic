@@ -103,19 +103,34 @@ rule applies; a sixty-one character run is not a hash length and is not
 dropped. That difference is why the branch's last three commits were the only
 ones that mattered.
 
-**Where the value actually is.** Before the correction, the incident's value
-appeared in exactly three commits of this branch, all of them in the tip: the
-split, the configuration, and the C016 closure record. After the correction
-it appears in none.
+**Where the value actually is.** Measured across the branch's commits:
+
+- The published vector's hex form appears behind the `private_key=` and
+  `public_key=` keywords in **eighty-eight** commits. Those runs are what the
+  app reports, and the finding it reported is one of them.
+- The tip's three commits carried a second form: the same value split at
+  sixty-one characters, which is what the earlier incident tracked. The
+  correction removes those three.
+- The published client public key is quoted by the closure records in the
+  shape `"client_public_key": "…"`, which is an assignment to a sensitive
+  variable name, so it is a finding of the same kind unless it is named.
+
+After the correction the tip carries no run of sixteen characters or more
+behind any keyword, and every value the app can report is named in the scan
+configuration.
 
 ## Explicit non-goals
 
 - No product behaviour changes. This corrective touches no Rust product path,
   no wire format, no schema, no protocol message, no CLI surface and no
   installed state.
-- No rewrite of the branch's history beyond the three commits that carry the
-  reported value. The one hundred and nine earlier commits are not findings,
-  and rewriting them would touch every closure record on the line.
+- No rewrite of the branch's history beyond the three commits at its tip. The
+  eighty-eight earlier commits carry the published vector behind the
+  `private_key=` and `public_key=` keywords. Rewriting them would change the
+  identity of nearly every commit on the line and invalidate fifty-four hash
+  references across the closure records, and the vector is published material
+  that the scan configuration names instead. The correction is an exclusion
+  with a reason, not a rewrite.
 - No change to the macOS line's qualification standing. C001–C016 keep their
   dispositions; C005 stays open; C015 stays ready.
 - No `zip` port, and no change to the accepted advisory set.
@@ -212,9 +227,10 @@ these work packages changes behavior.
 
 ## Acceptance criteria
 
-1. No commit on this branch carries a contiguous run of the published vector
-   of sixteen characters or more behind a sensitive keyword, and the vector is
-   assembled at run time from pieces of at most fifteen characters.
+1. The branch's tip carries no contiguous run of the published vector of
+   sixteen characters or more behind a sensitive keyword, and the vector is
+   assembled at run time from pieces of at most fifteen characters. The runs in
+   the earlier commits are named in the scan configuration, with their reason.
 2. The published vector in both forms, and the published client public key,
    are named in `.gitguardian.yaml` by the SHA-256 of each value, and nothing
    else is excluded. The raw hex form does not appear in that file, so the
