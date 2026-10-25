@@ -61,9 +61,20 @@ git diff --check                     # whitespace OK
 
 | Workflow | Result |
 |---|---|
-| CI | **success** — every job, including `dependency-audit`, which exits zero |
-| macOS qualification | **success** — `gates-arm64` and `live-arm64` |
+| CI (`40170084593`) | **success** — every job, including `dependency-audit`, which exits zero |
+| macOS qualification (`40170080665`) | **success** — `gates-arm64` and `live-arm64` |
+| Distribution foundation (`40170084579`) | **success** |
 | GitGuardian Security Checks | **success** — the app's scan reports no secret |
+
+### The configuration's effect, measured
+
+The configuration governs a scan only from the default branch, and it had
+just landed on `main` when this branch's next scan ran. That the
+configuration is honoured was measured directly rather than assumed: a
+one-commit pull request carrying the published vector in exactly the shape
+the detector reads — `private_key=` followed by the sixty-four character run
+— was scanned and reported **"No secrets detected"**. A fresh detection of
+the value is therefore suppressed, which is the whole point of the file.
 
 ## The detector's rule, and how the finding was reproduced
 
