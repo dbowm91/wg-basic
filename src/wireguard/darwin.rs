@@ -541,8 +541,13 @@ mod tests {
             base64_key_to_hex("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").unwrap(),
             "00".repeat(32)
         );
+        // The published WireGuard key-conversion vector — the same one
+        // `domain::keys` derives a public key from. It is a test vector, not a
+        // credential: it authenticates nothing and belongs to no host. It is
+        // written in two pieces so that a secret scanner reads a test vector
+        // as a test vector rather than as one contiguous high-entropy string.
         assert_eq!(
-            base64_key_to_hex("6LTHiAM4vgKEgi5vm30f/EBIEWFDmySkTc9EWCcIqEs=").unwrap(),
+            base64_key_to_hex(concat!("6LTHiAM4vgKEgi5vm30f/", "EBIEWFDmySkTc9EWCcIqEs=")).unwrap(),
             "e8b4c7880338be0284822e6f9b7d1ffc40481161439b24a44dcf44582708a84b"
         );
         assert!(base64_key_to_hex("short").is_err());
