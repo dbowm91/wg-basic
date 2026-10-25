@@ -1,8 +1,0 @@
-src/http/service.rs:73:pub const HEALTHZ_PATH: &str = "/healthz";
-src/http/service.rs:99:    Healthz,
-src/http/service.rs:166:            Self::Healthz
-src/http/service.rs:211:        HEALTHZ_PATH => Route::Healthz,
-src/http/service.rs:347:            Route::Healthz => match self.api.worker_health().await {
-src/http/service.rs:1177:            "/healthz/",
-src/http/service.rs:1196:            Route::Healthz,
-src/http/service.rs:1232:            Route::Healthz,

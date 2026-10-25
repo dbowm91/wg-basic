@@ -1,3 +1,0 @@
-=== state init / StateStore::initialize ===
-=== DEFAULT_STATE_PATH ===
-src/state/mod.rs:78:pub const DEFAULT_STATE_PATH: &str = "/var/lib/wg-basic/state.db";

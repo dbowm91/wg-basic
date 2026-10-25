@@ -1,6 +1,0 @@
-docs/installation.md:9:The release installer itself is a small Rust binary; Rust, Cargo, Python,
-docs/installation.md:74:## Authenticity and bootstrap trust
-docs/installation.md:77:path**. It downloads and runs the exact-version installer from GitHub over
-docs/installation.md:78:HTTPS. It does not independently authenticate that bootstrap or its manifest.
-docs/installation.md:163:The installer runs only after the manifest consistency checks and the
-docs/installation.md:165:against the manifest and is rechecked by the installer before

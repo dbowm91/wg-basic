@@ -1,1 +1,0 @@
-src/distribution.rs:718:        return Err("candidate version does not match this installer's release identity".into());
