@@ -1,6 +1,6 @@
 # C017 Closure — C016's secret-scan remedy did not clear the finding
 
-Status: closed.
+Status: conditionally closed.
 
 Implementation head: `11f0dae` — the C017 commits
 `fix: hold the published key vector in one piece, not in the sample data`
@@ -42,7 +42,7 @@ written reason, and C001–C015 keep their dispositions.
 | Plan requirement | Evidence |
 |---|---|
 | §Acceptance 1 — the tip carries no contiguous run of the published vector of sixteen characters or more behind a sensitive keyword, and the vector is assembled at run time from pieces of at most fifteen characters | `src/wireguard/darwin.rs` holds `VECTOR_BASE64` and `VECTOR_HEX` as `concat!` of pieces of at most fifteen characters: `6LTHiAM4vgKEgi5`, `vm30f/EBIEWFDmy`, `SkTc9EWCcIqEs=`, and `e8b4c7880338be0`, `284822e6f9b7d1f`, `fc40481161439b2`, `4a44dcf44582708`, `a84b`. The longest contiguous run in either form is fifteen characters, which is below the detector's sixteen-character minimum. The value is unchanged: `uapi_keys_convert_from_base64_to_helper_hex` derives the hex form from the base64 form and compares them, and it passes. |
-| §Acceptance 2 — the published vector in both forms, and the published client public key, are named in `.gitguardian.yaml` by the SHA-256 of each value, and nothing else is excluded | `.gitguardian.yaml` carries eight `ignored_matches` entries over four values: the vector's hex form as the detector reads it and whole, the vector's base64 form, and the client public key — each as the value itself and as the SHA-256 of that value. Both forms are recorded for every value. The SHA-256 form is the one that matches a dashboard incident to the value it reports; the literal form is what matches the value the detector extracts. The hex forms are written literally as well as by hash because the value the detector reports is the sixty-one character prefix of the vector's hex form, and the SHA-256 of the whole sixty-four character form does not match a prefix. The `match` key is not a sensitive variable name, so the values in that file are not read as assignments of a credential to a secret, and a scan of the file itself reports no secret. |
+| §Acceptance 2 — the published vector in both forms, and the published client public key, are named in `.gitguardian.yaml` by the SHA-256 of each value, and nothing else is excluded | `.gitguardian.yaml` carries eight `ignored_matches` entries over four values: the vector's hex form as the detector reads it and whole, the vector's base64 form, and the client public key — each as the value itself and as the SHA-256 of that value. Both forms are recorded for every value: the SHA-256 form names the value by hash, and the literal form is what matches the value the detector extracts. The hex forms are written literally as well as by hash because the value the detector reported on the tip was the sixty-one character prefix of the vector's hex form, and the SHA-256 of the whole sixty-four character form does not match a prefix. The `match` key is not a sensitive variable name, so the values in that file are not read as assignments of a credential to a secret, and a scan of the file itself reports no secret. |
 | §Acceptance 3 — the same `.gitguardian.yaml` lands on `main` with this branch, so a scan of this repository is governed by it | Pull request #12 (`plans/repo-scan-config` → `main`) landed `.gitguardian.yaml`, `.cargo/audit.toml`, the `.gitignore` entries and the `ctutils`/`tokio` movements on `main` before this branch merged. GitGuardian's app reads the file that governs a scan from the default branch, which is why the configuration had to land there first. |
 | §Acceptance 4 — the branch's GitGuardian check reports no secret | **Not met.** The app's check on this branch reports **one** secret: incident `38182092`, status `Triggered`, occurrence `303967330`, attributed to commit `f470820` at `src/wireguard/darwin.rs` line 576 — the published vector, behind the `private_key=` keyword. The tip itself reports nothing. See "The app's verdict, measured". |
 | §Acceptance 5 — the gate order is green, the local detector reproduction reports nothing on the branch's tip, and the Linux line is unchanged | The gate order passed on the implementation head (below). The local reproduction of the detector reports no finding on the tip. The change touches no Rust product path, no wire format, no schema, no protocol message, no CLI surface and no installed state. |
@@ -66,10 +66,16 @@ git diff --check                     # whitespace OK
 
 | Workflow | Result |
 |---|---|
-| CI (`40170084593`) | **success** — every job, including `dependency-audit`, which exits zero |
-| macOS qualification (`40170080665`) | **success** — `gates-arm64` and `live-arm64` |
-| Distribution foundation (`40170084579`) | **success** |
+| CI (`40170084593`, head `f429114`) | **success** — every job, including `dependency-audit`, which exits zero |
+| macOS qualification (`40170080665`, head `f429114`) | **success** — `gates-arm64` and `live-arm64` |
+| Distribution foundation (`40170084579`, head `f429114`) | **success** |
 | GitGuardian Security Checks | **failure** — one secret, incident `38182092`, on commit `f470820`. Every other job on the branch is green. |
+
+The three hosted runs above were taken at head `f429114`, the head this
+corrective was planned at; that head was rewritten to `7c60dc0` with the
+same content, and the runs are cited by their identifiers because they are
+the runs that were actually observed. The app's verdict below was
+re-observed on every later head.
 
 ### The app's verdict, measured
 
@@ -78,7 +84,7 @@ The app's check was re-run on this branch after the configuration reached
 thing: **one** secret, incident `38182092`, status `Triggered`, occurrence
 `303967330`, attributed to commit `f470820` at `src/wireguard/darwin.rs`
 line 576. The scan covered the whole pull request — 119 commits, then 120,
-then 121 — and the count of reported secrets did not fall.
+then 121, then 122 — and the count of reported secrets did not fall.
 
 The finding is the published vector, not something else: the local
 reproduction of the detector reports the same commit, the same line, the
@@ -137,6 +143,21 @@ commit `f470820`, the sensitive variable `private_key`, and the value being
 the sixty-four character run of the published vector. The same reproduction
 reports no finding on the branch's tip, and the reproduction is the
 regression evidence for this corrective.
+
+The published rule also carries post-validators that the finding passes and
+that explain its shape. The value banlist holds value patterns and
+context-window patterns, not hash lengths, and one of the context-window
+patterns excludes `public key` within a thirty-character window. That is why
+the app attributes the finding to the `private_key=` occurrence and not to the
+`public_key=` occurrence of the same value a few lines below it. An earlier
+draft of the C017 plan reasoned that a sixty-four character hex run is
+dropped by the banlist as a hash-length value; the app's own finding is a
+sixty-four character run, so that reasoning was wrong, and the plan now
+carries the measurement instead.
+
+The eighty-eight commits that carry the vector are not eighty-eight findings:
+they carry the same value, and the app reports one incident per distinct
+value, attributed to the first commit that carried it.
 
 ### Where the value is, measured across the branch
 
