@@ -1,0 +1,35 @@
+# Cargo-audit configuration for this repository.
+#
+# `cargo audit` runs in CI over the committed `Cargo.lock`. Everything below
+# is an advisory this repository knowingly accepts. Each entry states why it
+# cannot be fixed here and what would clear it, so that an accepted advisory
+# is a decision with a name on it rather than a silent gap.
+#
+# RUSTSEC-2026-0367, RUSTSEC-2026-0368, RUSTSEC-2026-0369 — `zip` 6.0.0.
+#
+# Why it cannot be bumped here: `zip` reaches this product only through
+# `eggup-eggpack` -> `eggup-archive` -> `zip`. `eggup-archive` requires
+# `zip = "^6.0.0"` in every published version (0.1.2, 0.1.3 and 0.2.0), so no
+# lockfile in this repository can resolve `zip` 9.x, which is where the fix
+# lives. `eggup-eggpack` is pinned exactly in `Cargo.toml` because the release
+# pipeline and this product must agree on one manifest projection.
+#
+# Why the exposure is bounded here: all three advisories describe archive
+# *extraction*. This product never extracts an archive. Its update path
+# acquires a signed release binary, verifies its size and SHA-256 digest, and
+# runs it through `eggup_core::run_bounded`; its use of `eggup-eggpack` is
+# limited to projecting and validating release manifests. The vulnerable entry
+# points (`ZipArchive::extract`, `ZipStreamReader::extract`) are unreachable
+# from this product.
+#
+# What clears this: an `eggup-archive` release that allows `zip` 9, followed by
+# a bump of the `eggup-eggpack` pin in `Cargo.toml`. The upstream port is
+# small — `zip` 9.1.0 still exposes `ZipArchive::extract`, `by_index` and
+# `file_names`, which is the whole surface `eggup-archive` uses.
+
+[advisories]
+ignore = [
+  "RUSTSEC-2026-0367",
+  "RUSTSEC-2026-0368",
+  "RUSTSEC-2026-0369",
+]
