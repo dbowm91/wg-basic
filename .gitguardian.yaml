@@ -1,0 +1,51 @@
+# GitGuardian scan configuration for this repository.
+#
+# GitGuardian's app reads this file from the repository's default branch, so
+# the copy that governs a scan lives on `main`. The macOS line carries the
+# same file so that the two never diverge.
+#
+# Every entry below names published, non-secret material that a generic
+# high-entropy detector reads as a credential. Each value is listed twice:
+# once as the value itself, and once as the SHA-256 of that value. GitGuardian
+# documents both forms for `ignored_matches` — the SHA-256 of the occurrence,
+# or the secret itself — and a scan that reads the file resolves an incident
+# against either one.
+#
+# The WireGuard key-conversion vector is a published test vector. It is the
+# private key of nothing, it belongs to no host and it authenticates nothing;
+# the kernel UAPI tests and `src/domain/keys.rs` use it. It appears in two
+# forms: the base64 form the kernel UAPI uses, and the hex form the Darwin
+# helper's wire format uses.
+#
+# The client public key is public by construction: every client configuration
+# carries it, so the closure records that quote it carry no secret either.
+#
+# The `match` key is not a sensitive variable name, so the values below are
+# not themselves read as assignments of a credential to a secret.
+#
+# Nothing else is excluded. Any other finding still fails the build.
+
+version: 2
+secret:
+  ignored_matches:
+    # The hex form of the published vector, split as the detector reads it:
+    # one contiguous run of the value behind the `private_key=` keyword.
+    - name: "published WireGuard key-conversion test vector (hex form, detector run) - not a credential"
+      match: "e8b4c7880338be0284822e6f9b7d1ffc40481161439b24a44dcf44582708a"
+    - name: "published WireGuard key-conversion test vector (hex form, detector run) - not a credential"
+      match: "1af5130676aa778b6b9dd83fdb54872f5cf43c1812e7f48cbe3648be18de4f2a"
+    # The same vector, whole.
+    - name: "published WireGuard key-conversion test vector (hex form, whole value) - not a credential"
+      match: "e8b4c7880338be0284822e6f9b7d1ffc40481161439b24a44dcf44582708a84b"
+    - name: "published WireGuard key-conversion test vector (hex form, whole value) - not a credential"
+      match: "5e2682c5c666330495625731b72c91dfbeda18222c67194e780c35eb58d01bea"
+    # The base64 form of the same vector.
+    - name: "published WireGuard key-conversion test vector (base64 form) - not a credential"
+      match: "6LTHiAM4vgKEgi5vm30f/EBIEWFDmySkTc9EWCcIqEs="
+    - name: "published WireGuard key-conversion test vector (base64 form) - not a credential"
+      match: "2bfd570139f0e30497fe082b4002164a8eea09720ec7ea69356870d47bdbd6c9"
+    # The client public key the macOS closure records quote.
+    - name: "client public key published in the macOS closure records - public by construction"
+      match: "lEAN+GJREY9d85dC1pwLtrAAoMSW6MGequ6cwDfmigI="
+    - name: "client public key published in the macOS closure records - public by construction"
+      match: "f2e27ab39de842ac6b663ce83c3ce63643e5e7d9843c2447d3d3a1a836272d38"
