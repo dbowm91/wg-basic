@@ -28,16 +28,6 @@
 version: 2
 secret:
   ignored_matches:
-    - name: "published WireGuard key-conversion test vector (hex form, occurrence sha, apikey label)"
-      match: "14cceda2539e2d4e62eff06089cf43062e18f098fc12625263a3618eab9cbe6b"
-    - name: "published WireGuard key-conversion test vector (hex form, occurrence sha, high_entropy label)"
-      match: "150e34ef7679daf6e4d2fda67cf25d7e5c77ebb309466f146bbe21c16a105d47"
-    - name: "published WireGuard key-conversion test vector (hex form, occurrence sha, generic_high_entropy_secret label)"
-      match: "5e3cee04ae012628dcdae573ab65421d7fe0e8f3ed828e1aec81ec7f0475a082"
-    - name: "published WireGuard key-conversion test vector (hex form, occurrence sha, secret label)"
-      match: "fb5c33d3cfb23a0e5a66e2f6d1119b7da65b091e4a969eb6e42c135314a62884"
-    - name: "published WireGuard key-conversion test vector (hex form as the detector reads it, occurrence sha, apikey label)"
-      match: "57bc57149da27a48221affe89b3b9d0ff6326de73dd18d170a29a7ebedc03494"
     # The hex form of the published vector, split as the detector reads it:
     # one contiguous run of the value behind the `private_key=` keyword.
     - name: "published WireGuard key-conversion test vector (hex form, detector run) - not a credential"
