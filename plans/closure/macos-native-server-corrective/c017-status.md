@@ -138,6 +138,21 @@ the sixty-four character run of the published vector. The same reproduction
 reports no finding on the branch's tip, and the reproduction is the
 regression evidence for this corrective.
 
+The published rule also carries post-validators that the finding passes and
+that explain its shape. The value banlist holds value patterns and
+context-window patterns, not hash lengths, and one of the context-window
+patterns excludes `public key` within a thirty-character window. That is why
+the app attributes the finding to the `private_key=` occurrence and not to the
+`public_key=` occurrence of the same value a few lines below it. An earlier
+draft of the C017 plan reasoned that a sixty-four character hex run is
+dropped by the banlist as a hash-length value; the app's own finding is a
+sixty-four character run, so that reasoning was wrong, and the plan now
+carries the measurement instead.
+
+The eighty-eight commits that carry the vector are not eighty-eight findings:
+they carry the same value, and the app reports one incident per distinct
+value, attributed to the first commit that carried it.
+
 ### Where the value is, measured across the branch
 
 | Form | Commits | After the correction |

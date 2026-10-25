@@ -90,18 +90,24 @@ two-digit floor, and the value banlist.
 
 **A local reproduction.** The rule was implemented locally and run against the
 commits this branch carried. It reproduces GitGuardian's finding exactly —
-`src/wireguard/darwin.rs` line 576 of commit `dbfed03`, the sensitive
-variable `private_key`, and the value being the sixty-one character run —
+`src/wireguard/darwin.rs` line 576 of commit `f470820`, the sensitive
+variable `private_key`, and the value being the sixty-four character run —
 and it reports nothing on the corrected tree. The same reproduction is the
 regression evidence for this corrective.
 
-**Why the older commits are not findings.** One hundred and nine earlier
-commits carry the vector's hex form as one contiguous sixty-four character
-run behind the same keyword, and no scan has ever reported them. A hex run of
-a hash length is dropped by the detector's value banlist before the generic
-rule applies; a sixty-one character run is not a hash length and is not
-dropped. That difference is why the branch's last three commits were the only
-ones that mattered.
+**Why the older commits are not separate findings.** Eighty-eight earlier
+commits carry the vector's hex form as one contiguous sixty-four character run
+behind the same keyword. They are not eighty-eight findings: they carry the
+**same** value, and the app reports one incident per distinct value,
+attributed to the first commit that carried it — `f470820`. An earlier draft
+of this plan reasoned that a sixty-four character hex run is dropped by the
+detector's value banlist as a hash-length value, and that a sixty-one
+character run is not; measurement contradicted that. The app's own finding
+*is* a sixty-four character run, and the published banlist has no
+hash-length rule — it is a set of value patterns and context-window
+patterns, one of which excludes `public key` and so explains why the app
+attributes the finding to `private_key` rather than to the `public_key=`
+occurrence of the same value a few lines below.
 
 **Where the value actually is.** Measured across the branch's commits:
 
