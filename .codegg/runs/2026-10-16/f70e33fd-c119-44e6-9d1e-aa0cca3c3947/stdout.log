@@ -1,2 +1,0 @@
-src/main.rs:1569:/// ordering — stop accepting, drain, stop the worker, release the store — lives
-src/main.rs:1625:    // the first Ctrl-C consumes it, and later ones find nothing to do.

@@ -1,3 +1,0 @@
-tests/wireguard_darwin_live.rs:4://! explicit opt-in (`WGB_DARWIN_LIVE=1`) as root. They are `#[ignore]`d by
-===IGNORED-COUNT===
-tests/wireguard_darwin_live.rs:1

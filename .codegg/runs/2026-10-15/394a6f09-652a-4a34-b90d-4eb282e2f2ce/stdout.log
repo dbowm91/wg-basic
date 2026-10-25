@@ -1,5 +1,0 @@
-=== login body requirements ===
-src/http/service.rs:324:        if let Err(rejection) = guard.check_host(head) {
-src/http/service.rs:341:        if let Err(rejection) = guard.check_origin(head) {
-src/http/service.rs:1308:            RequestRejection::HostNotAllowed,
-src/http/service.rs:1309:            RequestRejection::OriginNotAllowed,
