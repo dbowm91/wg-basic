@@ -1,3 +1,4 @@
+#![cfg(unix)]
 // M001 note: the fd/thread leak tail is Linux-only (`/proc`); `proc_entries`
 // is dead code on Darwin by construction.
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]

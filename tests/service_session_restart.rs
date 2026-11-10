@@ -1,3 +1,4 @@
+#![cfg(unix)]
 //! Phase 7 M004 §5: session behaviour across a real `serve` restart.
 //!
 //! # What this file is for

@@ -36,8 +36,10 @@ mod policy;
 mod service;
 #[cfg(target_os = "macos")]
 mod service_darwin;
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 mod service_other;
+#[cfg(target_os = "windows")]
+mod service_windows;
 
 pub use pf::{
     anchor_content_matches, anchor_file_content, anchor_file_marker, anchor_file_path, anchor_name,
@@ -56,5 +58,7 @@ pub use policy::{
 pub use service::FirewallService;
 #[cfg(target_os = "macos")]
 pub use service_darwin::FirewallService;
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 pub use service_other::FirewallService;
+#[cfg(target_os = "windows")]
+pub use service_windows::FirewallService;

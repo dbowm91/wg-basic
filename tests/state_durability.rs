@@ -1,3 +1,4 @@
+#![cfg(unix)]
 //! Durability evidence for the state store under abrupt process termination.
 //!
 //! These tests make no durability claim they cannot support. They show that an

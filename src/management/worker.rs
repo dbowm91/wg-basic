@@ -1550,7 +1550,7 @@ fn status_from(principal: &crate::state::PrincipalRecord) -> AdminStatus {
 mod tests {
     use super::*;
     use crate::state::StateStore;
-    use std::{fs, os::unix::fs::PermissionsExt};
+    use std::fs;
 
     #[test]
     fn telemetry_projection_caps_a_maximum_sized_backend_snapshot() {
@@ -1610,7 +1610,7 @@ mod tests {
             ));
             let _ = fs::remove_dir_all(&path);
             fs::create_dir(&path).unwrap();
-            fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+            crate::state::privacy::restrict_directory(&path).unwrap();
             Self { path }
         }
 

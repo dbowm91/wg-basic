@@ -1,3 +1,4 @@
+#![cfg(unix)]
 //! Loopback integration tests for the Phase 7 management HTTP surface.
 //!
 //! These tests speak **real HTTP/1.1 over a real TCP socket** to a real EggServe

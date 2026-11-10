@@ -1,3 +1,4 @@
+#![cfg(unix)]
 //! Phase 8 M001 product-management evidence.
 //!
 //! These cases qualify the product layer with no HTTP surface present at all,

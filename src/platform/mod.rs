@@ -30,6 +30,7 @@ use crate::domain::{InstallationId, InterfaceId, InterfaceName, OwnerTag};
 pub enum Platform {
     Linux,
     Darwin,
+    Windows,
     Unsupported,
 }
 
@@ -44,7 +45,11 @@ impl Platform {
         {
             Self::Darwin
         }
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        #[cfg(target_os = "windows")]
+        {
+            Self::Windows
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
         {
             Self::Unsupported
         }
@@ -54,6 +59,7 @@ impl Platform {
         match self {
             Self::Linux => "linux",
             Self::Darwin => "macos",
+            Self::Windows => "windows",
             Self::Unsupported => "unsupported",
         }
     }
@@ -108,6 +114,11 @@ pub enum OsLocator {
     },
     /// Darwin utun device name as assigned by the kernel (`utunN`), when known.
     Darwin { utun_name: Option<String> },
+    /// Windows adapter. The LUID is ephemeral observation, never desired state.
+    Windows {
+        name: InterfaceName,
+        luid: Option<u64>,
+    },
     /// No link observed.
     Absent { name: InterfaceName },
 }
@@ -117,6 +128,7 @@ impl OsLocator {
     pub fn logical_name(&self) -> &InterfaceName {
         match self {
             Self::Linux { name, .. } => name,
+            Self::Windows { name, .. } => name,
             Self::Darwin { .. } => {
                 // Darwin locators carry only the ephemeral utun name; the
                 // logical name lives in `LogicalTunnel`. This branch is
@@ -149,6 +161,7 @@ impl BackendCapability {
 
 pub mod darwin;
 pub mod linux;
+pub mod windows;
 
 #[cfg(test)]
 mod tests {
@@ -161,7 +174,9 @@ mod tests {
         assert_eq!(Platform::current(), Platform::Linux);
         #[cfg(target_os = "macos")]
         assert_eq!(Platform::current(), Platform::Darwin);
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        #[cfg(target_os = "windows")]
+        assert_eq!(Platform::current(), Platform::Windows);
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
         assert_eq!(Platform::current(), Platform::Unsupported);
     }
 
@@ -169,6 +184,7 @@ mod tests {
     fn only_linux_reports_a_native_network_backend_in_m001() {
         assert!(Platform::Linux.has_native_network_backend());
         assert!(!Platform::Darwin.has_native_network_backend());
+        assert!(!Platform::Windows.has_native_network_backend());
         assert!(!Platform::Unsupported.has_native_network_backend());
     }
 

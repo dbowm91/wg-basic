@@ -160,9 +160,15 @@ macOS native headless WireGuard server support has an authorized, separately gat
 
 A macOS server MAY use a pinned, verified userspace WireGuard helper with dynamic utun identity, native route management and narrowly scoped platform networking policies behind typed, authenticated privileged netd. The single-binary preference is waived only for the explicitly declared bundled macOS helper, not for Linux. No active claim of full macOS gateway capability is permitted until native peer traffic, IPv4 NAT/IPv6 forwarding, crash/restart, foreign-state preservation, and service/installer qualification are demonstrated on supported targets. Apple's TN3165 PF guidance requires a separate affirmative support/distribution decision; unsupported or unqualified gateway mode MUST fail closed.
 
-### 6.3 Other deferred platforms
+### 6.3 Optional Windows platform extension
 
-Windows, FreeBSD, and additional userspace-WireGuard hosts remain deferred. Internal APIs SHOULD avoid gratuitous Linux coupling while preserving qualified Linux behavior.
+Windows native headless WireGuard server support has an authorized, separately gated expansion under ADR-011 and `plans/subsystems/windows-native-server-roadmap.md`. Linux and macOS behavior, privilege boundaries, and release artifacts remain canonical for those hosts. Platform-neutral desired state, IPC semantics, and exported client configuration MUST NOT regress.
+
+A Windows server MAY use the pinned `wireguard-nt` 1.1 amd64 DLL as its dataplane, behind typed privileged `netd`, with addresses, routes, forwarding, and one owned WinNAT implemented as host operations. The single-binary preference is waived only for that declared DLL, not for Linux. The only authorized qualification target is Windows Server 2025 x64 on the GitHub-hosted `windows-2025` runner. No Windows support claim is permitted until that runner has shown translated IPv4 gateway traffic, foreign-NAT refusal, and the service install. Phase 10's systemd distribution claim is unchanged.
+
+### 6.4 Other deferred platforms
+
+FreeBSD and additional userspace-WireGuard hosts remain deferred. Internal APIs SHOULD avoid gratuitous Linux or Windows coupling while preserving qualified behavior on each supported host.
 
 ## 7. WireGuard domain requirements
 
