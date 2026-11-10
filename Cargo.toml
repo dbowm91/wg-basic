@@ -5,7 +5,7 @@
 # a tiny OS boundary via explicit ADR/lint exception rather than weakening
 # crate-wide forbid(unsafe_code)".
 [workspace]
-members = ["crates/darwin-sys"]
+members = ["crates/darwin-sys", "crates/win32-sys"]
 default-members = [".", "crates/darwin-sys"]
 
 [package]
@@ -61,7 +61,6 @@ eggup-curl = "=0.1.2"
 eggup-eggpack = "=0.1.3"
 eggup-service = "=0.1.3"
 minisign-verify = "=0.3.0"
-nix = { version = "0.30", features = ["fs", "socket", "user"] }
 qrcodegen = "1.8.0"
 rusqlite = { version = "0.41", default-features = false, features = ["bundled", "backup"] }
 # SHA-256 session-token digests. The raw token never reaches SQLite.
@@ -81,6 +80,9 @@ uuid = { version = "1.18", features = ["v4", "serde"] }
 x25519-dalek = { version = "2.0.1", features = ["getrandom", "static_secrets", "zeroize"] }
 zeroize = "1.8"
 
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.30", features = ["fs", "socket", "user"] }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 nl-wireguard = "0.3.0"
 rtnetlink = "0.23.0"
@@ -89,6 +91,9 @@ rtnetlink = "0.23.0"
 # compiles it, so no Darwin syscall is reachable from a Linux binary.
 [target.'cfg(target_os = "macos")'.dependencies]
 wg-basic-darwin-sys = { path = "crates/darwin-sys" }
+
+[target.'cfg(windows)'.dependencies]
+wg-basic-win32-sys = { path = "crates/win32-sys" }
 
 [lints.rust]
 unsafe_code = "deny"

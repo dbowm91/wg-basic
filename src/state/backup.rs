@@ -42,21 +42,11 @@ use rusqlite::backup::{Backup, StepResult};
 use std::{
     fs,
     io::Write,
-    os::unix::{
-        fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
-        io::AsRawFd,
-    },
     path::{Path, PathBuf},
 };
 
 #[cfg(feature = "update-test-fixtures")]
 use std::fs::OpenOptions;
-
-/// The restrictive mode every backup and restore artifact must carry.
-const SECRET_MODE: u32 = 0o600;
-
-/// The mode a restored database itself must carry.
-const DATABASE_MODE: u32 = 0o600;
 
 /// How many pages the online backup copies per step.
 ///
@@ -218,7 +208,7 @@ impl StateStore {
             target
                 .close()
                 .map_err(|(_, _)| StateError::Corrupt("backup could not be finalized"))?;
-            fs::set_permissions(&temporary, fs::Permissions::from_mode(SECRET_MODE))
+            crate::state::privacy::restrict_secret(&temporary)
                 .map_err(|_| StateError::Corrupt("backup permissions could not be narrowed"))?;
             sync_file(&temporary)?;
             verify_candidate(&temporary)?;
@@ -350,18 +340,18 @@ fn stage_restore(
     }
     drop(inspection);
 
-    fs::set_permissions(staging, fs::Permissions::from_mode(DATABASE_MODE))
+    crate::state::privacy::restrict_secret(staging)
         .map_err(|_| StateError::Corrupt("restored database permissions are unsafe"))?;
     sync_file(staging)?;
 
-    #[cfg(feature = "update-test-fixtures")]
+    #[cfg(all(unix, feature = "update-test-fixtures"))]
     wait_at_update_fixture_restore_gate(target)?;
 
     let previous = replace_target(staging, target)?;
     Ok((schema_version, previous))
 }
 
-#[cfg(feature = "update-test-fixtures")]
+#[cfg(all(unix, feature = "update-test-fixtures"))]
 fn wait_at_update_fixture_restore_gate(target: &Path) -> Result<(), StateError> {
     use std::os::unix::fs::MetadataExt;
 
@@ -438,27 +428,29 @@ pub fn validate_candidate(candidate: &Path) -> Result<(), StateError> {
 }
 
 fn verify_candidate(candidate: &Path) -> Result<(), StateError> {
-    let metadata = fs::symlink_metadata(candidate).map_err(|_| StateError::MissingParent {
-        path: candidate.display().to_string(),
+    let metadata = crate::state::privacy::inspect(candidate, current_uid()).map_err(|_| {
+        StateError::MissingParent {
+            path: candidate.display().to_string(),
+        }
     })?;
-    if metadata.file_type().is_symlink() {
+    if metadata.is_symlink {
         return Err(StateError::DatabaseIsSymlink {
             path: candidate.display().to_string(),
         });
     }
-    if !metadata.is_file() {
+    if !metadata.is_file {
         return Err(StateError::DatabaseNotRegularFile {
             path: candidate.display().to_string(),
         });
     }
-    if metadata.uid() != current_uid() {
+    if metadata.owner != current_uid() {
         return Err(StateError::DatabaseWrongOwner {
             path: candidate.display().to_string(),
-            owner: metadata.uid(),
+            owner: metadata.owner,
             expected: current_uid(),
         });
     }
-    if metadata.mode() & 0o077 != 0 {
+    if metadata.mode & 0o077 != 0 {
         return Err(StateError::DatabaseTooPermissive {
             path: candidate.display().to_string(),
         });
@@ -493,22 +485,24 @@ fn prepare_destination(destination: &Path) -> Result<(), StateError> {
         return Err(StateError::MissingPath);
     }
     let parent = parent_of(destination)?;
-    let metadata = fs::symlink_metadata(&parent).map_err(|_| StateError::MissingParent {
-        path: parent.display().to_string(),
+    let metadata = crate::state::privacy::inspect(&parent, current_uid()).map_err(|_| {
+        StateError::MissingParent {
+            path: parent.display().to_string(),
+        }
     })?;
-    if !metadata.is_dir() {
+    if !metadata.is_dir {
         return Err(StateError::ParentNotDirectory {
             path: parent.display().to_string(),
         });
     }
-    if metadata.uid() != current_uid() {
+    if metadata.owner != current_uid() {
         return Err(StateError::ParentWrongOwner {
             path: parent.display().to_string(),
-            owner: metadata.uid(),
+            owner: metadata.owner,
             expected: current_uid(),
         });
     }
-    if metadata.mode() & 0o022 != 0 {
+    if metadata.mode & 0o022 != 0 {
         return Err(StateError::ParentTooPermissive {
             path: parent.display().to_string(),
         });
@@ -529,22 +523,24 @@ fn prepare_destination(destination: &Path) -> Result<(), StateError> {
 
 fn verify_target_parent(target: &Path) -> Result<(), StateError> {
     let parent = parent_of(target)?;
-    let metadata = fs::symlink_metadata(&parent).map_err(|_| StateError::MissingParent {
-        path: parent.display().to_string(),
+    let metadata = crate::state::privacy::inspect(&parent, current_uid()).map_err(|_| {
+        StateError::MissingParent {
+            path: parent.display().to_string(),
+        }
     })?;
-    if !metadata.is_dir() {
+    if !metadata.is_dir {
         return Err(StateError::ParentNotDirectory {
             path: parent.display().to_string(),
         });
     }
-    if metadata.uid() != current_uid() {
+    if metadata.owner != current_uid() {
         return Err(StateError::ParentWrongOwner {
             path: parent.display().to_string(),
-            owner: metadata.uid(),
+            owner: metadata.owner,
             expected: current_uid(),
         });
     }
-    if metadata.mode() & 0o022 != 0 {
+    if metadata.mode & 0o022 != 0 {
         return Err(StateError::ParentTooPermissive {
             path: parent.display().to_string(),
         });
@@ -584,12 +580,7 @@ fn open_read_only(path: &Path) -> Result<rusqlite::Connection, StateError> {
 /// The mode is applied at creation rather than afterwards, so there is no
 /// window in which a secret-bearing artifact is world-readable.
 fn create_private_file(path: &Path) -> Result<(), StateError> {
-    fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(SECRET_MODE)
-        .open(path)
+    crate::state::privacy::create_secret_file(path)
         .map(|_| ())
         .map_err(|_| StateError::Corrupt("backup artifact could not be created"))
 }
@@ -706,17 +697,18 @@ fn sync_file(path: &Path) -> Result<(), StateError> {
 fn sync_directory(path: &Path) -> Result<(), StateError> {
     let directory =
         fs::File::open(path).map_err(|_| StateError::Corrupt("directory could not be synced"))?;
-    let _ = directory.as_raw_fd();
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        let _ = directory.as_raw_fd();
+    }
     directory
         .sync_all()
         .map_err(|_| StateError::Corrupt("directory could not be synced"))
 }
 
 fn current_uid() -> u32 {
-    // The effective uid of this process. Reading it from the database file's own
-    // ownership would make a chown'd database appear valid.
-    // Portable (M001): `geteuid` on Linux and Darwin; no `/proc` read.
-    nix::unistd::geteuid().as_raw()
+    crate::state::privacy::current_uid()
 }
 
 #[cfg(test)]
@@ -752,12 +744,12 @@ mod tests {
     #[test]
     fn offline_state_restore_can_be_replayed_after_an_interrupted_attempt() {
         use crate::state::StateStore;
-        use std::os::unix::fs::PermissionsExt;
+        use std::fs;
 
         let root =
             std::env::temp_dir().join(format!("wg-basic-restore-replay-{}", uuid::Uuid::new_v4()));
         fs::create_dir(&root).unwrap();
-        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        crate::state::privacy::restrict_directory(&root).unwrap();
         let target = root.join("state.db");
         let backup = root.join("state-backup.db");
         let store = StateStore::initialize(&target).unwrap();

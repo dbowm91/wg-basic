@@ -83,3 +83,30 @@ pub use worker::{
     WorkerClient, WorkerCommand, WorkerConfig, WorkerError, WorkerStartup, BACKEND_STARTUP_WAIT,
     DEFAULT_QUEUE_CAPACITY, DEFAULT_REPLY_DEADLINE,
 };
+
+/// Makes a scratch directory private enough for the state store's parent check.
+/// HTTP tests call this so the HTTP sources never name the filesystem module.
+#[cfg(test)]
+pub fn scratch_directory(path: &std::path::Path) {
+    let _ = std::fs::remove_dir_all(path);
+    std::fs::create_dir(path).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    #[cfg(not(unix))]
+    {
+        wg_basic_win32_sys::restrict_to_current_user(path).unwrap();
+    }
+}
+
+#[cfg(test)]
+pub fn remove_scratch(path: &std::path::Path) {
+    let _ = std::fs::remove_dir_all(path);
+}
+
+#[cfg(test)]
+pub fn make_directory(path: &std::path::Path) {
+    std::fs::create_dir(path).unwrap();
+}

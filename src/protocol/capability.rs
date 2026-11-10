@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
-use std::{fs, os::unix::fs::MetadataExt};
+use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -45,15 +47,7 @@ impl NetworkCapabilitySnapshot {
     }
 
     /// Darwin observation: honest unsupported/unknown, never Linux values.
-    ///
-    /// `cap_net_admin` is `None` (no Linux capabilities on Darwin),
-    /// `network_namespaces` is unavailable (no netns on macOS), and the
-    /// nftables slot is unavailable (Darwin has no nftables; the PF backend
-    /// lands with C003). The WireGuard slot reports the real Darwin control
-    /// surface: the pinned userspace helper, and only when the installed
-    /// helper still matches the digest the install receipt recorded. No
-    /// mutation is performed.
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
     pub fn observe(runtime_directory: &std::path::Path) -> Self {
         Self {
             os: std::env::consts::OS.into(),
@@ -65,6 +59,46 @@ impl NetworkCapabilitySnapshot {
             runtime_directory_safe: safe_runtime_directory(runtime_directory),
             network_namespaces: CapabilityState::Unavailable,
             wireguard_control: darwin_wireguard_control_state(),
+            nftables: CapabilityState::Unavailable,
+        }
+    }
+
+    /// Windows observation. No Linux capability, namespace, or nftables version
+    /// is invented. WireGuard is available only when the pinned DLL is present.
+    #[cfg(target_os = "windows")]
+    pub fn observe(runtime_directory: &std::path::Path) -> Self {
+        let facts = wg_basic_win32_sys::os_facts().ok();
+        Self {
+            os: facts
+                .as_ref()
+                .map(|facts| facts.caption.clone())
+                .unwrap_or_else(|| "windows".into()),
+            architecture: std::env::consts::ARCH.into(),
+            effective_uid: 0,
+            effective_gid: 0,
+            cap_net_admin: None,
+            kernel_release: facts.map(|facts| facts.build.to_string()),
+            runtime_directory_safe: safe_runtime_directory(runtime_directory),
+            network_namespaces: CapabilityState::Unavailable,
+            wireguard_control: windows_wireguard_state(),
+            nftables: CapabilityState::Unavailable,
+        }
+    }
+
+    /// Observation for a host that is neither Linux, Darwin, nor Windows.
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    pub fn observe(runtime_directory: &std::path::Path) -> Self {
+        let _ = runtime_directory;
+        Self {
+            os: std::env::consts::OS.into(),
+            architecture: std::env::consts::ARCH.into(),
+            effective_uid: 0,
+            effective_gid: 0,
+            cap_net_admin: None,
+            kernel_release: None,
+            runtime_directory_safe: false,
+            network_namespaces: CapabilityState::Unavailable,
+            wireguard_control: CapabilityState::Unavailable,
             nftables: CapabilityState::Unavailable,
         }
     }
@@ -90,7 +124,7 @@ fn effective_capability(capability: u8) -> Option<bool> {
 /// helper is present and still hashes to the digest the install receipt
 /// recorded, so a replaced helper is reported as unavailable instead of
 /// trusted.
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
 fn darwin_wireguard_control_state() -> CapabilityState {
     let Some(digest) = crate::launchd::installed_helper_digest(std::path::Path::new("/")) else {
         return CapabilityState::Unavailable;
@@ -107,7 +141,7 @@ fn darwin_wireguard_control_state() -> CapabilityState {
 /// Darwin kernel release via the audited `nix` `uname` wrapper (no new unsafe,
 /// no subprocess, no `/proc`). Returns `None` when the release string is
 /// empty rather than inventing a version.
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
 fn darwin_kernel_release() -> Option<String> {
     let uts = nix::sys::utsname::uname().ok()?;
     let release = uts.release().to_str()?.trim().to_owned();
@@ -118,12 +152,43 @@ fn darwin_kernel_release() -> Option<String> {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn windows_wireguard_state() -> CapabilityState {
+    let Ok(exe) = std::env::current_exe() else {
+        return CapabilityState::Unavailable;
+    };
+    let dll = exe
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join("wireguard.dll");
+    if crate::platform::windows::dll_matches_pin(&dll) {
+        CapabilityState::Available
+    } else {
+        CapabilityState::Unavailable
+    }
+}
+
 fn safe_runtime_directory(path: &std::path::Path) -> bool {
     let Ok(metadata) = fs::symlink_metadata(path) else {
         return false;
     };
-    let uid = nix::unistd::geteuid().as_raw();
-    metadata.file_type().is_dir() && metadata.uid() == uid && metadata.mode() & 0o022 == 0
+    if !metadata.file_type().is_dir() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        let uid = nix::unistd::geteuid().as_raw();
+        metadata.uid() == uid && metadata.mode() & 0o022 == 0
+    }
+    #[cfg(windows)]
+    {
+        wg_basic_win32_sys::is_private(path).unwrap_or(false)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (metadata, path);
+        false
+    }
 }
 
 #[cfg(test)]
@@ -145,7 +210,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
     fn darwin_snapshot_reports_unsupported_never_linux_values() {
         let snapshot = NetworkCapabilitySnapshot::observe(std::path::Path::new(
             "/definitely/not/a/runtime/path",

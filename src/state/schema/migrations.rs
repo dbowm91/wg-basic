@@ -9,7 +9,6 @@
 //! because it exists for exactly one reason: to protect a schema-changing
 //! migration. The opener calls it and otherwise knows nothing about it.
 
-use super::validation::DATABASE_MODE;
 use crate::state::error::StateError;
 use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 
@@ -17,7 +16,6 @@ use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 use super::validation::configure;
 use std::{
     fs,
-    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
 };
 
@@ -138,12 +136,7 @@ pub(super) fn recovery_snapshot(
 
     let staging = target.with_extension(format!("partial.{}", std::process::id()));
     let outcome = (|| -> Result<(), StateError> {
-        fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(DATABASE_MODE)
-            .open(&staging)
+        crate::state::privacy::create_secret_file(&staging)
             .map_err(|_| StateError::Corrupt("recovery snapshot could not be created"))?;
         let mut destination = Connection::open_with_flags(
             &staging,
@@ -160,7 +153,7 @@ pub(super) fn recovery_snapshot(
         destination
             .close()
             .map_err(|(_, _)| StateError::Corrupt("recovery snapshot could not be finalized"))?;
-        fs::set_permissions(&staging, fs::Permissions::from_mode(DATABASE_MODE))
+        crate::state::privacy::restrict_secret(&staging)
             .map_err(|_| StateError::Corrupt("recovery snapshot permissions are unsafe"))?;
         fs::rename(&staging, &target)
             .map_err(|_| StateError::Corrupt("recovery snapshot could not be installed"))

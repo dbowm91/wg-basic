@@ -1,3 +1,4 @@
+#![cfg(unix)]
 //! Durable state store integration tests.
 //!
 //! These run without root and use restrictive temporary directories. They cover

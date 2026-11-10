@@ -5,6 +5,8 @@ mod backend;
 pub mod darwin;
 #[cfg(target_os = "macos")]
 pub mod darwin_backend;
+#[cfg(target_os = "windows")]
+pub(crate) mod windows;
 
 #[cfg(target_os = "linux")]
 pub use backend::WireGuardBackend;
@@ -87,15 +89,36 @@ pub fn production_runtime_root() -> std::path::PathBuf {
         .join(darwin_backend::MANAGED_RUNTIME_SUBDIR)
 }
 
-/// Stub for platforms that are neither Linux nor macOS.
-///
-/// These platforms are not a supported deployment target; the backend exists
-/// only so the crate still compiles and fails closed as unsupported.
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+/// Windows Server wireguard-nt backend. The DLL is loaded from the directory
+/// of this executable. A name match is not ownership.
+#[cfg(target_os = "windows")]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct WireGuardBackend;
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(target_os = "windows")]
+impl WireGuardBackend {
+    pub fn observe_device(
+        &self,
+        interface: &InterfaceName,
+    ) -> Result<ObservedWireGuardDevice, WireGuardValidationError> {
+        windows::observe_device(interface)
+    }
+
+    pub fn apply_patch(
+        &self,
+        interface: &InterfaceName,
+        patch: WireGuardDevicePatch,
+    ) -> Result<WireGuardApplyReceipt, WireGuardValidationError> {
+        windows::apply_patch(interface, patch)
+    }
+}
+
+/// Stub for platforms that are neither Linux, macOS, nor Windows.
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WireGuardBackend;
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 impl WireGuardBackend {
     pub fn observe_device(
         &self,

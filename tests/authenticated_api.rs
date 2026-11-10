@@ -1,3 +1,4 @@
+#![cfg(unix)]
 //! Phase 7 M003 qualification: the authenticated HTTP perimeter.
 //!
 //! M003's central claims are about *ordering* and *absence*:

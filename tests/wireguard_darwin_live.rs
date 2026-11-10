@@ -1,3 +1,4 @@
+#![cfg(unix)]
 //! M003–M006 Darwin privileged live qualification (disposable hosts only).
 //!
 //! These tests run **only** on ephemeral GitHub-hosted macOS runners with

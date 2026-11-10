@@ -1,3 +1,4 @@
+#![cfg(unix)]
 //! Backup, restore, and corruption handling for the durable state store.
 //!
 //! These run unprivileged: they operate on temporary SQLite files only. The

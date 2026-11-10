@@ -169,7 +169,5 @@ impl StateStore {
 fn current_uid() -> u32 {
     // The management role runs unprivileged; the store refuses a database or
     // parent directory it does not own rather than widening access to it.
-    // Portable (M001): `geteuid` works on Linux and Darwin; the prior
-    // `/proc/self` metadata read was Linux-only.
-    nix::unistd::geteuid().as_raw()
+    super::privacy::current_uid()
 }

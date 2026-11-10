@@ -1,3 +1,4 @@
+#![cfg(unix)]
 //! Bounded process resource and row-growth smoke qualification for the long-lived serve role.
 //!
 //! M001 note: `/proc` sampling is Linux-only; the HTTP/row-growth contract is
