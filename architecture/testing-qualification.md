@@ -114,7 +114,7 @@ source-text assertions that run in the ordinary suite. By category:
 | HTTP perimeter (M003) | No CORS headers at all; no JWT/OAuth/session-crate dependencies; session-cookie attributes pinned (`HttpOnly`, `SameSite=Strict`, `Path=/`, no `Domain`, `Secure` from origin profile); no forwarded-header trust; one `headers::seal` call site; limiter consulted before worker authentication; bounded limiter peer map; routable bind refused without acknowledgement; response bodies only from `response.rs`/`api.rs`; failed logins always spend one Argon2 verification |
 | Embedded UI shell (M005) | Assets name no external origin; no inline script/style or event handlers (no CSP concession); no build toolchain or manifest build step; assets are `include_str!` constants with no filesystem reads; shell served through the single seal point; shell uses product/telemetry/audit routes only |
 | Service lifecycle (M004) | Limiter stays in-memory; anonymous `/healthz` answers only from the readiness projection (`ok`/`degraded`); backend probe is a read-only `Ping` reachable only from the authenticated route; only `src/http/serve.rs` orders shutdown (stop accepts → drain → stop worker); exactly `netd` and `serve` install `ctrlc` handlers with the `termination` feature; hardening contract matches netd runtime requirements |
-| Toolchain / runtime pins | Bundled SQLite newer than the WAL-reset advisory range (recorded `3.53.2`); `ctrlc` `termination` feature enabled |
+| Toolchain / runtime pins | Bundled SQLite newer than the WAL-reset advisory range (recorded `3.54.1`); `ctrlc` `termination` feature enabled |
 
 ## Rootful fixture prerequisites and invocation pattern
 

@@ -17,6 +17,34 @@ use std::{
 
 const CANDIDATE_FROM_TEST_BUILD: &str = env!("CARGO_BIN_EXE_wg-basic");
 
+/// A migrated client list keeps every historical field and adds only the
+/// schema 9 and 10 defaults: no deadline, no MTU, and no preshared key.
+fn assert_candidate_clients_match_history(
+    migrated: &serde_json::Value,
+    historical: &serde_json::Value,
+) {
+    let migrated = migrated.as_array().expect("migrated clients");
+    let historical = historical.as_array().expect("historical clients");
+    assert_eq!(migrated.len(), historical.len());
+    for (got, expected) in migrated.iter().zip(historical) {
+        let mut comparable = got.clone();
+        let object = comparable
+            .as_object_mut()
+            .expect("a client summary is an object");
+        assert_eq!(object.remove("expires_at"), Some(serde_json::Value::Null));
+        assert_eq!(
+            object.remove("expiry_state"),
+            Some(serde_json::Value::String("none".into()))
+        );
+        assert_eq!(object.remove("mtu"), Some(serde_json::Value::Null));
+        assert_eq!(
+            object.remove("preshared_key_configured"),
+            Some(serde_json::Value::Bool(false))
+        );
+        assert_eq!(&comparable, expected);
+    }
+}
+
 struct Scratch(PathBuf);
 
 impl Scratch {
@@ -465,7 +493,10 @@ fn real_v4_state_migrates_refuses_old_binary_and_rolls_back_with_v4_artifact() {
         .map(|client| client["client_id"].as_str().unwrap().to_owned())
         .collect();
     assert_eq!(candidate_ids, client_ids);
-    assert_eq!(candidate_json["clients"], old_clients_json["clients"]);
+    assert_candidate_clients_match_history(
+        &candidate_json["clients"],
+        &old_clients_json["clients"],
+    );
     let candidate_session = http(
         candidate_addr,
         "GET",
@@ -566,7 +597,7 @@ fn real_v4_state_migrates_refuses_old_binary_and_rolls_back_with_v4_artifact() {
     );
     assert_eq!(final_clients.status, 200, "{}", final_clients.body);
     let final_json: serde_json::Value = serde_json::from_str(&final_clients.body).unwrap();
-    assert_eq!(final_json["clients"], old_clients_json["clients"]);
+    assert_candidate_clients_match_history(&final_json["clients"], &old_clients_json["clients"]);
     assert_eq!(
         consume_enrollment(reupgraded_addr, &consume_path, &consume_body).status,
         410

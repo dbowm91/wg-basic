@@ -5,7 +5,8 @@
 # cannot be fixed here and what would clear it, so that an accepted advisory
 # is a decision with a name on it rather than a silent gap.
 #
-# RUSTSEC-2026-0367, RUSTSEC-2026-0368, RUSTSEC-2026-0369 — `zip` 6.0.0.
+# RUSTSEC-2026-0367, RUSTSEC-2026-0368, RUSTSEC-2026-0369, RUSTSEC-2026-0429
+# — `zip` 6.0.0.
 #
 # Why it cannot be bumped here: `zip` reaches this product only through
 # `eggup-eggpack` -> `eggup-archive` -> `zip`. `eggup-archive` requires
@@ -14,8 +15,10 @@
 # lives. `eggup-eggpack` is pinned exactly in `Cargo.toml` because the release
 # pipeline and this product must agree on one manifest projection.
 #
-# Why the exposure is bounded here: all three advisories describe archive
-# *extraction*. This product never extracts an archive. Its update path
+# Why the exposure is bounded here: all four advisories describe archive
+# *extraction*. RUSTSEC-2026-0429 is the same entry point: `ZipArchive::extract`
+# aborts on a symlink whose declared size is large. This product never extracts
+# an archive. Its update path
 # acquires a signed release binary, verifies its size and SHA-256 digest, and
 # runs it through `eggup_core::run_bounded`; its use of `eggup-eggpack` is
 # limited to projecting and validating release manifests. The vulnerable entry
@@ -32,4 +35,5 @@ ignore = [
   "RUSTSEC-2026-0367",
   "RUSTSEC-2026-0368",
   "RUSTSEC-2026-0369",
+  "RUSTSEC-2026-0429",
 ]
