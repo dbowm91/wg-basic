@@ -1916,17 +1916,17 @@ fn the_long_running_roles_catch_a_supervisors_termination_signal() {
     );
 
     let main = shippable(source_of("src/main.rs"));
-    // The roles that run forever install the handler: the Linux `netd` and
-    // `serve` and the Darwin `netd` (M002; Darwin `serve` reuses the same
-    // portable `serve` function as Linux, so it shares that handler). The two
-    // netd roles share one helper, so there are two call sites; a third would
-    // mean some one-shot command had started waiting for a signal it will
-    // never receive.
+    // The roles that run forever install the handler: the shared Unix `netd`
+    // helper, the portable `serve` function, and the Windows `netd` role.
+    // Unix `serve` is one function on Linux and Darwin. Windows `serve` calls
+    // that same function. Windows `netd` cannot share the Unix helper, so it
+    // has its own handler. A fourth call site would mean a one-shot command
+    // had started waiting for a signal it will never receive.
     assert_eq!(
         main.matches("ctrlc::set_handler").count(),
-        2,
-        "the shared netd helper and the Linux/Darwin serve role install a \
-         shutdown handler; a one-shot command must not"
+        3,
+        "the shared netd helper, the portable serve role, and the Windows netd \
+         role install a shutdown handler; a one-shot command must not"
     );
     for arm in ["Some(Command::Netd {", "Some(Command::Serve"] {
         assert!(
@@ -1956,6 +1956,20 @@ fn the_long_running_roles_catch_a_supervisors_termination_signal() {
         install < bind,
         "the shutdown handler must be installed before the socket is bound, or a \
          daemon stopped during startup leaves its socket behind"
+    );
+    let windows_netd = main
+        .split("fn run_windows_netd")
+        .nth(1)
+        .expect("the Windows netd role exists");
+    let windows_install = windows_netd
+        .find("ctrlc::set_handler")
+        .expect("the Windows netd role installs the shutdown handler");
+    let windows_bind = windows_netd
+        .find("SocketServer::bind")
+        .expect("the Windows netd role binds the pipe");
+    assert!(
+        windows_install < windows_bind,
+        "the Windows shutdown handler must be installed before the pipe is bound"
     );
 }
 
@@ -2109,7 +2123,6 @@ fn cargo_target_tables_keep_linux_backends_linux_only() {
     for portable in [
         "tokio",
         "serde_json",
-        "nix",
         "x25519-dalek",
         "ctrlc",
         "eggserve-server",
@@ -2120,6 +2133,66 @@ fn cargo_target_tables_keep_linux_backends_linux_only() {
             !linux_section.contains(portable),
             "{portable} must not be Linux-gated: it is shared by the Darwin management surface"
         );
+    }
+    let unix_section = manifest
+        .split("[target.'cfg(unix)'.dependencies]")
+        .nth(1)
+        .expect("unix target table exists");
+    assert!(
+        unix_section.contains("nix"),
+        "nix stays in the unix target table"
+    );
+    let before_unix = manifest
+        .split("[target.'cfg(unix)'.dependencies]")
+        .next()
+        .unwrap();
+    assert!(
+        !before_unix.contains("\nnix "),
+        "nix is not a portable dependency"
+    );
+    let windows_section = manifest
+        .split("[target.'cfg(windows)'.dependencies]")
+        .nth(1)
+        .expect("windows target table exists");
+    assert!(
+        windows_section.contains("wg-basic-win32-sys"),
+        "the Win32 crate stays windows-only"
+    );
+}
+
+#[test]
+fn windows_control_does_not_shell_out_or_take_a_caller_dll_path() {
+    for root in ["src", "crates"] {
+        visit_rust(std::path::Path::new(root), &|path, source| {
+            let code = code_only(source);
+            for token in ["powershell", "netsh", "wireguard.exe", "cmd.exe"] {
+                assert!(
+                    !code.contains(token),
+                    "{} must not reference {token}",
+                    path.display()
+                );
+            }
+        });
+    }
+    let wire = code_only(source_of("src/protocol/wire.rs"));
+    assert!(
+        !wire.contains("wireguard.dll"),
+        "the DLL path is not a protocol field"
+    );
+}
+
+fn visit_rust(dir: &std::path::Path, visit: &dyn Fn(&std::path::Path, &str)) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if path.is_dir() {
+            visit_rust(&path, visit);
+            continue;
+        }
+        if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+            let source = std::fs::read_to_string(&path).unwrap();
+            visit(&path, &source);
+        }
     }
 }
 

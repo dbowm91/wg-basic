@@ -450,6 +450,14 @@ Owner: `plans/subsystems/macos-native-server-roadmap.md`; architecture decision 
 
 **Amended 2026-10-21 (ADR-009):** the macOS line's qualification architecture is Apple silicon only; native Intel is dropped as a target, and an Intel Mac is refused at install time. The Linux architecture targets are unchanged.
 
+## 14B. Post-Phase-11 — Native Windows Server support
+
+Status: planned 2026-11-10. Independent of the macOS line. Linux Phase 1–11 technical closure and Phase 10's systemd claim remain in force.
+
+Owner: `plans/subsystems/windows-native-server-roadmap.md`. Architecture decision: `plans/adr/011-windows-server-wireguard-nt.md`.
+
+M001–M007 stage a `windows-2025` build, named-pipe identity, the pinned `wireguard-nt` 1.1 DLL, address and route reconciliation, one owned WinNAT gateway, Service Control Manager installation, and a support claim bounded to Windows Server 2025 x64. M001 is ready. M002–M007 have hard predecessor gates. The qualified end state is an IPv4 NAT gateway on that runner. Reboot survival, public inbound reachability, IPv6 egress, and every other Windows edition stay outside the claim. No Windows self-update and no Phase 10 target change.
+
 ## 15. Eggstack adoption constraints
 
 Eggstack reuse is contract-driven.

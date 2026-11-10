@@ -193,7 +193,16 @@ impl SocketServer {
                 ))
             }
         };
-        let response = self.dispatch(request);
+        let response = super::dispatch::dispatch(
+            &super::dispatch::DispatchTargets {
+                runtime_directory: &self.runtime_directory,
+                wireguard: &self.wireguard,
+                reconciliation: &self.reconciliation,
+                firewall: &self.firewall,
+                aggregate: &self.aggregate,
+            },
+            request,
+        );
         let encoded = serde_json::to_vec(&response)
             .map_err(|_| io::Error::other("could not encode protocol response"))?;
         write_frame(&mut stream, &encoded)

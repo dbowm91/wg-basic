@@ -1,3 +1,4 @@
+#![cfg(unix)]
 // M001 note: the read-only doctor fixture is Linux-only until M002 (netd +
 // `/proc`). Helpers are dead code on Darwin by construction.
 #![cfg_attr(not(target_os = "linux"), allow(dead_code, unused_imports))]

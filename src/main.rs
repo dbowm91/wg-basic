@@ -1,7 +1,15 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
+#[cfg(not(windows))]
 const DEFAULT_SOCKET: &str = "/run/wg-basic/netd.sock";
+#[cfg(windows)]
+const DEFAULT_SOCKET: &str = wg_basic::platform::windows::DEFAULT_PIPE;
+
+#[cfg(not(windows))]
+const DEFAULT_STATE: &str = wg_basic::state::DEFAULT_STATE_PATH;
+#[cfg(windows)]
+const DEFAULT_STATE: &str = wg_basic::platform::windows::DEFAULT_STATE_PATH;
 
 /// The Phase 7 local administrator's login name.
 const DEFAULT_ADMIN_USERNAME: &str = "admin";
@@ -35,7 +43,7 @@ enum Command {
     /// It reaches the network only through the authorized socket, from the
     /// worker thread, on behalf of a request.
     Serve {
-        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        #[arg(long, default_value = DEFAULT_STATE)]
         state: PathBuf,
         #[arg(long, default_value = DEFAULT_SOCKET)]
         socket: PathBuf,
@@ -73,7 +81,7 @@ enum Command {
     },
     /// Read-only service capability check.
     Doctor {
-        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        #[arg(long, default_value = DEFAULT_STATE)]
         state: PathBuf,
         #[arg(long, default_value = DEFAULT_SOCKET)]
         socket: PathBuf,
@@ -95,7 +103,7 @@ enum Command {
     /// This role never escalates privileges and never mutates the kernel
     /// directly; it reaches the network only through the authorized socket.
     Reconcile {
-        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        #[arg(long, default_value = DEFAULT_STATE)]
         state: PathBuf,
         #[arg(long, default_value = DEFAULT_SOCKET)]
         socket: PathBuf,
@@ -112,7 +120,7 @@ enum Command {
     },
     /// Prints the durable management health projection and exits.
     Health {
-        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        #[arg(long, default_value = DEFAULT_STATE)]
         state: PathBuf,
         #[arg(long, default_value = DEFAULT_SOCKET)]
         socket: PathBuf,
@@ -191,13 +199,13 @@ enum AdminAction {
         /// other tool happened to provide.
         #[arg(long)]
         password_stdin: bool,
-        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        #[arg(long, default_value = DEFAULT_STATE)]
         state: PathBuf,
     },
     /// Prints the safe administrator projection: identity, enabled state, and
     /// live session count. Never a verifier, token, or password.
     Status {
-        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        #[arg(long, default_value = DEFAULT_STATE)]
         state: PathBuf,
     },
 }
@@ -206,19 +214,19 @@ enum AdminAction {
 enum StateCommand {
     /// Create an empty schema or validate and migrate an existing owned state database.
     Init {
-        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        #[arg(long, default_value = DEFAULT_STATE)]
         state: PathBuf,
     },
     /// Prints a safe status projection: identifiers, generations, and integrity.
     ///
     /// Never prints private keys, preshared keys, or any row contents.
     Status {
-        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        #[arg(long, default_value = DEFAULT_STATE)]
         state: PathBuf,
     },
     /// Emit the updater's secret-free typed compatibility identity as JSON.
     Identity {
-        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        #[arg(long, default_value = DEFAULT_STATE)]
         state: PathBuf,
     },
     /// Writes a consistent snapshot of the database to <destination>.
@@ -227,7 +235,7 @@ enum StateCommand {
     /// credentials and is created owner-only.
     Backup {
         destination: PathBuf,
-        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        #[arg(long, default_value = DEFAULT_STATE)]
         state: PathBuf,
     },
     /// Validates <candidate> and installs it as the live database.
@@ -238,7 +246,7 @@ enum StateCommand {
     /// and this process's open-handle check remains as defense in depth.
     Restore {
         candidate: PathBuf,
-        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        #[arg(long, default_value = DEFAULT_STATE)]
         state: PathBuf,
     },
     /// Verify a candidate without migrating or modifying it.
@@ -249,7 +257,7 @@ enum StateCommand {
         confirm_installation_id: wg_basic::domain::InstallationId,
         #[arg(long)]
         dry_run: bool,
-        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        #[arg(long, default_value = DEFAULT_STATE)]
         state: PathBuf,
         #[arg(long, default_value = DEFAULT_SOCKET)]
         socket: PathBuf,
@@ -259,17 +267,17 @@ enum StateCommand {
 #[derive(Subcommand)]
 enum NetworkCommand {
     Status {
-        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        #[arg(long, default_value = DEFAULT_STATE)]
         state: PathBuf,
     },
     Disable {
-        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        #[arg(long, default_value = DEFAULT_STATE)]
         state: PathBuf,
         #[arg(long, default_value = DEFAULT_SOCKET)]
         socket: PathBuf,
     },
     Enable {
-        #[arg(long, default_value = wg_basic::state::DEFAULT_STATE_PATH)]
+        #[arg(long, default_value = DEFAULT_STATE)]
         state: PathBuf,
         #[arg(long, default_value = DEFAULT_SOCKET)]
         socket: PathBuf,
@@ -286,10 +294,12 @@ fn main() {
     let result = run_linux(cli.command);
     #[cfg(target_os = "macos")]
     let result = run_darwin(cli.command);
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(target_os = "windows")]
+    let result = run_windows(cli.command);
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     let result: Result<(), String> = {
         let _ = cli.command;
-        Err("network service roles require Linux or macOS".into())
+        Err("network service roles require Linux, macOS, or Windows Server".into())
     };
     if let Err(message) = result {
         wg_basic::operational::command_failure(&message);
@@ -1738,7 +1748,7 @@ fn append_forwarding_check(
 /// M001 Darwin IPv4 forwarding check: no `/proc` read, no sysctl mutation.
 /// Reports Unknown when forwarding is required (M005 owns the Darwin
 /// forwarding/PF decision) and Pass only when nothing is required.
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
 fn append_forwarding_check(
     checks: &mut Vec<wg_basic::doctor::DoctorCheck>,
     snapshot: &wg_basic::state::StateDiagnostic,
@@ -1823,7 +1833,7 @@ fn append_ipv6_forwarding_check(
 
 /// M001 Darwin IPv6 forwarding check: same fail-closed posture as IPv4.
 /// No `/proc` read; required forwarding reports Unknown until M005.
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
 fn append_ipv6_forwarding_check(
     checks: &mut Vec<wg_basic::doctor::DoctorCheck>,
     snapshot: &wg_basic::state::StateDiagnostic,
@@ -1856,6 +1866,297 @@ fn append_ipv6_forwarding_check(
         evidence,
         remediation,
     ));
+}
+
+#[cfg(target_os = "windows")]
+fn append_forwarding_check(
+    checks: &mut Vec<wg_basic::doctor::DoctorCheck>,
+    snapshot: &wg_basic::state::StateDiagnostic,
+) {
+    use wg_basic::doctor::{DoctorCheck, DoctorCheckId as Id, DoctorDisposition as D};
+    let required = snapshot
+        .desired
+        .state
+        .network_policy
+        .as_ref()
+        .is_some_and(|policy| policy.ipv4_forwarding_required);
+    let value = wg_basic_win32_sys::ipv4_forwarding_enabled().ok();
+    let (disposition, summary, evidence, remediation) = match (required, value) {
+        (false, _) => (
+            D::Pass,
+            "IPv4 forwarding is not required by desired state",
+            "no forwarding change required".to_owned(),
+            "none",
+        ),
+        (true, Some(true)) => (
+            D::Pass,
+            "required IPv4 forwarding is enabled",
+            "IPEnableRouter is 1".to_owned(),
+            "none",
+        ),
+        (true, Some(false)) => (
+            D::Fail,
+            "desired network policy requires IPv4 forwarding, but it is disabled",
+            "IPEnableRouter is 0".to_owned(),
+            "apply the gateway policy; doctor did not write the setting",
+        ),
+        (true, None) => (
+            D::Unknown,
+            "IPv4 forwarding state could not be read",
+            "IPEnableRouter was not readable".to_owned(),
+            "run doctor on the Windows Server host that owns the tunnel",
+        ),
+    };
+    checks.push(DoctorCheck::new(
+        Id::Forwarding,
+        disposition,
+        summary,
+        evidence,
+        remediation,
+    ));
+}
+
+#[cfg(target_os = "windows")]
+fn append_ipv6_forwarding_check(
+    checks: &mut Vec<wg_basic::doctor::DoctorCheck>,
+    snapshot: &wg_basic::state::StateDiagnostic,
+) {
+    use wg_basic::doctor::{DoctorCheck, DoctorCheckId as Id, DoctorDisposition as D};
+    let required = snapshot
+        .desired
+        .state
+        .network_policy
+        .as_ref()
+        .is_some_and(|policy| policy.ipv6_forwarding_required);
+    let (disposition, summary, evidence) = if required {
+        (
+            D::Unknown,
+            "IPv6 forwarding is not observed on this Windows target",
+            "IPv6 forwarding is left unchanged",
+        )
+    } else {
+        (
+            D::Pass,
+            "IPv6 forwarding is not required by desired state",
+            "no IPv6 forwarding observation required",
+        )
+    };
+    checks.push(DoctorCheck::new(
+        Id::Ipv6Forwarding,
+        disposition,
+        summary,
+        evidence,
+        "none",
+    ));
+}
+
+#[cfg(target_os = "windows")]
+fn run_windows(command: Option<Command>) -> Result<(), String> {
+    match command {
+        None => {
+            println!(
+                "wg-basic {}: use --help for runtime roles",
+                env!("CARGO_PKG_VERSION")
+            );
+            Ok(())
+        }
+        Some(Command::Serve {
+            state,
+            socket,
+            http_bind,
+            canonical_origin,
+            allow_non_loopback,
+        }) => serve(
+            state,
+            socket,
+            http_bind,
+            canonical_origin,
+            allow_non_loopback,
+        ),
+        Some(Command::Reconcile { state, socket }) => {
+            let runtime = wg_basic::management::ManagementRuntime::open(&state, &socket)
+                .map_err(|error| error.to_string())?;
+            match runtime
+                .reconcile_current()
+                .map_err(|error| error.to_string())?
+            {
+                None => println!("no managed interface; nothing to reconcile"),
+                Some(outcome) => println!(
+                    "generation {} -> {} ({:?})",
+                    outcome.applied_generation,
+                    if outcome.converged {
+                        "converged"
+                    } else {
+                        "not converged"
+                    },
+                    outcome.disposition
+                ),
+            }
+            Ok(())
+        }
+        Some(Command::System { action }) => match action {
+            SystemCommand::Install { candidate, helper } => {
+                let candidate = match candidate {
+                    Some(path) => path,
+                    None => std::env::current_exe()
+                        .map_err(|_| "could not identify the running executable".to_owned())?,
+                };
+                let dll = helper.ok_or_else(|| {
+                    "Windows installation requires the pinned wireguard.dll; pass --helper PATH"
+                        .to_owned()
+                })?;
+                let status = wg_basic::windows_install::install(&candidate, &dll)?;
+                println!(
+                    "sku_ok={} serve_registered={} netd_registered={} serve_is_administrator={}",
+                    status.sku_ok,
+                    status.serve_registered,
+                    status.netd_registered,
+                    status.serve_is_administrator
+                );
+                Ok(())
+            }
+            SystemCommand::Status => {
+                let status = wg_basic::windows_install::status()?;
+                println!(
+                    "sku_ok={} serve_registered={} netd_registered={} serve_is_administrator={}",
+                    status.sku_ok,
+                    status.serve_registered,
+                    status.netd_registered,
+                    status.serve_is_administrator
+                );
+                Ok(())
+            }
+            SystemCommand::Uninstall => wg_basic::windows_install::uninstall(),
+        },
+        Some(Command::Update { .. }) => Err(
+            "self-update is not part of the Windows Server installation; the Linux updater is unchanged"
+                .into(),
+        ),
+        Some(Command::Health { state, socket }) => {
+            let runtime = wg_basic::management::ManagementRuntime::open(&state, &socket)
+                .map_err(|error| error.to_string())?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&runtime.health())
+                    .map_err(|_| "could not format management health".to_owned())?
+            );
+            Ok(())
+        }
+        Some(Command::Doctor {
+            state,
+            socket,
+            json,
+            allow_warnings,
+            http_bind: _,
+            canonical_origin: _,
+            allow_non_loopback: _,
+        }) => {
+            use wg_basic::protocol::{request, RequestOperation, ResponseBody};
+            let (mut checks, state_snapshot) = doctor_state_checks(&state);
+            match request(&socket, RequestOperation::InspectCapabilities, 2) {
+                Ok(ResponseBody::Capabilities(snapshot)) => {
+                    checks.push(wg_basic::doctor::DoctorCheck::new(
+                        wg_basic::doctor::DoctorCheckId::Netd,
+                        if snapshot.runtime_directory_safe {
+                            wg_basic::doctor::DoctorDisposition::Pass
+                        } else {
+                            wg_basic::doctor::DoctorDisposition::Warn
+                        },
+                        "netd answered a capability request",
+                        format!(
+                            "runtime directory {}; wireguard {:?}; kernel {}",
+                            if snapshot.runtime_directory_safe {
+                                "safe"
+                            } else {
+                                "unsafe"
+                            },
+                            snapshot.wireguard_control,
+                            snapshot.kernel_release.as_deref().unwrap_or("unknown"),
+                        ),
+                        "none",
+                    ));
+                }
+                _ => checks.push(wg_basic::doctor::DoctorCheck::new(
+                    wg_basic::doctor::DoctorCheckId::Netd,
+                    wg_basic::doctor::DoctorDisposition::Unknown,
+                    "netd capability state is unavailable",
+                    "no safe capability response was received",
+                    "start wg-basic-netd and verify the pipe and the serve account",
+                )),
+            }
+            if let Some(snapshot) = state_snapshot.as_ref() {
+                append_network_plan_checks(&mut checks, &socket, snapshot);
+                append_forwarding_check(&mut checks, snapshot);
+                append_ipv6_forwarding_check(&mut checks, snapshot);
+            }
+            let report = wg_basic::doctor::DoctorReport::new(checks);
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&report)
+                        .map_err(|_| "could not format diagnostic report")?
+                );
+            } else {
+                print!("{}", report.render_human());
+            }
+            let exit_code =
+                if allow_warnings && report.overall == wg_basic::doctor::DoctorDisposition::Warn {
+                    0
+                } else {
+                    report.exit_code()
+                };
+            std::process::exit(exit_code);
+        }
+        Some(Command::Netd {
+            socket,
+            allowed_uids,
+            allowed_users,
+        }) => run_windows_netd(socket, allowed_uids, allowed_users),
+        Some(Command::Admin { action }) => run_admin_action(action),
+        Some(Command::State { action }) => run_state_action(action),
+        Some(Command::Network { action }) => run_network_action(action),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn run_windows_netd(
+    socket: std::path::PathBuf,
+    allowed_uids: Vec<u32>,
+    allowed_users: Vec<String>,
+) -> Result<(), String> {
+    use std::sync::{atomic::AtomicBool, Arc};
+    if !allowed_uids.is_empty() {
+        return Err("--allow-uid is rejected on Windows; pass --allow-user".into());
+    }
+    let account = match allowed_users.as_slice() {
+        [only] => only.as_str(),
+        _ => {
+            return Err("netd requires exactly one --allow-user, the serve account".into());
+        }
+    };
+    let policy = wg_basic::protocol::AuthorizationPolicy::for_account(account)
+        .map_err(|error| error.to_string())?;
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let signal_shutdown = shutdown.clone();
+    ctrlc::set_handler(move || {
+        signal_shutdown.store(true, std::sync::atomic::Ordering::Release);
+    })
+    .map_err(|_| "could not install graceful shutdown handler".to_owned())?;
+    let server = wg_basic::protocol::SocketServer::bind(&socket, policy)
+        .map_err(|error| error.to_string())?;
+    wg_basic::operational::emit(
+        "netd.started",
+        wg_basic::operational::Severity::Info,
+        "netd",
+        "startup",
+        "ready",
+        None,
+        None,
+        Some("pipe_listener"),
+    );
+    server
+        .run_until_shutdown(&shutdown)
+        .map_err(|_| "netd listener stopped after a runtime error".to_owned())
 }
 
 /// Reads a password from standard input, trimming exactly one trailing newline.
@@ -2098,7 +2399,8 @@ fn run_state_action(action: StateCommand) -> Result<(), String> {
             Ok(())
         }
         StateCommand::Identity { state } => {
-            let identity = wg_basic::update::state_identity(&state)?;
+            let identity = wg_basic::state::inspect_identity_readonly(&state)
+                .map_err(|error| format!("state identity could not be read: {error}"))?;
             println!(
                 "{}",
                 serde_json::to_string(&identity)
@@ -2205,7 +2507,6 @@ fn purge_state(
     confirmation: wg_basic::domain::InstallationId,
     dry_run: bool,
 ) -> Result<(), String> {
-    use std::os::unix::fs::MetadataExt;
     use wg_basic::{
         management::project_diagnostic_intent,
         protocol::{request, RequestOperation, ResponseBody},
@@ -2284,12 +2585,7 @@ fn purge_state(
     }
     for path in paths {
         match std::fs::symlink_metadata(&path) {
-            Ok(metadata)
-                if metadata.is_file()
-                    && !metadata.file_type().is_symlink()
-                    && metadata.uid() == nix::unistd::geteuid().as_raw()
-                    && metadata.mode() & 0o077 == 0 =>
-            {
+            Ok(_) if wg_basic::state::secret_file_owned_here(&path) => {
                 std::fs::remove_file(&path)
                     .map_err(|_| format!("could not safely remove {}", path.display()))?;
             }
@@ -2343,7 +2639,6 @@ fn print_purge_report(
 
 /// Portable (M001): purge path enumeration uses Unix metadata on both OSes.
 fn purge_paths(state: &std::path::Path, schema_version: i64) -> Result<Vec<PathBuf>, String> {
-    use std::os::unix::fs::MetadataExt;
     let mut paths = vec![state.to_path_buf()];
     for suffix in ["-wal", "-shm"] {
         let mut name = state.as_os_str().to_os_string();
@@ -2383,14 +2678,9 @@ fn purge_paths(state: &std::path::Path, schema_version: i64) -> Result<Vec<PathB
     paths.sort();
     paths.dedup();
     for path in &paths {
-        if let Ok(metadata) = std::fs::symlink_metadata(path) {
-            if metadata.file_type().is_symlink()
-                || !metadata.is_file()
-                || metadata.uid() != nix::unistd::geteuid().as_raw()
-                || metadata.mode() & 0o077 != 0
-            {
-                return Err(format!("unsafe purge artifact: {}", path.display()));
-            }
+        if std::fs::symlink_metadata(path).is_ok() && !wg_basic::state::secret_file_owned_here(path)
+        {
+            return Err(format!("unsafe purge artifact: {}", path.display()));
         }
     }
     Ok(paths)

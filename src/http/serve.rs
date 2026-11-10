@@ -420,7 +420,6 @@ pub fn run_blocking(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, os::unix::fs::PermissionsExt};
 
     /// A per-process scratch-path counter.
     ///
@@ -440,9 +439,7 @@ mod tests {
                 std::process::id(),
                 SCRATCH_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             ));
-            let _ = fs::remove_dir_all(&path);
-            fs::create_dir(&path).unwrap();
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+            crate::management::scratch_directory(&path);
             Self(path)
         }
 
@@ -458,7 +455,7 @@ mod tests {
 
     impl Drop for Scratch {
         fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
+            crate::management::remove_scratch(&self.0);
         }
     }
 
@@ -596,7 +593,7 @@ mod tests {
         let mut config = scratch.config();
         // A directory where the database should be cannot be opened.
         let bogus = scratch.0.join("not-a-database");
-        fs::create_dir(&bogus).unwrap();
+        crate::management::make_directory(&bogus);
         config.state_path = bogus;
 
         let error = run(config, std::future::pending::<()>())

@@ -10,7 +10,6 @@ use crate::{
 use rusqlite::{Connection, OpenFlags};
 use std::{
     fs,
-    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
 };
 
@@ -69,15 +68,15 @@ pub fn inspect_identity_readonly(path: &Path) -> Result<StateIdentity, StateErro
     }
     for suffix in ["-wal", "-shm"] {
         let sidecar = sidecar(&path, suffix);
-        let metadata = match fs::symlink_metadata(&sidecar) {
+        let metadata = match crate::state::privacy::inspect(&sidecar, uid()) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
             Err(_) => return Err(StateError::DatabaseOpenFailed),
         };
-        if metadata.file_type().is_symlink()
-            || !metadata.is_file()
-            || metadata.uid() != uid()
-            || metadata.mode() & 0o077 != 0
+        if metadata.is_symlink
+            || !metadata.is_file
+            || metadata.owner != uid()
+            || metadata.mode & 0o077 != 0
         {
             return Err(StateError::DatabaseOpenFailed);
         }
@@ -220,14 +219,14 @@ pub fn inspect_readonly(path: &Path) -> Result<StateDiagnostic, StateError> {
     let recovery_artifacts = (1..schema_version)
         .map(|source_schema| {
             let artifact = super::schema::recovery_snapshot_path(&path, source_schema);
-            match fs::symlink_metadata(&artifact) {
+            match crate::state::privacy::inspect(&artifact, uid()) {
                 Ok(metadata) => RecoveryArtifactStatus {
                     source_schema,
                     present: true,
-                    safe: metadata.is_file()
-                        && !metadata.file_type().is_symlink()
-                        && metadata.uid() == uid()
-                        && metadata.mode() & 0o077 == 0,
+                    safe: metadata.is_file
+                        && !metadata.is_symlink
+                        && metadata.owner == uid()
+                        && metadata.mode & 0o077 == 0,
                 },
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                     RecoveryArtifactStatus {
@@ -262,48 +261,50 @@ fn parse_generation(value: Option<i64>) -> Result<Option<DesiredGeneration>, Sta
 
 fn verify_path_readonly(path: &Path) -> Result<(), StateError> {
     let parent = path.parent().ok_or(StateError::MissingPath)?;
-    let parent_metadata = fs::symlink_metadata(parent).map_err(|_| StateError::MissingParent {
-        path: parent.display().to_string(),
-    })?;
     let uid = uid();
-    if !parent_metadata.is_dir() {
+    let parent_metadata =
+        crate::state::privacy::inspect(parent, uid).map_err(|_| StateError::MissingParent {
+            path: parent.display().to_string(),
+        })?;
+    if !parent_metadata.is_dir {
         return Err(StateError::ParentNotDirectory {
             path: parent.display().to_string(),
         });
     }
-    if parent_metadata.uid() != uid {
+    if parent_metadata.owner != uid {
         return Err(StateError::ParentWrongOwner {
             path: parent.display().to_string(),
-            owner: parent_metadata.uid(),
+            owner: parent_metadata.owner,
             expected: uid,
         });
     }
-    if parent_metadata.mode() & 0o022 != 0 {
+    if parent_metadata.mode & 0o022 != 0 {
         return Err(StateError::ParentTooPermissive {
             path: parent.display().to_string(),
         });
     }
-    let metadata = fs::symlink_metadata(path).map_err(|_| StateError::MissingParent {
-        path: path.display().to_string(),
-    })?;
-    if metadata.file_type().is_symlink() {
+    let metadata =
+        crate::state::privacy::inspect(path, uid).map_err(|_| StateError::MissingParent {
+            path: path.display().to_string(),
+        })?;
+    if metadata.is_symlink {
         return Err(StateError::DatabaseIsSymlink {
             path: path.display().to_string(),
         });
     }
-    if !metadata.is_file() {
+    if !metadata.is_file {
         return Err(StateError::DatabaseNotRegularFile {
             path: path.display().to_string(),
         });
     }
-    if metadata.uid() != uid {
+    if metadata.owner != uid {
         return Err(StateError::DatabaseWrongOwner {
             path: path.display().to_string(),
-            owner: metadata.uid(),
+            owner: metadata.owner,
             expected: uid,
         });
     }
-    if metadata.mode() & 0o077 != 0 {
+    if metadata.mode & 0o077 != 0 {
         return Err(StateError::DatabaseTooPermissive {
             path: path.display().to_string(),
         });
@@ -312,15 +313,20 @@ fn verify_path_readonly(path: &Path) -> Result<(), StateError> {
 }
 
 fn uid() -> u32 {
-    nix::unistd::geteuid().as_raw()
+    crate::state::privacy::current_uid()
 }
 
 fn immutable_uri(path: &Path) -> Result<String, StateError> {
+    #[cfg(unix)]
     use std::os::unix::ffi::OsStrExt;
     let mut uri = String::from("file:");
-    for byte in path.as_os_str().as_bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(*byte, b'/' | b'-' | b'_' | b'.' | b'~') {
-            uri.push(char::from(*byte));
+    #[cfg(unix)]
+    let bytes = path.as_os_str().as_bytes().to_vec();
+    #[cfg(not(unix))]
+    let bytes = path.to_string_lossy().as_bytes().to_vec();
+    for byte in bytes {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'_' | b'.' | b'~') {
+            uri.push(char::from(byte));
         } else {
             uri.push('%');
             uri.push_str(&format!("{byte:02X}"));
@@ -339,7 +345,7 @@ fn sidecar(path: &Path, suffix: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
+    use std::fs;
 
     /// A per-process scratch-path counter.
     ///
@@ -365,7 +371,7 @@ mod tests {
     fn immutable_inspection_decodes_state_without_mutating_files() {
         let directory = scratch_directory("wg-basic-state-diagnostic");
         fs::create_dir(&directory).unwrap();
-        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+        crate::state::privacy::restrict_directory(&directory).unwrap();
         let database = directory.join("state.db");
         drop(crate::state::StateStore::initialize(&database).unwrap());
         let before = fs::read(&database).unwrap();
@@ -408,7 +414,7 @@ mod tests {
     fn immutable_inspection_accepts_a_cleanly_closed_database_with_an_empty_log() {
         let directory = scratch_directory("wg-basic-state-diagnostic-clean");
         fs::create_dir(&directory).unwrap();
-        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+        crate::state::privacy::restrict_directory(&directory).unwrap();
         let database = directory.join("state.db");
         drop(crate::state::StateStore::initialize(&database).unwrap());
 
@@ -441,7 +447,7 @@ mod tests {
     fn immutable_inspection_refuses_a_newer_schema_without_migrating_it() {
         let directory = scratch_directory("wg-basic-newer-diagnostic");
         fs::create_dir(&directory).unwrap();
-        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+        crate::state::privacy::restrict_directory(&directory).unwrap();
         let database = directory.join("state.db");
         drop(crate::state::StateStore::initialize(&database).unwrap());
         let connection = Connection::open(&database).unwrap();
@@ -462,7 +468,7 @@ mod tests {
     fn identity_inspection_reads_v4_with_live_wal_without_migrating() {
         let directory = scratch_directory("wg-basic-identity-diagnostic");
         fs::create_dir(&directory).unwrap();
-        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+        crate::state::privacy::restrict_directory(&directory).unwrap();
         let database = directory.join("state.db");
         drop(crate::state::StateStore::initialize(&database).unwrap());
         let connection = Connection::open(&database).unwrap();

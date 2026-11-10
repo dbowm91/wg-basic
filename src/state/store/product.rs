@@ -987,7 +987,7 @@ fn parse_outcome(value: &str) -> Option<AuditOutcome> {
 #[cfg(test)]
 mod retention_tests {
     use super::*;
-    use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
+    use std::{fs, path::PathBuf};
 
     struct Scratch(PathBuf);
     impl Scratch {
@@ -999,7 +999,7 @@ mod retention_tests {
             ));
             let _ = fs::remove_dir_all(&path);
             fs::create_dir(&path).unwrap();
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+            crate::state::privacy::restrict_directory(&path).unwrap();
             Self(path)
         }
     }

@@ -21,6 +21,8 @@
 mod apply;
 #[cfg(target_os = "macos")]
 mod backend_darwin;
+#[cfg(target_os = "windows")]
+mod backend_windows;
 /// Darwin address/route observation + pure planning (M004 modeling scope;
 /// the privileged route-socket backend lands with the live helper).
 #[cfg(target_os = "macos")]
@@ -33,8 +35,10 @@ mod planner;
 mod service;
 #[cfg(target_os = "macos")]
 mod service_darwin;
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 mod service_other;
+#[cfg(target_os = "windows")]
+mod service_windows;
 
 #[cfg(target_os = "linux")]
 pub use linux::LinuxNetworkBackend;
@@ -47,10 +51,14 @@ pub use model::{
 pub use planner::plan_managed_interface;
 #[cfg(target_os = "linux")]
 pub use service::ReconciliationService;
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
 pub use service_darwin::ReconciliationService;
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+pub use service_other::ReconciliationService;
+#[cfg(target_os = "windows")]
+pub use service_windows::ReconciliationService;
 
 pub(crate) use apply::ReconcileBackend;
 pub(crate) use planner::Mutation;
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 pub(crate) use service_other::ReconcileBackend;

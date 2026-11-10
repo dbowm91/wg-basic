@@ -16,6 +16,7 @@
 // compile typed stubs that fail closed as unsupported rather than pretending
 // convergence.
 pub mod aggregate;
+#[cfg(unix)]
 pub mod distribution;
 pub mod doctor;
 pub mod domain;
@@ -24,6 +25,7 @@ pub mod firewall;
 pub mod http;
 /// Darwin launchd installation, artifact provenance, and recovery (M006
 /// installation scope; pure layout/receipt logic, no live system mutation).
+#[cfg(unix)]
 pub mod launchd;
 /// Darwin launchd control and the privileged installer (C002).
 ///
@@ -39,5 +41,8 @@ pub mod protocol;
 pub mod reconcile;
 pub mod release;
 pub mod state;
+#[cfg(unix)]
 pub mod update;
+#[cfg(windows)]
+pub mod windows_install;
 pub mod wireguard;

@@ -194,9 +194,9 @@ fn failure_from(error: &FirewallError) -> FirewallFailure {
     match error {
         FirewallError::PermissionDenied => FirewallFailure::PermissionDenied,
         FirewallError::Unsupported => FirewallFailure::Unsupported,
-        FirewallError::TableOwnershipConflict | FirewallError::LegacyTableOwnership => {
-            FirewallFailure::Conflict
-        }
+        FirewallError::TableOwnershipConflict
+        | FirewallError::LegacyTableOwnership
+        | FirewallError::ForeignNetNat => FirewallFailure::Conflict,
         FirewallError::InvalidPolicy
         | FirewallError::BackendFailure
         | FirewallError::ResourceLimitExceeded => FirewallFailure::BackendFailure,

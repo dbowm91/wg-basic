@@ -4,7 +4,6 @@
 //! call. Domain errors are projected onto the fixed protocol error set without
 //! leaking backend detail.
 
-use super::socket::SocketServer;
 use super::wire::{
     ProtocolError, RequestEnvelope, RequestOperation, ResponseBody, ResponseEnvelope,
     PROTOCOL_VERSION,
@@ -14,104 +13,111 @@ use crate::firewall::FirewallError;
 use crate::protocol::capability::NetworkCapabilitySnapshot;
 use crate::reconcile::ReconcileError;
 use crate::wireguard::WireGuardValidationError;
+use std::path::Path;
 
-impl SocketServer {
-    pub(crate) fn dispatch(&self, request: RequestEnvelope) -> ResponseEnvelope {
-        if request.protocol_version != PROTOCOL_VERSION {
-            return ResponseEnvelope::failure(
-                request.request_id,
-                ProtocolError::UnsupportedVersion,
-            );
-        }
-        let result = match request.operation {
-            RequestOperation::Ping => Ok(ResponseBody::Pong {
-                service: "wg-basic-netd".into(),
-                version: env!("CARGO_PKG_VERSION").into(),
+pub(crate) struct DispatchTargets<'a> {
+    pub runtime_directory: &'a Path,
+    pub wireguard: &'a crate::wireguard::WireGuardBackend,
+    pub reconciliation: &'a crate::reconcile::ReconciliationService,
+    pub firewall: &'a crate::firewall::FirewallService,
+    pub aggregate: &'a crate::aggregate::AggregateCoordinator,
+}
+
+pub(crate) fn dispatch(
+    targets: &DispatchTargets<'_>,
+    request: RequestEnvelope,
+) -> ResponseEnvelope {
+    if request.protocol_version != PROTOCOL_VERSION {
+        return ResponseEnvelope::failure(request.request_id, ProtocolError::UnsupportedVersion);
+    }
+    let result = match request.operation {
+        RequestOperation::Ping => Ok(ResponseBody::Pong {
+            service: "wg-basic-netd".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+        }),
+        RequestOperation::InspectCapabilities => Ok(ResponseBody::Capabilities(
+            NetworkCapabilitySnapshot::observe(targets.runtime_directory),
+        )),
+        RequestOperation::ObserveWireGuardDevice { interface } => targets
+            .wireguard
+            .observe_device(&interface)
+            .map(ResponseBody::WireGuardDevice)
+            .map_err(map_wireguard_error),
+        RequestOperation::ApplyWireGuardDevice { interface, patch } => targets
+            .wireguard
+            .apply_patch(&interface, patch)
+            .map(ResponseBody::WireGuardApplied)
+            .map_err(map_wireguard_error),
+        RequestOperation::PlanManagedInterface { desired } => targets
+            .reconciliation
+            .plan(&desired)
+            .map(ResponseBody::ManagedInterfacePlan)
+            .map_err(map_reconcile_error),
+        RequestOperation::ApplyManagedInterface { desired } => targets
+            .reconciliation
+            .apply(&desired)
+            .map(ResponseBody::ManagedInterfaceApplied)
+            .map_err(map_reconcile_error),
+        RequestOperation::PlanNetworkPolicy {
+            installation_id,
+            wireguard_interface,
+            policy,
+        } => targets
+            .firewall
+            .plan(installation_id, &wireguard_interface, policy.as_ref())
+            .map(ResponseBody::NetworkPolicyPlan)
+            .map_err(map_firewall_error),
+        RequestOperation::ApplyNetworkPolicy {
+            installation_id,
+            wireguard_interface,
+            policy,
+        } => targets
+            .firewall
+            .apply(installation_id, &wireguard_interface, policy.as_ref())
+            .map(ResponseBody::NetworkPolicyApplied)
+            .map_err(map_firewall_error),
+        RequestOperation::PlanInstallationNetworkIntent { intent } => targets
+            .aggregate
+            .plan(&intent)
+            .map(|plan| {
+                ResponseBody::InstallationNetworkPlanned(
+                    crate::protocol::wire::InstallationNetworkPlanBody {
+                        installation_id: plan.installation_id,
+                        generation: plan.generation,
+                        enabling: plan.enabling,
+                        interface_plan: plan.interface_plan,
+                        firewall_plan: plan.firewall_plan,
+                    },
+                )
+            })
+            .map_err(|rejection| match rejection {
+                PlanRejection::Interface(inner) => map_reconcile_error(inner),
+                PlanRejection::Firewall(inner) => map_firewall_error(inner),
+                PlanRejection::InvalidIntent(inner) => map_intent_error(inner),
+                PlanRejection::GenerationRejected(inner) => map_generation_rejection(inner),
             }),
-            RequestOperation::InspectCapabilities => Ok(ResponseBody::Capabilities(
-                NetworkCapabilitySnapshot::observe(&self.runtime_directory),
-            )),
-            RequestOperation::ObserveWireGuardDevice { interface } => self
-                .wireguard
-                .observe_device(&interface)
-                .map(ResponseBody::WireGuardDevice)
-                .map_err(map_wireguard_error),
-            RequestOperation::ApplyWireGuardDevice { interface, patch } => self
-                .wireguard
-                .apply_patch(&interface, patch)
-                .map(ResponseBody::WireGuardApplied)
-                .map_err(map_wireguard_error),
-            RequestOperation::PlanManagedInterface { desired } => self
-                .reconciliation
-                .plan(&desired)
-                .map(ResponseBody::ManagedInterfacePlan)
-                .map_err(map_reconcile_error),
-            RequestOperation::ApplyManagedInterface { desired } => self
-                .reconciliation
-                .apply(&desired)
-                .map(ResponseBody::ManagedInterfaceApplied)
-                .map_err(map_reconcile_error),
-            RequestOperation::PlanNetworkPolicy {
-                installation_id,
-                wireguard_interface,
-                policy,
-            } => self
-                .firewall
-                .plan(installation_id, &wireguard_interface, policy.as_ref())
-                .map(ResponseBody::NetworkPolicyPlan)
-                .map_err(map_firewall_error),
-            RequestOperation::ApplyNetworkPolicy {
-                installation_id,
-                wireguard_interface,
-                policy,
-            } => self
-                .firewall
-                .apply(installation_id, &wireguard_interface, policy.as_ref())
-                .map(ResponseBody::NetworkPolicyApplied)
-                .map_err(map_firewall_error),
-            RequestOperation::PlanInstallationNetworkIntent { intent } => self
-                .aggregate
-                .plan(&intent)
-                .map(|plan| {
-                    ResponseBody::InstallationNetworkPlanned(
-                        crate::protocol::wire::InstallationNetworkPlanBody {
-                            installation_id: plan.installation_id,
-                            generation: plan.generation,
-                            enabling: plan.enabling,
-                            interface_plan: plan.interface_plan,
-                            firewall_plan: plan.firewall_plan,
-                        },
-                    )
-                })
-                .map_err(|rejection| match rejection {
-                    PlanRejection::Interface(inner) => map_reconcile_error(inner),
-                    PlanRejection::Firewall(inner) => map_firewall_error(inner),
-                    PlanRejection::InvalidIntent(inner) => map_intent_error(inner),
-                    PlanRejection::GenerationRejected(inner) => map_generation_rejection(inner),
-                }),
-            RequestOperation::ApplyInstallationNetworkIntent { intent } => self
-                .aggregate
-                .apply(&intent)
-                .map(|receipt| {
-                    ResponseBody::InstallationNetworkApplied(
-                        crate::protocol::wire::InstallationNetworkApplyBody {
-                            installation_id: receipt.installation_id,
-                            generation: receipt.generation,
-                            status: receipt.status,
-                            interface: receipt.interface,
-                            firewall: receipt.firewall,
-                            failed_layer: receipt.failed_layer,
-                            observed_after: receipt.observed_after,
-                        },
-                    )
-                })
-                .map_err(map_aggregate_error),
-        };
-        ResponseEnvelope {
-            protocol_version: PROTOCOL_VERSION,
-            request_id: request.request_id,
-            result,
-        }
+        RequestOperation::ApplyInstallationNetworkIntent { intent } => targets
+            .aggregate
+            .apply(&intent)
+            .map(|receipt| {
+                ResponseBody::InstallationNetworkApplied(
+                    crate::protocol::wire::InstallationNetworkApplyBody {
+                        installation_id: receipt.installation_id,
+                        generation: receipt.generation,
+                        status: receipt.status,
+                        interface: receipt.interface,
+                        firewall: receipt.firewall,
+                        failed_layer: receipt.failed_layer,
+                        observed_after: receipt.observed_after,
+                    },
+                )
+            })
+            .map_err(map_aggregate_error),
+    };
+    ResponseEnvelope {
+        protocol_version: PROTOCOL_VERSION,
+        request_id: request.request_id,
+        result,
     }
 }
 
@@ -120,9 +126,9 @@ fn map_firewall_error(error: FirewallError) -> ProtocolError {
         FirewallError::InvalidPolicy | FirewallError::ResourceLimitExceeded => {
             ProtocolError::InvalidInput
         }
-        FirewallError::TableOwnershipConflict | FirewallError::LegacyTableOwnership => {
-            ProtocolError::Conflict
-        }
+        FirewallError::TableOwnershipConflict
+        | FirewallError::LegacyTableOwnership
+        | FirewallError::ForeignNetNat => ProtocolError::Conflict,
         FirewallError::PermissionDenied => ProtocolError::PermissionDenied,
         FirewallError::Unsupported => ProtocolError::UnsupportedBackend,
         FirewallError::BackendFailure => ProtocolError::BackendFailure,
