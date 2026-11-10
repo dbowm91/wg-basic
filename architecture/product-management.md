@@ -59,6 +59,7 @@ CORS policy. Setup, create, update, enable, disable, and delete use an explicit
 | DELETE | `/api/v1/enrollment-links/<uuid>` | Revoke an unused share link |
 | GET | `/enroll/<uuid>` | Load the static enrollment page without consuming the link |
 | POST | `/api/v1/enroll/<uuid>/consume` | Consume a valid capability exactly once |
+| GET | `/api/v1/network-prerequisites` | Read forwarding, attachment lines, and the current policy verdict |
 | GET | `/api/v1/clients/telemetry` | Observe live WireGuard peer telemetry |
 | GET | `/api/v1/audit` | Read the newest audit page |
 | GET | `/api/v1/audit/<unix-seconds>/<event-uuid>` | Read the next stable audit page |
@@ -76,9 +77,12 @@ change.
 
 Ordinary response shapes contain identifiers, public keys, labels, addresses,
 routes, DNS policy, keepalive policy, timestamps, and bounded enforcement
-metadata. Private keys, preshared keys, and enrollment tokens are absent from
-the projection types. Config and QR are explicit secret-bearing exports and
-always use `Cache-Control: no-store`; config is an attachment. Enrollment
+metadata. A client summary also carries `expires_at`, a derived
+`expiry_state` of `none`, `scheduled`, or `expired`, `preshared_key_configured`,
+and `mtu`. Private keys, preshared key bytes, and enrollment tokens are absent
+from the projection types. Config and QR are explicit secret-bearing exports and
+always use `Cache-Control: no-store`; config is an attachment. A configured
+preshared key and a client MTU appear only in that export. Enrollment
 tokens contain 256 random bits, are stored only as SHA-256 digests, expire after
 10 minutes by default (operator-selectable up to 24 hours), and are returned
 only in the URL fragment. The landing page moves the token into a same-origin
@@ -101,14 +105,63 @@ than seven days; their audit events remain. Audit storage retains the newest
 10,000 rows, deleting oldest rows deterministically by timestamp and event ID
 inside the writing transaction. Retention does not advance DesiredGeneration.
 
+`GET /api/v1/network-prerequisites` is an authenticated read with no body and
+no CSRF token. `host_platform` is the platform this binary was built for.
+Forwarding is `enabled`, `disabled`, or `not_observed`. A missing network
+service is `not_observed` with no verdict. A conflict or an unsupported plan
+is a named `refusal`. On macOS the reply includes the three administrator
+attachment lines, their section order, and the anchor file. Linux replies
+omit that object. The route plans through the existing network-policy plan
+operation and does not apply it.
+
+An omitted setup `mode` still derives the policy: forwarding or masquerade
+stores a gateway, and neither stores host-only. An explicit `gateway` mode is
+accepted with those settings. The embedded page starts from
+`GET /api/v1/network-prerequisites` when the form has not been edited. Linux
+leaves IPv4 forwarding and masquerade checked and egress at `eth0`. macOS
+clears both and the egress value, and uses `en0` as a placeholder. Any other
+platform clears both and shows that the platform is unknown. Choosing gateway
+or routed LAN on macOS shows the lines or filter rules and states that the
+product will not write them.
+
+A client `expires_at` is Unix seconds on the management worker's clock, or
+null for never. A value at or before that clock is rejected and nothing is
+written. The worker disables a due client through the existing disable path,
+keeps the row, addresses, and keys, and audits `client_expire`. It sleeps at
+most until the next stored deadline and does not sleep when none is stored.
+The clock is the authority. A step during that sleep is noticed when the
+sleep ends. NTP is not detected. Enabling a client whose stored deadline is
+still past is rejected unless the same request sets a future deadline or
+clears it.
+
+Create accepts `preshared_key` only as `"generate"`. Update accepts `"generate"`
+or `"clear"`; omitting the field leaves the stored key. Any other JSON,
+including raw key bytes, is rejected before the worker stores it. Generate
+draws a new key from the same CSPRNG as identity keys and replaces the stored
+one. Clear removes it. The summary boolean is the only non-export view. Audit
+actions are `client_preshared_key_set` and `client_preshared_key_clear`, and
+they carry the client id and no secret. A device must re-import the config
+after a generate or a clear. The key is not rolled back when a later kernel
+patch fails.
+
+`mtu` is an optional integer from 1280 through 9000. Omit on create stores
+null. Omit on update leaves the stored value. Null clears it. The export
+writes `MTU = <n>` in `[Interface]` after `Address` and before `DNS`, and the
+QR code is that same text. The server link MTU is unchanged.
+
 ## Operator UI
 
 The embedded operator page is a buildless same-origin client of these routes.
 It provides login, first-server setup, separate IPv4 and IPv6 route controls for
 no route, full tunnel, and split prefixes, server and client status, client
-create/edit/enable/disable/delete, explicit config/QR export, one-time link
+create/edit/enable/disable/delete, an optional deadline, a generate-or-clear
+preshared key, an optional client MTU, name/address/state/expiry filters over
+the loaded client list, explicit config/QR export, one-time link
 create/revoke, bounded visible-page telemetry refresh, and recent audit
-history. Mutations carry the generation from the latest API read; a `409`
+history. Saving a client does not send a preshared-key verb. Generate and
+clear are separate requests, and the page says a device must re-import.
+Enabling a client whose expiry state is `expired` clears the deadline in that
+request. Mutations carry the generation from the latest API read; a `409`
 refreshes current state and asks the operator to review before trying again.
 Committed but not enforced mutations retain an explicit pending/degraded
 message, with disable/delete wording that does not claim access was revoked.

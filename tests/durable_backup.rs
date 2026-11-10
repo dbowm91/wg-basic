@@ -410,6 +410,7 @@ impl Topology {
                 listen_port: 51821,
                 peers: vec![DesiredManagedPeer {
                     public_key: keys.server_public.clone(),
+                    preshared_key: None,
                     allowed_ips: vec!["0.0.0.0/0".parse().unwrap()],
                     persistent_keepalive_seconds: Some(25),
                     endpoint: Some("192.0.2.1:51820".parse().unwrap()),

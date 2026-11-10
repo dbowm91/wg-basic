@@ -162,6 +162,7 @@ fn project_interface(
                 .filter(|peer| visibility.projects(peer.id))
                 .map(|peer| DesiredManagedPeer {
                     public_key: peer.public_key.clone(),
+                    preshared_key: peer.preshared_key.clone(),
                     allowed_ips: peer.allowed_ips.clone(),
                     persistent_keepalive_seconds: peer.persistent_keepalive_seconds,
                     endpoint: peer.endpoint,

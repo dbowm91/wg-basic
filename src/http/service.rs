@@ -53,7 +53,7 @@ use crate::{
     management::{ProductFailure, WorkerError},
     product::{
         AdvertisedEndpoint, ClientCreateCommand, ClientDeleteCommand, ClientEnabled, ClientLabel,
-        ClientUpdateCommand, ServerSetupCommand, SetClientEnabledCommand,
+        ClientUpdateCommand, PresharedKeyRequest, ServerSetupCommand, SetClientEnabledCommand,
     },
 };
 use eggserve_primitives::{
@@ -110,6 +110,8 @@ pub enum Route {
     ApiHealth,
     /// Authenticated, fresh client peer observation.
     ClientTelemetry,
+    /// Authenticated read of forwarding, attachment, and policy prerequisites.
+    NetworkPrerequisites,
     /// Bounded audit query with an optional stable cursor.
     Audit(Option<crate::product::AuditCursor>),
     /// The embedded operator shell document.
@@ -170,6 +172,7 @@ impl Route {
             | Self::Session
             | Self::ApiHealth
             | Self::ClientTelemetry
+            | Self::NetworkPrerequisites
             | Self::Audit(_)
             | Self::Shell
             | Self::Asset => method == "GET",
@@ -217,6 +220,7 @@ pub fn route(path: &str) -> Route {
         SESSION_PATH => Route::Session,
         API_HEALTH_PATH => Route::ApiHealth,
         "/api/v1/clients/telemetry" => Route::ClientTelemetry,
+        "/api/v1/network-prerequisites" => Route::NetworkPrerequisites,
         "/api/v1/audit" => Route::Audit(None),
         SHELL_PATH => Route::Shell,
         // An embedded asset is matched exactly by its own lookup, which is a
@@ -398,6 +402,15 @@ impl ManagementService {
                     return refusal(RequestRejection::NotAuthenticated);
                 }
                 match self.api.worker().client_telemetry().await {
+                    Ok(snapshot) => json_response(eggserve_primitives::StatusCode::OK, &snapshot),
+                    Err(_) => response::unavailable(),
+                }
+            }
+            Route::NetworkPrerequisites => {
+                if self.api.authenticate(head).await.is_none() {
+                    return refusal(RequestRejection::NotAuthenticated);
+                }
+                match self.api.worker().network_prerequisites().await {
                     Ok(snapshot) => json_response(eggserve_primitives::StatusCode::OK, &snapshot),
                     Err(_) => response::unavailable(),
                 }
@@ -587,6 +600,15 @@ impl ManagementService {
                             None => return product_status(422, "invalid request"),
                         },
                         client_keepalive_seconds: input.client_keepalive_seconds,
+                        expires_at: input.expires_at,
+                        preshared_key: match input.preshared_key.as_deref() {
+                            None => None,
+                            Some(value) => match parse_preshared(value, false) {
+                                Some(request) => Some(request),
+                                None => return product_status(422, "invalid request"),
+                            },
+                        },
+                        mtu: input.mtu,
                     };
                     match self.api.worker().create_client(command).await {
                         Ok(reply) => mutation_response(201, 202, &reply.client, reply.receipt),
@@ -768,6 +790,16 @@ impl ManagementService {
                         client_keepalive_seconds: input.client_keepalive_seconds,
                         requested_address,
                         requested_ipv6_address,
+                        expires_at: input.expires_at,
+                        preshared_key: match input.preshared_key {
+                            None => None,
+                            Some(None) => return product_status(422, "invalid request"),
+                            Some(Some(value)) => match parse_preshared(&value, true) {
+                                Some(request) => Some(request),
+                                None => return product_status(422, "invalid request"),
+                            },
+                        },
+                        mtu: input.mtu,
                     };
                     match self.api.worker().update_client(command).await {
                         Ok(reply) => mutation_response(200, 202, &reply.client, reply.receipt),
@@ -843,12 +875,24 @@ impl ManagementService {
                 let Some(id) = id else {
                     return response::not_found();
                 };
-                let input: GenerationBody = match parse_json(body) {
-                    Some(v) => v,
-                    None => return product_status(422, "invalid request"),
-                };
-                let Some(generation) = DesiredGeneration::new(input.expected_generation) else {
-                    return product_status(422, "invalid request");
+                let (generation, expires_at, enabled) = if route == Enable {
+                    let input: EnableBody = match parse_json(body) {
+                        Some(v) => v,
+                        None => return product_status(422, "invalid request"),
+                    };
+                    let Some(generation) = DesiredGeneration::new(input.expected_generation) else {
+                        return product_status(422, "invalid request");
+                    };
+                    (generation, input.expires_at, ClientEnabled::Enabled)
+                } else {
+                    let input: GenerationBody = match parse_json(body) {
+                        Some(v) => v,
+                        None => return product_status(422, "invalid request"),
+                    };
+                    let Some(generation) = DesiredGeneration::new(input.expected_generation) else {
+                        return product_status(422, "invalid request");
+                    };
+                    (generation, None, ClientEnabled::Disabled)
                 };
                 match self
                     .api
@@ -857,11 +901,8 @@ impl ManagementService {
                         principal_id,
                         expected_generation: generation,
                         client_id: id,
-                        enabled: if route == Enable {
-                            ClientEnabled::Enabled
-                        } else {
-                            ClientEnabled::Disabled
-                        },
+                        enabled,
+                        expires_at,
                     })
                     .await
                 {
@@ -1061,6 +1102,15 @@ struct CreateBody {
     dns_servers: Vec<String>,
     #[serde(default)]
     client_keepalive_seconds: Option<u16>,
+    /// Unix seconds, or absent for a client that does not expire.
+    #[serde(default)]
+    expires_at: Option<i64>,
+    /// Only `"generate"` is accepted. A caller-supplied key is rejected.
+    #[serde(default)]
+    preshared_key: Option<String>,
+    /// Absent means the export omits the MTU line.
+    #[serde(default)]
+    mtu: Option<u16>,
 }
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1078,6 +1128,35 @@ struct PatchBody {
     dns_servers: Option<Vec<String>>,
     #[serde(default, deserialize_with = "deserialize_optional_optional")]
     client_keepalive_seconds: Option<Option<u16>>,
+    /// Absent leaves the deadline. Null clears it. A past value is rejected later.
+    #[serde(default, deserialize_with = "deserialize_optional_optional")]
+    expires_at: Option<Option<i64>>,
+    /// Absent leaves the key. `"generate"` replaces it. `"clear"` removes it.
+    #[serde(default, deserialize_with = "deserialize_optional_optional")]
+    preshared_key: Option<Option<String>>,
+    /// Absent leaves the MTU. Null clears it.
+    #[serde(default, deserialize_with = "deserialize_optional_optional")]
+    mtu: Option<Option<u16>>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EnableBody {
+    expected_generation: u64,
+    /// Applied only when enabling. Absent leaves the stored deadline.
+    #[serde(default, deserialize_with = "deserialize_optional_optional")]
+    expires_at: Option<Option<i64>>,
+}
+
+/// Accepts the two server-owned preshared-key verbs and nothing else.
+///
+/// A base64 key, a null, or `"clear"` on create never becomes a stored secret.
+fn parse_preshared(value: &str, allow_clear: bool) -> Option<PresharedKeyRequest> {
+    match value {
+        "generate" => Some(PresharedKeyRequest::Generate),
+        "clear" if allow_clear => Some(PresharedKeyRequest::Clear),
+        _ => None,
+    }
 }
 
 fn deserialize_optional_optional<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
@@ -1176,6 +1255,11 @@ mod tests {
         assert_eq!(route("/api/v1/session"), Route::Session);
         assert_eq!(route("/api/v1/health"), Route::ApiHealth);
         assert_eq!(route("/api/v1/clients/telemetry"), Route::ClientTelemetry);
+        assert_eq!(
+            route("/api/v1/network-prerequisites"),
+            Route::NetworkPrerequisites
+        );
+        assert_eq!(route("/api/v1/network-policy"), Route::Unknown);
         assert_eq!(route("/api/v1/audit"), Route::Audit(None));
         assert_eq!(
             route("/api/v1/server"),
@@ -1229,6 +1313,7 @@ mod tests {
             Route::Session,
             Route::ApiHealth,
             Route::ClientTelemetry,
+            Route::NetworkPrerequisites,
             Route::Audit(None),
             Route::Shell,
             Route::Asset,
@@ -1253,6 +1338,7 @@ mod tests {
         assert!(Route::Session.accepts("GET"));
         assert!(Route::ApiHealth.accepts("GET"));
         assert!(Route::ClientTelemetry.accepts("GET"));
+        assert!(Route::NetworkPrerequisites.accepts("GET"));
         assert!(Route::Audit(None).accepts("GET"));
         assert!(Route::Login.accepts("POST"));
         assert!(Route::Logout.accepts("POST"));
@@ -1264,6 +1350,7 @@ mod tests {
             Route::Session,
             Route::ApiHealth,
             Route::ClientTelemetry,
+            Route::NetworkPrerequisites,
             Route::Audit(None),
             Route::Login,
             Route::Logout,
@@ -1380,5 +1467,31 @@ mod tests {
             429,
             "a throttled attempt is 429, so a client can distinguish it and back off"
         );
+    }
+
+    #[test]
+    fn a_caller_supplied_preshared_key_is_rejected_before_it_is_stored() {
+        let raw = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        let create = format!(
+            r#"{{"expected_generation":1,"interface_id":"00000000-0000-4000-8000-000000000001","label":"laptop","preshared_key":"{raw}"}}"#
+        );
+        assert!(parse_json::<CreateBody>(create.as_bytes()).is_some());
+        assert!(parse_preshared(raw, false).is_none());
+        assert!(parse_preshared(raw, true).is_none());
+        assert!(parse_preshared("clear", false).is_none());
+        assert_eq!(
+            parse_preshared("generate", false),
+            Some(PresharedKeyRequest::Generate)
+        );
+        assert_eq!(
+            parse_preshared("clear", true),
+            Some(PresharedKeyRequest::Clear)
+        );
+        let update = format!(r#"{{"expected_generation":1,"preshared_key":"{raw}"}}"#);
+        let parsed: PatchBody = parse_json(update.as_bytes()).expect("the body is well formed");
+        let Some(Some(value)) = parsed.preshared_key else {
+            panic!("the supplied key must be visible so it can be rejected");
+        };
+        assert!(parse_preshared(&value, true).is_none());
     }
 }

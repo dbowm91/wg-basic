@@ -45,13 +45,17 @@ pub const ENROLL_JS: &str = include_str!("assets/enroll.js");
 
 /// The total embedded payload, as a ceiling rather than an observation.
 ///
-/// 36 KiB bounds the full management shell, including independent IPv4/IPv6
-/// route controls, while keeping the complete same-origin UI small enough to
-/// review.
-pub const MAX_EMBEDDED_ASSET_BYTES: usize = 36 * 1024;
+/// 48 KiB bounds the full management shell: independent IPv4/IPv6 route
+/// controls, the platform setup form, client expiry, preshared-key controls,
+/// and the client MTU field. The complete same-origin UI stays small enough
+/// to review.
+pub const MAX_EMBEDDED_ASSET_BYTES: usize = 48 * 1024;
 
 /// The largest single embedded asset, as a ceiling.
-pub const MAX_EMBEDDED_ASSET_BYTES_EACH: usize = 24 * 1024;
+///
+/// The client script crossed 24 KiB when setup, expiry, preshared-key, and
+/// MTU controls landed in the same file.
+pub const MAX_EMBEDDED_ASSET_BYTES_EACH: usize = 28 * 1024;
 
 /// One embedded asset: where it is served, what it is, and what it contains.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -313,6 +317,7 @@ mod tests {
             "/api/v1/clients",
             "/api/v1/clients/telemetry",
             "/api/v1/audit",
+            "/api/v1/network-prerequisites",
             "/enrollment-links/",
         ] {
             assert!(
@@ -326,6 +331,16 @@ mod tests {
         assert!(APP_JS.contains("network application is pending or degraded"));
         assert!(INDEX_HTML.contains("id=\"setup-form\""));
         assert!(INDEX_HTML.contains("id=\"client-rows\""));
+        assert!(APP_JS.contains("applySetupDefaults"));
+        assert!(APP_JS.contains("network-prerequisites"));
+        assert!(APP_JS.contains("ipv4_forwarding_required.checked = true"));
+        assert!(APP_JS.contains("masquerade.checked = true"));
+        assert!(APP_JS.contains("ipv4_forwarding_required.checked = false"));
+        assert!(APP_JS.contains("masquerade.checked = false"));
+        assert!(APP_JS.contains(".checked"));
+        assert!(INDEX_HTML.contains("name=\"ipv4_forwarding_required\" type=\"checkbox\" checked"));
+        assert!(INDEX_HTML.contains("name=\"masquerade\" type=\"checkbox\" checked"));
+        assert!(INDEX_HTML.contains("value=\"eth0\""));
     }
 
     #[test]

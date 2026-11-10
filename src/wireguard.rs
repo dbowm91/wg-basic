@@ -213,6 +213,12 @@ pub struct ObservedWireGuardPeer {
     pub latest_handshake: Option<std::time::Duration>,
     pub rx_bytes: Option<u64>,
     pub tx_bytes: Option<u64>,
+    /// Whether the dump reported a non-zero preshared key.
+    ///
+    /// The key bytes are never stored. `false` means the dump omitted the
+    /// field or reported the all-zero key WireGuard uses for "no key".
+    #[serde(default)]
+    pub preshared_key_configured: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

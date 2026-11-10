@@ -33,12 +33,18 @@ pub(crate) fn observe_firewall(
 ) -> Result<FirewallObservation, FirewallError> {
     let forwarding = fs::read_to_string("/proc/sys/net/ipv4/ip_forward").map_err(map_io_error)?;
     let forwarding_enabled = parse_forwarding(&forwarding)?;
-    let ipv6_forwarding_enabled = if observe_ipv6_forwarding {
-        let forwarding =
-            fs::read_to_string("/proc/sys/net/ipv6/conf/all/forwarding").map_err(map_io_error)?;
-        Some(parse_forwarding(&forwarding)?)
-    } else {
-        None
+    // IPv6 is read whenever the file can be read. A policy that requires it
+    // still fails closed when the read fails. A policy that does not require
+    // it keeps the previous "not observed" answer instead of failing the plan.
+    let ipv6_forwarding_enabled = match fs::read_to_string("/proc/sys/net/ipv6/conf/all/forwarding")
+    {
+        Ok(forwarding) => match parse_forwarding(&forwarding) {
+            Ok(enabled) => Some(enabled),
+            Err(error) if observe_ipv6_forwarding => return Err(error),
+            Err(_) => None,
+        },
+        Err(error) if observe_ipv6_forwarding => return Err(map_io_error(error)),
+        Err(_) => None,
     };
     let output = run_nft(&["-j", "list", "tables"], None)?;
     let json: serde_json::Value =

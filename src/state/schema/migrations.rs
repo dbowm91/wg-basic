@@ -71,6 +71,16 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "routed_lan_mode",
         sql: include_str!("../migrations/008_routed_lan_mode.sql"),
     },
+    Migration {
+        version: 9,
+        name: "client_expiration",
+        sql: include_str!("../migrations/009_client_expiration.sql"),
+    },
+    Migration {
+        version: 10,
+        name: "client_mtu",
+        sql: include_str!("../migrations/010_client_mtu.sql"),
+    },
 ];
 
 /// The schema version a current binary writes.

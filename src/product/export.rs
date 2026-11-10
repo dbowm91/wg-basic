@@ -22,6 +22,8 @@ pub struct ClientConfigMaterial {
     pub dns_servers: Vec<IpAddr>,
     pub server_public_key: PublicKey,
     pub preshared_key: Option<PresharedKey>,
+    /// Present only when the export should contain an `MTU` line.
+    pub mtu: Option<u16>,
     pub endpoint: String,
     pub allowed_ips: Vec<NetworkPrefix>,
     pub keepalive_seconds: Option<u16>,
@@ -95,6 +97,9 @@ pub fn render_config(material: &ClientConfigMaterial) -> Result<SecretArtifact, 
         if material.address.is_ipv4() { 32 } else { 128 }
     )
     .unwrap();
+    if let Some(mtu) = material.mtu {
+        writeln!(&mut output, "MTU = {mtu}").unwrap();
+    }
     if !material.dns_servers.is_empty() {
         let dns = material
             .dns_servers
@@ -172,6 +177,7 @@ mod tests {
             )
             .unwrap(),
             preshared_key: None,
+            mtu: None,
             endpoint: "vpn.example.test:51820".into(),
             allowed_ips: vec!["0.0.0.0/0".parse::<NetworkPrefix>().unwrap()],
             keepalive_seconds: Some(25),
@@ -207,6 +213,28 @@ mod tests {
             render_config(&material).unwrap_err(),
             ArtifactError::NoAllowedRoutes
         );
+    }
+
+    #[test]
+    fn an_mtu_line_sits_after_address_and_before_dns() {
+        for mtu in [None, Some(1280), Some(9000)] {
+            let mut material = fixture();
+            material.mtu = mtu;
+            let config = render_config(&material).unwrap();
+            let text = config.expose();
+            match mtu {
+                None => assert!(!text.contains("MTU = "), "{text}"),
+                Some(value) => {
+                    let address = text.find("Address = 10.0.0.2/32\n").unwrap();
+                    let line = text.find(&format!("MTU = {value}\n")).unwrap();
+                    let dns = text.find("DNS = 1.1.1.1\n").unwrap();
+                    assert!(address < line && line < dns, "{text}");
+                    assert_eq!(text.matches("MTU = ").count(), 1);
+                }
+            }
+            let qr = render_qr_svg(text).unwrap();
+            assert!(!qr.expose().contains("MTU = "));
+        }
     }
 
     #[test]

@@ -42,6 +42,36 @@ pub(crate) trait ReconcileBackend {
     fn apply(&self, interface: &InterfaceName, mutation: Mutation) -> Result<(), ReconcileError>;
 }
 
+/// Whether a plan has reached the desired state.
+///
+/// An empty plan has. A plan whose only leftovers are preshared-key sets has
+/// too: observation never returns the key bytes, so a successful set cannot
+/// be confirmed by reading it back. A leftover clear is not accepted, because
+/// presence of a key is observable and a clear that is still planned did not
+/// stick.
+fn plan_reached(plan: &super::planner::ExecutionPlan) -> bool {
+    plan.mutations.iter().all(is_unconfirmed_preshared_set)
+}
+
+fn is_unconfirmed_preshared_set(mutation: &Mutation) -> bool {
+    use crate::wireguard::{FieldUpdate, PeerMutation};
+    match mutation {
+        Mutation::ConfigureWireGuard(patch) => {
+            matches!(patch.private_key, FieldUpdate::Keep)
+                && matches!(patch.listen_port, FieldUpdate::Keep)
+                && matches!(
+                    &patch.peer,
+                    Some(PeerMutation::Update(peer))
+                        if matches!(peer.preshared_key, FieldUpdate::Set(_))
+                            && matches!(peer.allowed_ips, FieldUpdate::Keep)
+                            && matches!(peer.persistent_keepalive_seconds, FieldUpdate::Keep)
+                            && matches!(peer.endpoint, FieldUpdate::Keep)
+                )
+        }
+        _ => false,
+    }
+}
+
 /// Observes, plans, applies, and verifies one desired managed interface.
 pub(crate) fn apply_with_backend(
     desired: &DesiredManagedInterface,
@@ -66,8 +96,7 @@ pub(crate) fn apply_with_backend(
         if let Err(error) = backend.apply(&desired.interface, mutation) {
             let observed_after = backend.observe(&desired.interface, &desired.owner_tag).ok();
             let raced_to_desired = observed_after.as_ref().is_some_and(|observed| {
-                plan_execution(desired, observed)
-                    .is_ok_and(|remaining| remaining.mutations.is_empty())
+                plan_execution(desired, observed).is_ok_and(|remaining| plan_reached(&remaining))
             });
             return Ok(ApplyReceipt {
                 interface: desired.interface.clone(),
@@ -101,8 +130,8 @@ pub(crate) fn apply_with_backend(
             })
         }
     };
-    let converged = plan_execution(desired, &observed_after)
-        .is_ok_and(|remaining| remaining.mutations.is_empty());
+    let converged =
+        plan_execution(desired, &observed_after).is_ok_and(|remaining| plan_reached(&remaining));
     Ok(ApplyReceipt {
         interface: desired.interface.clone(),
         status: if converged {

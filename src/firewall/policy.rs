@@ -383,6 +383,12 @@ pub struct FirewallPlanSummary {
     /// prerequisite instead of reporting a bare failure.
     #[serde(default)]
     pub gateway: Option<GatewayVerdict>,
+    /// IPv4 forwarding as last read. `None` means the read did not happen.
+    #[serde(default)]
+    pub observed_ipv4_forwarding: Option<bool>,
+    /// IPv6 forwarding as last read. `None` means the read did not happen.
+    #[serde(default)]
+    pub observed_ipv6_forwarding: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

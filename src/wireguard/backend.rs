@@ -145,6 +145,10 @@ fn convert_observed(
                     .map_err(|_| WireGuardValidationError::BackendFailure)
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let preshared_key_configured = peer
+            .preshared_key
+            .as_deref()
+            .is_some_and(preshared_key_is_configured);
         observed_peers.push(ObservedWireGuardPeer {
             public_key,
             allowed_ips,
@@ -155,6 +159,7 @@ fn convert_observed(
             latest_handshake: peer.last_handshake,
             rx_bytes: peer.rx_bytes,
             tx_bytes: peer.tx_bytes,
+            preshared_key_configured,
         });
     }
     Ok(ObservedWireGuardDevice {
@@ -318,6 +323,13 @@ fn validate_new_peer_prefixes(
     Ok(())
 }
 
+fn preshared_key_is_configured(value: &str) -> bool {
+    STANDARD
+        .decode(value)
+        .ok()
+        .is_some_and(|bytes| bytes.len() == 32 && bytes.iter().any(|byte| *byte != 0))
+}
+
 fn zeroize_kernel_secrets(parsed: &mut WireguardParsed) {
     if let Some(private_key) = &mut parsed.private_key {
         private_key.zeroize();
@@ -356,9 +368,54 @@ mod tests {
         parsed.peers = Some(vec![peer]);
         let observed = convert_observed("wg0".parse().unwrap(), &parsed).unwrap();
         let display = format!("{observed:?}");
-        assert!(!display.contains("preshared_key"));
+        assert!(!display.contains("preshared_key:"));
+        assert!(!observed.peers[0].preshared_key_configured);
         assert!(display.contains("10"));
         assert_eq!(observed.peers[0].rx_bytes, Some(10));
+    }
+
+    #[test]
+    fn a_nonzero_preshared_key_is_recorded_as_presence_and_then_wiped() {
+        let mut peer = WireguardPeerParsed::default();
+        peer.public_key = Some("AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=".into());
+        peer.preshared_key = Some("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBE=".into());
+        let mut parsed = WireguardParsed::default();
+        parsed.peers = Some(vec![peer]);
+        let observed = convert_observed("wg0".parse().unwrap(), &parsed).unwrap();
+        assert!(observed.peers[0].preshared_key_configured);
+        assert!(!format!("{observed:?}").contains("BBBBBBBB"));
+        let public_key =
+            crate::domain::PublicKey::new("AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=".into())
+                .unwrap();
+        let cleared = update_peer(WireGuardPeerPatch {
+            public_key: public_key.clone(),
+            preshared_key: FieldUpdate::Clear,
+            allowed_ips: FieldUpdate::Keep,
+            persistent_keepalive_seconds: FieldUpdate::Keep,
+            endpoint: FieldUpdate::Keep,
+        })
+        .unwrap();
+        assert_eq!(
+            cleared.preshared_key.as_deref(),
+            Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+        );
+        let set = update_peer(WireGuardPeerPatch {
+            public_key,
+            preshared_key: FieldUpdate::Set(
+                crate::domain::PresharedKey::new(
+                    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBE=".into(),
+                )
+                .unwrap(),
+            ),
+            allowed_ips: FieldUpdate::Keep,
+            persistent_keepalive_seconds: FieldUpdate::Keep,
+            endpoint: FieldUpdate::Keep,
+        })
+        .unwrap();
+        assert_eq!(
+            set.preshared_key.as_deref(),
+            Some("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBE=")
+        );
     }
 
     #[test]

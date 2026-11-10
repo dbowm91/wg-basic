@@ -1129,13 +1129,14 @@ fn a_migration_fixture_is_a_real_v1_database() {
         "a test-only schema marker must not survive into the migration list"
     );
     let list = code_only(migrations);
+    // The comma is part of the match so version 10 does not count as version 1.
     assert_eq!(
-        list.matches("version: 1").count(),
+        list.matches("version: 1,").count(),
         1,
         "migration 1 appears exactly once in the production list"
     );
     assert_eq!(
-        list.matches("version: 2").count(),
+        list.matches("version: 2,").count(),
         1,
         "migration 2 appears exactly once in the production list"
     );
@@ -2078,9 +2079,10 @@ fn bundled_sqlite_runtime_is_past_the_wal_reset_advisory_range() {
         version > 3_051_002,
         "SQLite {version} must be newer than 3.51.2 for the WAL-reset advisory qualification"
     );
+    let recorded = rusqlite::version();
     assert!(
-        rusqlite::version().contains("3.53.2"),
-        "recorded bundled SQLite version changed; review the runtime security qualification"
+        recorded.contains("3.54.1"),
+        "recorded bundled SQLite version changed ({recorded}); review the runtime security qualification"
     );
 }
 

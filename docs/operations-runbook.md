@@ -152,6 +152,18 @@ The detailed current behavior and exact CLI options are in
 ordering are specified in the
 [update and rollback contract](../architecture/update-rollback-contract.md).
 
+## First server setup
+
+The embedded setup page reads `GET /api/v1/network-prerequisites` before the
+form is edited. On Linux the untouched form keeps IPv4 forwarding and
+masquerade checked and egress at `eth0`, which stores a gateway. On macOS the
+untouched form clears both and the egress value. The logical interface name
+stays `wg0`; the device the kernel assigns is a `utun`. An unknown platform
+checks neither box. A body that omits `mode` and still asks for forwarding or
+masquerade stores a gateway on every platform. Choosing gateway or routed LAN
+on macOS shows the attachment lines or the filter rules and states that the
+product will not write them. The route does not apply a policy.
+
 ## Routed LAN on macOS
 
 A routed LAN lets clients reach administrator-approved downstream LAN prefixes

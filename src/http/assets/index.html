@@ -49,8 +49,10 @@
             <label class="check"><input name="ipv6_forwarding_required" type="checkbox" /> Enable host-wide IPv6 forwarding</label>
             <span class="help">IPv6 forwarding is opt-in. IPv6 client routes require an IPv6 tunnel range and client address, plus working routed IPv6 egress. Linux applies forwarding globally; disabling this network leaves it enabled. NAT66 is not used.</span>
             <label class="check"><input name="masquerade" type="checkbox" checked /> Masquerade IPv4 client internet traffic</label>
-            <label>Network policy mode <select name="network_mode"><option value="auto" selected>Automatic (from the forwarding settings)</option><option value="routed_lan">Routed LAN (approved destinations only)</option></select></label>
+            <label>Network policy mode <select name="network_mode"><option value="auto" selected>Automatic (from the forwarding settings)</option><option value="gateway">Gateway</option><option value="routed_lan">Routed LAN (approved destinations only)</option></select></label>
             <label>Routed LAN destinations <input name="destination_prefixes" placeholder="192.168.9.0/24, 192.168.10.0/24" /></label>
+            <p id="setup-platform-note" class="note" role="status"></p>
+            <div id="setup-attachment"></div>
             <span class="help">A routed LAN forwards authorized client traffic to the approved downstream prefixes only, never masquerades, and is implemented on macOS only. The filter that bounds it is operator-managed: the product reports the exact rules it observed and refuses to converge when they are missing or have drifted.</span>
           </details>
           <button type="submit">Save server settings</button>
@@ -66,10 +68,18 @@
 
         <section id="clients-pane">
           <div class="section-heading"><h2>Clients</h2><button type="button" id="new-client">Add client</button></div>
+          <form id="client-filters" class="inline-form">
+            <label>Filter <input name="query" placeholder="name or address" /></label>
+            <label>State <select name="enabled"><option value="all">All</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label>
+            <label>Expiry <select name="expiry"><option value="all">All</option><option value="none">No deadline</option><option value="scheduled">Scheduled</option><option value="expired">Expired</option></select></label>
+          </form>
           <form id="create-form" class="inline-form" hidden>
             <label>Client name <input name="label" maxlength="128" required /></label>
             <label>Requested IPv6 address <input name="ipv6_address" placeholder="automatic" /></label>
             <label>DNS servers <input name="dns_servers" placeholder="1.1.1.1, 1.0.0.1" /></label>
+            <label>Expires <input name="expires_at" type="datetime-local" /></label>
+            <label>MTU <input name="mtu" type="number" min="1280" max="9000" placeholder="omit" /></label>
+            <label class="check"><input name="preshared_key" type="checkbox" /> Generate a preshared key</label>
             <button type="submit">Create client</button><button type="button" class="secondary" id="cancel-create">Cancel</button>
           </form>
           <div class="table-wrap"><table><thead><tr><th>Client</th><th>VPN address</th><th>State</th><th>Last handshake</th><th>Traffic</th><th>Actions</th></tr></thead><tbody id="client-rows"></tbody></table></div>
@@ -94,9 +104,14 @@
           <fieldset><legend>Client IPv6 routes</legend><label>Mode <select name="routes_v6_mode"><option value="none">No IPv6 route</option><option value="full">Full tunnel</option><option value="split">Split routes</option></select></label><label>Split prefixes <input name="routes_v6_prefixes" placeholder="2001:db8:1234::/48" /></label><span class="help">IPv6 routes require an IPv6 server tunnel range and an IPv6 address assigned to this client. Routed egress must also be configured.</span></fieldset>
           <label>DNS servers <input name="dns_servers" /></label>
           <label>Keepalive seconds <input name="client_keepalive_seconds" type="number" min="1" max="65535" /></label>
+          <label>Expires <input name="expires_at" type="datetime-local" /></label>
+          <label>MTU <input name="mtu" type="number" min="1280" max="9000" placeholder="omit" /></label>
+          <p class="help" id="preshared-note">Generating or clearing a preshared key changes the exported configuration. Devices must re-import it. The key is not shown on this page.</p>
           <button type="submit">Save changes</button>
         </form>
         <div class="artifact-actions">
+          <button type="button" id="generate-preshared">Generate preshared key</button>
+          <button type="button" id="clear-preshared">Clear preshared key</button>
           <button type="button" data-artifact="config">Download config</button>
           <button type="button" data-artifact="qr">Show QR code</button>
           <button type="button" data-artifact="share">Create one-time link</button>

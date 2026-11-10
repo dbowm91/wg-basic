@@ -251,6 +251,9 @@ fn create(service: &ProductService<'_>, label: &str) -> wg_basic::product::Produ
             route_policy: None,
             dns_servers: Vec::new(),
             client_keepalive_seconds: None,
+            expires_at: None,
+            preshared_key: None,
+            mtu: None,
         })
         .expect("client create");
     client
@@ -416,6 +419,9 @@ fn a_stale_expected_generation_is_refused_and_commits_nothing() {
         route_policy: None,
         dns_servers: Vec::new(),
         client_keepalive_seconds: None,
+        expires_at: None,
+        preshared_key: None,
+        mtu: None,
     });
 
     assert!(matches!(
@@ -460,6 +466,9 @@ fn concurrent_same_generation_creates_have_exactly_one_winner() {
                     route_policy: None,
                     dns_servers: Vec::new(),
                     client_keepalive_seconds: None,
+                    expires_at: None,
+                    preshared_key: None,
+                    mtu: None,
                 })
             }));
         }
@@ -560,6 +569,9 @@ fn a_requested_address_is_honoured_and_a_conflict_is_refused() {
             route_policy: None,
             dns_servers: Vec::new(),
             client_keepalive_seconds: None,
+            expires_at: None,
+            preshared_key: None,
+            mtu: None,
         })
         .unwrap();
     assert_eq!(chosen.assigned_address.to_string(), "10.8.0.50/32");
@@ -574,6 +586,9 @@ fn a_requested_address_is_honoured_and_a_conflict_is_refused() {
         route_policy: None,
         dns_servers: Vec::new(),
         client_keepalive_seconds: None,
+        expires_at: None,
+        preshared_key: None,
+        mtu: None,
     });
     assert!(
         matches!(
@@ -737,6 +752,9 @@ fn update_changes_label_dns_keepalive_and_route_policy_without_rotating_keys() {
             client_keepalive_seconds: Some(Some(25)),
             requested_address: None,
             requested_ipv6_address: None,
+            expires_at: None,
+            preshared_key: None,
+            mtu: None,
         })
         .unwrap();
 
@@ -918,6 +936,7 @@ fn a_disabled_client_leaves_projected_intent_and_re_enabling_restores_the_same_p
             expected_generation: store.current_generation().unwrap(),
             client_id: toggled.client_id,
             enabled: wg_basic::product::ClientEnabled::Disabled,
+            expires_at: None,
         })
         .unwrap();
 
@@ -958,6 +977,7 @@ fn a_disabled_client_leaves_projected_intent_and_re_enabling_restores_the_same_p
             expected_generation: store.current_generation().unwrap(),
             client_id: toggled.client_id,
             enabled: wg_basic::product::ClientEnabled::Enabled,
+            expires_at: None,
         })
         .unwrap();
 
@@ -1081,6 +1101,7 @@ fn disabling_one_client_leaves_the_others_and_their_addresses_alone() {
             expected_generation: store.current_generation().unwrap(),
             client_id: first.client_id,
             enabled: wg_basic::product::ClientEnabled::Disabled,
+            expires_at: None,
         })
         .unwrap();
 
@@ -1149,6 +1170,7 @@ fn every_committed_mutation_appends_exactly_one_audit_row() {
             expected_generation: store.current_generation().unwrap(),
             client_id: client.client_id,
             enabled: wg_basic::product::ClientEnabled::Disabled,
+            expires_at: None,
         })
         .unwrap();
     service
@@ -1209,6 +1231,9 @@ fn a_refused_mutation_appends_no_audit_row_and_does_not_advance_the_generation()
         route_policy: None,
         dns_servers: Vec::new(),
         client_keepalive_seconds: None,
+        expires_at: None,
+        preshared_key: None,
+        mtu: None,
     });
 
     assert_eq!(store.current_generation().unwrap(), before_generation);
@@ -1298,6 +1323,7 @@ fn product_state_survives_reopen_including_disabled_clients() {
             expected_generation: store.current_generation().unwrap(),
             client_id: client.client_id,
             enabled: wg_basic::product::ClientEnabled::Disabled,
+            expires_at: None,
         })
         .unwrap();
     drop(store);
@@ -1351,6 +1377,9 @@ fn an_exhausted_pool_is_reported_rather_than_wrapping() {
         route_policy: None,
         dns_servers: Vec::new(),
         client_keepalive_seconds: None,
+        expires_at: None,
+        preshared_key: None,
+        mtu: None,
     });
     assert!(
         matches!(
@@ -1432,6 +1461,9 @@ fn product_mutation_is_serialised_by_the_store_lock() {
                 route_policy: None,
                 dns_servers: Vec::new(),
                 client_keepalive_seconds: None,
+                expires_at: None,
+                preshared_key: None,
+                mtu: None,
             });
             outcomes.lock().unwrap().push(
                 result
@@ -1473,6 +1505,338 @@ fn interface_identifiers_are_distinct_per_installation() {
         "identifiers must be independent random values"
     );
     assert_ne!(ClientId::new(), ClientId::new());
+}
+
+fn now_seconds() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
+}
+
+fn create_with(
+    service: &ProductService<'_>,
+    label: &str,
+    expires_at: Option<i64>,
+    preshared_key: Option<wg_basic::product::PresharedKeyRequest>,
+    mtu: Option<u16>,
+) -> Result<wg_basic::product::ProductClient, ProductError> {
+    let generation = service.store().current_generation().unwrap();
+    let server = service.server().unwrap().expect("configured server");
+    service
+        .create_client(ClientCreateCommand {
+            principal_id: admin(service),
+            expected_generation: generation,
+            interface_id: server.interface_id,
+            label: ClientLabel::new(label).unwrap(),
+            requested_address: None,
+            route_policy: None,
+            dns_servers: Vec::new(),
+            client_keepalive_seconds: None,
+            expires_at,
+            preshared_key,
+            mtu,
+        })
+        .map(|(client, _)| client)
+}
+
+#[test]
+fn historical_setup_stays_a_gateway_and_an_unchecked_setup_is_host_only() {
+    let gateway = setup(|_| {});
+    let stored = gateway.store.load().unwrap().state.network_policy.unwrap();
+    assert_eq!(stored.mode, NetworkPolicyMode::Gateway);
+    assert!(stored.masquerade);
+    assert!(stored.ipv4_forwarding_required);
+
+    let host = setup(|command| {
+        command.ipv4_forwarding_required = false;
+        command.ipv6_forwarding_required = false;
+        command.masquerade = false;
+        command.mode = None;
+    });
+    let stored = host.store.load().unwrap().state.network_policy.unwrap();
+    assert_eq!(stored.mode, NetworkPolicyMode::HostOnly);
+    assert!(!stored.masquerade);
+
+    let explicit = setup(|command| {
+        command.mode = Some(NetworkPolicyMode::Gateway);
+        command.ipv4_forwarding_required = true;
+        command.masquerade = true;
+    });
+    let stored = explicit.store.load().unwrap().state.network_policy.unwrap();
+    assert_eq!(stored.mode, NetworkPolicyMode::Gateway);
+    assert!(stored.masquerade);
+}
+
+#[test]
+fn a_past_deadline_is_refused_and_a_due_client_is_disabled_in_id_order() {
+    let installed = setup(|_| {});
+    let service = installed.service();
+    let now = now_seconds();
+    let generation = installed.store.current_generation().unwrap();
+    let refused = create_with(&service, "past", Some(now - 60), None, None);
+    assert!(matches!(refused, Err(ProductError::InvalidClientExpiry)));
+    assert_eq!(installed.store.current_generation().unwrap(), generation);
+
+    let later = now + 1;
+    let first = create_with(&service, "first", Some(later), None, None).unwrap();
+    let second = create_with(&service, "second", Some(later), None, None).unwrap();
+    assert_eq!(first.expires_at, Some(later));
+    assert_eq!(
+        first.expiry_state,
+        wg_basic::product::ExpiryState::Scheduled
+    );
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    let later = now_seconds();
+    let mut expected = [first.client_id, second.client_id];
+    expected.sort();
+    let expired = service.expire_due_clients(later).unwrap();
+    assert_eq!(
+        expired
+            .iter()
+            .map(|(client, _)| client.client_id)
+            .collect::<Vec<_>>(),
+        expected
+    );
+    assert!(expired
+        .iter()
+        .all(|(client, _)| client.settings.enabled == wg_basic::product::ClientEnabled::Disabled));
+    let generation = installed.store.current_generation().unwrap();
+    assert!(service.expire_due_clients(later).unwrap().is_empty());
+    assert_eq!(installed.store.current_generation().unwrap(), generation);
+    let events = installed.store.audit_events(20).unwrap();
+    let expiries: Vec<_> = events
+        .iter()
+        .filter(|event| event.action == wg_basic::product::AuditAction::ClientExpire)
+        .collect();
+    assert_eq!(expiries.len(), 2);
+    assert!(expiries.iter().all(|event| event.principal_id.is_none()));
+    let kept = service
+        .client_config_material(first.client_id)
+        .expect("a disabled client keeps its config");
+    assert!(!kept.private_key.expose_secret().is_empty());
+    let projected = wg_basic::state::project(
+        &installed.store.load().unwrap().state,
+        installed
+            .store
+            .installation_metadata()
+            .unwrap()
+            .installation_id,
+        &wg_basic::state::ClientVisibility::from_product(
+            &installed.store.load().unwrap().state,
+            &installed.store.load_product().unwrap().state,
+        ),
+    )
+    .unwrap();
+    assert!(projected.interfaces[0]
+        .wireguard
+        .as_ref()
+        .unwrap()
+        .peers
+        .is_empty());
+
+    let stale = service.set_client_enabled(SetClientEnabledCommand {
+        principal_id: admin(&service),
+        expected_generation: installed.store.current_generation().unwrap(),
+        client_id: first.client_id,
+        enabled: wg_basic::product::ClientEnabled::Enabled,
+        expires_at: None,
+    });
+    assert!(matches!(stale, Err(ProductError::InvalidClientExpiry)));
+    let enabled = service
+        .set_client_enabled(SetClientEnabledCommand {
+            principal_id: admin(&service),
+            expected_generation: installed.store.current_generation().unwrap(),
+            client_id: first.client_id,
+            enabled: wg_basic::product::ClientEnabled::Enabled,
+            expires_at: Some(None),
+        })
+        .unwrap();
+    assert_eq!(enabled.0.expiry_state, wg_basic::product::ExpiryState::None);
+    assert!(enabled.0.settings.enabled.is_enabled());
+}
+
+#[test]
+fn preshared_keys_are_generated_or_cleared_and_never_echoed() {
+    let installed = setup(|command| {
+        command.default_client_route_policy = ClientRoutePolicy {
+            prefixes: vec![NetworkPrefix::new("0.0.0.0/0".parse().unwrap())],
+        };
+    });
+    let service = installed.service();
+    let client = create_with(
+        &service,
+        "keyed",
+        None,
+        Some(wg_basic::product::PresharedKeyRequest::Generate),
+        None,
+    )
+    .unwrap();
+    assert!(client.preshared_key_configured);
+    assert_eq!(client.expiry_state, wg_basic::product::ExpiryState::None);
+    let summary = serde_json::to_string(&client).unwrap();
+    assert!(summary.contains("\"preshared_key_configured\":true"));
+    assert!(!summary.contains("PresharedKey"));
+    let first = service
+        .client_config_material(client.client_id)
+        .unwrap()
+        .preshared_key
+        .unwrap();
+    let rendered = wg_basic::product::render_config(
+        &service.client_config_material(client.client_id).unwrap(),
+    )
+    .unwrap();
+    assert!(rendered.expose().contains("PresharedKey = "));
+    let events = installed.store.audit_events(20).unwrap();
+    assert!(events
+        .iter()
+        .any(|event| event.action == wg_basic::product::AuditAction::ClientCreate));
+    assert!(!events
+        .iter()
+        .any(|event| { event.action == wg_basic::product::AuditAction::ClientPresharedKeySet }));
+
+    let generation = installed.store.current_generation().unwrap();
+    let (renamed, _) = service
+        .update_client(ClientUpdateCommand {
+            principal_id: admin(&service),
+            expected_generation: generation,
+            client_id: client.client_id,
+            label: Some(ClientLabel::new("renamed").unwrap()),
+            ..ClientUpdateCommand::default()
+        })
+        .unwrap();
+    let after_rename = service
+        .client_config_material(renamed.client_id)
+        .unwrap()
+        .preshared_key
+        .unwrap();
+    assert_eq!(
+        first.expose_secret(),
+        after_rename.expose_secret(),
+        "an edit that omits the key leaves the key bytes unchanged"
+    );
+
+    let (rotated, _) = service
+        .update_client(ClientUpdateCommand {
+            principal_id: admin(&service),
+            expected_generation: installed.store.current_generation().unwrap(),
+            client_id: client.client_id,
+            label: Some(ClientLabel::new("rotated").unwrap()),
+            preshared_key: Some(wg_basic::product::PresharedKeyRequest::Generate),
+            ..ClientUpdateCommand::default()
+        })
+        .unwrap();
+    let second = service
+        .client_config_material(rotated.client_id)
+        .unwrap()
+        .preshared_key
+        .unwrap();
+    assert_ne!(first.expose_secret(), second.expose_secret());
+    assert!(installed
+        .store
+        .audit_events(20)
+        .unwrap()
+        .iter()
+        .any(|event| {
+            event.action == wg_basic::product::AuditAction::ClientPresharedKeySet
+                && event.resource_id.as_deref() == Some(client.client_id.to_string().as_str())
+        }));
+
+    let (cleared, _) = service
+        .update_client(ClientUpdateCommand {
+            principal_id: admin(&service),
+            expected_generation: installed.store.current_generation().unwrap(),
+            client_id: client.client_id,
+            preshared_key: Some(wg_basic::product::PresharedKeyRequest::Clear),
+            ..ClientUpdateCommand::default()
+        })
+        .unwrap();
+    assert!(!cleared.preshared_key_configured);
+    let config = wg_basic::product::render_config(
+        &service.client_config_material(client.client_id).unwrap(),
+    )
+    .unwrap();
+    assert!(!config.expose().contains("PresharedKey = "));
+    assert!(installed
+        .store
+        .audit_events(20)
+        .unwrap()
+        .iter()
+        .any(|event| { event.action == wg_basic::product::AuditAction::ClientPresharedKeyClear }));
+}
+
+#[test]
+fn client_mtu_is_bounded_and_does_not_change_the_address_plan() {
+    let installed = setup(|command| {
+        command.default_client_route_policy = ClientRoutePolicy {
+            prefixes: vec![NetworkPrefix::new("0.0.0.0/0".parse().unwrap())],
+        };
+    });
+    let service = installed.service();
+    let client = create_with(&service, "mtu", None, None, None).unwrap();
+    assert_eq!(client.mtu, None);
+    let omitted = wg_basic::product::render_config(
+        &service.client_config_material(client.client_id).unwrap(),
+    )
+    .unwrap();
+    assert!(!omitted.expose().contains("MTU = "));
+    let generation = installed.store.current_generation().unwrap();
+    for value in [1279_u16, 9001] {
+        let refused = service.update_client(ClientUpdateCommand {
+            principal_id: admin(&service),
+            expected_generation: generation,
+            client_id: client.client_id,
+            mtu: Some(Some(value)),
+            ..ClientUpdateCommand::default()
+        });
+        assert!(matches!(refused, Err(ProductError::InvalidClientMtu)));
+        assert_eq!(installed.store.current_generation().unwrap(), generation);
+    }
+    let before = installed.store.load().unwrap().state;
+    let (updated, _) = service
+        .update_client(ClientUpdateCommand {
+            principal_id: admin(&service),
+            expected_generation: generation,
+            client_id: client.client_id,
+            mtu: Some(Some(1280)),
+            ..ClientUpdateCommand::default()
+        })
+        .unwrap();
+    assert_eq!(updated.mtu, Some(1280));
+    assert_eq!(installed.store.load().unwrap().state, before);
+    let written = wg_basic::product::render_config(
+        &service.client_config_material(client.client_id).unwrap(),
+    )
+    .unwrap();
+    let text = written.expose();
+    let address = text.find("Address = ").unwrap();
+    let mtu = text.find("MTU = 1280\n").unwrap();
+    assert!(address < mtu);
+    let (left, _) = service
+        .update_client(ClientUpdateCommand {
+            principal_id: admin(&service),
+            expected_generation: installed.store.current_generation().unwrap(),
+            client_id: client.client_id,
+            label: Some(ClientLabel::new("still").unwrap()),
+            ..ClientUpdateCommand::default()
+        })
+        .unwrap();
+    assert_eq!(left.mtu, Some(1280));
+    let (cleared, _) = service
+        .update_client(ClientUpdateCommand {
+            principal_id: admin(&service),
+            expected_generation: installed.store.current_generation().unwrap(),
+            client_id: client.client_id,
+            mtu: Some(None),
+            ..ClientUpdateCommand::default()
+        })
+        .unwrap();
+    assert_eq!(cleared.mtu, None);
+    let wide = create_with(&service, "wide", None, None, Some(9000)).unwrap();
+    let wide_config =
+        wg_basic::product::render_config(&service.client_config_material(wide.client_id).unwrap())
+            .unwrap();
+    assert!(wide_config.expose().contains("MTU = 9000\n"));
 }
 
 #[test]

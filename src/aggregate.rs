@@ -572,6 +572,7 @@ mod tests {
                     listen_port: 51820,
                     peers: vec![DesiredManagedPeer {
                         public_key: crate::domain::PublicKey::new(PEER.into()).unwrap(),
+                        preshared_key: None,
                         allowed_ips: vec![NetworkPrefix::new("10.8.0.2/32".parse().unwrap())],
                         persistent_keepalive_seconds: None,
                         endpoint: None,

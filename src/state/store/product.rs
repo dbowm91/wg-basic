@@ -51,6 +51,10 @@ pub struct InterfaceProductState {
 pub struct ClientProductRecord {
     pub settings: ClientProductSettings,
     pub dns_servers: Vec<IpAddr>,
+    /// Unix seconds, or null when the client does not expire.
+    pub expires_at: Option<i64>,
+    /// Exported client MTU, or null when the config omits the line.
+    pub mtu: Option<u16>,
 }
 
 impl ClientProductRecord {
@@ -65,6 +69,8 @@ impl ClientProductRecord {
                 updated_at: now,
             },
             dns_servers: Vec::new(),
+            expires_at: None,
+            mtu: None,
         }
     }
 }
@@ -641,15 +647,31 @@ pub(crate) fn read_product_at_schema(
 
     let mut clients = BTreeMap::new();
     {
+        let expires_column = if schema_version >= 9 {
+            ", expires_at"
+        } else {
+            ""
+        };
+        let mtu_column = if schema_version >= 10 { ", mtu" } else { "" };
         let mut statement = connection
-            .prepare(
+            .prepare(&format!(
                 "SELECT client_id, label, enabled, client_keepalive_seconds,
-                        created_at, updated_at
-                 FROM client_product_settings ORDER BY client_id",
-            )
+                        created_at, updated_at{expires_column}{mtu_column}
+                 FROM client_product_settings ORDER BY client_id"
+            ))
             .map_err(StateError::database)?;
         let rows = statement
             .query_map([], |row| {
+                let expires_at = if schema_version >= 9 {
+                    row.get::<_, Option<i64>>(6)?
+                } else {
+                    None
+                };
+                let mtu = if schema_version >= 10 {
+                    row.get::<_, Option<i64>>(7)?
+                } else {
+                    None
+                };
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
@@ -657,12 +679,23 @@ pub(crate) fn read_product_at_schema(
                     row.get::<_, Option<i64>>(3)?,
                     row.get::<_, i64>(4)?,
                     row.get::<_, i64>(5)?,
+                    expires_at,
+                    mtu,
                 ))
             })
             .map_err(StateError::database)?;
         for value in rows {
-            let (client_id, label, enabled, keepalive, created_at, updated_at) =
+            let (client_id, label, enabled, keepalive, created_at, updated_at, expires_at, mtu) =
                 value.map_err(StateError::database)?;
+            let mtu = match mtu {
+                None => None,
+                Some(value) => Some(
+                    u16::try_from(value)
+                        .ok()
+                        .filter(|value| (1280..=9000).contains(value))
+                        .ok_or(StateError::Corrupt("invalid client mtu"))?,
+                ),
+            };
             let id: crate::domain::ClientId = client_id
                 .parse()
                 .map_err(|_| StateError::Corrupt("invalid product client id"))?;
@@ -688,6 +721,8 @@ pub(crate) fn read_product_at_schema(
                         updated_at,
                     },
                     dns_servers: read_dns_servers(connection, &client_id)?,
+                    expires_at,
+                    mtu,
                 },
             );
         }
@@ -803,8 +838,8 @@ pub(super) fn write_product(
             .execute(
                 "INSERT INTO client_product_settings
                      (client_id, label, enabled, client_keepalive_seconds,
-                      created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                      created_at, updated_at, expires_at, mtu)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 rusqlite::params![
                     client_id,
                     record.settings.label.as_str(),
@@ -812,6 +847,8 @@ pub(super) fn write_product(
                     record.settings.client_keepalive_seconds.map(i64::from),
                     record.settings.created_at,
                     record.settings.updated_at,
+                    record.expires_at,
+                    record.mtu.map(i64::from),
                 ],
             )
             .map_err(StateError::database)?;
@@ -912,7 +949,10 @@ fn parse_action(value: &str) -> Option<AuditAction> {
         AuditAction::ClientUpdate,
         AuditAction::ClientEnable,
         AuditAction::ClientDisable,
+        AuditAction::ClientExpire,
         AuditAction::ClientDelete,
+        AuditAction::ClientPresharedKeySet,
+        AuditAction::ClientPresharedKeyClear,
         AuditAction::NetworkEnable,
         AuditAction::NetworkDisable,
         AuditAction::EnforcementDegraded,
