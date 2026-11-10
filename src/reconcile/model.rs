@@ -35,6 +35,12 @@ pub struct DesiredWireGuardConfiguration {
 #[serde(deny_unknown_fields)]
 pub struct DesiredManagedPeer {
     pub public_key: PublicKey,
+    /// The preshared key to install. Absent means the peer has no key.
+    ///
+    /// Observation never returns the key bytes, so a later plan cannot treat a
+    /// missing observation as proof that a previously installed key is gone.
+    #[serde(default)]
+    pub preshared_key: Option<crate::domain::PresharedKey>,
     pub allowed_ips: Vec<NetworkPrefix>,
     pub persistent_keepalive_seconds: Option<u16>,
     pub endpoint: Option<std::net::SocketAddr>,

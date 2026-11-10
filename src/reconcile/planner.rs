@@ -366,7 +366,7 @@ fn plan_wireguard(
                 listen_port: FieldUpdate::Keep,
                 peer: Some(PeerMutation::Add(DesiredWireGuardPeer {
                     public_key: peer.public_key.clone(),
-                    preshared_key: None,
+                    preshared_key: peer.preshared_key.clone(),
                     allowed_ips: peer.allowed_ips.clone(),
                     persistent_keepalive_seconds: peer.persistent_keepalive_seconds,
                     endpoint: peer.endpoint,
@@ -393,16 +393,27 @@ fn plan_wireguard(
                 } else {
                     FieldUpdate::Set(peer.endpoint.unwrap_or_else(cleared_endpoint))
                 };
+                // The kernel does not return preshared-key bytes. Presence is
+                // the only observable fact. A stored key is always set, because
+                // a replacement cannot be compared. An absent key is cleared
+                // only when the observation still reports one, so a peer that
+                // never had a key does not become a mutation on every plan.
+                let preshared_key = match (&peer.preshared_key, current.preshared_key_configured) {
+                    (Some(key), _) => FieldUpdate::Set(key.clone()),
+                    (None, true) => FieldUpdate::Clear,
+                    (None, false) => FieldUpdate::Keep,
+                };
                 if !matches!(allowed_ips, FieldUpdate::Keep)
                     || !matches!(keepalive, FieldUpdate::Keep)
                     || !matches!(endpoint, FieldUpdate::Keep)
+                    || !matches!(preshared_key, FieldUpdate::Keep)
                 {
                     mutations.push(Mutation::ConfigureWireGuard(WireGuardDevicePatch {
                         private_key: FieldUpdate::Keep,
                         listen_port: FieldUpdate::Keep,
                         peer: Some(PeerMutation::Update(WireGuardPeerPatch {
                             public_key: peer.public_key.clone(),
-                            preshared_key: FieldUpdate::Keep,
+                            preshared_key,
                             allowed_ips,
                             persistent_keepalive_seconds: keepalive,
                             endpoint,
@@ -603,6 +614,7 @@ mod tests {
             listen_port: 51820,
             peers: vec![DesiredManagedPeer {
                 public_key: peer_key.clone(),
+                preshared_key: None,
                 allowed_ips: allowed_ips.clone(),
                 persistent_keepalive_seconds: Some(25),
                 endpoint: Some("198.51.100.8:51820".parse().unwrap()),
@@ -623,11 +635,85 @@ mod tests {
                 latest_handshake: Some(std::time::Duration::from_secs(123)),
                 rx_bytes: Some(4096),
                 tx_bytes: Some(8192),
+                preshared_key_configured: false,
             }],
         });
         assert!(plan_managed_interface(&wanted, &state)
             .unwrap()
             .actions
+            .is_empty());
+    }
+
+    #[test]
+    fn a_stored_preshared_key_is_set_and_a_leftover_key_is_cleared() {
+        let keypair = crate::wireguard::generate_keypair().unwrap();
+        let public_key = derive_public_key(&keypair.private_key).unwrap();
+        let peer_key =
+            PublicKey::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".into()).unwrap();
+        let allowed_ips: Vec<NetworkPrefix> = vec!["10.9.0.2/32".parse().unwrap()];
+        let stored =
+            crate::domain::PresharedKey::new("AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=".into())
+                .unwrap();
+        let mut wanted = DesiredManagedInterface {
+            addresses: Vec::new(),
+            routes: Vec::new(),
+            ..desired()
+        };
+        wanted.wireguard = Some(DesiredWireGuardConfiguration {
+            private_key: keypair.private_key,
+            listen_port: 51820,
+            peers: vec![DesiredManagedPeer {
+                public_key: peer_key.clone(),
+                preshared_key: Some(stored),
+                allowed_ips: allowed_ips.clone(),
+                persistent_keepalive_seconds: Some(25),
+                endpoint: Some("198.51.100.8:51820".parse().unwrap()),
+            }],
+            manage_all_peers: true,
+        });
+        let mut state = observed();
+        state.admin_up = Some(true);
+        state.wireguard = Some(ObservedWireGuardDevice {
+            interface: name(),
+            public_key: Some(public_key),
+            listen_port: Some(51820),
+            peers: vec![crate::wireguard::ObservedWireGuardPeer {
+                public_key: peer_key,
+                allowed_ips,
+                persistent_keepalive_seconds: Some(25),
+                endpoint: Some("198.51.100.8:51820".parse().unwrap()),
+                latest_handshake: None,
+                rx_bytes: None,
+                tx_bytes: None,
+                preshared_key_configured: false,
+            }],
+        });
+        let planned = plan_execution(&wanted, &state).unwrap();
+        assert!(matches!(
+            planned.mutations.as_slice(),
+            [Mutation::ConfigureWireGuard(patch)]
+                if matches!(
+                    &patch.peer,
+                    Some(PeerMutation::Update(peer))
+                        if matches!(peer.preshared_key, FieldUpdate::Set(_))
+                )
+        ));
+        wanted.wireguard.as_mut().unwrap().peers[0].preshared_key = None;
+        state.wireguard.as_mut().unwrap().peers[0].preshared_key_configured = true;
+        let planned = plan_execution(&wanted, &state).unwrap();
+        assert!(matches!(
+            planned.mutations.as_slice(),
+            [Mutation::ConfigureWireGuard(patch)]
+                if matches!(
+                    &patch.peer,
+                    Some(PeerMutation::Update(peer))
+                        if matches!(peer.preshared_key, FieldUpdate::Clear)
+                )
+        ));
+        state.wireguard.as_mut().unwrap().peers[0].preshared_key_configured = false;
+        assert!(plan_execution(&wanted, &state)
+            .unwrap()
+            .mutations
             .is_empty());
     }
 

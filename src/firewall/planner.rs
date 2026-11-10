@@ -118,6 +118,8 @@ pub(crate) fn plan_firewall(
             required_filter_rules: Vec::new(),
             routed_lan: None,
             gateway: None,
+            observed_ipv4_forwarding: Some(observation.forwarding_enabled),
+            observed_ipv6_forwarding: observation.ipv6_forwarding_enabled,
         },
         desired_hash,
     })

@@ -201,6 +201,7 @@ pub(crate) fn material_from_snapshots(
         dns_servers: settings.dns_servers.clone(),
         server_public_key,
         preshared_key: peer.preshared_key.clone(),
+        mtu: settings.mtu,
         endpoint,
         allowed_ips: client.route_policy.prefixes.clone(),
         keepalive_seconds: settings.settings.client_keepalive_seconds,
@@ -535,6 +536,24 @@ pub struct ClientCreateCommand {
     pub route_policy: Option<ClientRoutePolicy>,
     pub dns_servers: Vec<IpAddr>,
     pub client_keepalive_seconds: Option<u16>,
+    /// Unix seconds, or null when the client does not expire.
+    ///
+    /// A value at or before the worker clock is rejected and nothing is written.
+    pub expires_at: Option<i64>,
+    /// `Generate` stores a new server-generated key. `Clear` is rejected on create.
+    pub preshared_key: Option<PresharedKeyRequest>,
+    /// Client-config MTU, or null to omit the line.
+    pub mtu: Option<u16>,
+}
+
+/// What an operator may ask the server to do with a client's preshared key.
+///
+/// The browser never supplies key bytes. `Generate` draws them here; `Clear`
+/// removes the stored key.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PresharedKeyRequest {
+    Generate,
+    Clear,
 }
 
 /// Fields an update may change. Absent means "leave unchanged".
@@ -549,6 +568,13 @@ pub struct ClientUpdateCommand {
     pub client_keepalive_seconds: Option<Option<u16>>,
     pub requested_address: Option<IpAddr>,
     pub requested_ipv6_address: Option<std::net::Ipv6Addr>,
+    /// `None` leaves the stored deadline. `Some(None)` clears it. `Some(Some)`
+    /// replaces it, and a past value is rejected.
+    pub expires_at: Option<Option<i64>>,
+    /// `None` leaves the stored key. Generate replaces it. Clear removes it.
+    pub preshared_key: Option<PresharedKeyRequest>,
+    /// `None` leaves the stored MTU. `Some(None)` clears it.
+    pub mtu: Option<Option<u16>>,
 }
 
 /// Delete one managed client and release its address.
@@ -566,6 +592,9 @@ pub struct SetClientEnabledCommand {
     pub expected_generation: DesiredGeneration,
     pub client_id: ClientId,
     pub enabled: ClientEnabled,
+    /// Applied only when enabling. `None` leaves the deadline. A past deadline
+    /// that is left in place refuses the enable.
+    pub expires_at: Option<Option<i64>>,
 }
 
 impl<'a> ProductService<'a> {
@@ -578,6 +607,18 @@ impl<'a> ProductService<'a> {
         &self,
         command: ClientCreateCommand,
     ) -> Result<(ProductClient, ProductMutationReceipt), ProductError> {
+        let now = crate::state::now_seconds();
+        validate_expiry(command.expires_at, now)?;
+        validate_mtu(command.mtu)?;
+        if matches!(command.preshared_key, Some(PresharedKeyRequest::Clear)) {
+            return Err(ProductError::InvalidPresharedKey);
+        }
+        let preshared_key = match command.preshared_key {
+            Some(PresharedKeyRequest::Generate) => {
+                Some(crate::domain::generate_preshared_key().map_err(ProductError::Key)?)
+            }
+            Some(PresharedKeyRequest::Clear) | None => None,
+        };
         let loaded = self.store.load().map_err(ProductError::State)?;
         let base = loaded
             .state
@@ -669,7 +710,7 @@ impl<'a> ProductService<'a> {
                         // Retained so the client can export its own configuration.
                         // Never projected, never returned, never logged.
                         private_key: Some(client_key.clone()),
-                        preshared_key: None,
+                        preshared_key: preshared_key.clone(),
                         allowed_ips: std::iter::once(NetworkPrefix::new(host_v4(address)))
                             .chain(ipv6_address.map(|address| NetworkPrefix::new(host_v6(address))))
                             .collect(),
@@ -685,10 +726,11 @@ impl<'a> ProductService<'a> {
                         route_policy: route_policy.clone(),
                     });
 
-                    let now = crate::state::now_seconds();
                     let mut record = ClientProductRecord::new(command.label.clone(), now);
                     record.dns_servers = command.dns_servers.clone();
                     record.settings.client_keepalive_seconds = command.client_keepalive_seconds;
+                    record.expires_at = command.expires_at;
+                    record.mtu = command.mtu;
                     product.clients.insert(client_id, record);
 
                     Ok((
@@ -719,6 +761,10 @@ impl<'a> ProductService<'a> {
                 settings: record.settings.clone(),
                 route_policy: route_policy.clone(),
                 dns_servers: record.dns_servers.clone(),
+                expires_at: record.expires_at,
+                expiry_state: super::model::expiry_state(record.expires_at, now),
+                preshared_key_configured: preshared_key.is_some(),
+                mtu: record.mtu,
             })
             .ok_or(ProductError::ClientMissingAfterMutation(client_id))?;
 
@@ -737,6 +783,19 @@ impl<'a> ProductService<'a> {
         &self,
         command: ClientUpdateCommand,
     ) -> Result<(ProductClient, ProductMutationReceipt), ProductError> {
+        let now = crate::state::now_seconds();
+        if let Some(Some(deadline)) = command.expires_at {
+            validate_expiry(Some(deadline), now)?;
+        }
+        if let Some(Some(mtu)) = command.mtu {
+            validate_mtu(Some(mtu))?;
+        }
+        let generated = match command.preshared_key {
+            Some(PresharedKeyRequest::Generate) => {
+                Some(crate::domain::generate_preshared_key().map_err(ProductError::Key)?)
+            }
+            Some(PresharedKeyRequest::Clear) | None => None,
+        };
         let client_id = command.client_id;
         let committed = self.store.mutate_product(
             command.expected_generation,
@@ -755,9 +814,41 @@ impl<'a> ProductService<'a> {
                 if let Some(dns) = &command.dns_servers {
                     record.dns_servers = dns.clone();
                 }
+                if let Some(expires_at) = command.expires_at {
+                    record.expires_at = expires_at;
+                }
+                if let Some(mtu) = command.mtu {
+                    record.mtu = mtu;
+                }
                 record.settings.updated_at = crate::state::now_seconds();
 
                 let mut next = state.clone();
+                if let Some(request) = command.preshared_key {
+                    let peer_id = next
+                        .interfaces
+                        .iter()
+                        .flat_map(|interface| &interface.clients)
+                        .find(|client| client.id == client_id)
+                        .map(|client| client.peer_id)
+                        .ok_or(StateError::Corrupt("client has no peer"))?;
+                    let mut replaced = false;
+                    for interface in &mut next.interfaces {
+                        for peer in &mut interface.peers {
+                            if peer.id == peer_id {
+                                let previous = peer.preshared_key.take();
+                                drop(previous);
+                                peer.preshared_key = match request {
+                                    PresharedKeyRequest::Generate => generated.clone(),
+                                    PresharedKeyRequest::Clear => None,
+                                };
+                                replaced = true;
+                            }
+                        }
+                    }
+                    if !replaced {
+                        return Err(StateError::Corrupt("client peer is missing"));
+                    }
+                }
                 if let Some(policy) = &command.route_policy {
                     for interface in &mut next.interfaces {
                         for client in &mut interface.clients {
@@ -885,10 +976,12 @@ impl<'a> ProductService<'a> {
                     }
                 }
 
-                Ok((
-                    next,
-                    ProductAudit::client(AuditAction::ClientUpdate, client_id),
-                ))
+                let action = match command.preshared_key {
+                    Some(PresharedKeyRequest::Generate) => AuditAction::ClientPresharedKeySet,
+                    Some(PresharedKeyRequest::Clear) => AuditAction::ClientPresharedKeyClear,
+                    None => AuditAction::ClientUpdate,
+                };
+                Ok((next, ProductAudit::client(action, client_id)))
             },
         )?;
 
@@ -909,6 +1002,31 @@ impl<'a> ProductService<'a> {
         &self,
         command: SetClientEnabledCommand,
     ) -> Result<(ProductClient, ProductMutationReceipt), ProductError> {
+        let now = crate::state::now_seconds();
+        if let Some(Some(deadline)) = command.expires_at {
+            validate_expiry(Some(deadline), now)?;
+        }
+        let loaded = self.store.load_product().map_err(ProductError::State)?;
+        if loaded.generation != command.expected_generation {
+            return Err(ProductError::State(StateError::StaleGeneration {
+                expected: command.expected_generation.to_storage() as u64,
+                actual: loaded.generation.to_storage() as u64,
+            }));
+        }
+        if command.enabled.is_enabled() {
+            let record = loaded
+                .state
+                .clients
+                .get(&command.client_id)
+                .ok_or(ProductError::UnknownClient(command.client_id))?;
+            let effective = match command.expires_at {
+                Some(replacement) => replacement,
+                None => record.expires_at,
+            };
+            if effective.is_some_and(|deadline| deadline <= now) {
+                return Err(ProductError::InvalidClientExpiry);
+            }
+        }
         let client_id = command.client_id;
         let enabled = command.enabled;
         let committed = self.store.mutate_product(
@@ -920,6 +1038,9 @@ impl<'a> ProductService<'a> {
                     .get_mut(&client_id)
                     .ok_or(StateError::Corrupt("no such managed client"))?;
                 record.settings.enabled = enabled;
+                if let Some(expires_at) = command.expires_at {
+                    record.expires_at = expires_at;
+                }
                 record.settings.updated_at = crate::state::now_seconds();
                 let next = state.clone();
                 let action = match enabled {
@@ -974,6 +1095,74 @@ impl<'a> ProductService<'a> {
             },
         )?;
         Ok(ProductMutationReceipt::pending(committed.generation))
+    }
+
+    /// Disables every enabled client whose deadline is due, in client-id order.
+    ///
+    /// Each disable is its own generation. A client that is already disabled is
+    /// left unchanged, including its deadline. The caller reconciles each
+    /// receipt; this method does not talk to the network.
+    pub fn expire_due_clients(
+        &self,
+        now: i64,
+    ) -> Result<Vec<(ProductClient, ProductMutationReceipt)>, ProductError> {
+        let mut expired = Vec::new();
+        loop {
+            let loaded = self.store.load_product().map_err(ProductError::State)?;
+            let mut due: Vec<ClientId> = loaded
+                .state
+                .clients
+                .iter()
+                .filter(|(_, record)| {
+                    record.settings.enabled.is_enabled()
+                        && record.expires_at.is_some_and(|deadline| deadline <= now)
+                })
+                .map(|(client_id, _)| *client_id)
+                .collect();
+            due.sort();
+            let Some(client_id) = due.into_iter().next() else {
+                break;
+            };
+            match self.expire_one(loaded.generation, client_id, now) {
+                Ok(pair) => expired.push(pair),
+                Err(ProductError::State(StateError::StaleGeneration { .. })) => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(expired)
+    }
+
+    fn expire_one(
+        &self,
+        expected_generation: DesiredGeneration,
+        client_id: ClientId,
+        now: i64,
+    ) -> Result<(ProductClient, ProductMutationReceipt), ProductError> {
+        let committed =
+            self.store
+                .mutate_product(expected_generation, None, |state, product| {
+                    let record = product
+                        .clients
+                        .get_mut(&client_id)
+                        .ok_or(StateError::Corrupt("no such managed client"))?;
+                    let due = record.settings.enabled.is_enabled()
+                        && record.expires_at.is_some_and(|deadline| deadline <= now);
+                    if !due {
+                        return Err(StateError::Corrupt("client expiry was no longer due"));
+                    }
+                    record.settings.enabled = ClientEnabled::Disabled;
+                    record.settings.updated_at = crate::state::now_seconds();
+                    Ok((
+                        state.clone(),
+                        ProductAudit::client(AuditAction::ClientExpire, client_id),
+                    ))
+                })?;
+        let client = assemble_client(&committed.state, &committed.product, client_id)
+            .ok_or(ProductError::ClientMissingAfterMutation(client_id))?;
+        Ok((
+            client,
+            ProductMutationReceipt::pending(committed.generation),
+        ))
     }
 
     /// Records that a committed mutation did not reach the kernel.
@@ -1188,6 +1377,10 @@ fn assemble_client(
         settings: record.settings.clone(),
         route_policy: client.route_policy.clone(),
         dns_servers: record.dns_servers.clone(),
+        expires_at: record.expires_at,
+        expiry_state: super::model::expiry_state(record.expires_at, crate::state::now_seconds()),
+        preshared_key_configured: peer.preshared_key.is_some(),
+        mtu: record.mtu,
     })
 }
 
@@ -1227,6 +1420,26 @@ pub enum ProductError {
     Allocation(#[from] super::AllocationError),
     #[error("the network policy mode is inconsistent with the rest of the setup: {0}")]
     InvalidNetworkPolicyMode(&'static str),
+    #[error("the client expiry is not in the future")]
+    InvalidClientExpiry,
+    #[error("the client MTU is outside 1280 through 9000")]
+    InvalidClientMtu,
+    #[error("a preshared key must be generated by the server")]
+    InvalidPresharedKey,
+}
+
+fn validate_expiry(expires_at: Option<i64>, now: i64) -> Result<(), ProductError> {
+    if expires_at.is_some_and(|deadline| deadline <= now) {
+        return Err(ProductError::InvalidClientExpiry);
+    }
+    Ok(())
+}
+
+fn validate_mtu(mtu: Option<u16>) -> Result<(), ProductError> {
+    if mtu.is_some_and(|value| !(1280..=9000).contains(&value)) {
+        return Err(ProductError::InvalidClientMtu);
+    }
+    Ok(())
 }
 
 impl ProductError {
@@ -1281,6 +1494,11 @@ impl ProductError {
             ProductError::InvalidNetworkPolicyMode(_) => StateError::Validation(
                 crate::domain::StateValidationError::NetworkPolicyModeInvalid,
             ),
+            ProductError::InvalidClientExpiry
+            | ProductError::InvalidClientMtu
+            | ProductError::InvalidPresharedKey => {
+                StateError::Corrupt("a rejected client field reached the state transaction")
+            }
         }
     }
 }

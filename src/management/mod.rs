@@ -41,7 +41,9 @@
 //! are not retryable without an operator or state change, so they fail fast and
 //! preserve the desired state. The same is true for refusals: an unauthorized
 //! caller or an unsupported backend is diagnosed, not retried. There is
-//! deliberately no permanent high-frequency reconciliation loop.
+//! deliberately no permanent high-frequency reconciliation loop. Client expiry
+//! waits, at most, until the next stored deadline and does not wait at all
+//! when no deadline is stored.
 //!
 //! # Privilege
 //!
@@ -72,7 +74,10 @@ pub use coordinator::{CoordinatorAction, ReconcileCoordinator};
 pub use error::{FailureClass, ManagementError, ProjectionFailure};
 pub use health::{BackendProbe, ConvergenceState, ManagementHealth};
 pub use runtime::project_diagnostic_intent;
-pub use runtime::{ManagementRuntime, ReconcileOutcome};
+pub use runtime::{
+    ForwardingObservation, ManagementRuntime, NetworkPrerequisites, OperatorAttachmentView,
+    PrerequisiteRefusal, ReconcileOutcome,
+};
 pub use worker::{
     spawn, ClientMutationReply, ProductFailure, ProductSnapshotReply, SetupReply, StartupReconcile,
     WorkerClient, WorkerCommand, WorkerConfig, WorkerError, WorkerStartup, BACKEND_STARTUP_WAIT,

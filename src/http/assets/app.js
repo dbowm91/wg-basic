@@ -118,6 +118,7 @@
     generation = summary.generation;
     if (!summary.server) {
       setVisible("setup-pane", true); setVisible("app-pane", false); stopPolling();
+      await applySetupDefaults();
       return;
     }
     setVisible("setup-pane", false); setVisible("app-pane", true);
@@ -172,10 +173,22 @@
       const title = document.createElement("span"); title.className = "card-label"; title.textContent = label;
       const output = document.createElement("strong"); output.textContent = String(value); card.append(title, output); counts.append(card);
     }
-    for (const client of clients) {
+    const filters = form("client-filters");
+    const query = filters.query.trim().toLowerCase();
+    const visible = clients.filter((client) => {
+      const addresses = [client.assigned_address, client.assigned_ipv6_address].filter(Boolean).join(" ");
+      const haystack = `${client.settings.label} ${addresses}`.toLowerCase();
+      if (query && !haystack.includes(query)) return false;
+      if (filters.enabled === "enabled" && client.settings.enabled !== "enabled") return false;
+      if (filters.enabled === "disabled" && client.settings.enabled === "enabled") return false;
+      if (filters.expiry !== "all" && client.expiry_state !== filters.expiry) return false;
+      return true;
+    });
+    for (const client of visible) {
       const row = document.createElement("tr");
       const live = telemetry.get(client.client_id);
-      const state = client.settings.enabled === "enabled" ? (live?.observation ?? "unknown") : "disabled";
+      const expiry = client.expiry_state && client.expiry_state !== "none" ? ` · ${client.expiry_state}` : "";
+      const state = (client.settings.enabled === "enabled" ? (live?.observation ?? "unknown") : "disabled") + expiry;
       const drift = live?.drift ? " · needs attention" : "";
       const handshake = live?.latest_handshake_age_seconds == null ? "Never" : `${live.latest_handshake_age_seconds}s ago`;
       const traffic = live?.rx_bytes == null ? "—" : `↓ ${bytes(live.rx_bytes)} · ↑ ${bytes(live.tx_bytes)}`;
@@ -245,6 +258,7 @@
     // The routing intent is only stated when it is the one that cannot be
     // derived: everything else follows from the forwarding and masquerade
     // settings, exactly as it did before the routed-LAN mode existed.
+    if (data.network_mode === "gateway") body.mode = "gateway";
     if (data.network_mode === "routed_lan") {
       body.mode = "routed_lan";
       body.destination_prefixes = data.destination_prefixes.split(",").map((value) => value.trim()).filter(Boolean);
@@ -261,6 +275,10 @@
     const body = { expected_generation: generation, interface_id: server.server.interface_id, label: data.label };
     if (data.ipv6_address.trim()) body.ipv6_address = data.ipv6_address.trim();
     if (data.dns_servers.trim()) body.dns_servers = data.dns_servers.split(",").map((x) => x.trim()).filter(Boolean);
+    const createdDeadline = deadlineSeconds(data.expires_at);
+    if (createdDeadline != null) body.expires_at = createdDeadline;
+    if (data.mtu.trim()) body.mtu = Number(data.mtu);
+    if ($("create-form").elements.preshared_key.checked) body.preshared_key = "generate";
     const response = await api("POST", "/api/v1/clients", body); const result = await json(response);
     if (await refreshAfterMutation(response, result, false)) { $("create-form").reset(); setVisible("create-form", false); }
   }
@@ -271,6 +289,11 @@
     edit.elements.ipv6_address.value = client.assigned_ipv6_address?.split("/")[0] ?? "";
     setRouteFields(edit, client.route_policy); edit.elements.dns_servers.value = client.dns_servers.join(", ");
     edit.elements.client_keepalive_seconds.value = client.settings.client_keepalive_seconds ?? "";
+    edit.elements.expires_at.value = deadlineLocal(client.expires_at);
+    edit.elements.mtu.value = client.mtu ?? "";
+    $("preshared-note").textContent = client.preshared_key_configured
+      ? "A preshared key is configured. Generating or clearing it changes the exported configuration. Devices must re-import it. The key is not shown on this page."
+      : "No preshared key is configured. Generating one changes the exported configuration. Devices must re-import it. The key is not shown on this page.";
     $("artifact").replaceChildren(); setVisible("artifact", false); moveBanner($("client-dialog")); $("client-dialog").showModal();
   }
 
@@ -285,7 +308,7 @@
 
   async function submitEdit(event) {
     event.preventDefault(); clearBanner(); const data = form("edit-form");
-    const body = { expected_generation: generation, label: data.label, address: data.address, route_policy: routePolicy(data), dns_servers: data.dns_servers.split(",").map((x) => x.trim()).filter(Boolean), client_keepalive_seconds: data.client_keepalive_seconds === "" ? null : Number(data.client_keepalive_seconds) };
+    const body = { expected_generation: generation, label: data.label, address: data.address, route_policy: routePolicy(data), dns_servers: data.dns_servers.split(",").map((x) => x.trim()).filter(Boolean), client_keepalive_seconds: data.client_keepalive_seconds === "" ? null : Number(data.client_keepalive_seconds), expires_at: deadlineSeconds(data.expires_at), mtu: data.mtu.trim() ? Number(data.mtu) : null };
     if (data.ipv6_address.trim()) body.ipv6_address = data.ipv6_address.trim();
     const response = await api("PATCH", `/api/v1/clients/${data.client_id}`, body); const result = await json(response);
     await refreshAfterMutation(response, result, false);
@@ -298,7 +321,9 @@
     const deleting = button.dataset.action === "delete";
     const disabling = button.dataset.action === "toggle" && client.settings.enabled === "enabled";
     const path = deleting ? `/api/v1/clients/${client.client_id}` : `/api/v1/clients/${client.client_id}/${disabling ? "disable" : "enable"}`;
-    const response = await api(deleting ? "DELETE" : "POST", path, { expected_generation: generation });
+    const payload = { expected_generation: generation };
+    if (!deleting && !disabling && client.expiry_state === "expired") payload.expires_at = null;
+    const response = await api(deleting ? "DELETE" : "POST", path, payload);
     const result = await json(response);
     await refreshAfterMutation(response, result, deleting || disabling);
   }
@@ -348,9 +373,87 @@
     await api("POST", "/api/v1/logout"); await showSignedOut(); message("You have signed out.", "info");
   }
 
+  let setupTouched = false;
+  let prerequisites = null;
+
+  function deadlineSeconds(value) {
+    if (!value) return null;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return Math.floor(parsed.getTime() / 1000);
+  }
+
+  function deadlineLocal(seconds) {
+    if (seconds == null) return "";
+    const date = new Date(seconds * 1000);
+    const pad = (part) => String(part).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  }
+
+  function renderAttachment() {
+    const box = $("setup-attachment");
+    box.replaceChildren();
+    if (!prerequisites || prerequisites.host_platform !== "macos") return;
+    const mode = $("setup-form").elements.network_mode.value;
+    if (mode !== "gateway" && mode !== "routed_lan") return;
+    const note = document.createElement("p");
+    note.textContent = "The product will not write these lines. An administrator has to add them.";
+    box.append(note);
+    if (mode === "gateway" && prerequisites.attachment) {
+      for (const line of [prerequisites.attachment.nat_anchor, prerequisites.attachment.filter_anchor, prerequisites.attachment.load_anchor]) {
+        const row = document.createElement("code");
+        row.textContent = line;
+        box.append(row);
+      }
+    }
+    if (mode === "routed_lan") {
+      for (const rule of prerequisites.required_filter_rules || []) {
+        const row = document.createElement("code");
+        row.textContent = rule;
+        box.append(row);
+      }
+    }
+  }
+
+  async function applySetupDefaults() {
+    if (setupTouched) return;
+    const response = await api("GET", "/api/v1/network-prerequisites");
+    if (!response.ok) return;
+    prerequisites = await json(response);
+    const setup = $("setup-form");
+    const note = $("setup-platform-note");
+    note.textContent = "";
+    if (prerequisites.host_platform === "linux") {
+      setup.elements.ipv4_forwarding_required.checked = true;
+      setup.elements.masquerade.checked = true;
+      if (!setup.elements.egress_interface.value) setup.elements.egress_interface.value = "eth0";
+    } else {
+      setup.elements.ipv4_forwarding_required.checked = false;
+      setup.elements.masquerade.checked = false;
+      setup.elements.egress_interface.value = "";
+      if (prerequisites.host_platform === "macos") setup.elements.egress_interface.placeholder = "en0";
+      else note.textContent = "This host platform is unknown, so setup starts with no forwarding and no masquerade.";
+    }
+    renderAttachment();
+  }
+
+  async function setPreshared(verb) {
+    const id = $("edit-form").elements.client_id.value;
+    if (!id) return;
+    clearBanner();
+    const response = await api("PATCH", `/api/v1/clients/${id}`, { expected_generation: generation, preshared_key: verb });
+    const result = await json(response);
+    await refreshAfterMutation(response, result, false);
+  }
+
   function main() {
     $("login-form").addEventListener("submit", login);
     $("setup-form").addEventListener("submit", submitSetup);
+    $("setup-form").addEventListener("input", () => { setupTouched = true; });
+    $("setup-form").elements.network_mode.addEventListener("change", renderAttachment);
+    $("client-filters").addEventListener("input", renderClients);
+    $("generate-preshared").addEventListener("click", () => setPreshared("generate"));
+    $("clear-preshared").addEventListener("click", () => setPreshared("clear"));
     $("create-form").addEventListener("submit", submitCreate);
     $("edit-form").addEventListener("submit", submitEdit);
     $("logout").addEventListener("click", logout);

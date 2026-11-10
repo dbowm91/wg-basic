@@ -27,7 +27,7 @@ pub use interface_name::InterfaceName;
 // in `domain` rather than behind the `wireguard` module's platform gate: the
 // unprivileged product service generates server and client identities and must
 // be able to do so without a network backend present.
-pub use keys::{derive_public_key, generate_keypair, WireGuardKeyPair};
+pub use keys::{derive_public_key, generate_keypair, generate_preshared_key, WireGuardKeyPair};
 pub use network::{
     validate_unique_client_addresses, ClientRoutePolicy, NetworkPrefix, RoutePolicyValidationError,
     MAX_CLIENT_ROUTE_PREFIXES,

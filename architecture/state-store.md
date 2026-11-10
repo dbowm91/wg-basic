@@ -135,6 +135,16 @@ allowlist, because none had one. A binary that predates the mode refuses a
 database that carries it: the runner rejects a newer-than-binary version
 rather than opening a store whose shape it does not understand.
 
+Schema v9 adds nullable `client_product_settings.expires_at`, Unix seconds on
+the management worker's clock. Null means the client does not expire. Existing
+rows stay null. The migration does not disable a client and does not advance
+desired generation. Expiry is a later disable of that one client.
+
+Schema v10 adds nullable `client_product_settings.mtu`, an integer that is
+null or between 1280 and 9000. Null means the exported config omits the MTU
+line. The column is not applied to the server link. A schema 9 deadline
+survives this step, and desired generation does not move.
+
 Session storage is bounded to 32 live sessions per principal; expired sessions
 are pruned at serve startup and before successful issuance. Enrollment storage
 allows eight live capabilities per client and prunes terminal rows after seven

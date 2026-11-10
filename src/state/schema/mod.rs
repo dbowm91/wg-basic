@@ -372,7 +372,7 @@ mod tests {
             .unwrap();
         assert_eq!(user_version, migrations::supported_version());
         assert_eq!(
-            user_version, 8,
+            user_version, 10,
             "a fresh database is created at the current head, never behind it"
         );
 
@@ -422,8 +422,8 @@ mod tests {
             StateStore::open(temp.db()),
             Err(StateError::SchemaTooNew {
                 found: 9999,
-                supported: 8
-            })
+                supported
+            }) if supported == migrations::current_schema_version()
         ));
     }
 
@@ -700,7 +700,22 @@ mod tests {
         );
 
         migrations::apply_migrations(&mut connection, MIGRATIONS).unwrap();
-        assert_eq!(user_version_of(&connection), 8);
+        assert_eq!(
+            user_version_of(&connection),
+            migrations::current_schema_version()
+        );
+        let names: Vec<String> = {
+            let mut columns = connection
+                .prepare("PRAGMA table_info(client_product_settings)")
+                .unwrap();
+            columns
+                .query_map([], |row| row.get::<_, String>(1))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        assert!(names.iter().any(|name| name == "expires_at"));
+        assert!(names.iter().any(|name| name == "mtu"));
 
         // Every version the upgrade ran through must actually have created its
         // schema.
@@ -773,7 +788,10 @@ mod tests {
         connection.close().unwrap();
 
         let store = StateStore::open(temp.db()).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 8);
+        assert_eq!(
+            store.schema_version().unwrap(),
+            migrations::current_schema_version()
+        );
         let metadata = store.installation_metadata().unwrap();
         assert_eq!(metadata.installation_id, identity);
         assert_eq!(metadata.desired_generation.to_storage(), before_generation);
@@ -913,14 +931,88 @@ mod tests {
     }
 
     #[test]
+    fn a_schema_9_deadline_survives_the_mtu_migration() {
+        let temp = TempDir::new();
+        initialize_at_version(&temp.db(), 9).unwrap();
+        let connection = Connection::open(temp.db()).unwrap();
+        let before_generation: i64 = connection
+            .query_row(
+                "SELECT desired_generation FROM installation WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let interface_id = "11111111-1111-4111-8111-111111111111";
+        let peer_id = "22222222-2222-4222-8222-222222222222";
+        let client_id = "33333333-3333-4333-8333-333333333333";
+        connection
+            .execute(
+                "INSERT INTO managed_interfaces
+                    (id, name, ownership, lifecycle, admin_up, private_key, listen_port,
+                     manage_all_peers, position)
+                 VALUES (?1, 'wg0', 'managed', 'present', 1,
+                         'yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=', 51820, 1, 0)",
+                [interface_id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO peers
+                    (id, interface_id, public_key, position)
+                 VALUES (?1, ?2, 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=', 0)",
+                [peer_id, interface_id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO clients (id, interface_id, peer_id, assigned_address, position)
+                 VALUES (?1, ?2, ?3, '10.8.0.2/32', 0)",
+                [client_id, interface_id, peer_id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO client_product_settings
+                    (client_id, label, enabled, created_at, updated_at, expires_at)
+                 VALUES (?1, 'kept', 1, 1, 1, 4102444800)",
+                [client_id],
+            )
+            .unwrap();
+        drop(connection);
+
+        let store = StateStore::open(temp.db()).unwrap();
+        assert_eq!(store.schema_version().unwrap(), 10);
+        assert_eq!(
+            store
+                .installation_metadata()
+                .unwrap()
+                .desired_generation
+                .to_storage(),
+            before_generation
+        );
+        let product = store.load_product().unwrap();
+        let record = product
+            .state
+            .clients
+            .values()
+            .next()
+            .expect("the migrated client is still there");
+        assert_eq!(record.expires_at, Some(4_102_444_800));
+        assert_eq!(record.mtu, None);
+        assert!(record.settings.enabled.is_enabled());
+    }
+
+    #[test]
     fn a_schema_newer_than_the_binary_is_refused_rather_than_downgraded() {
         let temp = TempDir::new();
         historical_v1(&temp);
 
-        // The production list stops at version 8, so a database stamped 9 comes
-        // from a future binary.
+        // A stamp one past the head comes from a future binary.
+        let future = migrations::current_schema_version() + 1;
         let connection = Connection::open(temp.db()).unwrap();
-        connection.execute("PRAGMA user_version = 9", []).unwrap();
+        connection
+            .execute(&format!("PRAGMA user_version = {future}"), [])
+            .unwrap();
         drop(connection);
 
         let mut connection = Connection::open(temp.db()).unwrap();
@@ -928,10 +1020,8 @@ mod tests {
         assert!(
             matches!(
                 error,
-                StateError::SchemaTooNew {
-                    found: 9,
-                    supported: 8
-                }
+                StateError::SchemaTooNew { found, supported }
+                    if found == future && supported == migrations::current_schema_version()
             ),
             "{error:?}"
         );
@@ -958,9 +1048,9 @@ mod tests {
             matches!(
                 error,
                 StateError::SchemaTooNew {
-                    found: 8,
+                    found,
                     supported: 7
-                }
+                } if found == migrations::current_schema_version()
             ),
             "{error:?}"
         );

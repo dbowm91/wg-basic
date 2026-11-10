@@ -47,7 +47,7 @@ use super::{
     auth::{AdminStatus, AuthError, AuthService, IssuedSession},
     error::ManagementError,
     health::{BackendProbe, ManagementHealth},
-    runtime::ManagementRuntime,
+    runtime::{ManagementRuntime, NetworkPrerequisites},
 };
 use crate::{
     domain::{DesiredGeneration, PrincipalId},
@@ -175,6 +175,12 @@ pub enum WorkerCommand {
     /// Fresh live observation mapped to stable product client IDs.
     ClientTelemetry {
         reply: oneshot::Sender<Result<ClientTelemetrySnapshot, ProductFailure>>,
+    },
+    /// The current forwarding, attachment, and policy prerequisites.
+    ///
+    /// Read-only. A missing network service is a snapshot, not an error.
+    NetworkPrerequisites {
+        reply: oneshot::Sender<Result<NetworkPrerequisites, ProductFailure>>,
     },
     /// One bounded secret-safe audit page.
     AuditPage {
@@ -317,7 +323,10 @@ impl ProductFailure {
             }
             ProductError::Key(_) => Self::Invalid,
             ProductError::Allocation(_) => Self::AddressUnavailable,
-            ProductError::InvalidNetworkPolicyMode(_) => Self::Invalid,
+            ProductError::InvalidNetworkPolicyMode(_)
+            | ProductError::InvalidClientExpiry
+            | ProductError::InvalidClientMtu
+            | ProductError::InvalidPresharedKey => Self::Invalid,
             ProductError::State(crate::state::StateError::StaleGeneration { .. }) => {
                 Self::StaleGeneration
             }
@@ -647,6 +656,13 @@ impl WorkerClient {
     pub async fn product_snapshot(&self) -> Result<ProductSnapshotReply, WorkerError> {
         let (reply, answer) = oneshot::channel();
         self.admit(WorkerCommand::ProductSnapshot { reply }).await?;
+        self.product_reply(answer).await
+    }
+
+    pub async fn network_prerequisites(&self) -> Result<NetworkPrerequisites, WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::NetworkPrerequisites { reply })
+            .await?;
         self.product_reply(answer).await
     }
 
@@ -1047,6 +1063,15 @@ fn run(
     // attempt degraded, which is what the operator has to see.
     wait_for_backend(&config.socket, config.backend_startup_wait);
 
+    // Due clients are disabled before the startup reconcile, so the first
+    // apply already omits their peers. A state failure here is fatal for the
+    // same reason a session purge failure is: the store cannot be trusted.
+    // A reconcile that does not converge is not fatal.
+    if let Err(error) = expire_due(&runtime) {
+        let _ = startup.send(StartupOutcome::Fatal(error));
+        return;
+    }
+
     // ADR-002 requires an unconditional startup attempt. It is deliberately not
     // conditional on stored convergence evidence, and a degraded result is
     // reported rather than raised: the listener must come up either way.
@@ -1256,186 +1281,252 @@ fn product_failure(error: ProductCommandError) -> ProductFailure {
 /// The loop is exhaustive over [`WorkerCommand`] on purpose: adding a command
 /// without deciding how it is served is a compile error, so the bounded queue
 /// can never grow a path that quietly does something else.
+/// Disables due clients and reconciles each generation.
+///
+/// The clock is the worker's wall clock. A step that happens while this
+/// thread is asleep is noticed when that sleep ends, because the sleep is a
+/// monotonic wait for a duration computed up front. There is no poll.
+fn expire_due(runtime: &ManagementRuntime) -> Result<(), ManagementError> {
+    let service = ProductService::new(runtime.store());
+    let expired = service
+        .expire_due_clients(crate::state::now_seconds())
+        .map_err(|error| match error {
+            crate::product::ProductError::State(state) => ManagementError::from(state),
+            _ => ManagementError::State(crate::state::StateError::Corrupt(
+                "client expiry could not be committed",
+            )),
+        })?;
+    for (_, receipt) in expired {
+        let _ = runtime.reconcile_after_commit(receipt.generation);
+    }
+    Ok(())
+}
+
+/// How long to sleep until the soonest future deadline, if any client has one.
+fn expiry_wait(runtime: &ManagementRuntime) -> Option<Duration> {
+    let product = runtime.store().load_product().ok()?;
+    let now = crate::state::now_seconds();
+    let soonest = product
+        .state
+        .clients
+        .values()
+        .filter(|record| record.settings.enabled.is_enabled())
+        .filter_map(|record| record.expires_at)
+        .filter(|deadline| *deadline > now)
+        .min()?;
+    Some(Duration::from_secs((soonest - now).max(1) as u64))
+}
+
 fn serve(
     runtime: ManagementRuntime,
     receiver: &mut mpsc::Receiver<WorkerCommand>,
     stopping: &AtomicBool,
 ) {
-    loop {
-        // A stop request discards the backlog rather than working through it:
-        // the worker is leaving, and every queued command would otherwise hold
-        // the state store open for as long as it took to answer them.
-        if stopping.load(Ordering::Acquire) {
-            break;
-        }
-        let Some(command) = receiver.blocking_recv() else {
-            break;
-        };
-        if stopping.load(Ordering::Acquire) {
-            break;
-        }
-        match command {
-            WorkerCommand::Health { reply } => {
-                // The projection cannot fail: it is derived from stored
-                // evidence, and an unreadable store degrades the projection
-                // rather than raising.
-                let _ = reply.send(Ok(runtime.health()));
+    // One current-thread timer. It exists so a stored deadline can wake this
+    // thread. It does not accept commands and it does not run a fixed loop.
+    let timer = match tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+    {
+        Ok(timer) => timer,
+        Err(_) => return,
+    };
+    timer.block_on(async {
+        loop {
+            // A stop request discards the backlog rather than working through it:
+            // the worker is leaving, and every queued command would otherwise hold
+            // the state store open for as long as it took to answer them.
+            if stopping.load(Ordering::Acquire) {
+                break;
             }
-            WorkerCommand::ProbeBackend { reply } => {
-                // Cannot fail by construction: the probe reports non-answer as a
-                // value, so a backend outage is not a worker fault.
-                let _ = reply.send(runtime.probe_backend());
+            // After startup, an expiry failure must not take the listener down.
+            // The next wake tries the same clients again.
+            let _ = expire_due(&runtime);
+            let command = if let Some(wait) = expiry_wait(&runtime) {
+                tokio::select! {
+                    biased;
+                    command = receiver.recv() => command,
+                    _ = tokio::time::sleep(wait) => continue,
+                }
+            } else {
+                receiver.recv().await
+            };
+            let Some(command) = command else {
+                break;
+            };
+            if stopping.load(Ordering::Acquire) {
+                break;
             }
-            WorkerCommand::SetAdminPassword {
-                username,
-                password,
-                reply,
-            } => {
-                let auth = AuthService::new(runtime.store());
-                let _ = reply.send(
-                    auth.set_password(&username, &password)
-                        .map(|principal| {
-                            auth.status()
-                                .ok()
-                                .flatten()
-                                .unwrap_or_else(|| status_from(&principal))
-                        })
-                        .map_err(AuthFailure::from),
-                );
-            }
-            WorkerCommand::Authenticate {
-                username,
-                password,
-                reply,
-            } => {
-                let auth = AuthService::new(runtime.store());
-                let _ = reply.send(
-                    auth.authenticate(&username, &password)
-                        .map_err(AuthFailure::from),
-                );
-            }
-            WorkerCommand::ResolveSession { presented, reply } => {
-                let auth = AuthService::new(runtime.store());
-                let _ = reply.send(auth.resolve_session(&presented).map_err(AuthFailure::from));
-            }
-            WorkerCommand::RevokeSession { presented, reply } => {
-                let auth = AuthService::new(runtime.store());
-                let _ = reply.send(auth.revoke_session(&presented).map_err(AuthFailure::from));
-            }
-            WorkerCommand::RevokeAllSessions {
-                principal_id,
-                reply,
-            } => {
-                let auth = AuthService::new(runtime.store());
-                let _ = reply.send(
-                    auth.revoke_all_sessions(principal_id)
-                        .map_err(AuthFailure::from),
-                );
-            }
-            WorkerCommand::PurgeExpiredSessions { reply } => {
-                let auth = AuthService::new(runtime.store());
-                let _ = reply.send(auth.purge_expired_sessions().map_err(AuthFailure::from));
-            }
-            WorkerCommand::AdminStatus { reply } => {
-                let auth = AuthService::new(runtime.store());
-                let _ = reply.send(auth.status().map_err(AuthFailure::from));
-            }
-            WorkerCommand::ProductSnapshot { reply } => {
-                let _ = reply.send(product_snapshot(&runtime));
-            }
-            WorkerCommand::ClientTelemetry { reply } => {
-                let _ = reply.send(client_telemetry(&runtime));
-            }
-            WorkerCommand::AuditPage { before, reply } => {
-                let _ = reply.send(audit_page(&runtime, before));
-            }
-            WorkerCommand::SetupServer { command, reply } => {
-                let service = ProductService::new(runtime.store());
-                let _ = reply.send(
-                    run_product_mutation(&runtime, || service.setup_server(command))
-                        .map(|(server, receipt)| SetupReply { server, receipt })
-                        .map_err(product_failure),
-                );
-            }
-            WorkerCommand::CreateClient { command, reply } => {
-                let service = ProductService::new(runtime.store());
-                let _ = reply.send(
-                    run_product_mutation(&runtime, || service.create_client(command))
-                        .map(|(client, receipt)| ClientMutationReply { client, receipt })
-                        .map_err(product_failure),
-                );
-            }
-            WorkerCommand::UpdateClient { command, reply } => {
-                let service = ProductService::new(runtime.store());
-                let _ = reply.send(
-                    run_product_mutation(&runtime, || service.update_client(command))
-                        .map(|(client, receipt)| ClientMutationReply { client, receipt })
-                        .map_err(product_failure),
-                );
-            }
-            WorkerCommand::SetClientEnabled { command, reply } => {
-                let service = ProductService::new(runtime.store());
-                let _ = reply.send(
-                    run_product_mutation(&runtime, || service.set_client_enabled(command))
-                        .map(|(client, receipt)| ClientMutationReply { client, receipt })
-                        .map_err(product_failure),
-                );
-            }
-            WorkerCommand::DeleteClient { command, reply } => {
-                let service = ProductService::new(runtime.store());
-                let _ = reply.send(
-                    (|| -> Result<ProductMutationReceipt, ProductCommandError> {
-                        let pending = service.delete_client(command)?;
+            match command {
+                WorkerCommand::Health { reply } => {
+                    // The projection cannot fail: it is derived from stored
+                    // evidence, and an unreadable store degrades the projection
+                    // rather than raising.
+                    let _ = reply.send(Ok(runtime.health()));
+                }
+                WorkerCommand::ProbeBackend { reply } => {
+                    // Cannot fail by construction: the probe reports non-answer as a
+                    // value, so a backend outage is not a worker fault.
+                    let _ = reply.send(runtime.probe_backend());
+                }
+                WorkerCommand::SetAdminPassword {
+                    username,
+                    password,
+                    reply,
+                } => {
+                    let auth = AuthService::new(runtime.store());
+                    let _ = reply.send(
+                        auth.set_password(&username, &password)
+                            .map(|principal| {
+                                auth.status()
+                                    .ok()
+                                    .flatten()
+                                    .unwrap_or_else(|| status_from(&principal))
+                            })
+                            .map_err(AuthFailure::from),
+                    );
+                }
+                WorkerCommand::Authenticate {
+                    username,
+                    password,
+                    reply,
+                } => {
+                    let auth = AuthService::new(runtime.store());
+                    let _ = reply.send(
+                        auth.authenticate(&username, &password)
+                            .map_err(AuthFailure::from),
+                    );
+                }
+                WorkerCommand::ResolveSession { presented, reply } => {
+                    let auth = AuthService::new(runtime.store());
+                    let _ = reply.send(auth.resolve_session(&presented).map_err(AuthFailure::from));
+                }
+                WorkerCommand::RevokeSession { presented, reply } => {
+                    let auth = AuthService::new(runtime.store());
+                    let _ = reply.send(auth.revoke_session(&presented).map_err(AuthFailure::from));
+                }
+                WorkerCommand::RevokeAllSessions {
+                    principal_id,
+                    reply,
+                } => {
+                    let auth = AuthService::new(runtime.store());
+                    let _ = reply.send(
+                        auth.revoke_all_sessions(principal_id)
+                            .map_err(AuthFailure::from),
+                    );
+                }
+                WorkerCommand::PurgeExpiredSessions { reply } => {
+                    let auth = AuthService::new(runtime.store());
+                    let _ = reply.send(auth.purge_expired_sessions().map_err(AuthFailure::from));
+                }
+                WorkerCommand::AdminStatus { reply } => {
+                    let auth = AuthService::new(runtime.store());
+                    let _ = reply.send(auth.status().map_err(AuthFailure::from));
+                }
+                WorkerCommand::ProductSnapshot { reply } => {
+                    let _ = reply.send(product_snapshot(&runtime));
+                }
+                WorkerCommand::ClientTelemetry { reply } => {
+                    let _ = reply.send(client_telemetry(&runtime));
+                }
+                WorkerCommand::NetworkPrerequisites { reply } => {
+                    let _ = reply.send(
                         runtime
-                            .reconcile_after_commit(pending.generation)
-                            .map_err(ProductCommandError::Runtime)
-                    })()
-                    .map_err(product_failure),
-                );
-            }
-            WorkerCommand::ClientConfig { client_id, reply } => {
-                let result = ProductService::new(runtime.store())
-                    .client_config_material(client_id)
-                    .and_then(|material| {
-                        crate::product::render_config(&material)
-                            .map_err(crate::product::ProductError::Artifact)
-                    })
-                    .map_err(|error| ProductFailure::classify(&error));
-                let _ = reply.send(result);
-            }
-            WorkerCommand::CreateEnrollmentLink {
-                principal_id,
-                client_id,
-                ttl_seconds,
-                reply,
-            } => {
-                let result = ProductService::new(runtime.store())
-                    .create_enrollment_link(principal_id, client_id, ttl_seconds)
-                    .map_err(|error| ProductFailure::classify(&error));
-                let _ = reply.send(result);
-            }
-            WorkerCommand::RevokeEnrollmentLink {
-                principal_id,
-                capability_id,
-                reply,
-            } => {
-                let result = ProductService::new(runtime.store())
-                    .revoke_enrollment_link(principal_id, capability_id)
-                    .map_err(|error| ProductFailure::classify(&error));
-                let _ = reply.send(result);
-            }
-            WorkerCommand::ConsumeEnrollment {
-                capability_id,
-                token,
-                reply,
-            } => {
-                let result = ProductService::new(runtime.store())
-                    .consume_enrollment_link(capability_id, &token)
-                    .map_err(|error| ProductFailure::classify(&error));
-                let _ = reply.send(result);
+                            .network_prerequisites()
+                            .map_err(|_| ProductFailure::StateUnavailable),
+                    );
+                }
+                WorkerCommand::AuditPage { before, reply } => {
+                    let _ = reply.send(audit_page(&runtime, before));
+                }
+                WorkerCommand::SetupServer { command, reply } => {
+                    let service = ProductService::new(runtime.store());
+                    let _ = reply.send(
+                        run_product_mutation(&runtime, || service.setup_server(command))
+                            .map(|(server, receipt)| SetupReply { server, receipt })
+                            .map_err(product_failure),
+                    );
+                }
+                WorkerCommand::CreateClient { command, reply } => {
+                    let service = ProductService::new(runtime.store());
+                    let _ = reply.send(
+                        run_product_mutation(&runtime, || service.create_client(command))
+                            .map(|(client, receipt)| ClientMutationReply { client, receipt })
+                            .map_err(product_failure),
+                    );
+                }
+                WorkerCommand::UpdateClient { command, reply } => {
+                    let service = ProductService::new(runtime.store());
+                    let _ = reply.send(
+                        run_product_mutation(&runtime, || service.update_client(command))
+                            .map(|(client, receipt)| ClientMutationReply { client, receipt })
+                            .map_err(product_failure),
+                    );
+                }
+                WorkerCommand::SetClientEnabled { command, reply } => {
+                    let service = ProductService::new(runtime.store());
+                    let _ = reply.send(
+                        run_product_mutation(&runtime, || service.set_client_enabled(command))
+                            .map(|(client, receipt)| ClientMutationReply { client, receipt })
+                            .map_err(product_failure),
+                    );
+                }
+                WorkerCommand::DeleteClient { command, reply } => {
+                    let service = ProductService::new(runtime.store());
+                    let _ = reply.send(
+                        (|| -> Result<ProductMutationReceipt, ProductCommandError> {
+                            let pending = service.delete_client(command)?;
+                            runtime
+                                .reconcile_after_commit(pending.generation)
+                                .map_err(ProductCommandError::Runtime)
+                        })()
+                        .map_err(product_failure),
+                    );
+                }
+                WorkerCommand::ClientConfig { client_id, reply } => {
+                    let result = ProductService::new(runtime.store())
+                        .client_config_material(client_id)
+                        .and_then(|material| {
+                            crate::product::render_config(&material)
+                                .map_err(crate::product::ProductError::Artifact)
+                        })
+                        .map_err(|error| ProductFailure::classify(&error));
+                    let _ = reply.send(result);
+                }
+                WorkerCommand::CreateEnrollmentLink {
+                    principal_id,
+                    client_id,
+                    ttl_seconds,
+                    reply,
+                } => {
+                    let result = ProductService::new(runtime.store())
+                        .create_enrollment_link(principal_id, client_id, ttl_seconds)
+                        .map_err(|error| ProductFailure::classify(&error));
+                    let _ = reply.send(result);
+                }
+                WorkerCommand::RevokeEnrollmentLink {
+                    principal_id,
+                    capability_id,
+                    reply,
+                } => {
+                    let result = ProductService::new(runtime.store())
+                        .revoke_enrollment_link(principal_id, capability_id)
+                        .map_err(|error| ProductFailure::classify(&error));
+                    let _ = reply.send(result);
+                }
+                WorkerCommand::ConsumeEnrollment {
+                    capability_id,
+                    token,
+                    reply,
+                } => {
+                    let result = ProductService::new(runtime.store())
+                        .consume_enrollment_link(capability_id, &token)
+                        .map_err(|error| ProductFailure::classify(&error));
+                    let _ = reply.send(result);
+                }
             }
         }
-    }
+    });
     // Falling out of the loop drops `runtime`, which closes the state store.
 }
 
@@ -1484,6 +1575,10 @@ mod tests {
                 },
                 route_policy: Default::default(),
                 dns_servers: Vec::new(),
+                expires_at: None,
+                expiry_state: crate::product::ExpiryState::None,
+                preshared_key_configured: false,
+                mtu: None,
             })
             .collect();
         let observed = crate::wireguard::ObservedWireGuardDevice {

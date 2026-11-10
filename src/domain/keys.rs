@@ -18,6 +18,19 @@ impl fmt::Debug for WireGuardKeyPair {
     }
 }
 
+/// A WireGuard preshared key from the same CSPRNG the identity keys use.
+///
+/// The bytes are not an X25519 secret. They are 32 random octets, which is
+/// the preshared-key shape WireGuard stores. The temporary buffer is wiped
+/// before this returns.
+pub fn generate_preshared_key() -> Result<super::PresharedKey, KeyError> {
+    let secret = StaticSecret::random();
+    let mut bytes = secret.to_bytes();
+    let encoded = STANDARD.encode(bytes);
+    bytes.zeroize();
+    super::PresharedKey::new(encoded)
+}
+
 pub fn generate_keypair() -> Result<WireGuardKeyPair, KeyError> {
     let secret = StaticSecret::random();
     let public = X25519PublicKey::from(&secret);

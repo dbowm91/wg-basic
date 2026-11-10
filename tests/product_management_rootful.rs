@@ -459,6 +459,9 @@ impl Installation {
                 route_policy: None,
                 dns_servers: Vec::new(),
                 client_keepalive_seconds: None,
+                expires_at: None,
+                preshared_key: None,
+                mtu: None,
             })
             .await
             .unwrap_or_else(|error| panic!("client create failed: {error:?}"))
@@ -509,6 +512,9 @@ async fn a_created_client_becomes_a_real_kernel_peer() {
             route_policy: None,
             dns_servers: Vec::new(),
             client_keepalive_seconds: None,
+            expires_at: None,
+            preshared_key: None,
+            mtu: None,
         })
         .await
         .unwrap_or_else(|error| panic!("create failed: {error:?}"));
@@ -1837,6 +1843,7 @@ async fn disabling_removes_the_real_peer_and_re_enabling_restores_the_same_one()
             expected_generation: installation.store.current_generation().unwrap(),
             client_id: client.client_id,
             enabled: wg_basic::product::ClientEnabled::Disabled,
+            expires_at: None,
         })
         .await
         .expect("disable");
@@ -1875,6 +1882,7 @@ async fn disabling_removes_the_real_peer_and_re_enabling_restores_the_same_one()
             expected_generation: installation.store.current_generation().unwrap(),
             client_id: client.client_id,
             enabled: wg_basic::product::ClientEnabled::Enabled,
+            expires_at: None,
         })
         .await
         .expect("enable");
@@ -1983,6 +1991,9 @@ async fn a_backend_outage_after_commit_is_committed_but_degraded_and_restart_con
             route_policy: None,
             dns_servers: Vec::new(),
             client_keepalive_seconds: None,
+            expires_at: None,
+            preshared_key: None,
+            mtu: None,
         })
         .await
         .expect("the commit must succeed even with the backend down");

@@ -186,7 +186,7 @@ fn a_real_v1_database_upgrades_to_head_and_preserves_desired_state() {
     let store = StateStore::open(scratch.db()).expect("the v1 database upgrades");
     assert_eq!(
         store.schema_version().unwrap(),
-        8,
+        wg_basic::state::current_schema_version(),
         "a v1 file upgrades all the way to head, not one step at a time"
     );
 
@@ -241,7 +241,10 @@ fn the_upgrade_takes_a_recovery_snapshot_holding_the_v1_schema() {
         "the snapshot must hold the *pre-migration* schema"
     );
     // The live file has moved on; the snapshot has not.
-    assert_eq!(user_version_of(&scratch.db()), 8);
+    assert_eq!(
+        user_version_of(&scratch.db()),
+        wg_basic::state::current_schema_version()
+    );
 }
 
 #[test]

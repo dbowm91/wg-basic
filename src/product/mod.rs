@@ -25,10 +25,10 @@ pub use model::{
     AuditEventId, AuditOutcome, AuditPage, AuditResourceKind, ClientEnabled, ClientLabel,
     ClientLabelError, ClientObservationStatus, ClientProductSettings, ClientTelemetry,
     ClientTelemetrySnapshot, DegradedCategory, EnforcementState, EnrollmentCapabilityId,
-    ProductClient, ProductMutationReceipt, ProductServer, MAX_ADVERTISED_HOST_BYTES,
-    MAX_CLIENT_LABEL_BYTES,
+    ExpiryState, ProductClient, ProductMutationReceipt, ProductServer, MAX_ADVERTISED_HOST_BYTES,
+    MAX_CLIENT_LABEL_BYTES, MAX_CLIENT_MTU, MIN_CLIENT_MTU,
 };
 pub use service::{
-    ClientCreateCommand, ClientDeleteCommand, ClientUpdateCommand, ProductError, ProductService,
-    ServerSetupCommand, SetClientEnabledCommand, SetupResult,
+    ClientCreateCommand, ClientDeleteCommand, ClientUpdateCommand, PresharedKeyRequest,
+    ProductError, ProductService, ServerSetupCommand, SetClientEnabledCommand, SetupResult,
 };

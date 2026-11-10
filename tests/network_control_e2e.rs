@@ -511,6 +511,7 @@ fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
             server_private.clone(),
             DesiredManagedPeer {
                 public_key: client_public.clone(),
+                preshared_key: None,
                 allowed_ips: vec![
                     "10.8.0.2/32".parse().unwrap(),
                     "2001:db8:42::2/128".parse().unwrap(),
@@ -534,6 +535,7 @@ fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
             client_private.clone(),
             DesiredManagedPeer {
                 public_key: server_public.clone(),
+                preshared_key: None,
                 allowed_ips: vec!["0.0.0.0/0".parse().unwrap(), "::/0".parse().unwrap()],
                 persistent_keepalive_seconds: Some(25),
                 endpoint: Some("192.0.2.1:51820".parse().unwrap()),

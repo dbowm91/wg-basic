@@ -1,5 +1,11 @@
 # Client configuration and enrollment
 
+A managed client may carry `expires_at`, a Unix-second deadline on the
+management worker's clock. Null means the client does not expire. When the
+deadline is due, the worker disables that client and leaves the row, the
+addresses, and the keys in place. The clock is the authority. The product
+does not detect NTP. A disabled client's config can still be exported.
+
 An authenticated administrator can download a managed client's standard
 WireGuard configuration or request a local SVG QR encoding of that exact
 configuration. Both artifact responses are marked `Cache-Control: no-store`;
@@ -11,6 +17,13 @@ a managed server IPv6 tunnel range and an IPv6 address assigned to that client;
 assigning an IPv6 address alone never enables IPv6 routes. Route policies are
 limited to 64 unique unicast prefixes. Export preserves the selected routes,
 DNS addresses, and a bracketed IPv6 endpoint literal where configured.
+A stored client MTU is written as `MTU = <n>` after the `Address` lines and
+before `DNS`. Null omits the line. The QR code encodes that same text. The
+server interface MTU is not changed, and a device must re-import the file to
+pick up a new value. A preshared key is present in the `[Peer]` section only
+when one is stored. The client summary says whether one is configured and
+does not contain the key. Generating or clearing it replaces the export, so
+the device must re-import.
 Hosted namespace qualification covers IPv4 and IPv6 full-tunnel traffic and
 split-prefix positive/negative traffic. The server's IPv6 path is routed with
 an explicit upstream return route and no NAT66; a saved route policy does not

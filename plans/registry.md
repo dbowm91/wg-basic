@@ -6,6 +6,8 @@ Last planning reconciliation: 2026-10-21 (macOS **scope decision — native Inte
 
 This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
 
+Operator parity closed on 2026-11-10 on the uncommitted tree at baseline `a9b0c06`. M001–M004 are closed. Deferred roadmap items stay deferred. C015 is unchanged. See §4C.
+
 ## 1. Canonical planning authority
 
 | Document | Role |
@@ -76,6 +78,7 @@ Runtime dependency adoption remains evidence-driven.
 | Distribution/install/update | closed (technical) | `plans/subsystems/distribution-install-update-roadmap.md` | M001–M005 closed; production release remains blocked on signing |
 | IPv6/route-policy qualification | closed | `plans/subsystems/ipv6-route-policy-roadmap.md` | M001–M004 closed; `plans/closure/ipv6-route-policy/004-status.md` |
 | Release readiness and supply-chain security | closed (R004b waived; checksums-only releases) | `plans/subsystems/release-readiness-security-roadmap.md` | R001–R004a closed; waiver `004b-waiver-status.md` |
+| Operator parity (Linux and Apple silicon) | closed 2026-11-10; M001–M004 closed; deferred items remain deferred; no macOS release | `plans/subsystems/operator-parity-roadmap.md` | Closures `plans/closure/operator-parity/001-status.md` through `004-status.md`. Linux untouched setup stays a gateway. macOS untouched setup is host-only. The product does not write Darwin forwarding or `/etc/pf.conf`. C015 is unchanged. |
 | Headless macOS native server/gateway | active; low-level M001–M004 qualified; C001/C002 **closed** 2026-10-21 on their Apple silicon controlled-host evidence; C003 **closed** 2026-10-22 on a controlled-host routed-LAN qualification and a controlled-host Linux rootful qualification; C006, C007, C008 closed; C010 closed; C011 conditionally closed; C012 closed; C013 closed; **C004 closed** 2026-10-23 on a controlled-host gateway qualification with real translated and untranslated packet evidence; **C014 closed** 2026-10-23; **C016 closed** 2026-10-25; C015 ready; M005–M007 blocked | `plans/subsystems/macos-native-server-roadmap.md` + `plans/subsystems/macos-native-server-corrective-roadmap.md` | C001 **closed** 2026-10-21 — the Apple silicon product path against an off-host Linux-kernel peer is closed with observed evidence; the native Intel arch of the same path was retired by scope under ADR-009. C002 **closed** 2026-10-21 — the three-phase cold-reboot qualification was run end to end on a disposable arm64 macOS guest and passes with the reboot observed; the native Intel arch of the same leg was retired by scope under ADR-009. C006 **closed** 2026-10-21 — the two boot-path defects the C002 leg exposed are corrected and the leg re-run to a pass. C007 **closed** 2026-10-21 — the PF attachment verifier is exact and per rule class. C008 **closed** 2026-10-21 — the helper's build input is declared, immutable, and provenanced. C010 **closed** 2026-10-21 — Apple silicon only as the Darwin target. C003 **closed** 2026-10-22 — the routed-LAN contract is qualified on a controlled host, its two findings are corrected by C011, its own Linux breakage by C012, and its Linux rootful half is evidenced natively on a controlled Linux host. C011 **conditionally closed** 2026-10-22. C012 **closed** 2026-10-22. C013 **closed** 2026-10-22 — the hosted live qualification asserts only what it can measure, and the product's own interface observation is fallible and named. C004 **closed** 2026-10-23 — the product's macOS PF observation became a bounded, installation-scoped write path over one anchor and one anchor file, and the controlled-host run carried real traffic through it: the IPv4 far side observed the **translated** source, the IPv6 far side the **untranslated** one, and the teardown emptied the anchor's two rule classes and left the administrator's parent in place; the mechanism was measured against the real `pfctl` before it was implemented, and the measurement corrected the plan twice. **C014 closed** 2026-10-23 — C003's routed-LAN fixture now measures its own restoration, and two runs on the same guest with no PF reset between them leave the main filter and NAT rulesets byte-identical to the baseline. **C016 closed** 2026-10-25 — the line's repository state is clean: the 530 generated agent transcripts and the stray `.DS_Store` are gone and ignored, the published WireGuard key-conversion vector is named as a test vector instead of reading as a credential, and the dependency audit passes — `ctutils` and `tokio` moved inside their existing requirements, and the three `zip` advisories are accepted with a written reason because they describe archive extraction this product never performs. **C017 closed** 2026-10-25 — C016's secret-scan remedy did not clear the finding: its split left a sixty-one character run, which is still one high-entropy token behind the `private_key=` keyword, and its scan configuration never reached the default branch, which is where GitGuardian's app reads the file that governs a scan. The tip's vector is now written in pieces of at most fifteen characters, below the detector's sixteen-character minimum, and every published value the app can report is named in the scan configuration that `main` now carries. C015 ready — the macOS managed interface's own teardown is refused; C005 open. M003/M004 native runner `38524007872` does not prove product runtime; macOS MUST NOT release |
 
 Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
@@ -158,10 +161,27 @@ Staged host-only/routed capability does **not** automatically permit a macOS rel
 
 Explicit macOS stop gate: Apple TN3165 warns PF is not an API for broad product use. PF anchor/NAT capability for advanced-admin deployments must be documented, qualified and approved separately before advertising full macOS gateway support. Do not modify foreign PF configuration automatically or accept compilation as networking evidence. Linux remains canonical and strictly qualified.
 
+## 4C. Operator parity handoff (2026-11-10)
+
+Roadmap: `plans/subsystems/operator-parity-roadmap.md`. Baseline `a9b0c06`. This line is the wg-easy operator loop on the two target systems. It does not reopen ADR-008, does not authorize a macOS release, and does not replace C015.
+
+| Milestone | Status | Plan |
+|---|---|---|
+| M001 platform-honest setup | **closed** 2026-11-10 | `plans/implementation/operator-parity/001-platform-honest-setup.md`; closure `plans/closure/operator-parity/001-status.md` |
+| M002 client expiration | **closed** 2026-11-10 | `plans/implementation/operator-parity/002-client-expiration.md`; closure `plans/closure/operator-parity/002-status.md` |
+| M003 server-generated preshared keys | **closed** 2026-11-10 | `plans/implementation/operator-parity/003-client-preshared-keys.md`; closure `plans/closure/operator-parity/003-status.md` |
+| M004 client MTU in the exported config | **closed** 2026-11-10 | `plans/implementation/operator-parity/004-client-mtu.md`; closure `plans/closure/operator-parity/004-status.md` |
+
+Hooks, charts, Prometheus, 2FA, OIDC, a browser password change, server-interface MTU, and a product-written Darwin parent ruleset are deferred in the roadmap with reasons. An implementation that sets a Darwin forwarding sysctl or edits `/etc/pf.conf` is a stop, not a completion of M001.
+
 ## 5. Implementation plan status (including external gates)
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
 |---|---|---|---|---|
+| Operator parity | M001 platform-honest setup | **closed** 2026-11-10 | `plans/implementation/operator-parity/001-platform-honest-setup.md` | `plans/closure/operator-parity/001-status.md`. Historical setup body stays a gateway. |
+| Operator parity | M002 client expiration | **closed** 2026-11-10 | `plans/implementation/operator-parity/002-client-expiration.md` | `plans/closure/operator-parity/002-status.md`. Schema 9. One deadline wake. Not a poll. |
+| Operator parity | M003 preshared keys | **closed** 2026-11-10 | `plans/implementation/operator-parity/003-client-preshared-keys.md` | `plans/closure/operator-parity/003-status.md`. No migration. Both wire encoders project set and clear. |
+| Operator parity | M004 client MTU | **closed** 2026-11-10 | `plans/implementation/operator-parity/004-client-mtu.md` | `plans/closure/operator-parity/004-status.md`. Schema 10. Export line only. No server link MTU. |
 | Release readiness/security | R001 workflow input/provenance hardening | **closed at `1e034d0`** | `plans/implementation/release-readiness/001-release-workflow-input-and-provenance-hardening.md` | Exact-head CI `38108270370` + Distribution `38108270368` green; live preflight deferred to R004 |
 | Release readiness/security | R002 offline signing and trust root | closed (non-secret engineering) at `1e034d0` | `plans/implementation/release-readiness/002-production-trust-root-and-offline-signing-ceremony.md` | Single-maintainer ceremony; production key/draft are R004 operations |
 | Release readiness/security | R003 verified first-install trust | closed (repository engineering) at `1e034d0` | `plans/implementation/release-readiness/003-bootstrap-installer-trust-and-root-execution-boundary.md` | First signed install is R004 evidence |
@@ -184,6 +204,13 @@ M004 and its corrective slices are closed: `plans/closure/distribution/004-statu
 
 ## 7. Recently closed work
 
+- Operator parity M001–M004 **closed** 2026-11-10 on the uncommitted tree at
+  baseline `a9b0c06`. Linux untouched setup stays a gateway. macOS untouched
+  setup is host-only, and the product does not write Darwin forwarding or
+  `/etc/pf.conf`. Schema head is 10. Client expiry, server-generated preshared
+  keys, and a client MTU export line are in the product path. Closures
+  `plans/closure/operator-parity/001-status.md` through `004-status.md`.
+  Deferred roadmap items and C015 are unchanged. No macOS release.
 - macOS C001 **closed** 2026-10-21: production Darwin host-only
   wiring implemented at `b53ce2d` — the Darwin `WireGuardBackend` with a
   durable runtime registry and a *joint* ownership proof (process executable

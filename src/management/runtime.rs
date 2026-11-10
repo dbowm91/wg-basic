@@ -419,6 +419,188 @@ impl ManagementRuntime {
             _ => Err(ManagementError::UnexpectedResponse),
         }
     }
+
+    /// Reads the current network prerequisites through the existing plan opcode.
+    ///
+    /// This never applies. A store that cannot be read is an error. A netd
+    /// that cannot be reached, or that refuses the plan, is still a reply:
+    /// the caller renders that as an observation rather than a failure.
+    pub fn network_prerequisites(&self) -> Result<NetworkPrerequisites, ManagementError> {
+        let metadata = self.store.installation_metadata()?;
+        let loaded = self.store.load()?;
+        let projected = project(
+            &loaded.state,
+            metadata.installation_id,
+            &ClientVisibility::all_enabled(),
+        )
+        .ok();
+        let interface = projected
+            .as_ref()
+            .and_then(|intent| intent.interface_names.first().cloned())
+            .or_else(|| crate::domain::InterfaceName::new("wg0").ok())
+            .expect("wg0 is a valid interface name");
+        let policy = projected.and_then(|intent| intent.network_policy);
+        let response = crate::protocol::request(
+            &self.socket,
+            RequestOperation::PlanNetworkPolicy {
+                installation_id: metadata.installation_id,
+                wireguard_interface: interface,
+                policy,
+            },
+            u64::MAX - 2,
+        );
+        Ok(assemble_network_prerequisites(
+            metadata.installation_id,
+            response,
+        ))
+    }
+}
+
+/// How many filter rules a prerequisite reply will carry.
+///
+/// A routed LAN names at most sixteen destinations. The cap is several times
+/// that, so a normal policy is complete and a runaway render cannot fill the
+/// response.
+const MAX_PREREQUISITE_FILTER_RULES: usize = 128;
+
+/// What the host reported for one forwarding family.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ForwardingObservation {
+    Enabled,
+    Disabled,
+    NotObserved,
+}
+
+/// Why a plan could not be read. Absent when the plan itself was returned.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrerequisiteRefusal {
+    Conflict,
+    Unsupported,
+}
+
+/// The three administrator lines a macOS parent ruleset has to contain.
+///
+/// Linux replies omit this. The lines are the product's rendered text. The
+/// product does not write them.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub struct OperatorAttachmentView {
+    pub nat_anchor: String,
+    pub filter_anchor: String,
+    pub load_anchor: String,
+    /// The order the two sections and the load line require.
+    pub sections: [&'static str; 3],
+    pub anchor_file: String,
+}
+
+/// The authenticated prerequisite snapshot.
+///
+/// `host_platform` is the platform this binary was built for. Forwarding
+/// values come from the plan, and `not_observed` means the read did not
+/// happen. A missing netd does not become a fabricated ready verdict.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub struct NetworkPrerequisites {
+    pub host_platform: &'static str,
+    pub ipv4_forwarding: ForwardingObservation,
+    pub ipv6_forwarding: ForwardingObservation,
+    pub attachment: Option<OperatorAttachmentView>,
+    pub gateway: Option<crate::firewall::GatewayVerdict>,
+    pub routed_lan: Option<crate::firewall::RoutedLanVerdict>,
+    pub required_filter_rules: Vec<String>,
+    pub refusal: Option<PrerequisiteRefusal>,
+}
+
+fn host_platform() -> &'static str {
+    if cfg!(target_os = "linux") {
+        "linux"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "unknown"
+    }
+}
+
+fn forwarding_observation(value: Option<bool>) -> ForwardingObservation {
+    match value {
+        Some(true) => ForwardingObservation::Enabled,
+        Some(false) => ForwardingObservation::Disabled,
+        None => ForwardingObservation::NotObserved,
+    }
+}
+
+fn operator_attachment_view(installation_id: InstallationId) -> Option<OperatorAttachmentView> {
+    #[cfg(target_os = "macos")]
+    {
+        let anchor = crate::firewall::anchor_name(installation_id);
+        let anchor_file = crate::firewall::anchor_file_path(&anchor);
+        let lines =
+            crate::firewall::operator_attachment(&anchor, &anchor_file.display().to_string());
+        Some(OperatorAttachmentView {
+            nat_anchor: lines.nat_anchor,
+            filter_anchor: lines.filter_anchor,
+            load_anchor: lines.load_anchor,
+            sections: ["translation", "filtering", "load"],
+            anchor_file: anchor_file.display().to_string(),
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = installation_id;
+        None
+    }
+}
+
+/// Turns one plan round-trip into the operator snapshot.
+///
+/// A conflict or an unsupported backend is named. Every other failure,
+/// including a missing netd, leaves forwarding unobserved and names no
+/// verdict.
+pub fn assemble_network_prerequisites(
+    installation_id: InstallationId,
+    response: Result<ResponseBody, std::io::Error>,
+) -> NetworkPrerequisites {
+    let attachment = operator_attachment_view(installation_id);
+    let blank = NetworkPrerequisites {
+        host_platform: host_platform(),
+        ipv4_forwarding: ForwardingObservation::NotObserved,
+        ipv6_forwarding: ForwardingObservation::NotObserved,
+        attachment,
+        gateway: None,
+        routed_lan: None,
+        required_filter_rules: Vec::new(),
+        refusal: None,
+    };
+    let summary = match response {
+        Ok(ResponseBody::NetworkPolicyPlan(summary)) => summary,
+        Ok(_) => {
+            return NetworkPrerequisites {
+                refusal: Some(PrerequisiteRefusal::Unsupported),
+                ..blank
+            };
+        }
+        Err(error) => {
+            let classified = classify_io(error);
+            let refusal = match classified {
+                ManagementError::Conflict => Some(PrerequisiteRefusal::Conflict),
+                ManagementError::Rejected | ManagementError::Unauthorized => {
+                    Some(PrerequisiteRefusal::Unsupported)
+                }
+                _ => None,
+            };
+            return NetworkPrerequisites { refusal, ..blank };
+        }
+    };
+    let mut required_filter_rules = summary.required_filter_rules;
+    required_filter_rules.truncate(MAX_PREREQUISITE_FILTER_RULES);
+    NetworkPrerequisites {
+        ipv4_forwarding: forwarding_observation(summary.observed_ipv4_forwarding),
+        ipv6_forwarding: forwarding_observation(summary.observed_ipv6_forwarding),
+        gateway: summary.gateway,
+        routed_lan: summary.routed_lan,
+        required_filter_rules,
+        ..blank
+    }
 }
 
 fn request_id(generation: DesiredGeneration) -> u64 {
@@ -679,5 +861,112 @@ mod tests {
             client_routes: Default::default(),
             network_policy: None,
         }
+    }
+
+    fn summary(
+        gateway: Option<crate::firewall::GatewayVerdict>,
+        routed_lan: Option<crate::firewall::RoutedLanVerdict>,
+        ipv4: Option<bool>,
+        rules: Vec<String>,
+    ) -> crate::firewall::FirewallPlanSummary {
+        crate::firewall::FirewallPlanSummary {
+            wireguard_interface: crate::domain::InterfaceName::new("wg0").unwrap(),
+            actions: Vec::new(),
+            warnings: Vec::new(),
+            required_filter_rules: rules,
+            routed_lan,
+            gateway,
+            observed_ipv4_forwarding: ipv4,
+            observed_ipv6_forwarding: None,
+        }
+    }
+
+    #[test]
+    fn prerequisites_name_verdicts_and_do_not_invent_a_ready_state() {
+        let id = InstallationId::new();
+        let ready = assemble_network_prerequisites(
+            id,
+            Ok(crate::protocol::ResponseBody::NetworkPolicyPlan(summary(
+                Some(crate::firewall::GatewayVerdict::Ready),
+                None,
+                Some(true),
+                Vec::new(),
+            ))),
+        );
+        match ready.host_platform {
+            "linux" => assert!(ready.attachment.is_none()),
+            "macos" => {
+                let attachment = ready.attachment.expect("macos names the parent lines");
+                assert_eq!(attachment.sections, ["translation", "filtering", "load"]);
+            }
+            other => panic!("unexpected platform {other}"),
+        }
+        assert_eq!(ready.ipv4_forwarding, ForwardingObservation::Enabled);
+        assert_eq!(ready.ipv6_forwarding, ForwardingObservation::NotObserved);
+        assert_eq!(ready.gateway, Some(crate::firewall::GatewayVerdict::Ready));
+        assert!(ready.refusal.is_none());
+
+        let disabled = assemble_network_prerequisites(
+            id,
+            Ok(crate::protocol::ResponseBody::NetworkPolicyPlan(summary(
+                Some(crate::firewall::GatewayVerdict::ForwardingDisabled),
+                None,
+                Some(false),
+                Vec::new(),
+            ))),
+        );
+        assert_eq!(
+            disabled.gateway,
+            Some(crate::firewall::GatewayVerdict::ForwardingDisabled)
+        );
+        assert_eq!(disabled.ipv4_forwarding, ForwardingObservation::Disabled);
+
+        let missing = assemble_network_prerequisites(
+            id,
+            Ok(crate::protocol::ResponseBody::NetworkPolicyPlan(summary(
+                Some(crate::firewall::GatewayVerdict::AttachmentMissing),
+                Some(crate::firewall::RoutedLanVerdict::Ready),
+                None,
+                (0..200).map(|index| format!("rule {index}")).collect(),
+            ))),
+        );
+        assert_eq!(
+            missing.gateway,
+            Some(crate::firewall::GatewayVerdict::AttachmentMissing)
+        );
+        assert_eq!(
+            missing.routed_lan,
+            Some(crate::firewall::RoutedLanVerdict::Ready)
+        );
+        assert_eq!(missing.required_filter_rules.len(), 128);
+        assert_eq!(missing.ipv4_forwarding, ForwardingObservation::NotObserved);
+
+        let conflict = assemble_network_prerequisites(
+            id,
+            Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                crate::protocol::ProtocolError::Conflict,
+            )),
+        );
+        assert_eq!(conflict.refusal, Some(PrerequisiteRefusal::Conflict));
+        assert!(conflict.gateway.is_none());
+        assert_eq!(conflict.ipv4_forwarding, ForwardingObservation::NotObserved);
+
+        let unsupported = assemble_network_prerequisites(
+            id,
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                crate::protocol::ProtocolError::UnsupportedBackend,
+            )),
+        );
+        assert_eq!(unsupported.refusal, Some(PrerequisiteRefusal::Unsupported));
+
+        let down = assemble_network_prerequisites(
+            id,
+            Err(std::io::Error::from(std::io::ErrorKind::ConnectionRefused)),
+        );
+        assert!(down.refusal.is_none());
+        assert!(down.gateway.is_none());
+        assert_eq!(down.ipv4_forwarding, ForwardingObservation::NotObserved);
     }
 }

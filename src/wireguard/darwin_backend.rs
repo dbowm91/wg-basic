@@ -783,8 +783,8 @@ fn validation_failure_name(error: &WireGuardValidationError) -> &'static str {
 
 /// Maps one helper `get=1` dump onto the portable observed device.
 /// The helper reports the device private key; it is a secret. It is converted
-/// to the device public key and dropped immediately. The per-peer preshared
-/// key is never read at all.
+/// to the device public key and dropped immediately. A per-peer preshared key
+/// is reduced to a presence flag and the bytes are not stored.
 pub fn parse_uapi_device(
     interface: &InterfaceName,
     device: &UapiDevice,
@@ -826,6 +826,7 @@ pub fn parse_uapi_device(
                     handshake_nanos: 0,
                     tx_bytes: None,
                     rx_bytes: None,
+                    preshared_key_configured: false,
                 });
             }
             "endpoint" => {
@@ -867,8 +868,18 @@ pub fn parse_uapi_device(
                     peer.rx_bytes = value.parse().ok();
                 }
             }
-            // The per-peer preshared key is a secret and is never read.
-            "preshared_key" => {}
+            // The key bytes are a secret and are never stored. Presence of a
+            // non-zero key is the only fact the planner can compare.
+            "preshared_key" => {
+                if let Some(peer) = current.as_mut() {
+                    let trimmed = value.trim();
+                    peer.preshared_key_configured = trimmed.len() == 64
+                        && trimmed
+                            .chars()
+                            .all(|character| character.is_ascii_hexdigit())
+                        && trimmed.chars().any(|character| character != '0');
+                }
+            }
             _ => {}
         }
     }
@@ -895,6 +906,7 @@ struct PeerObservation {
     handshake_nanos: u32,
     tx_bytes: Option<u64>,
     rx_bytes: Option<u64>,
+    preshared_key_configured: bool,
 }
 
 impl PeerObservation {
@@ -909,6 +921,7 @@ impl PeerObservation {
             latest_handshake,
             rx_bytes: self.rx_bytes,
             tx_bytes: self.tx_bytes,
+            preshared_key_configured: self.preshared_key_configured,
         }
     }
 }
@@ -1231,6 +1244,61 @@ mod tests {
         assert!(!rendered.contains("endpoint="));
         assert!(!rendered.contains("persistent_keepalive_interval="));
         assert!(rendered.ends_with("\n\n"));
+    }
+
+    #[test]
+    fn preshared_key_set_and_clear_are_rendered_and_only_presence_is_parsed() {
+        let public_key =
+            PublicKey::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".into()).unwrap();
+        let key =
+            crate::domain::PresharedKey::new("AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=".into())
+                .unwrap();
+        let set = render_uapi_patch(&WireGuardDevicePatch {
+            private_key: FieldUpdate::Keep,
+            listen_port: FieldUpdate::Keep,
+            peer: Some(PeerMutation::Update(WireGuardPeerPatch {
+                public_key: public_key.clone(),
+                preshared_key: FieldUpdate::Set(key),
+                allowed_ips: FieldUpdate::Keep,
+                persistent_keepalive_seconds: FieldUpdate::Keep,
+                endpoint: FieldUpdate::Keep,
+            })),
+        })
+        .unwrap();
+        assert!(set.contains("preshared_key="));
+        assert!(!set.contains(&"0".repeat(64)));
+        let clear = render_uapi_patch(&WireGuardDevicePatch {
+            private_key: FieldUpdate::Keep,
+            listen_port: FieldUpdate::Keep,
+            peer: Some(PeerMutation::Update(WireGuardPeerPatch {
+                public_key,
+                preshared_key: FieldUpdate::Clear,
+                allowed_ips: FieldUpdate::Keep,
+                persistent_keepalive_seconds: FieldUpdate::Keep,
+                endpoint: FieldUpdate::Keep,
+            })),
+        })
+        .unwrap();
+        assert!(clear.contains(&format!("preshared_key={}\n", "0".repeat(64))));
+        let present = parse_uapi_device(
+            &interface(),
+            &dump(&[
+                ("public_key", &"ab".repeat(32)),
+                ("preshared_key", &"01".repeat(32)),
+            ]),
+        )
+        .unwrap();
+        assert!(present.peers[0].preshared_key_configured);
+        assert!(!format!("{present:?}").contains("01".repeat(8)));
+        let absent = parse_uapi_device(
+            &interface(),
+            &dump(&[
+                ("public_key", &"ab".repeat(32)),
+                ("preshared_key", &"00".repeat(32)),
+            ]),
+        )
+        .unwrap();
+        assert!(!absent.peers[0].preshared_key_configured);
     }
 
     #[test]

@@ -130,6 +130,8 @@ impl FirewallService {
                     required_filter_rules: Vec::new(),
                     routed_lan: None,
                     gateway: Some(verdict),
+                    observed_ipv4_forwarding: host_forwarding_state().0,
+                    observed_ipv6_forwarding: host_forwarding_state().1,
                 })
             }
             NetworkPolicyMode::RoutedLan => {
@@ -145,6 +147,8 @@ impl FirewallService {
                         .unwrap_or_default(),
                     routed_lan: Some(verdict),
                     gateway: None,
+                    observed_ipv4_forwarding: host_forwarding_state().0,
+                    observed_ipv6_forwarding: host_forwarding_state().1,
                 })
             }
         }
@@ -521,6 +525,8 @@ fn empty_plan(wireguard_interface: &InterfaceName) -> FirewallPlanSummary {
         required_filter_rules: Vec::new(),
         routed_lan: None,
         gateway: None,
+        observed_ipv4_forwarding: host_forwarding_state().0,
+        observed_ipv6_forwarding: host_forwarding_state().1,
     }
 }
 

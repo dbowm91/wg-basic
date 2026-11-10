@@ -1129,13 +1129,14 @@ fn a_migration_fixture_is_a_real_v1_database() {
         "a test-only schema marker must not survive into the migration list"
     );
     let list = code_only(migrations);
+    // The comma is part of the match so version 10 does not count as version 1.
     assert_eq!(
-        list.matches("version: 1").count(),
+        list.matches("version: 1,").count(),
         1,
         "migration 1 appears exactly once in the production list"
     );
     assert_eq!(
-        list.matches("version: 2").count(),
+        list.matches("version: 2,").count(),
         1,
         "migration 2 appears exactly once in the production list"
     );

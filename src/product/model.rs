@@ -315,6 +315,36 @@ impl ClientEnabled {
     }
 }
 
+/// Lowest MTU a client config may request.
+///
+/// 1280 is the IPv6 minimum that still carries a tunnel.
+pub const MIN_CLIENT_MTU: u16 = 1280;
+
+/// Highest MTU a client config may request.
+///
+/// 9000 covers a jumbo frame. Larger integers are not an MTU this product stores.
+pub const MAX_CLIENT_MTU: u16 = 9000;
+
+/// Whether a stored client deadline has fired.
+///
+/// Derived when the summary is read. It is not a second stored fact.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExpiryState {
+    None,
+    Scheduled,
+    Expired,
+}
+
+/// Classifies a stored deadline against the worker clock.
+pub fn expiry_state(expires_at: Option<i64>, now: i64) -> ExpiryState {
+    match expires_at {
+        None => ExpiryState::None,
+        Some(deadline) if deadline <= now => ExpiryState::Expired,
+        Some(_) => ExpiryState::Scheduled,
+    }
+}
+
 /// Product metadata for one managed client, composed with its desired client.
 ///
 /// Deliberately composed rather than merged into [`crate::domain::DesiredClient`]:
@@ -352,6 +382,13 @@ pub struct ProductClient {
     pub settings: ClientProductSettings,
     pub route_policy: crate::domain::ClientRoutePolicy,
     pub dns_servers: Vec<IpAddr>,
+    /// Unix seconds at which an enabled client is disabled, or null for never.
+    pub expires_at: Option<i64>,
+    pub expiry_state: ExpiryState,
+    /// Whether a preshared key is stored. The key itself is not in this summary.
+    pub preshared_key_configured: bool,
+    /// Client-config MTU, or null when the export omits the line.
+    pub mtu: Option<u16>,
 }
 
 /// Operator-facing summary of the managed server.
@@ -442,7 +479,13 @@ pub enum AuditAction {
     ClientUpdate,
     ClientEnable,
     ClientDisable,
+    /// The worker disabled the client because its deadline passed.
+    ClientExpire,
     ClientDelete,
+    /// A preshared key was generated and stored. The row carries no key bytes.
+    ClientPresharedKeySet,
+    /// A stored preshared key was removed. The row carries no key bytes.
+    ClientPresharedKeyClear,
     NetworkEnable,
     NetworkDisable,
     /// A post-commit reconciliation outcome, recorded separately because the
@@ -462,7 +505,10 @@ impl AuditAction {
             AuditAction::ClientUpdate => "client_update",
             AuditAction::ClientEnable => "client_enable",
             AuditAction::ClientDisable => "client_disable",
+            AuditAction::ClientExpire => "client_expire",
             AuditAction::ClientDelete => "client_delete",
+            AuditAction::ClientPresharedKeySet => "client_preshared_key_set",
+            AuditAction::ClientPresharedKeyClear => "client_preshared_key_clear",
             AuditAction::NetworkEnable => "network_enable",
             AuditAction::NetworkDisable => "network_disable",
             AuditAction::EnforcementDegraded => "enforcement_degraded",
