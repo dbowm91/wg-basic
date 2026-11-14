@@ -2,533 +2,60 @@
 
 Status: active
 
-Last planning reconciliation: 2026-10-21 (macOS **scope decision — native Intel dropped as a target** under **ADR-009**: Apple silicon is the only supported Darwin target, an Intel Mac is refused at install time, and the two Intel residuals are retired by scope rather than by measurement; **C001 and C002 are now `closed`** on their Apple silicon controlled-host evidence — C001's product path against an off-host Linux-kernel peer with observed evidence, and C002's three-phase cold-reboot qualification run end to end on a disposable arm64 macOS guest and passing, with the reboot observed, both roles returned from the system domain, the management daemon still unprivileged, the credential and enrolled client survived, the network reconverged and the uninstall leaving nothing behind — and **C010 active**, implementing the decision in the target set, the install refusal, the declared helper build input, and the qualification workflow; **C006 closed** at `e37210b` — the two boot-path defects that first run exposed (macOS's transient `/var/run`, and the boot-time race against the privileged daemon) are corrected and the leg re-run to a pass; **C007 closed** at `1bf4bb3` — the PF attachment verifier's two fail-open defects (a substring test and a filter-OR-NAT predicate) are corrected to an exact, per-rule-class verification, evidenced by the real `pfctl` output of a live host and by the hosted arm64 and Intel live fixtures; **C008 closed** at `62337c5` — the `wireguard-go` helper is now one declared, immutable build input with one builder and a recorded provenance receipt, and the build is byte-reproducible; the controlled-host qualifications moved out of the hosted-runner test target into their own `wireguard_darwin_controlled` target, so a hosted runner never executes a fixture that needs a host it cannot be; C003–C005 re-assessed and still open; macOS C001–C005 corrective handoff registered; 2026-10-13 macOS server planning added; prior release policy retained; 2026-10-11 (R001–R004a closed; R004b waived by maintainer decision — checksums-only releases, `v0.1.0` stable; solo-maintainer policy with zero required PR approvals))
-
-This file is the compact control surface for active wg-basic planning. Detailed requirements belong in canonical documents, subsystem roadmaps, implementation plans, future closure records, and Git history.
-
-Operator parity closed on 2026-11-10 on the uncommitted tree at baseline `a9b0c06`. M001–M004 are closed. Deferred roadmap items stay deferred. C015 is unchanged. See §4C.
+Last registry cleanup: 2026-11-14. This file is the compact planning control surface; detailed requirements, decisions, and evidence remain in their canonical plans and closure records.
 
 ## 1. Canonical planning authority
 
 | Document | Role |
 |---|---|
-| `plans/000-long-term-specification.md` | product scope, architecture, security/operations end state |
+| `plans/000-long-term-specification.md` | product scope, architecture, security and operations end state |
 | `plans/001-terminology-and-domain-model.md` | canonical vocabulary and type boundaries |
-| `plans/002-long-term-roadmap.md` | macro dependency/order |
-| `plans/003-planning-process.md` | planning, handoff, corrective, closure rules |
-| `plans/adr/001-linux-native-control-plane.md` | accepted Linux-native/privilege-separated architecture |
-| `plans/adr/002-durable-state-generations-and-ownership.md` | accepted Phase 6 persistence/generation/ownership architecture |
-| `plans/adr/003-management-http-auth-and-worker-boundary.md` | accepted Phase 7 HTTP/auth/worker security architecture |
-| `plans/adr/004-product-management-enrollment-and-api-semantics.md` | accepted Phase 8 product mutation/enrollment/API architecture |
-| `plans/adr/005-operational-hardening-maintenance-and-recovery.md` | accepted Phase 9 diagnostics/maintenance/recovery/security architecture |
-| `plans/adr/006-distribution-install-authenticity-and-update.md` | accepted Phase 10 release/install/authenticity/update architecture |
-| `plans/adr/007-ipv6-forwarding-ownership.md` | accepted Phase 11 global IPv6 forwarding ownership contract |
-| `plans/adr/008-macos-headless-platform-backends.md` | accepted staged headless macOS support direction; PF/NAT remains gated by Apple TN3165 |
+| `plans/002-long-term-roadmap.md` | macro dependency and milestone order |
+| `plans/003-planning-process.md` | planning, handoff, corrective, and closure rules |
+| `plans/adr/001-linux-native-control-plane.md` | Linux-native, privilege-separated architecture |
+| `plans/adr/002-durable-state-generations-and-ownership.md` | persistence, generations, and ownership |
+| `plans/adr/003-management-http-auth-and-worker-boundary.md` | management HTTP, auth, and worker boundary |
+| `plans/adr/004-product-management-enrollment-and-api-semantics.md` | product mutations, enrollment, and API semantics |
+| `plans/adr/005-operational-hardening-maintenance-and-recovery.md` | diagnostics, maintenance, and recovery |
+| `plans/adr/006-distribution-install-authenticity-and-update.md` | distribution, authenticity, and update policy |
+| `plans/adr/007-ipv6-forwarding-ownership.md` | global IPv6 forwarding ownership |
+| `plans/adr/008-macos-headless-platform-backends.md` | staged headless macOS backends and PF policy |
+| `plans/adr/009-apple-silicon-only-darwin-target.md` | Apple silicon as the only Darwin target |
+| `plans/adr/010-privileged-helper-supervision.md` | privileged supervision of the WireGuard helper |
 
-Authority order for implementation handoff:
+Implementation handoffs resolve conflicts in this order: canonical specification and terminology; accepted ADRs; subsystem roadmap; implementation plan; current repository evidence.
 
-1. canonical specification/terminology;
-2. accepted ADRs;
-3. subsystem roadmap;
-4. milestone implementation plan;
-5. current repository evidence.
+## 2. Current posture
 
-## 2. Product direction snapshot
+wg-basic is a Linux-first WireGuard management appliance with a privilege-separated management service and typed network service. Keep operator documentation factual; installation and transactional self-update are not implemented. No macOS release is authorized; the M007 must-not-release decision remains in force.
 
-wg-basic is a Linux-first, low-overhead WireGuard management appliance inspired by wg-easy's ease of use but canonically distributed as a small Rust binary/service installation rather than a Docker/Node runtime.
+## 3. Active and recent work
 
-The Linux kernel owns the WireGuard dataplane.
-
-The architecture separates:
-
-- unprivileged management service: HTTP/API/UI + durable application state;
-- privileged network service: typed kernel/network observation and mutation over local IPC.
-
-The privileged service does not expose arbitrary shell, command, file-write, sysctl-path, nft-script, or raw-netlink execution.
-
-Current production code state: **Network control and Phases 6–11 are technically closed. The authenticated product API and embedded UI provide server setup, client lifecycle, config/QR export, one-time enrollment, live telemetry, bounded audit history, operational diagnostics, safe maintenance/recovery, and a proven old/new database rollback contract.** Phase 10 is release-mechanically complete: native x86_64/aarch64 systemd install, signed-fixture update/recovery, state-preserving uninstall/reinstall, and guarded purge are qualified. Phase 11 dual-stack tunnel addressing, IPv6 forwarding/firewall ownership, client route policy/product surface, and dual-stack end-to-end qualification are strictly closed. Releases are checksums-only by maintainer decision (`v0.1.0` stable, unsigned); self-update is permanently fail-closed and every release needs a fresh install.
-
-## 3. Eggstack reuse disposition
-
-Current research and planning disposition:
-
-| Eggstack project | Disposition | Handoff note |
+| Workstream | Status | Source of truth |
 |---|---|---|
-| EggServe | selected Phase 7 substrate | direct `eggserve-server` + `eggserve-primitives` H1 service; wg-basic owns routing/auth/CSRF/rate limits and embeds its own assets; no Tower/Axum in the baseline |
-| Eggup | selected Phase 10 substrate | Core owns staged/integrity/ownership-safe binary replacement; acquisition + preferred curl adapter own bounded download mechanics; Eggpack adapter projects signed manifest evidence; service crate owns systemd mechanics. wg-basic still owns authenticity, two-service/state transaction, health, journal, and recovery. |
-| Eggpack | selected Phase 10 producer substrate | canonical two-target release/build/qualification/manifest/bootstrap/draft-release contracts; no release signing or appliance service policy delegated to Eggpack |
-| Eggfetch | alternate Phase 10 update transport only | not selected in baseline because eggup-curl keeps the shipped link graph smaller; may replace curl only with recorded host-availability/footprint evidence |
-| Eggprobe | external/reference only for Phase 9 | useful generic DNS/TCP/TLS/route diagnostics, but wg-basic doctor requires authoritative local state/ownership/netd checks that Eggprobe does not own; no runtime dependency selected |
-| Eggress | out of scope | proxy transport unrelated to initial VPN appliance |
-| Eggsact | out of scope | coding-agent utility, not appliance runtime |
-| Eggsearch | out of scope | no search subsystem |
-| Eggwork / Eggplan | development tooling only if useful | must not become shipped runtime dependencies solely for repo-family consistency |
+| Headless macOS native server/gateway | Active. C001–C010 and C012–C014 are closed; C011 is conditionally closed; C015 is ready; C005 remains blocked on its release-qualification gates and explicit maintainer authorization. No macOS release. | `plans/subsystems/macos-native-server-roadmap.md`; `plans/subsystems/macos-native-server-corrective-roadmap.md`; §4 below |
+| Operator parity (Linux and Apple silicon) | Closed 2026-11-10; M001–M004 closed. Deferred roadmap items remain deferred; C015 is unchanged. | `plans/subsystems/operator-parity-roadmap.md`; `plans/closure/operator-parity/001-status.md` through `004-status.md` |
+| Release readiness | R001–R003 closed; R004a closed as an unsigned release; R004b waived. Releases remain checksums-only, no trust root is planned, and production self-update stays disabled. | `plans/subsystems/release-readiness-security-roadmap.md`; `plans/closure/release-readiness/004b-waiver-status.md` |
 
-Runtime dependency adoption remains evidence-driven.
+Other closed subsystem history remains in its roadmap and closure records; it is not repeated here.
 
-## 4. Active subsystem roadmaps
+## 4. Current macOS handoffs and blockers
 
-| Subsystem | Status | Roadmap | Current milestone |
-|---|---|---|---|
-| Linux network-control foundation | closed | `plans/subsystems/network-control-roadmap.md` + `plans/subsystems/network-control-post-foundation-reconciliation-addendum.md` | M001–M005 and C001 closed |
-| Durable state/restart reconciliation | closed | `plans/subsystems/durable-state-restart-reconciliation-roadmap.md` + `plans/subsystems/durable-state-post-phase6-reconciliation-addendum.md` | Phase 6 complete; M001–M004 and post-Phase-6 C001 closed |
-| Management service/auth/security substrate | closed | `plans/subsystems/management-service-security-roadmap.md` + `plans/subsystems/management-service-post-phase7-reconciliation-addendum.md` | M001–M004 and post-Phase-7 C001 closed |
-| Product management/enrollment/UI | closed; M007 corrective **closed** 2026-10-23 | `plans/subsystems/product-management-enrollment-ui-roadmap.md` | Phase 8 M001–M005 closed; M006 closed — the embedded operator shell's login form posted an empty body, so no operator could sign in, and three elements it marked `hidden` rendered on screen; M007 closed — the shell's client QR code rendered into the last child of the scrollable client editor, so the code an operator was told to scan landed below the visible region or was cut by the dialog's edge |
-| Operational hardening | closed | `plans/subsystems/operational-hardening-roadmap.md` | M001–M005 closed; Phase 9 closed |
-| Distribution/install/update | closed (technical) | `plans/subsystems/distribution-install-update-roadmap.md` | M001–M005 closed; production release remains blocked on signing |
-| IPv6/route-policy qualification | closed | `plans/subsystems/ipv6-route-policy-roadmap.md` | M001–M004 closed; `plans/closure/ipv6-route-policy/004-status.md` |
-| Release readiness and supply-chain security | closed (R004b waived; checksums-only releases) | `plans/subsystems/release-readiness-security-roadmap.md` | R001–R004a closed; waiver `004b-waiver-status.md` |
-| Operator parity (Linux and Apple silicon) | closed 2026-11-10; M001–M004 closed; deferred items remain deferred; no macOS release | `plans/subsystems/operator-parity-roadmap.md` | Closures `plans/closure/operator-parity/001-status.md` through `004-status.md`. Linux untouched setup stays a gateway. macOS untouched setup is host-only. The product does not write Darwin forwarding or `/etc/pf.conf`. C015 is unchanged. |
-| Headless macOS native server/gateway | active; low-level M001–M004 qualified; C001/C002 **closed** 2026-10-21 on their Apple silicon controlled-host evidence; C003 **closed** 2026-10-22 on a controlled-host routed-LAN qualification and a controlled-host Linux rootful qualification; C006, C007, C008 closed; C010 closed; C011 conditionally closed; C012 closed; C013 closed; **C004 closed** 2026-10-23 on a controlled-host gateway qualification with real translated and untranslated packet evidence; **C014 closed** 2026-10-23; **C016 closed** 2026-10-25; C015 ready; M005–M007 blocked | `plans/subsystems/macos-native-server-roadmap.md` + `plans/subsystems/macos-native-server-corrective-roadmap.md` | C001 **closed** 2026-10-21 — the Apple silicon product path against an off-host Linux-kernel peer is closed with observed evidence; the native Intel arch of the same path was retired by scope under ADR-009. C002 **closed** 2026-10-21 — the three-phase cold-reboot qualification was run end to end on a disposable arm64 macOS guest and passes with the reboot observed; the native Intel arch of the same leg was retired by scope under ADR-009. C006 **closed** 2026-10-21 — the two boot-path defects the C002 leg exposed are corrected and the leg re-run to a pass. C007 **closed** 2026-10-21 — the PF attachment verifier is exact and per rule class. C008 **closed** 2026-10-21 — the helper's build input is declared, immutable, and provenanced. C010 **closed** 2026-10-21 — Apple silicon only as the Darwin target. C003 **closed** 2026-10-22 — the routed-LAN contract is qualified on a controlled host, its two findings are corrected by C011, its own Linux breakage by C012, and its Linux rootful half is evidenced natively on a controlled Linux host. C011 **conditionally closed** 2026-10-22. C012 **closed** 2026-10-22. C013 **closed** 2026-10-22 — the hosted live qualification asserts only what it can measure, and the product's own interface observation is fallible and named. C004 **closed** 2026-10-23 — the product's macOS PF observation became a bounded, installation-scoped write path over one anchor and one anchor file, and the controlled-host run carried real traffic through it: the IPv4 far side observed the **translated** source, the IPv6 far side the **untranslated** one, and the teardown emptied the anchor's two rule classes and left the administrator's parent in place; the mechanism was measured against the real `pfctl` before it was implemented, and the measurement corrected the plan twice. **C014 closed** 2026-10-23 — C003's routed-LAN fixture now measures its own restoration, and two runs on the same guest with no PF reset between them leave the main filter and NAT rulesets byte-identical to the baseline. **C016 closed** 2026-10-25 — the line's repository state is clean: the 530 generated agent transcripts and the stray `.DS_Store` are gone and ignored, the published WireGuard key-conversion vector is named as a test vector instead of reading as a credential, and the dependency audit passes — `ctutils` and `tokio` moved inside their existing requirements, and the three `zip` advisories are accepted with a written reason because they describe archive extraction this product never performs. **C017 closed** 2026-10-25 — C016's secret-scan remedy did not clear the finding: its split left a sixty-one character run, which is still one high-entropy token behind the `private_key=` keyword, and its scan configuration never reached the default branch, which is where GitGuardian's app reads the file that governs a scan. The tip's vector is now written in pieces of at most fifteen characters, below the detector's sixteen-character minimum, and every published value the app can report is named in the scan configuration that `main` now carries. C015 ready — the macOS managed interface's own teardown is refused; C005 open. M003/M004 native runner `38524007872` does not prove product runtime; macOS MUST NOT release |
-
-Do not create the later subsystem implementation plans merely to fill the roadmap. Research/write them when their predecessor contracts are stable enough for a bounded handoff.
-
-## 4A. Active macOS server implementation and corrective handoff
-
-Architecture: `plans/adr/008-macos-headless-platform-backends.md`.
-Canonical new roadmap: `plans/subsystems/macos-native-server-roadmap.md`.
-Baseline: `47c72b0e81d569d48396c615120453bf0cf1d46e` (Linux stable `v0.1.0` remains unchanged).
-macOS M001–M004 have qualified **isolated primitives** below (M003–M004 live on hosted arm64 + Intel runners, run `38524007872`); production WireGuardBackend/ReconciliationService/FirewallService still fail closed and live tests bypass application convergence. M005–M006 carry narrowed blocked tails; M007 retains MUST-NOT-release standing. C001–C005 own product integration, least privilege, scoped routing/PF, and release requalification. No macOS release, integrated network-server or gateway claim exists.
-
-**Update 2026-10-20 (implementation head `b53ce2d`):** C001 and C002 are now *implemented*, not merely planned. The Darwin production backend (`src/wireguard/darwin_backend.rs`, `src/reconcile/backend_darwin.rs`, `src/reconcile/service_darwin.rs`, `src/firewall/service_darwin.rs`) and the least-privilege installer (`src/launchd.rs`, `src/launchd_install.rs`) are wired into the real typed paths, with the audited OS boundary isolated in the `crates/darwin-sys` workspace member. Both plans are dispositioned **blocked (narrowed)**: their implementation and their hosted native evidence exist, and a controlled arm64 host has since produced the off-host Linux-kernel peer leg of C001 and the arm phase of C002's cold-reboot qualification. What each plan's own acceptance gate still needs is evidence a hosted macOS runner cannot produce: the **native Intel** arch of C001's product path, whose peer has to be reachable from the runner, and the **reboot** of C002's armed controlled host. C003–C005 remain blocked; the M007 MUST-NOT-release standing is unchanged.
-
-**Update 2026-10-21 (implementation head `e37210b`):** C002's three-phase cold-reboot qualification was **run end to end on a disposable arm64 macOS guest** — a real macOS guest, so a real launchd system domain, a real `utun`, and a real reboot. The first run **failed** and exposed two material post-implementation defects in C002's own code: macOS recreates `/var/run` at every boot, so the privileged daemon's runtime directory was gone in the new boot and it could never bind its socket; and `launchd` starts the two jobs concurrently (measured 174 ms apart), so the management daemon's startup reconciliation lost the race and the deployment stayed degraded with no background reconcile. Both are corrected under **C006** (`src/launchd.rs::ensure_runtime_directory`, `src/management/worker.rs::wait_for_backend`), which is **closed** at `e37210b`; the leg was then re-run to a **pass** on the same guest. C002's residual is now the **native Intel** arch of the same leg, so C002 and C001 carry the same residual shape. C003–C005 remain blocked; the M007 MUST-NOT-release standing is unchanged.
-
-**Update 2026-10-21 (implementation head `62337c5`):** two more corrective plans were raised, implemented, and closed, each taking one defect that no environmental condition prevented fixing out of a blocked successor. **C007** (closed at `1bf4bb3`) corrects the PF attachment verifier, which the corrective roadmap's gap list recorded as using substring membership and a filter-OR-NAT predicate — it now verifies per rule class and token-exactly, and the live fixture gained the positive, collision, and negative controls it never had, run on both architectures. **C008** (closed at `62337c5`) makes the `wireguard-go` helper a declared, immutable build input with one builder, recorded provenance, and a byte-reproducible build. Neither narrows C001's or C002's native Intel residual, and neither unblocks C003, C004, or C005: C004's live half and C005's release half remain exactly where they were. C003–C005 remain blocked; the M007 MUST-NOT-release standing is unchanged.
-
-**Update 2026-10-22 (implementation head `56752b8`):** **C003 is now implemented and qualified, and is conditionally closed.** The typed mode contract (`host_only` | `routed_lan` | `gateway`) is in the persisted desired state with a schema-8 migration; the Darwin routed-LAN contract observes an operator-managed PF filter through a bounded read-only view, reports the exact rules the operator has to install, and refuses on absence or drift; the doctor names every missing prerequisite. The controlled-host run — a disposable macOS guest as the product's server, a real WireGuard peer in a Linux namespace on a second guest, and the LAN host in its own namespace behind the upstream router — **proved real IPv4 and IPv6 traffic in both directions through the tunnel**, refused a destination outside the approved prefix and a spoofed source, and produced a distinct refusal for every missing prerequisite (forwarding off, filter absent, filter drifted, filter removed, a competing route, no route to the approved destination, and a killed helper). The qualification exposed **twelve defects**, all corrected and each covered by a test that fails without the fix; two of them — the routed-LAN filter carrying only its forward leg, and the traffic probes' assertions being satisfied by `100% packet loss` — would have let a leg that carried no traffic at all report a pass. Two findings remain and are routed to the line that owns them: the management service does not terminate within the qualification's bound after `SIGTERM` (its shutdown path joins its worker thread without a bound), and a killed WireGuard helper is not recovered automatically. Both are recorded, with evidence, in the closure record. C004 and C005 remain blocked on their own gates and on the maintainer's authority; the M007 MUST-NOT-release standing is unchanged.
-
-**Update 2026-10-22 (implementation head `4a772e7`):** **C003 is closed.** The same-day conditional closure carried two conditions — the management service not terminating within the qualification's bound after `SIGTERM`, and a killed WireGuard helper not being recovered — both routed to the line that owns them, and both corrected under **C011** (`plans/closure/macos-native-server-corrective/c011-status.md`), whose re-reading changed what they are: the `SIGTERM` observation was a misreading of launchd's `KeepAlive` successor, and the helper finding was worse than recorded, because a receipt naming a dead helper refused every attempt to recreate the tunnel. C003's own Linux breakage — the policy-model change that left every Linux job uncompilable from `5238816` — is corrected by **C012** (`plans/closure/macos-native-server-corrective/c012-status.md`). Reading C003's own closure record against its own plan found one row that pointed at evidence it did not contain: the matrix row for "Routine/MSRV and all Linux rootful suites" pointed at §3, and §3 holds the development-host gates, which ran on the Darwin host where the rootful suites compile to nothing. The missing half is now produced: the ordinary gate order and **every rootful suite** ran natively on a controlled Linux host (`sugarwookie@192.168.182.143`, Ubuntu 24.04.5, kernel 6.8, kernel WireGuard present) at this head — the gate order clean, forty rootful tests across eleven targets executed with `CI=true` so nothing could silently skip, the Phase 8 → current schema migration rehearsed with real traffic, and the host's namespaces, links, nftables tables, units, and canonical installation paths unchanged before and after. The two canonical-path systemd tests were deliberately not run there: their own annotations mark them "disposable systemd VM only", and that host is the maintainer's working machine. The closure record's history is left period-accurate; §11 of it is the amendment. C004 stays **ready** and C005 stays open on its own gates and the maintainer's release authority; the M007 MUST-NOT-release standing is unchanged.
-
-**Update 2026-10-22 (implementation head `f4bf28d`):** **C013 is closed.** The hosted macOS live job had been red on two of twenty runs of the *same* code, and nothing in the job recorded the condition it ran under: the failing test's evidence file was written only on success, so the red runs uploaded an artifact with no transcript of the failing test and no baseline to compare against. The diagnosis was measured, not guessed — `ifconfig -l` and `getifaddrs` list the same `utun` devices on the maintainer's Mac, so the mechanism was never the difference; the difference was between two *instants*, plus macOS recycling `utun` indices. The qualification compared the product's chosen device against a snapshot taken at a different moment, so it fired on correct product behaviour, and it turned the product's correct refusal to identify its own device in a contended namespace into a failed helper. Running the hosted suite on the disposable macOS guest — which had never been done, because the suite is written for a hosted runner — exposed two more defects: the product reported a failed interface enumeration as an empty host, and the ownership proof compared the kernel's **canonical** executable path with the receipt's string, so on a host where `/tmp` is `/private/tmp` it called a live, correct helper a mismatch and an installation whose helper lived under a symlinked directory could never hold a managed tunnel. All three are corrected: the qualification proves the device from the product's own pre-spawn observation, waits for a quiescent namespace, retries a contention refusal with every attempt and every inventory recorded, identifies its own helper's socket by device and inode rather than by a path macOS recycles, claims only what it created, and keeps its evidence when it fails; the product's observation is fallible with its failures named, and an unreadable inventory is refused and retried rather than treated as an absent device. The product's fail-closed adoption rule is unchanged — only the diagnosis and the evidence improve. The hosted live job is green at this head, the controlled Linux host's whole gate order and all eleven rootful suites are green with the host's unrelated state preserved, the Darwin host's gate order including the Linux cross-clippy is green, and C003's routed-LAN leg is re-run against this head. Re-running that leg also found one thing that leg does not restore: macOS keeps a loaded anchor's rules across `pfctl -f`, and the leg's teardown removes the anchor from `pf.conf` without flushing them, so the operator's filter is left loaded on the disposable guest with PF still enabled — the same stale-rule hazard the leg's own drift control establishes, left behind by the leg itself. The product writes none of that state and the leg still passes; the defect is in C003's fixture, it is recorded as **F8** in C013's closure record, and C003's closure record carries the dated §12 amendment that corrects its "the host's routing and filter as it found them" clause. It needs its own corrective. C004 stays **ready** and C005 stays open on its own gates and the maintainer's release authority; the M007 MUST-NOT-release standing is unchanged.
-
-**Update 2026-10-23 (implementation head `d26c886`):** **C014 is raised and registered.** C013's re-run of C003's routed-LAN leg against C013's final head found that the leg does not restore the host's packet filter: macOS keeps a loaded anchor's **rules** across `pfctl -f` and `pfctl -F all`, so removing the anchor's `load anchor` line from `/etc/pf.conf` and deleting its file leaves the anchor's rules **loaded and being evaluated**; the leg also runs `pfctl -e` and never puts PF back the way it found it, and it leaves the `.drift` file it wrote for the drift control in `/etc/pf.anchors/`. Two of the eight leftover rules match on `utun0`, and macOS recycles `utun` indices, so a later tunnel handed that index inherits the previous leg's rules. The defect is in C003's **fixture**, not in the product: the product writes no PF state, no forwarding sysctl, and no route in the routed-LAN mode, and C003's traffic evidence is unaffected. Per §13 of the planning process it gets its own corrective, plan, and closure record; C003's record keeps its history and carries the dated §12 amendment that recorded the finding. **C014 is a corrective of the fixture only** — it restores PF's enable state, empties the managed anchor's filter and NAT rulesets, removes the anchor's file and its `.drift` sibling, and *measures* that it did, instead of asserting it. The C003 routed-LAN closure itself stands, and C004's product-side PF/NAT work is untouched by it.
-
-
-**Update 2026-10-23 (implementation head `5e35a4a`):** **C004 and C014 are closed, and C015 is raised.** **C004** turned the macOS PF observation into a bounded, installation-scoped **write** path: the product owns exactly one anchor and one anchor file, installs its rendered filter and translation rules into that anchor with `pfctl -a <anchor> -f <file>`, proves that the administrator's parent invokes the anchor in **both** the filter and the NAT table, and refuses every incomplete attachment with its own actionable remediation. The mechanism was measured against the real `pfctl` on the disposable guest **before** it was implemented, and the measurement corrected the plan twice: an absent anchor and an emptied one are different facts on macOS (the exit code is 0 in both cases and only the message tells them apart), and the rendered file's rule order is part of the contract (PF evaluates translation before filtering, so a `nat` rule must precede any `pass`/`block` rule). The controlled-host run carried **real traffic**: the IPv4 far side observed the **translated** source, the IPv6 far side the **untranslated** one, the four negatives refused with their own remedies, and the teardown emptied the anchor's two rule classes, left the anchor's file carrying only its marker, and left the administrator's parent and every foreign rule exactly as it found them. The gateway's traffic claim is that evidence and nothing else; no document claims the gateway carries traffic. The qualification also found **two product defects** (the absent-versus-emptied anchor, the rule order), **three fixture defects** (a privileged call that dropped its program, an attachment made before the anchor's file existed, and a service stop that was not idempotent), and **one defect outside C004's scope**: on macOS the interface layer's delete path compares the observed interface against the desired state and the two can never be equal — the product's own `10.77.0.1/24` is observed as `/32` because the utun device is point-to-point, its `2001:db8:77::1/64` is observed as `/128`, and the kernel's link-local address is observed but never listed — so `wg-basic network disable` commits its generation and reports `not yet enforced (Degraded(BackendRefused))` and the managed tunnel device is never removed. That is recorded as **F10** and routed to **C015**; the firewall layer's teardown still runs and completes, so C004's anchor work is unaffected. **C014** closed the fixture defect C013 found: C003's routed-LAN leg now captures a baseline filter inventory, restores PF's enable state, empties the managed anchor's filter **and** NAT rulesets per class, removes the anchor's file and its `.drift` sibling, and **measures** its restoration instead of asserting it. It was qualified by running the leg **twice on the same guest with no PF reset between the runs**: both runs passed, and the inventory before run 1, after run 1 and after run 2 shows the main filter and NAT rulesets byte-identical to the baseline, PF's enable state unchanged, and neither the anchor's file nor its `.drift` sibling present — the only difference is the kernel's own anchor **objects**, which PF never destroys and which held no rules. The disposable macOS guest had to be re-created for these runs (its package was destroyed mid-session), so the restore image was re-downloaded and digest-verified, macOS 26.6.2 was restored, and the binaries were re-staged and digest-matched. The Darwin gate order, the Linux cross-clippy, the controlled Linux host's gate order and all eleven rootful suites are green; the hosted `dependency-audit` job stays **red** for an upstream reason and is never claimed green. C005 stays open on the scoped network gates and the maintainer's release authority, and the M007 MUST-NOT-release standing is unchanged.
-| Milestone | Status | Handoff |
+| Work item | Status | Handoff |
 |---|---|---|
-| M001 portability/Cargo/build/typed platform seams | **closed 2026-10-13** | `plans/implementation/macos-native-server/001-portable-boundaries-and-darwin-build.md`; closure `plans/closure/macos-native-server/001-status.md` |
-| M002 Darwin IPC, peer identity and doctor | **closed 2026-10-13** (M001 closed) | `plans/implementation/macos-native-server/002-darwin-privileged-ipc-and-capabilities.md`; closure `plans/closure/macos-native-server/002-status.md` |
-| M003 wireguard-go/utun lifecycle/UAPI | **closed 2026-10-14** (hosted live arm64+Intel, run `38524007872`) | `plans/implementation/macos-native-server/003-wireguard-go-utun-backend.md`; closure `plans/closure/macos-native-server/003-status.md` — loopback handshake/traffic/counters/RSS/ownership/kill-restart both arches; off-host interop residual |
-| M004 address/route ownership and Darwin reconciliation | **closed 2026-10-14** (hosted live arm64+Intel, run `38524007872`) | `plans/implementation/macos-native-server/004-darwin-interface-address-route-reconciliation.md`; closure `plans/closure/macos-native-server/004-status.md` — v4+v6 lifecycle, planner-vs-live-observation, preservation; sleep/roaming residual |
-| M005 forwarding, PF/NAT and Apple policy review | **blocked** (narrowed 2026-10-14; hosted live, run `38524007872`) | `plans/implementation/macos-native-server/005-forwarding-pf-nat-and-platform-policy.md`; closure `plans/closure/macos-native-server/005-status.md` — TN3165 decision evidence-backed; anchor/forwarding/PF-cycle qualified; effective NAT + v6 egress need admin-integrated host; installer MUST NOT auto-configure PF |
-| M006 launchd, installer, helper provenance and recovery | **blocked** (narrowed 2026-10-14; hosted live arm64, run `38524007872`) | `plans/implementation/macos-native-server/006-launchd-installation-distribution-and-recovery.md`; closure `plans/closure/macos-native-server/006-status.md` — bootstrap/KeepAlive/bootout/reinstall/DB-free qualified; reboot + post-reboot traffic need rebootable host |
-| M007 native E2E, security and release qualification | **blocked** (updated 2026-10-21: MUST-NOT-release stands; architecture gate amended to Apple silicon by ADR-009) | `plans/implementation/macos-native-server/007-native-e2e-security-release-qualification.md`; closure `plans/closure/macos-native-server/007-status.md` — M003–M004 closed, M005–M006 narrowed, residuals enumerated (off-host interop, NAT+v6 egress, reboot, release audit + authorization); the Intel architecture residual is retired by scope, the rest stand |
+| C015 — managed-interface teardown | Ready. Darwin's observed point-to-point addresses and link-local address do not match the desired address list, so deleting the managed tunnel is refused. Correct the interface delete comparison while preserving refusals for foreign resources; do not reopen C004's firewall work. | `plans/implementation/macos-native-server/c015-macos-interface-teardown-acceptance.md`; C004 evidence in `plans/closure/macos-native-server-corrective/c004-status.md` |
+| C005 — native E2E, distribution, and release decision | Blocked. The implementation plan's remaining qualification and authorization gates still apply; M007's must-not-release decision stands until they are explicitly satisfied and amended by the maintainer. | `plans/implementation/macos-native-server/c005-release-qualification-and-reconciliation.md`; `plans/closure/macos-native-server/007-status.md` |
+| C017 — secret-scan corrective | Conditionally closed. Its closure records one previously reported GitGuardian incident for the workspace owner to resolve; repository changes do not clear that recorded dashboard occurrence. | `plans/closure/macos-native-server-corrective/c017-status.md` |
 
+Operator-parity closures did not authorize a Darwin release or change C015. Its deferred items and stop conditions remain in the roadmap.
 
-### Active macOS corrective implementation plans — 2026-10-20
+## 5. Release disposition
 
-Recorded against `fc51146e811cabebd042d852449c6e7f4f854265`; source roadmap: `plans/subsystems/macos-native-server-corrective-roadmap.md`. C001 and C002 were **planning-only** handoffs at that baseline; both are now implemented at `b53ce2d` with their own closure records. Historical M003–M007 closures remain untouched.
+The maintainer waived the signed-production gate on 2026-10-11. Releases are checksums-only; no production signing key or trust root is planned, and `update check` / `update run` fail closed. `v0.1.0` is stable and unsigned. See the R004a/R004b closure records and `docs/release-signing.md` for the release evidence and limitations.
 
-| Corrective | Status | Implementation plan / immediate gate |
-|---|---|---|
-| C001 production WireGuard/reconciliation/firewall host-only integration | **closed** 2026-10-21 — implemented at `b53ce2d`; closure `plans/closure/macos-native-server-corrective/c001-status.md` | `plans/implementation/macos-native-server/c001-production-wiring-host-only.md` — the production Darwin wiring, the joint ownership proof, and the host-only firewall refusal are done and natively evidenced; the **Apple silicon** product path against an off-host Linux-kernel peer — handshake, dual-stack traffic, API telemetry — is closed with observed evidence. The native Intel arch of the same path was retired by scope under ADR-009, not by measurement |
-| C002 privileged launchd identity/installer | **closed** 2026-10-21 — implemented at `b53ce2d`; closure `plans/closure/macos-native-server-corrective/c002-status.md` | `plans/implementation/macos-native-server/c002-launchd-privilege-and-install.md` — the unprivileged `serve` identity, the constrained plist renderer, the exact fs/IPC layout, and the transactional installer are done and hosted-live evidenced; the three-phase cold-reboot qualification was **run end to end on a disposable arm64 macOS guest and passes** with the reboot observed, the network reconverged, and the uninstall leaving nothing behind. The native Intel arch of the same leg was retired by scope under ADR-009, not by measurement |
-| C006 boot-time runtime directory and backend readiness (C002's corrective) | **closed** 2026-10-21 — implemented at `e37210b`; closure `plans/closure/macos-native-server-corrective/c006-status.md` | `plans/implementation/macos-native-server/c006-boot-time-runtime-and-backend-readiness.md` — the two boot-path defects the C002 cold-reboot qualification exposed are corrected: the privileged daemon creates its own runtime directory when macOS's transient `/var/run` has been recreated, and the management daemon waits, bounded, for the privileged daemon to answer before its startup reconciliation. The C002 leg was re-run to a pass on the same guest. **Corrected 2026-10-21 by C009:** the wait was applied on every platform, which delayed the Linux listener; the wait is now Darwin's alone |
-| C009 restore the Linux startup path (C006's corrective) | **closed** 2026-10-21 — closure `plans/closure/macos-native-server-corrective/c009-status.md` | `plans/implementation/macos-native-server/c009-restore-the-linux-startup-path.md` — C006's backend startup wait is Darwin's need (launchd starts the two jobs concurrently); Linux's units already order them, so the bound is zero elsewhere and the Linux startup path is what it was before. The three Linux CI jobs that C006 broke — `rust`, `upgrade-rehearsal`, `upgrade-rehearsal-rootful` — are green again, and the Linux harnesses' listener bound now follows the product's own wait instead of a raised constant |
-| C007 effective PF attachment verification (C004's model carve-out) | **closed** 2026-10-21 — implemented at `1bf4bb3`; closure `plans/closure/macos-native-server-corrective/c007-status.md` | `plans/implementation/macos-native-server/c007-effective-pf-attachment-verification.md` — the attachment verifier is token-exact and per rule class: a filter-table `anchor` rule and a NAT-table `nat-anchor` rule, each naming the managed anchor as a whole token, and a verdict that is a conjunction over the required classes. The live fixture gained the positive, collision, and negative controls it never had, and the Intel job now runs them too. C004's live half stays blocked |
-| C008 declared helper build input and provenance (C005's repository carve-out) | **closed** 2026-10-21 — implemented at `62337c5`; closure `plans/closure/macos-native-server-corrective/c008-status.md` | `plans/implementation/macos-native-server/c008-declared-helper-build-input.md` — the `wireguard-go` helper's upstream source, immutable commit, MIT license, and Go toolchain are one declared input (`helper/wireguard-go.provenance.json`); one builder refuses a mismatched commit, license, or toolchain and records a provenance receipt; the macOS qualification builds through it on both architectures and keeps the receipt as a run artifact. C005's release half stays blocked |
-| C003 bounded routed LAN without NAT | **closed** 2026-10-22 — the same day's conditional closure is amended by §11 of the closure record; implemented and qualified on a controlled host; closure `plans/closure/macos-native-server-corrective/c003-status.md` | `plans/implementation/macos-native-server/c003-routed-lan-no-nat.md` — forwarding, admin policy, proven return routing, on the Apple silicon target (ADR-009). The typed mode contract is in the persisted desired state with a state-store migration, the Darwin filter is observed and never written, and the controlled-host run proved real IPv4 and IPv6 traffic in both directions through the tunnel with the wrong destination and the spoofed source refused. The two findings it carried — the management service not terminating on `SIGTERM`, and a killed helper not being recovered — are corrected by **C011**, and C003's own Linux breakage by **C012**. Its Linux rootful half is now evidenced natively on a controlled Linux host: the ordinary gate order clean, forty rootful tests across eleven targets with no skips, and the host's unrelated state preserved |
-| C004 effective administrator-opt-in PF/NAT | **closed** 2026-10-23 — implemented at `7c7da7b`; closure `plans/closure/macos-native-server-corrective/c004-status.md` | `plans/implementation/macos-native-server/c004-pf-nat-effective-gateway.md` — the product owns one installation-scoped anchor and one anchor file: it installs its rendered filter and translation rules into that anchor with `pfctl -a <anchor> -f <file>`, proves the administrator's parent invokes the anchor in **both** the filter and the NAT table, refuses every incomplete attachment with its own remediation, and empties both classes and rewrites the file to its marker line on teardown. The controlled-host run carried real traffic: the IPv4 far side observed the **translated** source and the IPv6 far side the **untranslated** one, and the four negatives refused with their own remedies. The mechanism was measured against the real `pfctl` first, and the measurement corrected the plan twice |
-| C014 the routed-LAN leg restores the filter it loaded (C003's fixture corrective) | **closed** 2026-10-23 — implemented at `7855533`; closure `plans/closure/macos-native-server-corrective/c014-status.md` | `plans/implementation/macos-native-server/c014-routed-leg-filter-restoration.md` — the defect was in C003's **qualification fixture**, not in the product: macOS keeps a loaded anchor's rules across `pfctl -f` and `pfctl -F all`, so the leg's teardown left the anchor's eight rules **loaded and being evaluated**, left PF **enabled** on a host that had it disabled, and left the `.drift` file behind. C014 restores PF's enable state, empties the managed anchor's filter **and** NAT rulesets, removes the anchor's file and its `.drift` sibling, and *measures* the restoration instead of asserting it. **Closed:** the leg was run twice on the same disposable guest with no PF reset between the runs, and the filter inventory before run 1, after run 1 and after run 2 was captured and compared — both runs passed, the main filter and NAT rulesets were byte-identical to the baseline, PF's enable state was unchanged, and neither the anchor's file nor its `.drift` sibling remained |
-| C015 the macOS managed interface's teardown is accepted (C004's corrective) | **ready** 2026-10-23 — raised by the **F10** finding C004's closure record made; plan `plans/implementation/macos-native-server/c015-macos-interface-teardown-acceptance.md` | The interface layer's delete path compares the observed interface against the desired state, and on macOS the two can never be equal: the product's own `10.77.0.1/24` is observed as `/32` because the utun device is point-to-point, its `2001:db8:77::1/64` is observed as `/128`, and the kernel's link-local address is observed but never listed. `wg-basic network disable` therefore commits its generation and reports `not yet enforced (Degraded(BackendRefused))`, and the managed tunnel device is never removed. The firewall layer's teardown still runs and completes, so C004's anchor work is unaffected. The defect is in the **interface** layer and is outside C004's scope; C015 makes the comparison succeed for the product's own resources and keeps the refusal for a foreign one |
-| C005 E2E, Eggpack, and release authorization | **open** — C001+C002 closed 2026-10-21 and C003 closed 2026-10-22, so the routed-mode gate is discharged; still blocked on C004 for gateway mode and on the maintainer's authority | `plans/implementation/macos-native-server/c005-release-qualification-and-reconciliation.md` — support matrix, native launchd/reboot on the supported architecture, release truth; M007 MUST-NOT-release remains |
-| C010 Apple silicon only as the Darwin target (ADR-009's implementation) | **closed** 2026-10-21 — closure `plans/closure/macos-native-server-corrective/c010-status.md` | `plans/implementation/macos-native-server/c010-apple-silicon-only-target.md` — the Darwin target set is Apple silicon only, an Intel Mac is refused with an actionable error, the declared helper build input names one target, and the qualification workflow has one architecture |
-| C011 service-lifecycle and helper-recovery correctives (C003's corrective) | **conditionally closed** 2026-10-22 — implemented at `ae153e3`; closure `plans/closure/macos-native-server-corrective/c011-status.md` | `plans/implementation/macos-native-server/c011-service-lifecycle-and-helper-recovery.md`; ADR-010 — the three findings C003's controlled-host run left open are corrected: the management service's shutdown is bounded and its stop request cannot be refused; a helper that dies is replaced by the privileged authority that spawned it, and a receipt naming a dead helper no longer wedges the installation; the upstream route shape is verifiable. The corrective is evidenced on a controlled host. C003's own closure record stays a period-accurate historical record |
-| C012 the Linux rootful qualification compiles again (C003's corrective) | **closed** 2026-10-22 — implemented at `66c078e`; closure `plans/closure/macos-native-server-corrective/c012-status.md` | C003 added the policy model's `mode` and `destination_prefixes` and did not update the Linux-only fixtures, so every Linux CI job has been red since `5238816`; the fixtures state their mode, and the gate order gains the Linux cross-clippy with `--features linux-integration` so a Darwin host type-checks the Linux-gated code |
-| C013 live-qualification observation integrity | **closed** 2026-10-22 — implemented at `120b1e2` and `f4bf28d`; closure `plans/closure/macos-native-server-corrective/c013-status.md` | The hosted macOS live job was red on two of twenty runs of the *same* code, and its own evidence for the failing test was lost, so the flake could not be diagnosed from its artifact. The qualification compared the product's chosen device against an inventory snapshot taken at a different moment, which fires on correct product behaviour because macOS recycles `utun` indices; it now proves the device from the product's own pre-spawn observation, waits for a quiescent namespace, retries a contention refusal with every attempt and inventory recorded, identifies its own helper's socket by device and inode, claims only what it created, and keeps its evidence when it fails. The product's interface observation is fallible and its failures are named, an unreadable inventory is no longer an empty one, and the ownership proof compares the helper's path as the file it names — `/tmp` is `/private/tmp` on every macOS, and an installation whose helper lived under a symlinked directory could never hold a managed tunnel. The hosted live job and the controlled-host Linux qualification are green at the final head; C003's routed-LAN leg is re-run against that head |
+## 6. Planning hygiene
 
-**C003's corrective (2026-10-22):** C003's controlled-host run left three findings open, and re-reading them against the code and against a fresh reproduction changed two of the three. **F1** — the management service's "does not terminate within 30 s of `SIGTERM`" — was a **misreading**: the service does act on the term and exits in under a second, and what the run saw afterwards was launchd's `KeepAlive` successor, not a hung process. The run's own evidence shows three different process identifiers after three successive stops, which a service that never exited could not produce. The code-level claim underneath it was nonetheless true and is still fixed: the stop request rode the bounded queue, and the queue refuses admissions exactly when the service is busiest, so a refused stop request would leave the worker running with the store open; the join that followed had no bound. **F2** — "a killed helper isn't recovered automatically" — was **worse than recorded**: the refusal half was met, but the recovery path was broken too, because a receipt naming a dead helper was treated as an ownership claim and refused every attempt to recreate the tunnel. A re-apply did not recover it, a service restart did not recover it, and the only remedy was an operator deleting the receipt by hand, which was documented nowhere. **F3** — the upstream route shape — is documented and stays an operator prerequisite, and gained a check. Per `plans/003-planning-process.md` §13 these are corrected under **C011** (`plans/implementation/macos-native-server/c011-service-lifecycle-and-helper-recovery.md`), and the recovery decision is recorded in **ADR-010** (`plans/adr/010-privileged-helper-supervision.md`): the privileged authority supervises the helper it spawned, and the management role's standing no-reconciliation-loop rule is unchanged. C003's closure record is **not** rewritten: it stays a period-accurate historical record, and its findings are corrected by C011's closure record.
-
-**Unblock assessment (2026-10-21):** C001 and C002 are now **closed** (2026-10-21), so the dependency chain has moved: C003's hard dependency on C001's closure is discharged and C003 is open on its own implementation and qualification; C004 stays blocked on C003 plus an external controlled host; C005 stays blocked on the claimed-mode gates (C003 for routed mode, C004 for gateway mode) and on the maintainer's release authority, which is unchanged. Both C001 and C002 closed on evidence that was already observed and recorded before the scope decision: C001's **Apple silicon** gate was met by a controlled-host run against an off-host Linux-kernel WireGuard peer (real installer, real daemons, real authenticated HTTP surface, real handshake, dual-stack traffic, API telemetry), and C002's **Apple silicon** cold-reboot gate is met by a disposable arm64 macOS guest where the reboot was taken and observed, both roles came back from the system domain, the management daemon was still unprivileged, the credential and the enrolled client survived, the network reconverged and the uninstall left nothing behind. The **native Intel** arch of both paths was retired by scope under ADR-009 rather than by new measurement, and no Intel evidence is claimed. **C007 and C008 did not narrow either residual and unblocked nothing downstream:** C007 closes one defect in C004's *model* half and leaves C004's live half blocked on C003 and an administrator-integrated host, and C008 closes the repository-engineering half of C005 item 4 and leaves C005's release half blocked on the claimed-mode gates and the maintainer's authority.
-
-**Scope decision — native Intel dropped as a target (2026-10-21):** the maintainer has decided, in **ADR-009**, that Apple silicon is the only supported Darwin target for this line, and that an Intel Mac is refused at install time rather than running an unqualified build. The two Intel residuals above are therefore retired **by scope, not by measurement** — no Intel product-path run and no Intel cold reboot were performed, and none is claimed. **C001 and C002 are now `closed`** on their Apple silicon controlled-host evidence, which was already observed and recorded before this decision; each closure record carries a dated scope-amendment section and keeps its history period-accurate. The macOS support floor is unchanged at macOS 13.0, the Linux line is untouched, and **C010** implements the decision: the Darwin target set, the install refusal, the declared helper build input, and the qualification workflow all become Apple-silicon-only. C003–C005 remain open on their own implementation and gates, and the M007 MUST-NOT-release standing is unchanged.
-
-**CI feasibility of the native Intel residual (2026-10-21):** the two residuals above were re-assessed against every macOS CI substrate available today, and the findings change the *shape* of the unblock without changing the dispositions. The **native Intel arch is already in hosted CI** — `macos-15-intel` is a real Intel Mac and this repository's `live-intel-tunnel` job already runs the WireGuard control plane there — so the gap is not the instruction set but **host lifecycle** and **topology**. **No hosted macOS runner can be rebooted at any tier**: each hosted macOS job is a fresh VM discarded at job end, nested virtualization is documented as unsupported on macOS runners, and an independent probe of all four hosted macOS images found the Intel image equally unable to start a guest, so C002's Intel cold-reboot leg has no hosted CI path. What does satisfy both legs is a **rented bare-metal Intel Mac** (`mac1.metal`, a 2018 Intel Mac mini on a dedicated host with a 24-hour minimum allocation, per-second billing, and an ordinary OS reboot via `reboot-instances` — the destructive host scrubbing happens on stop or terminate, not on reboot) registered as a **self-hosted runner** with the runner application installed as a boot-scoped service, plus a **Linux peer instance in the same VPC** for C001, whose private subnet is a routed, non-NAT domain with two real hosts and also satisfies C003's "separate LAN host and real WireGuard peer on Linux" clause. The named unblocks are therefore now specific — C001 needs a peer reachable from the server (publicly addressed, or in the server's VPC); C002 needs a self-hosted runner on a rebooted bare-metal Mac — and the cost is one scheduled allocation per qualification cycle rather than a hardware purchase. No disposition changes; both remain **blocked (narrowed)**, and C003–C005 and the M007 MUST-NOT-release standing are unchanged.
-
-**C002's corrective (2026-10-21):** the first run of C002's cold-reboot leg **failed** and exposed two material post-implementation defects in C002's own code — macOS recreates `/var/run` at every boot, so the privileged daemon's runtime directory was gone in the new boot and it could never bind its socket; and `launchd` starts the two jobs concurrently (measured 174 ms apart), so the management daemon's startup reconciliation lost the race and the deployment stayed degraded with no background reconcile. Per `plans/003-planning-process.md` §13 a material post-implementation defect receives its own corrective plan rather than a silent rewrite of the original record, so both are corrected under **C006** (`plans/implementation/macos-native-server/c006-boot-time-runtime-and-backend-readiness.md`, closed at `e37210b`, closure `plans/closure/macos-native-server-corrective/c006-status.md`). The C002 cold-reboot leg was re-run end to end on the same guest and **passes**. The C002 closure record was updated to point at C006 and to carry the residual honestly; its own implementation evidence still stands at `b53ce2d`.
-
-**C004's corrective (2026-10-21):** the corrective roadmap's evidence-triggered gap list named `src/firewall/pf.rs::attachment_verified` as using substring membership and a filter-OR-NAT predicate — neither of which proves effective policy attachment. C004 is blocked behind C003, which is blocked behind C001's closure, so that defect could not be reached in the dependency order, and it is a defect in the **verifier**, not in the routed-LAN capability, and depends on neither. Per §13 it was corrected under **C007** (`plans/implementation/macos-native-server/c007-effective-pf-attachment-verification.md`, closed at `1bf4bb3`, closure `plans/closure/macos-native-server-corrective/c007-status.md`): the verifier is now token-exact and per rule class, its verdict is a conjunction over the required classes, and the live fixture proves the positive, collision, and negative cases against real `pfctl` output on both architectures. C004's own live half — the bounded `pfctl` backend, the ordering analysis, the effective-traffic evidence — is unchanged and still blocked.
-
-**C005's corrective (2026-10-21):** C005 item 4 asks for the pinned `wireguard-go` helper to be "a declared, immutable build input with recorded upstream commit/tag, MIT license, Go compiler/toolchain and SHA-256 evidence". The upstream source, commit, license, and toolchain existed only as literals pasted twice into the qualification workflow; nothing in the repository declared the helper as a build input, the two architecture jobs could drift, and the digest was written to a scratch file and discarded. The repository-engineering half of that item depends on no blocked gate, so per §13 it was corrected under **C008** (`plans/implementation/macos-native-server/c008-declared-helper-build-input.md`, closed at `62337c5`, closure `plans/closure/macos-native-server-corrective/c008-status.md`): one declared input (`helper/wireguard-go.provenance.json`), one builder that refuses a mismatched commit, license, or toolchain and records a provenance receipt, and the macOS qualification building through it on both architectures. The build is byte-reproducible — two independent arm64 builds of the declared commit produced the same digest. C005's release half — the Eggpack producer/consumer integration, the exact-target package, the cross-architecture mixing refusal, the SBOM, and the release decision — is unchanged and still blocked on C001+C002 and on the maintainer's authority.
-
-**Hosted qualification (macOS run `39427791794`):** all four jobs pass — `gates-arm64`, `gates-intel`, `live-arm64`, `live-intel-tunnel`. The C001 live qualification proves the joint ownership proof, the production backend's observation of the managed device, the receipt's survival across a reader restart, and a teardown with no leaked device, socket, or receipt. The C002 live qualification runs the product's own transactional installer and observes the privileged daemon as root and the management daemon as the dedicated unprivileged account, with the privileged socket root-owned and reachable only by the management group. Linux native CI run `39427800154` passes every job except the pre-existing `dependency-audit` upstream `zip` advisory.
-
-**Hosted qualification on the current head (macOS run `39470322220`):** all four jobs pass again — `gates-arm64`, `gates-intel`, `live-arm64`, `live-intel-tunnel`. The controlled-host qualifications (the off-host Linux-kernel peer leg and the three-phase cold-reboot leg) live in their own `wireguard_darwin_controlled` test target, so the hosted `live-arm64` job never executes a fixture that needs a host a hosted runner cannot be. Linux native CI on the same head passes every job except the same pre-existing `dependency-audit` upstream `zip` advisory.
-
-Staged host-only/routed capability does **not** automatically permit a macOS release: the M007 gateway and reboot requirements remain binding. The dual-architecture requirement was amended to Apple silicon by ADR-009 (2026-10-21), by explicit maintainer decision. Any narrower release needs an explicit maintainer-approved ADR-008/M007 decision before publication; gateway still needs C004. All old Linux state, CI, artifacts, updater policy and historical closures remain unchanged.
-
-Explicit macOS stop gate: Apple TN3165 warns PF is not an API for broad product use. PF anchor/NAT capability for advanced-admin deployments must be documented, qualified and approved separately before advertising full macOS gateway support. Do not modify foreign PF configuration automatically or accept compilation as networking evidence. Linux remains canonical and strictly qualified.
-
-## 4C. Operator parity handoff (2026-11-10)
-
-Roadmap: `plans/subsystems/operator-parity-roadmap.md`. Baseline `a9b0c06`. This line is the wg-easy operator loop on the two target systems. It does not reopen ADR-008, does not authorize a macOS release, and does not replace C015.
-
-| Milestone | Status | Plan |
-|---|---|---|
-| M001 platform-honest setup | **closed** 2026-11-10 | `plans/implementation/operator-parity/001-platform-honest-setup.md`; closure `plans/closure/operator-parity/001-status.md` |
-| M002 client expiration | **closed** 2026-11-10 | `plans/implementation/operator-parity/002-client-expiration.md`; closure `plans/closure/operator-parity/002-status.md` |
-| M003 server-generated preshared keys | **closed** 2026-11-10 | `plans/implementation/operator-parity/003-client-preshared-keys.md`; closure `plans/closure/operator-parity/003-status.md` |
-| M004 client MTU in the exported config | **closed** 2026-11-10 | `plans/implementation/operator-parity/004-client-mtu.md`; closure `plans/closure/operator-parity/004-status.md` |
-
-Hooks, charts, Prometheus, 2FA, OIDC, a browser password change, server-interface MTU, and a product-written Darwin parent ruleset are deferred in the roadmap with reasons. An implementation that sets a Darwin forwarding sysctl or edits `/etc/pf.conf` is a stop, not a completion of M001.
-
-## 5. Implementation plan status (including external gates)
-
-| Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff |
-|---|---|---|---|---|
-| Operator parity | M001 platform-honest setup | **closed** 2026-11-10 | `plans/implementation/operator-parity/001-platform-honest-setup.md` | `plans/closure/operator-parity/001-status.md`. Historical setup body stays a gateway. |
-| Operator parity | M002 client expiration | **closed** 2026-11-10 | `plans/implementation/operator-parity/002-client-expiration.md` | `plans/closure/operator-parity/002-status.md`. Schema 9. One deadline wake. Not a poll. |
-| Operator parity | M003 preshared keys | **closed** 2026-11-10 | `plans/implementation/operator-parity/003-client-preshared-keys.md` | `plans/closure/operator-parity/003-status.md`. No migration. Both wire encoders project set and clear. |
-| Operator parity | M004 client MTU | **closed** 2026-11-10 | `plans/implementation/operator-parity/004-client-mtu.md` | `plans/closure/operator-parity/004-status.md`. Schema 10. Export line only. No server link MTU. |
-| Release readiness/security | R001 workflow input/provenance hardening | **closed at `1e034d0`** | `plans/implementation/release-readiness/001-release-workflow-input-and-provenance-hardening.md` | Exact-head CI `38108270370` + Distribution `38108270368` green; live preflight deferred to R004 |
-| Release readiness/security | R002 offline signing and trust root | closed (non-secret engineering) at `1e034d0` | `plans/implementation/release-readiness/002-production-trust-root-and-offline-signing-ceremony.md` | Single-maintainer ceremony; production key/draft are R004 operations |
-| Release readiness/security | R003 verified first-install trust | closed (repository engineering) at `1e034d0` | `plans/implementation/release-readiness/003-bootstrap-installer-trust-and-root-execution-boundary.md` | First signed install is R004 evidence |
-
-## 6. External readiness blockers
-
-| Subsystem | Milestone | Status | Implementation plan | Hard blocker |
-|---|---|---|---|---|
-| Release readiness/security | R004a initial unsigned pre-release | **closed 2026-10-11** (`v0.1.0` public pre-release) | `plans/implementation/release-readiness/004-first-production-release-security-qualification-and-authorization.md` §4A | Release run `38115877717` + provenance `38152418203` green; digest-verified draft and public assets; closure `plans/closure/release-readiness/004a-status.md` |
-| Release readiness/security | R004b signed-production gate | **waived by maintainer decision 2026-10-11** | `plans/implementation/release-readiness/004-first-production-release-security-qualification-and-authorization.md` §§4–10 (retained as future spec) | Checksums-only releases; `v0.1.0` stable; waiver `plans/closure/release-readiness/004b-waiver-status.md` |
-| Distribution/install/update | Production signing and public release | R004 operation | `plans/subsystems/release-readiness-security-roadmap.md` and R002/R004 checklists | Maintainer key custody, tag, signed draft, current CI, install check, and explicit publication authorization |
-
-The initial 2026-10-09 release-readiness review at `main@ff40f85` found shell interpolation in the generated workflow and no independent source/run proof. Eggpack M003k closed the producer finding at `1103a1affc62a210f1102a769457db80d9188bc8` (hosted run `38027470046`); it validates and resolves the release tag before checkout and freezes the selected commit. Consumer regeneration, security regressions, and settings evidence are recorded in the dated follow-up below. No production key was generated, installed or stored, and no release was staged or published.
-
-R001–R003 repository implementation pins Eggpack M003k and regenerates the workflow with pre-checkout canonical tag resolution, rejects injection payloads, records source-run/asset provenance, adds a signer preflight, hardens and labels the convenience installer, and documents the signed first-install process. Earlier hosted CI `38022851605` and Distribution Foundation `38022853831` passed at `bd7c085`; this follow-up has local qualification but awaits exact-head hosted checks. GitHub has protected `main` (zero required approvals; maintainer merges after green checks)/immutable `v*` tag rules, selected Actions allowlist/read-only default permissions, and a single-maintainer `release-staging` approval with self-approval allowed. R001–R003 close on exact-head hosted evidence; the first live staging, key/draft, and signed install are R004 operations. No production key was generated or installed; no release was staged or published. No second reviewer is required anywhere.
-
-M004 corrective ordering: upstream `eggstack/eggup` Service M010 owned-failed-systemd quiescence and required M011 publication are closed; wg-basic C001a, C001, and C002 have actual-updater hosted recovery evidence; M004 technical closure is recorded at `plans/closure/distribution/004-status.md`; M005 and Phase 10 are now strictly closed at `plans/closure/distribution/005-status.md`. Fixture evidence does not claim production signing or public release readiness.
-
-M004 and its corrective slices are closed: `plans/closure/distribution/004-status.md`, `004-c001-status.md`, `004-c001a-status.md`, and `004-c002-status.md`. M005 is closed at `plans/closure/distribution/005-status.md`. Production public-release readiness additionally requires maintainer provisioning of the real release signing trust root and a production-signed draft. Fixture signing is sufficient to qualify mechanics but MUST NOT be described as production signing.
-
-## 7. Recently closed work
-
-- Operator parity M001–M004 **closed** 2026-11-10 on the uncommitted tree at
-  baseline `a9b0c06`. Linux untouched setup stays a gateway. macOS untouched
-  setup is host-only, and the product does not write Darwin forwarding or
-  `/etc/pf.conf`. Schema head is 10. Client expiry, server-generated preshared
-  keys, and a client MTU export line are in the product path. Closures
-  `plans/closure/operator-parity/001-status.md` through `004-status.md`.
-  Deferred roadmap items and C015 are unchanged. No macOS release.
-- macOS C001 **closed** 2026-10-21: production Darwin host-only
-  wiring implemented at `b53ce2d` — the Darwin `WireGuardBackend` with a
-  durable runtime registry and a *joint* ownership proof (process executable
-  identity + helper digest + socket owner/type + kernel device), the Darwin
-  reconciliation service over the audited `getifaddrs`/`sysctl`/`ioctl`/`AF_ROUTE`
-  boundary, an explicitly host-only firewall that *refuses* routed and
-  masquerade policies, and the real capability surface — with the audited
-  `unsafe` isolated in the `crates/darwin-sys` workspace member so the product
-  crate keeps `#![forbid(unsafe_code)]`. Closure gate met on the supported
-  architecture: the off-host Linux-kernel peer / dual-stack / API-telemetry
-  acceptance ran as root on a controlled Apple silicon host against an
-  independent Ubuntu 24.04 Linux-kernel peer, with observed evidence. The
-  **native Intel** arch of the same path was retired by scope under ADR-009, not
-  by measurement. Closure
-  `plans/closure/macos-native-server-corrective/c001-status.md`.
-- macOS C002 **closed** 2026-10-21: least-privilege launchd and a
-  real installer implemented at `b53ce2d` — a dedicated unprivileged
-  `_wg-basic-serve` management principal (verified in the plist *and* observed
-  by effective UID at runtime), a fully fixed plist renderer that takes no
-  caller path, an exact fs/IPC layout with symlink and mode refusals, a
-  transactional installer with rollback, and helper provenance checked at
-  execution time. The cold-reboot leg was **run end to end on a
-  disposable arm64 macOS guest and passes** — the reboot observed, both roles
-  back from the system domain, the management daemon still unprivileged, the
-  credential and enrolled client survived, the network reconverged, the
-  uninstall leaving nothing behind. The **native Intel** arch of the same leg
-  was retired by scope under ADR-009, not by measurement. Closure
-  `plans/closure/macos-native-server-corrective/c002-status.md`.
-- macOS C006 **closed** 2026-10-21: the boot-time corrective for C002,
-  implemented at `e37210b` — the privileged daemon creates its own runtime
-  directory when macOS's transient `/var/run` has been recreated (the Darwin
-  analogue of the Linux unit's `RuntimeDirectory=`), and the management daemon
-  waits, bounded, for the privileged daemon to answer a read-only capability
-  request before its startup reconciliation (the analogue of `After=` plus the
-  unit's `doctor` pre-flight). The C002 cold-reboot leg was re-run to a pass on
-  the same guest. Closure
-  `plans/closure/macos-native-server-corrective/c006-status.md`.
-- macOS C007 **closed** 2026-10-21: the corrective for C004's model half,
-  implemented at `1bf4bb3` — the PF attachment verifier no longer matches the
-  managed anchor with a substring test over two rulesets joined by a
-  disjunction. It is now token-exact and per rule class: the filter table's
-  parent must invoke the anchor with an `anchor` rule and the NAT table's
-  parent with a `nat-anchor` rule, each naming the managed anchor as a whole
-  token, and the verdict is a conjunction over the required classes. A
-  colliding name, a comment, another table's keyword, and a reference to the
-  other class verify nothing. Evidenced by the real `pfctl` output of a live
-  macOS host and by the hosted arm64 and Intel live fixtures, which gained
-  the positive, collision, and negative controls they never had. C004's live
-  half stays blocked. Closure
-  `plans/closure/macos-native-server-corrective/c007-status.md`.
-- macOS C008 **closed** 2026-10-21: the corrective for C005 item 4's
-  repository-engineering half, implemented at `62337c5` — the `wireguard-go`
-  helper's upstream source, immutable commit, MIT license, and Go toolchain
-  are one declared input (`helper/wireguard-go.provenance.json`); one builder
-  (`scripts/build-wireguard-go-helper.py`) refuses a mismatched commit,
-  license, or toolchain and records a provenance receipt carrying the
-  upstream commit, the license and its digest, the toolchain, the target, the
-  build flags, the artifact digest, and the binary's own `vcs.revision` stamp;
-  the macOS qualification builds through it on both architectures and keeps
-  the receipt as a run artifact. The build is byte-reproducible. C005's
-  release half stays blocked. Closure
-  `plans/closure/macos-native-server-corrective/c008-status.md`.
-- macOS M003 closed 2026-10-14: hosted live qualification on arm64 +
-  Intel (`macos-15`, `macos-15-intel`, macOS 15.7.9, run `38524007872`) —
-  pinned-helper spawn, utun delta mapping, hex-key UAPI set/get, dual-stack
-  loopback handshake/traffic/counters/RSS (~6.2 MiB/helper), ownership
-  proof + negative case, kill/restart with renumber tolerance. Two
-  kernel-vs-helper wire deviations fixed in the codec (hex keys, errno
-  trailer). Closure `plans/closure/macos-native-server/003-status.md`.
-- macOS M004 closed 2026-10-14: v4+v6 address/alias lifecycle on live
-  `utun`, pure planner verified against live observation, default route
-  byte-identical, inventories scoped (counter drift excluded after one
-  false-positive). Closure
-  `plans/closure/macos-native-server/004-status.md`.
-- macOS M005 narrowed 2026-10-14: TN3165 advanced-admin-only decision now
-  evidence-backed (attachment needs system-ruleset surgery the OS guards);
-  anchor lifecycle, forwarding/PF cycle with restore, unattached-inert
-  proof, no-false-convergence qualified live. Effective NAT + v6 egress
-  remain blocked. Closure
-  `plans/closure/macos-native-server/005-status.md`.
-- macOS M006 narrowed 2026-10-14: plist lint, system bootstrap/print/
-  bootout, KeepAlive re-supervision, DB-free state, reinstall cycle
-  qualified live on arm64. Reboot + post-reboot traffic remain blocked.
-  Closure `plans/closure/macos-native-server/006-status.md`.
-- macOS M007 verdict updated 2026-10-14: MUST-NOT-release stands with
-  enumerated residuals (off-host Linux interop, NAT+v6 egress, reboot,
-  Intel launchd, release audit + authorization). Closure
-  `plans/closure/macos-native-server/007-status.md`.
-- macOS M007 blocked verdict 2026-10-13: support matrix (only loopback
-  management + IPC qualified on arm64), threat review, serve footprint
-  (0.097s ready, 11.3 MiB RSS, 0.0% idle), docs audit, binding MUST-NOT-release
-  decision + 5-step unblock checklist. Closure
-  `plans/closure/macos-native-server/007-status.md`. The line is closed as far
-  as unprivileged qualification can take it.
-- macOS M006 blocked 2026-10-13: installation scope at `8a063de`
-  (two-label plists, provenance receipts with helper hash + Darwin targets,
-  explicit-root install/verify/state-preserving-uninstall fixtures; 4 unit
-  tests; no signing claims). Native install/boot/reboot/recovery
-  unqualified — shared privileged-host blocker. Closure
-  `plans/closure/macos-native-server/006-status.md`.
-- macOS M005 blocked 2026-10-13: TN3165 advanced-admin-only decision +
-  anchor model at `be077d1` (installation-scoped anchors, masquerade without
-  NAT66, attachment verification, drift digest, conservative teardown; 6 unit
-  tests; read-only facts: pfctl root-gated, forwarding 0/0 untouched). Live
-  gateway traffic unqualified — shared privileged-host blocker; installer
-  MUST NOT auto-configure PF. Closure
-  `plans/closure/macos-native-server/005-status.md`.
-- macOS M004 blocked 2026-10-13: modeling scope at `42fa94c` (typed Darwin
-  observation, pure planner with idempotence/foreign-preservation/conflict/
-  global-takeover/renumber cases; 6 unit tests; purity guard). Native
-  convergence unqualified — shared privileged-host blocker; no convergence
-  claimed. Closure `plans/closure/macos-native-server/004-status.md`.
-- macOS M003 blocked 2026-10-13: safe unprivileged scope at `b1c831c`
-  (pinned wireguard-go 0.0.20250522 MIT, fixed-argv supervision, bounded UAPI
-  codec, fail-closed ownership logic, audited process boundary; 9 new unit
-  tests). Live utun handshake/traffic unqualified — no sudo/disposable Mac
-  VM/opt-in in this session; no packet claim made. Closure
-  `plans/closure/macos-native-server/003-status.md`.
-- macOS M002 strict closure 2026-10-13: Darwin `getpeereid` IPC at `96075b5`
-  (authorized Ping/capabilities, no root bypass, bounded framing, socket
-  lifecycle, SIGTERM/restart; 6/6 native `darwin_ipc` + 10 portable socket
-  unit tests). Closure
-  `plans/closure/macos-native-server/002-status.md`. M003 is now ready.
-- macOS M001 strict closure 2026-10-13: portable Cargo/build/typed platform
-  seams at `9c99fc6` (native arm64 `cargo test` 561 passed; Intel target
-  compiles; loopback admin/serve/auth/doctor smoke reports backend-unavailable
-  degradation, never convergence). Closure
-  `plans/closure/macos-native-server/001-status.md`. M002 is now ready.
-- Release-readiness R004a closure 2026-10-11: `v0.1.0` public pre-release
-  (unsigned, evaluation only) at source `7527241`. Release run
-  `38115877717` (11 jobs) + provenance run `38152418203` green; RF-07
-  producer tag-fetch fix (`eggstack/eggpack@a0fec98`) verified live;
-  draft and public assets digest-verified byte-identical; maintainer
-  staging approval + draft-to-pre-release flip. Closure
-  `plans/closure/release-readiness/004a-status.md`.
-- Release-readiness R004b waiver 2026-10-11: the signed-production gate is
-  waived by maintainer decision; releases are checksums-only and `v0.1.0`
-  was promoted to stable unsigned. Waiver
-  `plans/closure/release-readiness/004b-waiver-status.md`. The release
-  subsystem is now closed.
-
-- Release-readiness R001 strict closure at `1e034d0`: Eggpack M003k pin,
-  regenerated workflow, zero-approval solo-maintainer policy, exact-head
-  hosted CI `38108270370` (21 passed) and Distribution Foundation
-  `38108270368` green. First live staging run is an R004 operation.
-- Release-readiness R002 strict closure (non-secret engineering) at
-  `1e034d0`: single-maintainer ceremony, fixture negative matrix,
-  fail-closed default; production key/draft are R004 operations.
-- Release-readiness R003 strict closure (repository engineering) at
-  `1e034d0`: authenticated install procedure, ordering regression,
-  truthful convenience-mode labels; first signed-install run is R004
-  evidence.
-- Distribution M005 strict closure and **Phase 10 technical closure**:
-  `plans/closure/distribution/005-status.md` (implementation head `c7de919`;
-  full CI `37936112512`; native release/lifecycle CI `37936276064`). Public
-  publication remains blocked on production signing and explicit maintainer
-  authorization.
-- IPv6/route-policy M001 strict closure:
-  `plans/closure/ipv6-route-policy/001-status.md` (head `fa25918`; full CI
-  `37945376954`; native product job `113870168633`). M002 and M003 strict
-  closures are recorded below; M004 and Phase 11 are now strictly closed.
-- IPv6/route-policy M002 strict closure:
-  `plans/closure/ipv6-route-policy/002-status.md` (implementation head
-  `306ec64`; full CI `37952330395`; rootful network-control job
-  `113894015843`). M003 is strictly closed; M004 is unblocked.
-- IPv6/route-policy M003 strict closure:
-  `plans/closure/ipv6-route-policy/003-status.md` (implementation head
-  `7bfa28f`; full CI `37955744248`; rootful product job `113905694296`).
-  M004 and Phase 11 are now strictly closed under their closure record.
-- IPv6/route-policy M004 strict closure and **Phase 11 technical closure**:
-  `plans/closure/ipv6-route-policy/004-status.md` (implementation head
-  `f72ac4d`; full CI run `37959251834`; rootful product job `113917592634`,
-  network-control job `113917592920`, and systemd job `113917592267`).
-- Operational-hardening M001 strict closure: `plans/closure/operational-hardening/001-status.md` (implementation commit `3e5b21c`; real-kernel doctor drift/convergence/conflict fixtures).
-- Operational-hardening M002 strict closure: `plans/closure/operational-hardening/002-status.md` (implementation commit `ae60e81`; real serve lease, schema v5, network lifecycle, recovery and purge evidence).
-- Operational-hardening M003 strict closure: `plans/closure/operational-hardening/003-status.md` (implementation commit `5815c59`; structured events, bounded retention, crash/resource qualification, and service-manager contract).
-- Operational-hardening M004 strict closure: `plans/closure/operational-hardening/004-status.md` (implementation commits `f821e3b` and `4c326f4`; abuse-boundary tests, threat review, and pinned advisory gate).
-- Operational-hardening M005 strict closure and **Phase 9 closure**: `plans/closure/operational-hardening/005-status.md` (implementation head `6a9f354`; CI run `37741533304`).
-- Distribution M001 strict closure: `plans/closure/distribution/001-status.md` (implementation head `c4d4e87`; native target run `37782271310`; full CI run `37782271299`).
-- Distribution M002 strict closure: `plans/closure/distribution/002-status.md` (implementation head `d1813da`; systemd qualification and full CI run `37799075225`).
-- Distribution M003 historical blocked disposition: `plans/closure/distribution/003-status.md`; prerequisite re-review/unblock: `plans/closure/distribution/003-unblock-review.md`.
-- Distribution M003 mechanical closure: `plans/closure/distribution/003-final-status.md` (implementation head `568d568`; native target run `37853066003`; full CI run `37853066011`).
-- Distribution M004 C001 initial corrective-required disposition and superseding strict closure: `plans/closure/distribution/004-c001-status.md` (implementation head `e26e9f2`; rootful/full CI run `37900751408`).
-- Distribution M004 C001a strict scoped closure: `plans/closure/distribution/004-c001a-status.md` (hosted actual-updater run `37896480910`; upstream Eggup 0.1.3 typed failed-unit adoption).
-- Distribution M004 C002 strict rootful qualification: `plans/closure/distribution/004-c002-status.md` (head `0b01078`; dedicated rootful run `37929914324`).
-- Distribution M004 strict technical closure: `plans/closure/distribution/004-status.md` (final qualified head `0b01078`; full CI `37929917248`; native targets `37929920418`; production signing/publication pending).
-
-- M001 strict closure: `plans/closure/network-control/001-status.md`.
-- M002 strict closure: `plans/closure/network-control/002-status.md`.
-- M003 strict closure: `plans/closure/network-control/003-status.md`.
-- M004 strict closure: `plans/closure/network-control/004-status.md`.
-- M005 strict closure: `plans/closure/network-control/005-status.md`.
-- C001 strict closure: `plans/closure/network-control-post-foundation-reconciliation/c001-status.md` (head `0e74a40`, CI run `37617879237`).
-- Durable-state M001 strict closure: `plans/closure/durable-state/001-status.md` (head `88f10f9`, CI run `37619412663`).
-- Durable-state M002 strict closure: `plans/closure/durable-state/002-status.md` (head `65339b8`, CI run `37623015401`).
-- Durable-state M003 strict closure: `plans/closure/durable-state/003-status.md` (head `6a9cbc7`).
-- Durable-state M004 strict closure and **Phase 6 closure**: `plans/closure/durable-state/004-status.md` (head `772203d`).
-- Durable-state post-Phase-6 C001 strict closure: `plans/closure/durable-state-post-phase6-reconciliation/c001-status.md` (head `635a130`, CI run `37638334930`).
-- Management-service M001 strict closure: `plans/closure/management-service/001-status.md` (head `5b57d49`).
-- Management-service M002 strict closure: `plans/closure/management-service/002-status.md` (head `60d1482`).
-- Management-service M003 strict closure: `plans/closure/management-service/003-status.md` (head `cfe6860`).
-- Management-service M004 strict closure and **Phase 7 closure**: `plans/closure/management-service/004-status.md` (head `d5d5ca9`).
-- Management-service post-Phase-7 C001 strict closure: `plans/closure/management-service/c001-status.md` (head `df1f9e7`).
-- Product-management M001 strict closure: `plans/closure/product-management/001-status.md`.
-- Product-management M002 strict closure: `plans/closure/product-management/002-status.md` (head `cf0717e`).
-- Product-management M003 strict closure: `plans/closure/product-management/003-status.md` (implementation head `37c0ff7`).
-- Product-management M004 strict closure: `plans/closure/product-management/004-status.md` (implementation head `d629103`).
-- Product-management M005 strict closure and **Phase 8 closure**: `plans/closure/product-management/005-status.md` (implementation head `8b20a7c`).
-- MacOS C016 corrective closure: `plans/closure/macos-native-server-corrective/c016-status.md` (implementation head `11f0dae`; plan `plans/implementation/macos-native-server/c016-repository-hygiene-and-dependency-audit-corrective.md`). The macOS line carried 530 generated `.codegg/` agent transcripts and a stray `.DS_Store`; GitGuardian's generic high-entropy detector read the published WireGuard key-conversion vector as a credential; and `cargo audit` failed on `ctutils` 0.4.3, `tokio` 1.53.2 and three `zip` 6.0.0 advisories. `ctutils` and `tokio` move inside their existing requirements; the three `zip` advisories describe archive extraction this product never performs and are accepted with a written reason pending an upstream `eggup-archive` release; the vector is named as a published test vector. No product behaviour changed.
-- Product-management M006 corrective closure: `plans/closure/product-management/006-status.md` (implementation head `61cb753`; plan `plans/implementation/product-management/006-operator-shell-sign-in-and-visibility-corrective.md`). The embedded operator shell's login form posted an empty body, so no operator could sign in with any password, and three elements the shell marked `hidden` rendered on screen; the shell's status messages also carried no severity and the modal-scoped notices rendered behind the dialog backdrop. Corrected with a regression guard that fails on the pre-fix assets.
-- Product-management M007 corrective closure: `plans/closure/product-management/007-status.md` (implementation head `f70730c`; plan `plans/implementation/product-management/007-operator-shell-qr-presentation-corrective.md`). The embedded operator shell rendered the client QR code into the last child of the client editor's scrollable dialog, so the code landed below the visible region and was cut by the dialog's edge: the served SVG decoded correctly while the operator's screen did not. Corrected by bringing a rendered artifact into the editor's visible area, with a regression guard that fails on the pre-fix assets.
-
-- MacOS C017 corrective closure: `plans/closure/macos-native-server-corrective/c017-status.md` (implementation head `11f0dae`; plan `plans/implementation/macos-native-server/c017-secret-scan-finding-persistence-corrective.md`). C016 was closed with two of its acceptance criteria unmet: its split of the published WireGuard key-conversion vector left a sixty-one character run, which is still one high-entropy token behind the `private_key=` keyword, and its scan configuration never reached the default branch, so no scan ever exercised it. The tip's vector is written in pieces of at most fifteen characters, below the detector's sixteen-character minimum, and every published value the app can report — the vector in both forms and the client public key — is named in the scan configuration, which `main` now carries; a fresh detection of those values is suppressed, measured on a pull request carrying the value in the shape the detector reads. The app's check on the branch still reports one occurrence, incident `38182092` on commit `f470820`, because the app recorded it before the configuration existed and does not re-evaluate a recorded occurrence; resolving it in the GitGuardian dashboard is the workspace owner's and is the one condition this closure leaves open. The eighty-eight earlier commits that carry the vector behind the `private_key=` and `public_key=` keywords are named rather than rewritten, because rewriting them would change the identity of ninety-five commits and invalidate sixty hash references across the line's closure records. C016's closure record stays period-accurate. No product behaviour changed.
-## 8. M005 and C001 closure and downstream handoff
-
-C001 is strictly closed and preserves every M004/M005 contract; its evidence is recorded in `plans/closure/network-control-post-foundation-reconciliation/c001-status.md` and documents the before/after module inventory, the static guards, and the unchanged wire/protocol surface.
-
-M004 and M005 are strictly closed using their predecessor contracts. M004's RTNETLINK choice and ownership/retry semantics are recorded in `architecture/reconciliation.md`; M005's firewall/forwarding/NAT evidence is recorded in `plans/closure/network-control/005-status.md`. Rootful hosted CI supplies real kernel and end-to-end traffic evidence.
-
-## 9. Kernel/network research handoff
-
-M003 selected and qualified `nl-wireguard` 0.3.0. M004 selected and qualified `rtnetlink` 0.23.0 without rewriting the working WireGuard backend solely for dependency uniformity. M005 selected and qualified the bounded `nft` process backend under ADR-001 constraints; see `architecture/firewall.md` and its closure record.
-
-Candidate families include:
-
-- DefGuard WireGuard Rust control layer;
-- `wireguard-control`/innernet-family primitives;
-- `netlink-packet-wireguard` + Generic Netlink;
-- newer consolidated Linux netlink libraries where mature.
-
-The firewall backend research and selection are closed in M005. Its process boundary remains direct invocation with typed input, internal rendering, version/output/time bounds, and atomic table transactions; no shell or raw caller-provided nft source.
-
-## 10. External prior-art boundary
-
-wg-easy is the primary UX/product reference.
-
-Other WireGuard managers, including Rust/Linux control planes such as nx9-wg and DefGuard components, are architecture/interoperability references rather than source templates.
-
-wg-basic differentiation remains:
-
-- wg-easy-style low-friction onboarding;
-- Linux-native non-container canonical installation;
-- one small Rust executable with separated runtime privilege domains;
-- direct kernel control;
-- conservative host ownership;
-- simple binary/update distribution;
-- narrow appliance scope rather than general network orchestration.
-
-## 11. Verification posture
-
-M001: ordinary Rust/Linux CI + MSRV.
-
-M002: Linux UDS peer-credential/lifecycle qualification.
-
-M003: real kernel WireGuard namespace handshake and telemetry.
-
-M004: real RTNETLINK reconciliation/idempotence/partial-failure/preservation.
-
-M005: three-node namespace traffic with nftables, forwarding, NAT, restart/reapply, disable, and unrelated-state preservation.
-
-C001: unchanged behavior proven by re-running every M003–M005 rootful suite, plus static source guards that pin the architecture boundaries (no `wg`/`wg-quick`/`ip` control path, process execution isolated to the nft backend, no shell, no generic protocol escape hatch, secret redaction).
-
-Durable-state post-Phase-6 C001: the existing routine, MSRV, and seven rootful suites, re-run unchanged, plus one new real-kernel case qualifying the disable path when the firewall layer refuses. Injection is a fixture-private `nft` on netd's `PATH`, so the shipped firewall-first ordering is exercised with no production fault-injection hook; two reverted negative controls confirm the case fails when that ordering is broken.
-
-No network milestone may substitute mocked kernel behavior for its required real-kernel closure evidence.
-
-## 12. Planning hygiene
-
-M001–M005 and C001 have strict closure records. M005 was verified at `c67fff8` (CI run `37593324627`); C001 was verified at `0e74a40` (CI run `37617879237`).
-
-Durable-state M001 is closed at `88f10f9` (CI run `37619412663`): hardened SQLite state store, installation identity, monotonic desired generation with CAS mutation, deterministic projection.
-
-Durable-state M002 is closed at `65339b8` (CI run `37623015401`, five jobs). It adds the durable owner tag, installation-scoped firewall ownership, and the generation-aware aggregate reconcile with an outer coordinator lock and truthful receipts. Two real-kernel fault-injection cases in the plan's case list were recorded in the M002 closure record as lacking a rootful fixture; M003 closed that gap for the enable path with `a_partially_applied_generation_recovers_after_a_restart`.
-
-C001 removed stale milestone-era documentation and decomposed `reconcile.rs`, `firewall.rs`, and `protocol/server.rs` into `reconcile/`, `firewall/`, and `protocol/` module trees before persistence/UI added more consumers.
-
-Durable-state post-Phase-6 C001 is closed at `635a130` (CI run `37638334930`, seven jobs). It reconciled current-state docs that still described shipped behavior as future work, split `management`, `state/store`, and `state/schema` by subject with the public surface unchanged and no dependency change, and retired the last M002/M003 evidence debt. Its closure record notes two judgment calls: `store/sql.rs` holds row/column conversion rather than extracted query strings, and the schema contract test suite stayed whole rather than being distributed across the three modules it spans.
-
-Durable-state M003 is closed at `6a9cbc7`: the unprivileged management role reconciles the committed desired generation on startup and after a crash, records convergence evidence only for the generation the database still holds, and qualifies restart recovery at the process level against real `netd` and management child processes, SQLite, RTNETLINK, and nftables. Two classification defects were found and fixed while qualifying: every refusal was being reported as a transient outage, and a partial apply was being reported as a hard refusal. A previously vacuous owned-table fixture was corrected to seed a network policy.
-
-Durable-state M004 is closed at `772203d` and **Phase 6 is closed with it**. Online backup uses SQLite's backup API under the store's mutation lock rather than copying a live WAL database; offline restore validates a candidate completely before replacing anything and retains the previous database; a restored database is qualified end to end by rebuilding a fresh three-namespace environment and carrying real WireGuard, forwarding, and NAT traffic. A fail-closed gap was fixed: `enforce_singleton` accepted a missing installation row, so a tampered database opened successfully and was merely unusable afterwards. A vacuous M001 architecture guard that forbade the now-enabled `rusqlite::backup` was corrected rather than deleted.
-
-Phase 6 is complete under ADR-002 and `plans/subsystems/durable-state-restart-reconciliation-roadmap.md`.
-
-Phase 7 research/planning is complete under ADR-003 and `plans/subsystems/management-service-security-roadmap.md`. The selected baseline is direct EggServe H1, a bounded dedicated management worker, local Argon2id credentials, opaque revocable sessions, explicit Host/Origin/CSRF enforcement, and loopback-first binding.
-
-Phase 7 M001 is closed at `5b57d49`. It proves the ADR-003 boundary empirically rather than by assertion: `eggserve-server` 0.4.0 and `eggserve-primitives` 0.2.2 are sufficient on their own, no router framework was needed, one bounded worker owns `ManagementRuntime`, and HTTP code provably never reaches the store or netd. Three judgment calls are recorded in its closure record: EggServe rejects a zero file-stream/tunnel capacity so the surface pins the floor of 1 with no route able to consume it; the pre-Phase-7 architecture guard's blanket `tokio::` ban was replaced with a narrower and stricter rule (no web stack anywhere in management, `tokio::` only in the worker); and architecture guards now inspect code with comments stripped, because prose that names a forbidden dependency would otherwise fail its own guard.
-
-Phase 7 M003 is closed at `cfe6860`. The surface publishes five routes — `POST /api/v1/login`, `POST /api/v1/logout`, `GET /api/v1/session`, `GET /api/v1/health`, and the unauthenticated `GET /healthz` — and no Phase 8 configuration-mutating route. Five judgment calls are recorded in its closure record. Security headers are applied *after* construction, in exactly one place at the end of `ManagementService::dispatch`, because sealing during construction would have let four separate literal constructors drift and sealing after it makes the guarantee total: a route cannot build a response that skips the headers. Trust is never inferred from a loopback listener, because a rebinding page controls `Host`; an allowed host set and a canonical origin are declared instead, and a routable bind is refused outright without an explicit acknowledgement. The `Secure` cookie attribute and the `__Host-` name follow the configured canonical origin rather than the incoming request, so a plain-HTTP loopback deployment does not emit a cookie a browser would silently drop. The login limiter runs *before* Argon2 — at ~300 ms and 19 MiB per verification under load, a limiter after the hash is a denial of service wearing a rate limit's clothes — and that ordering is enforced by an architecture guard as well as measured, because a timing test cannot catch a refactor that moves one statement. Two defects in already-closed M002 work were found and corrected: `admin set-password` failed on a fresh install because both one-shot commands used a store open that refuses a file which does not exist, and an unknown username returned in microseconds beside a wrong password's ~300 ms, which is a username oracle larger than anything a response body could leak; plan §10 required a dummy verifier for exactly that and it is now in place. No historical closure record was edited.
-
-One corrective finding was made during M001: `ManagementHealth::netd_reachable` was derived from the convergence state, so a recorded `backend_unavailable` — which is the record of netd not answering — projected as reachable. The derivation was untested. It is now derived from the recorded disposition directly, with regression tests. No closed plan's verified surface changed, and no historical closure record was edited.
-
-One carry-forward constraint for M002: `src/state/schema/mod.rs` currently exercises the migration runner through a `#[cfg(test)]`-only step stamped at version 2, so a genuine migration 2 collides with it. M002 must replace that harness with fixtures built from the production v1 schema.
-
-If later implementation evidence reveals a material architecture contradiction, record it and revise the appropriate plan/ADR deliberately rather than silently altering the contract.
-
-Phase 9 research/planning is complete under ADR-005 and `plans/subsystems/operational-hardening-roadmap.md`. The selected baseline is an authoritative read-only doctor, crash-safe service lease, durable whole-server network state, fail-closed purge, structured stderr events, bounded operational-row housekeeping, adversarial HTTP/UDS qualification, and a binary+database rollback rehearsal using Phase 8 closure `e8fd6b1` as the old-version baseline.
-
-Phase 10 is technically closed under ADR-006 and `plans/subsystems/distribution-install-update-roadmap.md`; M001–M005 closure evidence is recorded. The selected baseline is two native Linux GNU targets, a signed Eggpack ReleaseManifest with project-owned Minisign trust, native systemd installation, Eggup-owned local binary mechanics, wg-basic-owned two-service/database orchestration, a root-owned crash-recovery journal, and state-preserving uninstall. The production private signing key remains outside repository/ordinary CI authority; public-release readiness requires maintainer provisioning of the real trust root and a production-signed draft. Phase 11 M001–M004 are strictly closed under `plans/closure/ipv6-route-policy/004-status.md`.
-
-## 13. Closure handoff
-
-M001–M005, network-control C001, durable-state M001–M004, and durable-state post-Phase-6 C001 are closed and their strict evidence is recorded. **Phase 6 remains closed.** Phase 7 M001, M002, M003, and M004 are all closed; **Phase 7 is closed at `d5d5ca9`** and Phase 8 is unblocked.
-
-Phase 7 M004 closed strictly at `d5d5ca9`. The milestone delivered a self-contained embedded operator shell (12,723 bytes, compiled in, no document root, no external origin, no CSP concession), a deterministic `serve` lifecycle, sessions qualified across a real process restart over real cookies, four-way readiness differentiation, and end-to-end plus abuse/resource qualification against real processes and a real network backend. Two defects were corrected that the code alone would not have shown: `serve` died from `SIGTERM` without draining, because `ctrlc`'s `termination` feature was not enabled and only its handler covers a supervisor's signal; and `ManagementHealth::netd_reachable` could not distinguish a dead backend from an installation that had simply not applied anything yet, so an authenticated live read-only probe was added while the unauthenticated probe was deliberately left unable to dial the privileged backend. The rootful service fixture drives the management HTTP surface against a real `netd` inside a disposable namespace and qualifies real convergence in both directions — `ok` when converged, `degraded` when the backend is gone. Measured footprint is 13.34 MiB combined against the long-term 30 MiB engineering signal, with 0 idle CPU ticks for both roles over a two-second window; nothing was weakened to meet the signal, and the Argon2id parameters remain at the M002 policy, asserted with a latency *floor* so they cannot be traded for speed. No high or medium finding remains open. No historical closure record was edited.
-
-Phase 8 M005 closed at implementation head `8b20a7c`, completing the first user-facing product boundary. The buildless embedded UI consumes the authenticated API for setup, client lifecycle, explicit credential exports, one-time link actions, live telemetry, and audit. The combined Linux-integration suite and six-test product rootful suite passed; the rootful product case configures a real client from HTTP-exported values, proves a kernel handshake and traffic, then drives disable, re-enable, and delete through HTTP. The five embedded assets total 29,811 bytes. The release footprint measured 13.54 MiB combined serve/netd RSS and zero idle CPU ticks over two seconds; no high, medium, or low finding remains open. Phase 9 M001–M005 are now strictly closed with the upgrade/rollback and clean-target recovery evidence at `plans/closure/operational-hardening/005-status.md`. Phase 10 M001 is strictly closed; M002 is ready, while installation and self-update behavior remain unimplemented.
-
-At each future closure, update:
-
-- source implementation-plan status;
-- `plans/subsystems/network-control-roadmap.md` milestone table;
-- `plans/subsystems/durable-state-restart-reconciliation-roadmap.md` milestone table;
-- `plans/subsystems/management-service-security-roadmap.md` milestone table;
-- `plans/subsystems/product-management-enrollment-ui-roadmap.md` milestone table;
-- `plans/subsystems/operational-hardening-roadmap.md` milestone table;
-- `plans/subsystems/distribution-install-update-roadmap.md` milestone table;
-- this registry;
-- current architecture/operator docs.
-
-Historical closure records remain immutable evidence if later corrective work is required.
+- Plans describe intended or active work; current-behavior documentation describes only implemented behavior.
+- Do not create closure records before evidence exists. Historical closure records remain period-accurate when corrective work follows.
+- Do not create later implementation plans merely to fill a roadmap; hand off work when its predecessor contracts are stable enough for a bounded plan.
+- Detailed closed-work status belongs in its source plan or closure record, not in this registry.

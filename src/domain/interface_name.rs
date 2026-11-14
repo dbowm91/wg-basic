@@ -1,16 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 
-/// Logical managed interface name (e.g. `wg0`).
+/// Logical, operator-configured interface identity (e.g. `wg0`), stored with
+/// the [`InterfaceId`] and stable across reboots. On Darwin, `utunN` is an
+/// ephemeral [`OsLocator`](crate::platform::OsLocator), not this identity.
 ///
-/// This is the operator-configured, OS-neutral logical identity stored in
-/// SQLite alongside the [`InterfaceId`]. It is stable across reboots and, on
-/// Darwin, across `utunN` renumbering: the kernel-assigned `utunN` name is an
-/// ephemeral [`OsLocator`](crate::platform::OsLocator), never this value.
-///
-/// Bounds follow `IFNAMSIZ` (15 bytes plus NUL) on both Linux and Darwin
-/// (Darwin `IFNAMSZ` is likewise 16), so the same validation holds for both
-/// backends. Darwin `utunN` names (`utun0`…`utun4095`) satisfy these bounds.
+/// The 15-byte limit matches Linux `IFNAMSIZ` and Darwin `IFNAMSZ`; all
+/// `utun0`…`utun4095` names fit.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct InterfaceName(String);

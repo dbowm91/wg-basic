@@ -23,10 +23,8 @@ pub use intent::{
     DesiredAddress, LinkLifecycle, ManagedRoute, OwnershipDeclaration, ResourcePresence,
 };
 pub use interface_name::InterfaceName;
-// Key generation is pure X25519 arithmetic with no Linux dependency, so it lives
-// in `domain` rather than behind the `wireguard` module's platform gate: the
-// unprivileged product service generates server and client identities and must
-// be able to do so without a network backend present.
+// Key generation is platform-independent; keep it in `domain` so management
+// can create identities even when no network backend is available.
 pub use keys::{derive_public_key, generate_keypair, generate_preshared_key, WireGuardKeyPair};
 pub use network::{
     validate_unique_client_addresses, ClientRoutePolicy, NetworkPrefix, RoutePolicyValidationError,
