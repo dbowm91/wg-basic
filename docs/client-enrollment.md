@@ -1,60 +1,72 @@
 # Client configuration and enrollment
 
-A managed client may carry `expires_at`, a Unix-second deadline on the
-management worker's clock. Null means the client does not expire. When the
-deadline is due, the worker disables that client and leaves the row, the
-addresses, and the keys in place. The clock is the authority. The product
-does not detect NTP. A disabled client's config can still be exported.
+In the operator UI, choose **Add client**, enter a name, and choose **Create
+client**. Open that client's editor from the Clients section. The editor can
+export a standard WireGuard configuration, show a QR code for it, or create a
+one-time enrollment link.
 
-An authenticated administrator can download a managed client's standard
-WireGuard configuration or request a local SVG QR encoding of that exact
-configuration. Both artifact responses are marked `Cache-Control: no-store`;
-the config response is an attachment. A client without an allowed route policy
-cannot be exported because it would produce an unusable `AllowedIPs` setting.
-Client route intent is selected explicitly per family: no routes, that family's
-full tunnel (`0.0.0.0/0` or `::/0`), or split prefixes. IPv6 routes require both
-a managed server IPv6 tunnel range and an IPv6 address assigned to that client;
-assigning an IPv6 address alone never enables IPv6 routes. Route policies are
-limited to 64 unique unicast prefixes. Export preserves the selected routes,
-DNS addresses, and a bracketed IPv6 endpoint literal where configured.
-A stored client MTU is written as `MTU = <n>` after the `Address` lines and
-before `DNS`. Null omits the line. The QR code encodes that same text. The
-server interface MTU is not changed, and a device must re-import the file to
-pick up a new value. A preshared key is present in the `[Peer]` section only
-when one is stored. The client summary says whether one is configured and
-does not contain the key. Generating or clearing it replaces the export, so
-the device must re-import.
-Hosted namespace qualification covers IPv4 and IPv6 full-tunnel traffic and
-split-prefix positive/negative traffic. The server's IPv6 path is routed with
-an explicit upstream return route and no NAT66; a saved route policy does not
-configure that upstream network for the operator.
-The embedded operator page offers these exports from the client editor only
-after an explicit action. Closing the editor clears its displayed artifact.
+Configuration files, QR codes, and enrollment links contain credentials. Share
+them only through a private channel and store downloaded files securely.
 
-For an in-person or separately delivered share, create an enrollment link with
-`POST /api/v1/clients/<client-id>/enrollment-links`. The request requires the
-administrator session, exact configured `Origin`, and CSRF token. An optional
-`expires_in_seconds` selects a lifetime from 1 second through 24 hours; the
-default is 600 seconds. The response contains the capability ID, expiry, and a
-share URL whose 256-bit URL-safe token exists after `#token=` only. The raw
-token is never stored: SQLite retains its SHA-256 digest.
+## Export a configuration
 
-The recipient opens the link in a browser. The embedded page does not consume a
-capability on GET; its script reads the fragment, removes it from browser
-history, and sends a small same-origin JSON POST. The first correct consume
-returns the config once. Wrong, expired, revoked, deleted-client, and already
-consumed capabilities return the same unavailable response. A separate
-per-peer/global limiter runs before the worker looks up a capability.
+Choose **Download config** to download the client profile, or **Show QR code**
+to display the same configuration as a QR code. The export is generated only
+after you request it. Responses use `Cache-Control: no-store`, and closing the
+client editor clears the displayed artifact.
 
-Create and revoke actions are in the secret-safe audit trail. The token and
-configuration are never audit fields. The public enrollment page and consume
-response use the service's no-store and no-referrer security headers. No CORS
-headers are emitted. The operator page displays a newly created link with its
-expiry and copy/revoke actions. The raw link is held in page memory only and is
-cleared when the client editor closes; deliver it over an approved private
-channel.
+A client without an allowed route policy cannot be exported because its
+`AllowedIPs` would be unusable. A disabled client can still be exported, but it
+will not pass traffic once the disable has been enforced. Check the client
+status if you need to confirm revocation.
 
-Each client can hold at most eight live capabilities. Startup and capability
-creation prune consumed, revoked, and expired capability rows older than seven
-days. Their audit events remain, subject to the bounded 10,000-event audit
-retention policy documented in [product management](../architecture/product-management.md).
+## Routes, MTU, and preshared keys
+
+IPv4 and IPv6 routes are selected independently. Each family can have no route,
+a full-tunnel default route, or split prefixes. IPv6 routes require both a
+managed server IPv6 tunnel range and an IPv6 address assigned to the client.
+An IPv6 address alone does not enable IPv6 routes. The upstream network must
+also provide routed egress and a return route for the tunnel prefix. wg-basic
+does not configure upstream routers or use NAT66.
+
+A client MTU from 1280 through 9000 is written to the exported configuration.
+An unset MTU omits the line. Changing it does not change the server interface
+MTU. The client must re-import the profile to receive route or MTU changes.
+
+You can generate or clear a server-generated preshared key in the client
+editor. The key is not shown in the client summary. Changing it changes the
+profile, so the client must re-import the updated configuration.
+
+## Client expiration
+
+An optional expiration time disables the client when the management worker's
+clock reaches the deadline. The clock is authoritative; wg-basic does not
+check whether NTP is configured. Expiration keeps the client row, addresses,
+and keys. As with other mutations, confirm that enforcement succeeded if you
+need to know exactly when access was revoked.
+
+## Create a one-time enrollment link
+
+Choose **Create one-time link** in the client editor. The default lifetime is
+10 minutes. The API also accepts `expires_in_seconds` from 1 second through
+24 hours. The response contains a share URL, expiry time, and capability ID.
+The token is a 256-bit URL-safe value in the URL fragment. It is not stored in
+the database; SQLite stores only its SHA-256 digest.
+
+Use **Copy link** and send the link privately. When the recipient opens it,
+the page removes the token from browser history and immediately sends a consume
+request. The first valid request consumes the capability and returns the
+configuration. The page then offers a **Download configuration** link. Because
+the link is consumed when the page loads, ask the recipient to open it only
+when ready to download. If they lose access to the page, create a new link.
+You can revoke an unused link from the client editor.
+
+Invalid, expired, revoked, deleted-client, and already-used links return the
+same unavailable response. Each client can have at most eight live links.
+The application prunes consumed, revoked, and expired capability records
+older than seven days. Audit events remain subject to the bounded retention
+policy.
+
+Creating and revoking links is recorded in the secret-safe audit trail. The
+raw token and client configuration are never audit fields. The page uses
+no-store and no-referrer headers and does not emit CORS headers.

@@ -1,216 +1,133 @@
-# State backup, restore, and migration
+# State backup, restore, and purge
 
-The wg-basic state database is authoritative for desired configuration and is **secret-bearing**: it holds the server private key and every client private and preshared key. A backup is a second copy of those secrets, never a sanitized export.
+The state database is authoritative for desired configuration and contains the
+server private key, client private keys, preshared keys, password verifiers,
+sessions, and enrollment digests. A backup contains the same secrets as the
+live database. Protect both with owner-only permissions and never commit them
+to version control.
 
-The default location is `/var/lib/wg-basic/state.db`.
-
-> **Backups contain VPN credentials.** Treat a backup file exactly as you treat the live database: owner-only permissions, off-host storage you control, never in version control.
+The default Linux state path is `/var/lib/wg-basic/state.db`.
 
 ## Commands
 
-Status, backup, verify, and restore operate on the database directly. Purge is
-the only state command that asks netd for a read-only plan before deleting
-files.
-
 ```sh
-# Safe status projection: identifiers, generations, integrity.
 wg-basic state status [--state <path>]
-
-# Consistent snapshot to a new file.
 wg-basic state backup <destination> [--state <path>]
-
-# Validate a candidate and install it as the live database.
+wg-basic state verify <candidate>
 wg-basic state restore <candidate> [--state <path>]
 
-# Verify without migration or modification.
-wg-basic state verify <candidate>
-
-# Preview or perform a guarded purge.
-wg-basic state purge --confirm-installation-id <uuid> --dry-run \
-  [--state <path>] [--socket <path>]
+wg-basic state purge --dry-run \
+  --confirm-installation-id <uuid> [--state <path>] [--socket <path>]
 ```
 
-`state status` prints the database path, schema version, installation identity, current desired generation, last attempted and last converged generations, the last outcome **category**, and the integrity verdict. It never prints private keys, preshared keys, or any row contents.
+`state status` prints identifiers, schema version, desired and convergence
+generations, the last outcome category, and integrity. It never prints key
+material or database rows. `verify` reads a candidate without migrating or
+modifying it. Purge is the only listed command that asks `netd` for a read-only
+network plan before removing files.
 
-There is deliberately **no** SQL, query, or shell access. The state surface can snapshot, validate, and install a database; it cannot be used to read or write arbitrary tables.
+## Back up
 
-## Backup
+Backup uses SQLite's online backup API. Do not copy `state.db` with ordinary
+filesystem tools while it is live. Committed transactions may still be in the
+WAL sidecar, so a direct copy can look valid while missing recent changes.
 
-Backup uses SQLite's **online backup API**, not a file copy.
+The store's mutation lock is held during the snapshot. Before it is promoted,
+the result is checked for SQLite integrity, foreign keys, schema, installation
+identity, and desired generation. The receipt identifies the exact generation
+in the backup. Online backup can run while `serve` is active.
 
-This matters. The database runs in WAL mode, so committed transactions may still live in a `-wal` sidecar. Copying `state.db` while that is true produces a file that is missing recent commits — and the result looks like an intact database, which is worse than an obviously stale one.
+The destination must be new. Its parent must be an existing real directory
+owned by the calling user and must not be group- or world-writable. The
+destination cannot be a symlink. Staging and final files use mode `0600`. On
+failure, the command removes only its own staging file. Replace the example
+`/secure/wg-basic` path with a directory that meets these requirements.
 
-The store's mutation lock is held for the duration. The database is small, so serializing is cheap, and it makes the receipt meaningful: **the generation in the receipt is exactly the generation the file contains.**
+```sh
+wg-basic state backup /secure/wg-basic/before-maintenance.db \
+  --state /var/lib/wg-basic/state.db
+wg-basic state verify /secure/wg-basic/before-maintenance.db
+```
 
-The completed file is checked before promotion: private regular file, SQLite
-integrity and foreign keys, schema, installation identity, and exact desired
-generation must match the receipt. A shared maintenance advisory lock keeps
-purge and restore from racing the snapshot, while online backups remain allowed
-while `serve` holds its separate service lease.
-
-A backup prints the destination, the generation, the schema version, and the installation identity, then warns that the file contains VPN credentials.
-
-### Path and permission rules
-
-| Rule | Behavior |
-|---|---|
-| Destination parent must be a real directory owned by the calling user | otherwise refused |
-| Destination parent must not be group- or world-writable | otherwise refused |
-| Destination must not already exist | refused; choose a new path |
-| Destination must not be a symbolic link | refused |
-| Staging artifact is created `0600` | never briefly world-readable |
-| Final file mode | `0600` |
-| Shell or subprocess execution | never used |
-| Failure | removes only the staging artifact it created |
-
-Overwriting an existing backup is refused rather than done unsafely. If you need a new copy, use a new filename.
+Keep backups outside the live state directory. Choose a new filename for each
+copy because existing destinations are never overwritten.
 
 ## Restore
 
-Restore is **offline and exclusive**. Stop the management service first. The
-command and library both acquire the service lease, so a second process cannot
-replace the database while `serve` is alive. An exclusive maintenance lease
-also prevents a concurrent online backup during replacement.
+Restore is offline. Stop `serve` and any other process that can write the
+state database. The command acquires the state lease and refuses an active
+management service. `netd` does not open the database.
 
 ```sh
-systemctl stop wg-basic          # or however you run the management role
-wg-basic state restore /secure/backup.db
-systemctl start wg-basic
+wg-basic state restore /secure/wg-basic/before-maintenance.db \
+  --state /var/lib/wg-basic/state.db
 ```
 
-Restore retains the same-process open-handle check as defense in depth. The
-cross-process service lease is the authority for whether another `serve` owns
-the state path.
+Restore validates the candidate before replacing anything. It checks that the
+candidate is a regular file owned by the caller, checks SQLite integrity and
+foreign keys, rejects a schema newer than the binary supports, copies the
+candidate to a private staging database, applies migrations to that copy, and
+validates the full typed desired state. It then syncs the staged file and
+retains the previous database as `<state>.pre-restore` before promotion.
 
-The order is **validate, then replace**:
+If validation or promotion fails, the current database remains in place and
+the candidate is not modified. Do not start an older binary against a database
+with a newer schema. Use a compatible binary or a backup from before the
+schema change.
 
-1. acquire the per-state service lease and exclusive maintenance lease;
-2. refuse a target or candidate this process holds open;
-3. validate the candidate path — not a symlink, a regular file, owned by the calling user, not group- or world-accessible;
-4. open the candidate **read-only** and run `PRAGMA quick_check` plus a foreign-key check;
-5. reject a `user_version` **newer than this binary understands**;
-6. copy the candidate into a private staging database beside the target;
-7. apply pending migrations to the staging copy;
-8. load the entire typed desired state and validate it;
-9. verify the installation identity and desired generation are consistent;
-10. `fsync` the file and its directory;
-11. move the previous target aside to `<state>.pre-restore` and rename the staged database into place.
+## Restoring onto another host
 
-A failure at any step leaves the original database exactly as it was, and the staging artifact is removed.
+The installation identity is stored in the backup. Startup reconciliation
+still follows the normal ownership rules. It can recreate resources it can
+prove belong to the restored installation, but the backup does not authorize
+taking over a foreign interface, route, or firewall table with the same name.
 
-### What a failed restore preserves
+After restoring, start the normal management process, let it reconcile, and
+check `state status`, `doctor`, and real client connectivity. Do not declare
+recovery complete from a successful database restore alone.
 
-If validation fails, nothing is displaced: the original database stays in place, no `.pre-restore` file is created, and the operator's candidate file is untouched — restore never migrates the candidate in place.
+## Migrations
 
-### Schema newer than this binary
+Migrations run in order and each migration is transactional. Historical
+migration SQL is not rewritten. Before migrating an existing database, the
+program writes a recovery snapshot named `<state>.pre-migration-v<N>`, where
+`N` is the schema version being migrated from. New databases and databases
+with no pending migration do not get a snapshot. Existing snapshots are kept,
+not overwritten, so wg-basic does not accumulate repeated automatic backups.
 
-A database written by a **newer** wg-basic is rejected, by `state restore` and by ordinary startup alike. It is never downgraded or partially interpreted. Start the newer binary, or restore from a backup taken before the upgrade.
+Migration snapshots contain the same secrets as the live database. Protect
+them in the same way.
 
-### Restore is not host-state takeover
+## Purge
 
-Restore replaces a database. It does **not** grant authority over unrelated host state.
-
-After restore, ordinary startup reconciliation applies the restored desired generation under the ordinary owner-tag rules:
-
-| Host state after restore | Startup behavior |
-|---|---|
-| no owned resources exist | created, tagged with the restored installation identity |
-| owned resources matching the restored owner tag | reconciled |
-| foreign or same-name resources | **fails closed**, preserved untouched |
-
-The installation identity travels with the backup, so restoring onto a different host recreates resources carrying the same durable owner identity — which means a restore can only ever reclaim resources this installation can prove it owns.
-
-## Migrations and the pre-migration recovery snapshot
-
-Schema changes are applied in order, each inside one transaction, with a foreign-key check after every step. Historical migration SQL is never rewritten; a schema change is a new migration.
-
-When a migration is about to run against an existing user database, wg-basic first writes a recovery snapshot beside it:
-
-```
-<state>.pre-migration-v<N>
-```
-
-where `N` is the schema version being migrated *from*. No snapshot is taken for a brand-new initialization (nothing to lose) or when no migration is pending. The snapshot uses the same online backup API and the same `0600` mode, so it holds the same secrets.
-
-Retention is bounded and deterministic: the name carries the version, and an existing snapshot for that same version is kept rather than replaced. wg-basic does not accumulate automatic backups.
-
-Schema v5 adds a durable whole-server networking switch. `wg-basic network
-disable` removes managed networking and owned firewall state while preserving
-the configured server, clients, keys, addresses, and endpoint. `network enable`
-reapplies that same identity. Both commands require the serve lease to be free,
-commit one audited generation, reconcile through the configured netd socket,
-and report committed-but-not-enforced if netd cannot confirm the result.
-
-`state verify <candidate>` reports identifiers, schema, integrity, foreign-key
-status, migration need, and too-new status using read-only access; it never
-migrates or modifies the candidate. The output warns that the file contains VPN
-credentials.
-
-`state purge --confirm-installation-id <uuid> --dry-run` prints the exact
-wg-basic database/recovery artifacts it would remove and the paths it preserves.
-Actual purge additionally requires networking disabled, the current generation
-recorded as converged, and a fresh no-op netd plan proving owned networking is
-gone. It preserves arbitrary operator backups and configuration. Service and
-maintenance lock files remain to avoid locking a different inode after unlink.
-
-## Durability, precisely stated
-
-What is verified:
-
-- WAL journal mode with `synchronous = FULL`, both read back at open;
-- an abruptly killed process leaves a database that reopens cleanly;
-- what survives is one whole generation, not a partial write, and still passes typed validation;
-- WAL sidecars do not become world-readable after an unclean death;
-- a backup of a recovered database is itself internally consistent.
-
-What is **not** claimed:
-
-- **Hardware power-cut safety.** If a filesystem or disk acknowledges `fsync` without durably storing the data, the operating system and hardware have already violated the contract SQLite relies on. No application-level test can detect that, and none is attempted.
-
-## Restoring onto a new host
-
-1. Install the same `wg-basic` version that wrote the backup.
-2. Place the backup where the management user can read it, with `0600` permissions.
-3. Stop the management service.
-4. `wg-basic state restore /path/to/backup.db`
-5. Start the management service. Startup reconciles the restored desired generation and creates the owned resources.
-6. Confirm with `wg-basic state status` and `wg-basic health`.
-
-Step 4 retains the previous database as `<state>.pre-restore`. If the restore turns out to be wrong, that file is still there.
-
-For a planned update or disaster-recovery exercise, retain an explicit backup
-outside the live state directory and verify it before stopping services:
+Purge removes only verified wg-basic state and recovery artifacts. It does not
+remove arbitrary operator backups or configuration. A dry run prints the
+paths it would remove and preserve:
 
 ```sh
-wg-basic state backup /secure/wg-basic/pre-update-v4.db \
-  --state /var/lib/wg-basic/state.db
-wg-basic state verify /secure/wg-basic/pre-update-v4.db
-systemctl stop wg-basic-serve wg-basic-netd
-wg-basic state restore /secure/wg-basic/pre-update-v4.db \
-  --state /var/lib/wg-basic/state.db
-systemctl start wg-basic-netd
-wg-basic doctor --state /var/lib/wg-basic/state.db \
-  --socket /run/wg-basic/netd.sock --json
-systemctl start wg-basic-serve
-wg-basic doctor --state /var/lib/wg-basic/state.db \
-  --socket /run/wg-basic/netd.sock --json
+wg-basic state purge --dry-run \
+  --confirm-installation-id '<installation-id>' \
+  --state /var/lib/wg-basic/state.db --socket /run/wg-basic/netd.sock
 ```
 
-Starting netd alone gives doctor its typed read-only backend without starting
-the management service against the restored database. Then start serve and let
-startup reconciliation apply the restored desired generation. Run authenticated
-product and real client traffic checks after startup. The
-Phase 9 rehearsal executes these CLI backup/verify/restore operations with an
-immutable Phase 8 v4 database, then checks the restored v4 state with the
-read-only doctor before old service startup. The Phase 8 binary predates the
-doctor command; the current diagnostic reads v4 without migration and projects
-the v4 default network state as enabled. Once candidate startup migrates the
-database, candidate health, doctor, product, and client traffic are all checked
-again. See the [operations runbook](operations-runbook.md) for the complete
-failure-after-migration ordering.
+Actual purge requires networking to be disabled, the current generation to be
+recorded as converged, and a fresh no-op `netd` plan proving that owned
+networking is gone. Stop `serve` before purge and keep `netd` available for the
+plan. To perform the purge, repeat the command without `--dry-run`.
+
+Service and maintenance lock files may remain after purge. Keeping them avoids
+locking a different inode if the state path is later recreated.
+
+## Durability limits
+
+The database uses WAL mode with `synchronous = FULL`. Qualification covers
+process crashes, consistent generations, private WAL sidecars, and backups of
+recovered databases. Hardware power-loss safety is not claimed. It depends on
+the filesystem and storage device honoring `fsync`.
 
 ## See also
 
-- [architecture/state-store.md](../architecture/state-store.md) — storage, schema, and the generation contract
-- [architecture/startup-recovery.md](../architecture/startup-recovery.md) — startup reconciliation and drift repair
-- [architecture/ownership.md](../architecture/ownership.md) — how ownership is proven
+- [Operations runbook](operations-runbook.md)
+- [State store architecture](../architecture/state-store.md)
+- [Startup recovery architecture](../architecture/startup-recovery.md)
+- [Ownership model](../architecture/ownership.md)
