@@ -5,7 +5,7 @@ Status: **closed** (2026-11-16).
 Planning baseline: `plans/implementation/security-audit/001-typed-interpreter-and-admission-corrective.md`.
 Repository baseline at implementation start: `2c38726`
 (`Keep the owned NetNAT name inside WinNAT's 80-byte key.`).
-Final implementation head: recorded in §2 after landing.
+Final implementation head: `797e466`.
 Disposition: **closed**.
 
 ## Outcome
@@ -44,12 +44,9 @@ No historical closure was edited. No schema or protocol change.
 
 ## 2. Commits
 
-Implementation and documentation land together on the branch that carries
-this closure. Final head SHA is filled after the landing commit:
-
 - Baseline: `2c38726`
-- Final head: *(set in the post-landing registry/closure touch if needed;
-  otherwise the tip that contains this file)*
+- Implementation + docs + this closure: `797e466`
+  (`Close S001: refuse PF operator names, pin nft, isolate healthz admission.`)
 
 ## 3. Verification commands actually run
 
