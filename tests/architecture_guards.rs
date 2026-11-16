@@ -583,8 +583,18 @@ fn the_nft_backend_spawns_exactly_nft_and_never_a_shell() {
         .expect("nft backend source is registered")
         .1;
     assert!(
-        source.contains("Command::new(\"nft\")"),
-        "the bounded backend must invoke nft directly"
+        source.contains("Command::new(&nft)"),
+        "the bounded backend must invoke a resolved absolute nft path"
+    );
+    assert!(
+        source.contains("NFT_CANDIDATES")
+            && source.contains("/usr/sbin/nft")
+            && source.contains("/sbin/nft"),
+        "nft must be selected from a fixed absolute candidate list"
+    );
+    assert!(
+        !source.contains("Command::new(\"nft\")"),
+        "nft must not be looked up on PATH by bare name"
     );
     for forbidden in ["\"wg\"", "\"wg-quick\"", "\"ip\"", "\"sh\"", "\"bash\""] {
         assert!(

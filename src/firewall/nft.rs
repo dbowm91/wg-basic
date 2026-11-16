@@ -13,6 +13,8 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     io::{Read, Write},
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     thread,
     time::{Duration, Instant},
@@ -26,6 +28,11 @@ pub(crate) const MAX_NFT_OUTPUT: usize = 256 * 1024;
 pub(crate) const NFT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Minimum supported nft userspace version.
 pub(crate) const MIN_NFT_VERSION: (u32, u32, u32) = (0, 9, 0);
+/// Absolute paths tried, in order, for the `nft` executable.
+///
+/// `PATH` is never consulted. Each candidate must be a regular file, executable,
+/// and not a symlink; the first that qualifies is used.
+pub(crate) const NFT_CANDIDATES: &[&str] = &["/usr/sbin/nft", "/sbin/nft"];
 
 pub(crate) fn observe_firewall(
     owner: &FirewallOwner,
@@ -274,11 +281,41 @@ fn nft_version_supported(output: &[u8]) -> bool {
     (major, minor, patch) >= MIN_NFT_VERSION
 }
 
+/// Selects the pinned `nft` executable.
+///
+/// Walks [`NFT_CANDIDATES`] in order. A candidate qualifies only when it is an
+/// absolute path to a regular, executable file that is not a symlink. Relative
+/// names and `PATH` lookups are never considered.
+pub(crate) fn resolve_nft_path() -> Result<PathBuf, FirewallError> {
+    resolve_nft_path_from(NFT_CANDIDATES)
+}
+
+fn resolve_nft_path_from(candidates: &[&str]) -> Result<PathBuf, FirewallError> {
+    for candidate in candidates {
+        let path = Path::new(candidate);
+        if !path.is_absolute() {
+            continue;
+        }
+        let Ok(metadata) = fs::symlink_metadata(path) else {
+            continue;
+        };
+        if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+            continue;
+        }
+        if metadata.permissions().mode() & 0o111 == 0 {
+            continue;
+        }
+        return Ok(path.to_path_buf());
+    }
+    Err(FirewallError::Unsupported)
+}
+
 fn run_nft_unchecked(args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>, FirewallError> {
     if input.is_some_and(|input| input.len() > MAX_NFT_INPUT) {
         return Err(FirewallError::ResourceLimitExceeded);
     }
-    let mut child = Command::new("nft")
+    let nft = resolve_nft_path()?;
+    let mut child = Command::new(&nft)
         .args(args)
         .stdin(if input.is_some() {
             Stdio::piped()
@@ -356,6 +393,8 @@ fn map_io_error(error: std::io::Error) -> FirewallError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
     #[test]
     fn nft_quoted_values_escape_string_delimiters() {
         assert_eq!(
@@ -397,5 +436,65 @@ mod tests {
             Err(FirewallError::BackendFailure)
         );
         assert_eq!(parse_forwarding("0\n1"), Err(FirewallError::BackendFailure));
+    }
+
+    #[test]
+    fn nft_path_selection_accepts_only_pinned_absolute_regular_executables() {
+        let root = std::env::temp_dir().join(format!(
+            "wg-basic-nft-pin-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+
+        assert_eq!(
+            resolve_nft_path_from(&["nft", "./nft"]),
+            Err(FirewallError::Unsupported),
+            "a relative candidate must never win"
+        );
+
+        let missing = root.join("missing-nft");
+        assert_eq!(
+            resolve_nft_path_from(&[missing.to_str().unwrap()]),
+            Err(FirewallError::Unsupported)
+        );
+
+        let target = root.join("nft-target");
+        fs::write(&target, b"#!/bin/true\n").unwrap();
+        let mut mode = fs::metadata(&target).unwrap().permissions();
+        mode.set_mode(0o755);
+        fs::set_permissions(&target, mode).unwrap();
+        let linked = root.join("nft-link");
+        std::os::unix::fs::symlink(&target, &linked).unwrap();
+        assert_eq!(
+            resolve_nft_path_from(&[linked.to_str().unwrap()]),
+            Err(FirewallError::Unsupported),
+            "a symlink must be skipped"
+        );
+
+        let pinned = root.join("pinned-nft");
+        fs::write(&pinned, b"#!/bin/true\n").unwrap();
+        let mut mode = fs::metadata(&pinned).unwrap().permissions();
+        mode.set_mode(0o755);
+        fs::set_permissions(&pinned, mode).unwrap();
+        let chosen = resolve_nft_path_from(&[
+            linked.to_str().unwrap(),
+            missing.to_str().unwrap(),
+            pinned.to_str().unwrap(),
+        ])
+        .expect("the first qualifying absolute regular file wins");
+        assert_eq!(chosen, pinned);
+
+        for candidate in NFT_CANDIDATES {
+            assert!(
+                Path::new(candidate).is_absolute(),
+                "{candidate} must stay absolute"
+            );
+        }
+        let _ = fs::remove_dir_all(&root);
     }
 }

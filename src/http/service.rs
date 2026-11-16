@@ -351,16 +351,25 @@ impl ManagementService {
 
         // 6 and 7. Session, CSRF, and the handler.
         match matched {
-            Route::Healthz => match self.api.worker_health().await {
-                // Classified once, then projected down to two tokens. The
-                // reasons `Readiness` carries are not rendered here and have no
-                // path to this response -- only the operator's startup log and
-                // the authenticated route below can name them.
-                Ok(health) => response::liveness(Liveness::from_readiness(
-                    super::Readiness::from_health(&health),
-                )),
-                Err(error) => response_for_worker_error(error),
-            },
+            Route::Healthz => {
+                // Liveness admission is independent of login and mutation
+                // admission. A spent health budget sheds here with the same
+                // unavailable answer the worker already uses for overload, and
+                // never occupies a management-worker slot.
+                match self.api.admit_health(peer) {
+                    super::Admission::Refused { .. } => response::unavailable(),
+                    super::Admission::Allowed { .. } => match self.api.worker_health().await {
+                        // Classified once, then projected down to two tokens. The
+                        // reasons `Readiness` carries are not rendered here and have
+                        // no path to this response -- only the operator's startup
+                        // log and the authenticated route below can name them.
+                        Ok(health) => response::liveness(Liveness::from_readiness(
+                            super::Readiness::from_health(&health),
+                        )),
+                        Err(error) => response_for_worker_error(error),
+                    },
+                }
+            }
             Route::Login => match self.api.login(head, body, peer).await {
                 Ok(response) => response,
                 Err(rejection) => refusal(rejection),

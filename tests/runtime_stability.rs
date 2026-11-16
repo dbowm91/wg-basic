@@ -168,7 +168,13 @@ fn repeated_valid_and_rejected_http_requests_have_bounded_resource_and_row_growt
     let _child_id = child.0.id();
     let valid_host = format!("127.0.0.1:{}", addr.port());
     for _ in 0..200 {
-        assert_eq!(request(addr, &valid_host), 200);
+        // `/healthz` has its own admission budget. A rapid probe flood may be
+        // shed as 503 while still leaving Host enforcement and the listener up.
+        let status = request(addr, &valid_host);
+        assert!(
+            status == 200 || status == 503,
+            "health must stay in the sealed vocabulary: {status}"
+        );
         assert_eq!(request(addr, "not-the-configured-host.invalid"), 403);
     }
     let after_rows = rows(&state);

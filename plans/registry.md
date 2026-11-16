@@ -40,6 +40,7 @@ wg-basic is a Linux-first WireGuard management appliance with a privilege-separa
 | Operator parity (Linux and Apple silicon) | Closed 2026-11-10; M001–M004 closed. Deferred roadmap items remain deferred; C015 is unchanged. | `plans/subsystems/operator-parity-roadmap.md`; `plans/closure/operator-parity/001-status.md` through `004-status.md` |
 | Release readiness | R001–R003 closed; R004a closed as an unsigned release; R004b waived. Releases remain checksums-only, no trust root is planned, and production self-update stays disabled. | `plans/subsystems/release-readiness-security-roadmap.md`; `plans/closure/release-readiness/004b-waiver-status.md` |
 | Headless Windows Server | Implemented 2026-11-10. M001–M007 closure is blocked on `windows-2025` handshake, route, and translated-echo evidence. No support claim. | `plans/subsystems/windows-native-server-roadmap.md`; `plans/adr/011-windows-server-wireguard-nt.md`; `plans/implementation/windows-native-server/` |
+| Security-audit corrective (S001) | Closed 2026-11-16. PF token refusal, absolute `nft` pin, and separate `/healthz` admission landed. | `plans/closure/security-audit/001-status.md` |
 
 Other closed subsystem history remains in its roadmap and closure records; it is not repeated here.
 
@@ -48,6 +49,7 @@ Other closed subsystem history remains in its roadmap and closure records; it is
 | Work item | Status | Handoff |
 |---|---|---|
 | C015 — managed-interface teardown | Ready. Darwin's observed point-to-point addresses and link-local address do not match the desired address list, so deleting the managed tunnel is refused. Correct the interface delete comparison while preserving refusals for foreign resources; do not reopen C004's firewall work. | `plans/implementation/macos-native-server/c015-macos-interface-teardown-acceptance.md`; C004 evidence in `plans/closure/macos-native-server-corrective/c004-status.md` |
+| S001 — PF token, absolute `nft`, health admission | Closed 2026-11-16. Did not reopen C004's anchor contract or C015. | `plans/closure/security-audit/001-status.md` |
 | C005 — native E2E, distribution, and release decision | Blocked. The implementation plan's remaining qualification and authorization gates still apply; M007's must-not-release decision stands until they are explicitly satisfied and amended by the maintainer. | `plans/implementation/macos-native-server/c005-release-qualification-and-reconciliation.md`; `plans/closure/macos-native-server/007-status.md` |
 | C017 — secret-scan corrective | Conditionally closed. Its closure records one previously reported GitGuardian incident for the workspace owner to resolve; repository changes do not clear that recorded dashboard occurrence. | `plans/closure/macos-native-server-corrective/c017-status.md` |
 
