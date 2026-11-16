@@ -20,6 +20,8 @@
 //!   anchor's NAT rules;
 //! - the teardown leaves the host's packet filter as it was found, apart from
 //!   the managed anchor's own rules being emptied;
+//! - `network disable` removes the managed `utun` and reports enforcement
+//!   (C015; the historical F10 degradation pin is retired);
 //! - the product never loaded the root ruleset, never flushed a table, never
 //!   toggled PF, and never wrote the forwarding switches.
 //!
@@ -2034,31 +2036,28 @@ fn run_gateway_leg(evidence: &mut Evidence, context: &mut Option<FilterContext>)
         disable.status.success(),
         "disabling the managed network must succeed: {disable_errors}"
     );
-    // The teardown's own claim is the anchor, not the whole network: the
-    // product's teardown empties the anchor's two rule classes and leaves the
-    // administrator's parent and every foreign rule exactly as they were.
-    //
-    // The network disable as a whole is not asserted to be enforced. The
-    // managed interface's own deletion is refused on macOS, because the
-    // observed address forms do not match the desired ones, and that refusal
-    // belongs to a different defect: it is recorded as finding F10 and it is
-    // corrected by plan C015. The leg pins the refusal's shape, so a
-    // degradation with any other cause still fails here.
-    if !disable_text.contains(" and enforced") {
-        assert!(
-            disable_text.contains("not yet enforced"),
-            "the product's teardown must either be enforced or say that it is not: {disable_text}"
-        );
-        let doctor_text = String::from_utf8_lossy(&doctor_after.stdout);
-        assert!(
-            doctor_text.contains("ownership conflict"),
-            "the teardown may only degrade for the known reason: {doctor_text}"
-        );
-        evidence.log(
-            "the network disable degraded for the known reason: the managed interface's deletion \
-             is refused on macOS (finding F10); the anchor's own teardown is measured below",
-        );
-    }
+    // C015: the whole disable must be enforced. Darwin point-to-point `/32` /
+    // `/128` observations and kernel IPv6 link-locals are accounted for on
+    // delete, so the managed interface is removed rather than refused as an
+    // unlisted resource (historical finding F10).
+    assert!(
+        disable_text.contains(" and enforced"),
+        "network disable must remove the managed interface and report enforcement (C015): {disable_text}"
+    );
+    let ifconfig_after = sh_unchecked(evidence, "ifconfig", &[&device]);
+    evidence.log(&format!(
+        "ifconfig {device} after network disable: success={} output={}",
+        ifconfig_after.0, ifconfig_after.1
+    ));
+    assert!(
+        !ifconfig_after.0,
+        "the managed interface {device} must be gone after network disable: {}",
+        ifconfig_after.1
+    );
+    assert!(
+        !utun_names().iter().any(|name| name == &device),
+        "the managed interface {device} must leave the host's utun inventory after network disable"
+    );
     let released_filter = anchor_class_rules(evidence, &anchor, "rules");
     let released_nat = anchor_class_rules(evidence, &anchor, "nat");
     evidence.log(&format!(

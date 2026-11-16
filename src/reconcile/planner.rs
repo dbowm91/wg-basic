@@ -159,11 +159,10 @@ pub(crate) fn plan_execution(
             let mut addresses = desired.addresses.iter().collect::<Vec<_>>();
             addresses.sort_by_key(|address| address.address.to_string());
             for address in addresses {
-                if let Some(observed_address) = observed
-                    .addresses
-                    .iter()
-                    .copied()
-                    .find(|current| address_matches_desired_on_delete(*current, address.address))
+                if let Some(observed_address) =
+                    observed.addresses.iter().copied().find(|current| {
+                        address_matches_desired_on_delete(*current, address.address)
+                    })
                 {
                     // Remove the form the kernel holds (Darwin point-to-point
                     // host routes), not only the desired prefix spelling.

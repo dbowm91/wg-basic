@@ -371,12 +371,34 @@ The leg is qualified by being run **twice on the same guest**: the second
 run's baseline is the proof that the first run left nothing. The commands
 above are how to run it.
 
-The gateway mode's qualification is separate work. It needs the
-administrator's attachment and a PF enabled by the administrator, not by the
-product — see the
-[operations runbook](operations-runbook.md#internet-eit-gateway-on-macos). The
-gateway's packet evidence is C004's own and is **not finished**; nothing here
-claims it.
+### C004 gateway leg and C015 disable evidence
+
+C004's gateway packet evidence is **closed** on the controlled Apple silicon
+host. Re-run the same leg after the C015 planner fix to prove `network disable`
+removes the managed `utun` and reports enforcement (the historical F10
+degradation pin in `tests/wireguard_darwin_gateway.rs` is retired). Use a
+disposable macOS host; the leg installs the product, mutates PF as the
+administrator, and needs the routed peer driver (it provides
+`observed-source` / `observed-source6`):
+
+```sh
+cargo test --locked --no-run --test wireguard_darwin_gateway
+sudo WGB_DARWIN_LIVE=1 WGB_WIREGUARD_GO=/path/to/wireguard-go \
+  WGB_HELPER_SHA256=<expected> WGB_BINARY=$PWD/target/debug/wg-basic \
+  WGB_EVIDENCE_DIR=/tmp/wgb-evidence \
+  WGB_PEER_COMMAND=$PWD/tests/fixtures/darwin-routed-peer/wg-basic-routed-peer.sh \
+  WGB_PEER_SSH_HOST=<peer> WGB_PEER_SSH_USER=<user> WGB_PEER_SSH_KEY=<key> \
+  WGB_UPSTREAM_GATEWAY=<the server host's address on the peer's network> \
+  WGB_LAN_PREFIX=10.20.20.0/24 WGB_LAN_ADDRESS=10.20.20.2 \
+  ./target/debug/deps/wireguard_darwin_gateway-* \
+  live_c004_gateway_translates_the_ipv4_source_and_routes_the_ipv6_source \
+  --ignored --exact --test-threads=1 --nocapture
+```
+
+Operator attachment and TN3165 labeling live in the
+[operations runbook](operations-runbook.md#internet-exit-gateway-on-macos).
+Record C015 closure only after this re-run is green without the old
+`not yet enforced` / ownership-conflict degradation.
 
 ## Local netd
 

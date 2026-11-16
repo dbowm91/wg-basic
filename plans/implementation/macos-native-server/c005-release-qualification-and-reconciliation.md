@@ -53,3 +53,19 @@ publication gate in ADR-014 §5: C015 controlled-host teardown evidence,
 companion helper packaging for `system install --helper`, operator matrix
 docs, and `plans/closure/macos-native-server-corrective/c005-status.md`.
 Unsupported OS/arch/mode must still visibly refuse. Linux is unaffected.
+
+### In-tree progress (2026-11-16)
+
+Landed without writing a premature C005 closure:
+
+- Eggpack Darwin target + regenerated release workflow (`macos-arm64` /
+  `aarch64-apple-darwin` on `macos-15`).
+- Companion helper packaging script
+  `scripts/package-darwin-release-helper.py` and developer docs.
+- Exact ADR-014 matrix in `docs/installation.md` (still labeled
+  authorized-pending until C015 host evidence).
+- Operator gateway / Darwin disable notes in `docs/operations-runbook.md`.
+- Darwin `update` CLI remains fail-closed (no self-update fiction).
+- C015 planner fix + C004 fixture pin retired; **blocking residual:**
+  controlled-host re-run of `live_c004_gateway_…`, then C015 and C005 closure
+  records.

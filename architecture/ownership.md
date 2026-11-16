@@ -44,6 +44,18 @@ Durable ownership does not weaken any existing rule:
 - deleting an interface that still carries an unlisted address or route is still refused;
 - peer preservation is unchanged.
 
+On Darwin delete planning, two kernel-derived shapes are accounted for so the
+product can remove an interface it owns without treating its own observation as
+foreign (C015):
+
+- a point-to-point host-scoped prefix (`/32` or `/128`) whose address equals a
+  desired address is treated as that desired address;
+- an IPv6 link-local (`fe80::/10`) observed on the managed interface is treated
+  as kernel-derived and is not an unlisted resource.
+
+A truly foreign address or route is still refused with
+`UnlistedResourceOnDelete`.
+
 ## Firewall ownership
 
 The only table wg-basic owns is `inet wg_basic`. Its table comment binds to the installation identity:

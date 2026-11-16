@@ -5,7 +5,8 @@ use the Linux default state and socket paths; replace them with the paths used
 by your processes. A supported product installer and transactional self-update
 are not implemented. Apple silicon macOS server publication is
 maintainer-authorized under ADR-014; a published support claim still waits on
-C015 and C005 closure. Darwin self-update is unavailable.
+C015 and C005 closure. Darwin self-update is unavailable. The exact Apple
+silicon matrix is in [deployment status](installation.md#apple-silicon-support-matrix-adr-014).
 
 ## Protect the state database
 
@@ -57,6 +58,32 @@ wg-basic reconcile --state /var/lib/wg-basic/state.db \
   --socket /run/wg-basic/netd.sock
 wg-basic network status --state /var/lib/wg-basic/state.db
 ```
+
+On Apple silicon, a successful disable must report enforcement and remove the
+managed `utun`. Darwin point-to-point `/32`/`/128` observations and kernel
+IPv6 link-locals are accounted for on delete; a foreign address or route still
+refuses. Controlled-host confirmation of that path is C015's remaining gate.
+
+## Internet exit gateway on macOS
+
+Gateway mode is **advanced-administrator-only** (Apple TN3165; ADR-014). The
+product owns one installation-scoped PF anchor and its anchor file. The
+administrator keeps parent `anchor` / `nat-anchor` / `load anchor` lines, host
+forwarding, and PF enablement. The product never edits `/etc/pf.conf`, never
+toggles PF globally, and never writes the forwarding sysctls.
+
+Before enabling gateway policy:
+
+1. Create or confirm the installation anchor file under `/etc/pf.anchors/`.
+2. Attach the anchor in **both** the filter and NAT parent classes.
+3. Enable PF and IPv4/IPv6 forwarding yourself.
+4. Confirm with `wg-basic doctor --json` that the gateway verdict is available
+   only after those prerequisites are in place.
+
+Teardown empties the managed anchor's filter and NAT classes and leaves the
+marker line so the administrator's `load anchor` path still resolves. Routed
+LAN remains operator-managed PF and is not this path. Never market gateway
+mode as a general consumer VPN exit.
 
 ## Purge state
 
