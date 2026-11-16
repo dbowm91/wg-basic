@@ -382,7 +382,7 @@ fn run_darwin(command: Option<Command>) -> Result<(), String> {
             // refused until C005 publishes an aarch64-apple-darwin artifact and
             // an approved trust policy (checksums-only today).
             UpdateCommand::Check => {
-                wg_basic::update::require_production_key()?;
+                let _ = wg_basic::update::require_production_key()?;
                 Err(
                     "macOS release updates are unavailable: ADR-014 authorizes Apple silicon publication under checksums-only policy but does not authorize Darwin self-update"
                         .into(),
@@ -395,7 +395,7 @@ fn run_darwin(command: Option<Command>) -> Result<(), String> {
                             .into(),
                     );
                 }
-                wg_basic::update::require_production_key()?;
+                let _ = wg_basic::update::require_production_key()?;
                 Err(
                     "macOS release updates are unavailable: ADR-014 authorizes Apple silicon publication under checksums-only policy but does not authorize Darwin self-update"
                         .into(),
@@ -408,7 +408,7 @@ fn run_darwin(command: Option<Command>) -> Result<(), String> {
                             .into(),
                     );
                 }
-                wg_basic::update::require_production_key()?;
+                let _ = wg_basic::update::require_production_key()?;
                 Err(
                     "macOS release updates are unavailable: ADR-014 authorizes Apple silicon publication under checksums-only policy but does not authorize Darwin self-update"
                         .into(),
