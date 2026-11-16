@@ -2068,7 +2068,7 @@ fn live_c015_network_disable_removes_the_managed_interface() {
     let serve_listing = "ps -o pid,ppid,stat,command -ax | grep '[w]g-basic serve' || true";
     let serve_pids = || -> Vec<u32> {
         let output = Command::new("sh")
-            .args(["-c", &serve_listing])
+            .args(["-c", serve_listing])
             .output()
             .expect("list serve processes");
         String::from_utf8_lossy(&output.stdout)
