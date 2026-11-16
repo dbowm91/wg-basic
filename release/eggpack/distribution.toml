@@ -27,3 +27,18 @@ install = "{product}"
 
 [targets.checksum]
 sidecar = "{asset}.sha256"
+
+# Apple silicon headless server binary (ADR-009). The pinned wireguard-go
+# helper remains a separate install input (`system install --helper`) until
+# C005 lands a declared multi-asset Darwin package + update policy.
+[[targets]]
+triple = "aarch64-apple-darwin"
+aliases = ["macos-arm64"]
+
+[targets.asset]
+kind = "direct"
+asset = "{product}-{target}"
+install = "{product}"
+
+[targets.checksum]
+sidecar = "{asset}.sha256"

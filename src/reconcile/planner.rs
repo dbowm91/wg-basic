@@ -123,7 +123,7 @@ pub(crate) fn plan_execution(
             if observed
                 .addresses
                 .iter()
-                .any(|address| !listed_addresses.contains(address))
+                .any(|address| !address_accounted_for_on_delete(*address, &listed_addresses))
             {
                 return Err(ReconcileError::UnlistedResourceOnDelete);
             }
@@ -159,8 +159,15 @@ pub(crate) fn plan_execution(
             let mut addresses = desired.addresses.iter().collect::<Vec<_>>();
             addresses.sort_by_key(|address| address.address.to_string());
             for address in addresses {
-                if observed.addresses.contains(&address.address) {
-                    mutations.push(Mutation::RemoveAddress(address.address));
+                if let Some(observed_address) = observed
+                    .addresses
+                    .iter()
+                    .copied()
+                    .find(|current| address_matches_desired_on_delete(*current, address.address))
+                {
+                    // Remove the form the kernel holds (Darwin point-to-point
+                    // host routes), not only the desired prefix spelling.
+                    mutations.push(Mutation::RemoveAddress(observed_address));
                 }
             }
             if observed.admin_up == Some(true) {
@@ -216,6 +223,48 @@ pub(crate) fn plan_execution(
         return Err(ReconcileError::OwnershipRequired);
     }
     Ok(execution_plan(desired, mutations))
+}
+
+/// Whether an observed address may stay on a managed interface during delete.
+///
+/// Exact desired matches are listed. Darwin `utun` point-to-point devices also
+/// report the product's own address as a host route (`/32` or `/128`) and add a
+/// kernel link-local; those are not foreign resources. Anything else remains an
+/// unlisted conflict.
+fn address_accounted_for_on_delete(
+    observed: IpNet,
+    desired: &std::collections::HashSet<IpNet>,
+) -> bool {
+    if desired.contains(&observed) {
+        return true;
+    }
+    if is_ipv6_link_local(observed) {
+        return true;
+    }
+    desired
+        .iter()
+        .any(|wanted| address_matches_desired_on_delete(observed, *wanted))
+}
+
+fn address_matches_desired_on_delete(observed: IpNet, desired: IpNet) -> bool {
+    if observed == desired {
+        return true;
+    }
+    observed.addr() == desired.addr() && is_host_scoped_prefix(observed)
+}
+
+fn is_host_scoped_prefix(address: IpNet) -> bool {
+    match address.addr() {
+        IpAddr::V4(_) => address.prefix_len() == 32,
+        IpAddr::V6(_) => address.prefix_len() == 128,
+    }
+}
+
+fn is_ipv6_link_local(address: IpNet) -> bool {
+    match address.addr() {
+        IpAddr::V6(v6) => (v6.segments()[0] & 0xffc0) == 0xfe80,
+        IpAddr::V4(_) => false,
+    }
 }
 
 fn plan_addresses(
@@ -577,6 +626,77 @@ mod tests {
         };
         assert_eq!(
             plan_managed_interface(&deleting, &with_unsupported_route),
+            Err(ReconcileError::UnlistedResourceOnDelete)
+        );
+    }
+
+    #[test]
+    fn darwin_shaped_owned_addresses_may_be_deleted() {
+        // C015: Darwin observes point-to-point host routes and a kernel
+        // link-local that desired state never lists. Those are not foreign.
+        let mut deleting = desired();
+        deleting.lifecycle = LinkLifecycle::Absent;
+        deleting.admin_up = None;
+        deleting.addresses = vec![DesiredAddress {
+            address: "10.77.0.1/24".parse().unwrap(),
+            presence: ResourcePresence::Absent,
+        }];
+        deleting.routes.clear();
+        let darwin_shaped = ObservedManagedInterface {
+            addresses: vec![
+                "10.77.0.1/32".parse().unwrap(),
+                "2001:db8:77::1/128".parse().unwrap(),
+                "fe80::3c84:7232:cc4e:2dc0/64".parse().unwrap(),
+            ],
+            interface_alias: Some(owner_tag().as_str()),
+            duplicate_owner_tag: false,
+            ..observed()
+        };
+        // Only the IPv4 address is desired; the observed IPv6 global is foreign.
+        assert_eq!(
+            plan_managed_interface(&deleting, &darwin_shaped),
+            Err(ReconcileError::UnlistedResourceOnDelete)
+        );
+
+        deleting.addresses.push(DesiredAddress {
+            address: "2001:db8:77::1/64".parse().unwrap(),
+            presence: ResourcePresence::Absent,
+        });
+        let plan = plan_managed_interface(&deleting, &darwin_shaped).expect("darwin delete");
+        assert!(plan
+            .actions
+            .iter()
+            .any(|action| action.kind == MutationKind::DeleteLink));
+        assert!(plan.actions.iter().any(|action| {
+            action.kind == MutationKind::RemoveAddress && action.target == "10.77.0.1/32"
+        }));
+        assert!(plan.actions.iter().any(|action| {
+            action.kind == MutationKind::RemoveAddress && action.target == "2001:db8:77::1/128"
+        }));
+    }
+
+    #[test]
+    fn foreign_address_still_blocks_delete_after_darwin_accounting() {
+        let mut deleting = desired();
+        deleting.lifecycle = LinkLifecycle::Absent;
+        deleting.admin_up = None;
+        deleting.addresses = vec![DesiredAddress {
+            address: "10.77.0.1/24".parse().unwrap(),
+            presence: ResourcePresence::Absent,
+        }];
+        deleting.routes.clear();
+        let with_foreign = ObservedManagedInterface {
+            addresses: vec![
+                "10.77.0.1/32".parse().unwrap(),
+                "10.77.0.99/32".parse().unwrap(),
+                "fe80::1/64".parse().unwrap(),
+            ],
+            interface_alias: Some(owner_tag().as_str()),
+            duplicate_owner_tag: false,
+            ..observed()
+        };
+        assert_eq!(
+            plan_managed_interface(&deleting, &with_foreign),
             Err(ReconcileError::UnlistedResourceOnDelete)
         );
     }

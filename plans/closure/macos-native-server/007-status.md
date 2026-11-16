@@ -185,3 +185,22 @@ The macOS native-server line is **closed as far as unprivileged qualification
 can take it** (M001–M002 strictly closed; M003–M006 blocked with implemented
 safe scopes + binding decisions) and **blocked for any release or gateway
 claim** until the checklist above is satisfied.
+
+## Maintainer amendment (2026-11-16) — ADR-014
+
+This historical record's MUST-NOT-release verdict is **amended**, not
+rewritten. Corrective closures C001–C004, C006, C008, and C010 later proved
+the Apple silicon product path, reboot, routed LAN, and advanced-admin
+gateway on controlled hosts. The maintainer accepts
+`plans/adr/014-macos-apple-silicon-release-authorization.md`:
+
+- Apple silicon (`aarch64-apple-darwin`) headless server publication is
+  **authorized** under the ADR-014 support matrix (checksums-only; gateway
+  advanced-administrator-only per TN3165; no Darwin self-update; Intel
+  refused).
+- Operator docs may claim a **published supported** macOS release only after
+  **C015** controlled-host teardown evidence and **C005** packaging/docs
+  closure cite ADR-014.
+- Until those gates close, the product remains authorized-pending, not a
+  shipped macOS support claim.
+- This section does not alter the period-accurate observations above.

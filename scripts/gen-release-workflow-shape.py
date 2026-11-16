@@ -7,7 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 RELEASE = ROOT / "release" / "eggpack"
-ALIASES = ["linux-x64", "linux-arm64"]
+ALIASES = ["linux-x64", "linux-arm64", "macos-arm64"]
 
 
 def main() -> None:

@@ -29,8 +29,13 @@ impl LinuxTarget {
     }
 
     pub fn from_host(os: &str, arch: &str) -> Result<Self, &'static str> {
+        // Authenticated update projection remains Linux-only: ADR-014
+        // authorizes Apple silicon *publication* under checksums-only policy
+        // but does not authorize Darwin self-update.
         if os != "linux" {
-            return Err("wg-basic releases support Linux only");
+            return Err(
+                "authenticated update targets are Linux-only; Apple silicon uses fresh install (ADR-014)",
+            );
         }
         match arch {
             "x86_64" | "amd64" => Ok(Self::X86_64),
@@ -39,6 +44,32 @@ impl LinuxTarget {
                 Err("unsupported Linux architecture; supported targets are x86_64 and aarch64 GNU")
             }
         }
+    }
+}
+
+/// Eggpack / install publication targets, including Apple silicon (ADR-014).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReleaseTarget {
+    Linux(LinuxTarget),
+    AppleSiliconDarwin,
+}
+
+impl ReleaseTarget {
+    pub const fn triple(self) -> &'static str {
+        match self {
+            Self::Linux(target) => target.triple(),
+            Self::AppleSiliconDarwin => "aarch64-apple-darwin",
+        }
+    }
+
+    pub fn from_host(os: &str, arch: &str) -> Result<Self, &'static str> {
+        if os == "macos" || os == "darwin" {
+            return match arch {
+                "aarch64" | "arm64" => Ok(Self::AppleSiliconDarwin),
+                _ => Err("unsupported Darwin architecture; Apple silicon only (ADR-009)"),
+            };
+        }
+        LinuxTarget::from_host(os, arch).map(Self::Linux)
     }
 }
 
@@ -222,6 +253,15 @@ mod tests {
         ] {
             assert!(LinuxTarget::from_host(os, arch).is_err());
         }
+        assert_eq!(
+            ReleaseTarget::from_host("macos", "arm64"),
+            Ok(ReleaseTarget::AppleSiliconDarwin)
+        );
+        assert_eq!(
+            ReleaseTarget::AppleSiliconDarwin.triple(),
+            "aarch64-apple-darwin"
+        );
+        assert!(ReleaseTarget::from_host("macos", "x86_64").is_err());
     }
 
     #[test]

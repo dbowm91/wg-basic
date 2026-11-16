@@ -13,3 +13,10 @@ argv = ["--version"]
 timeout_ms = 10000
 stdout_limit = 8192
 stderr_limit = 8192
+
+[targets."aarch64-apple-darwin".smoke]
+selector = { kind = "direct" }
+argv = ["--version"]
+timeout_ms = 10000
+stdout_limit = 8192
+stderr_limit = 8192

@@ -99,10 +99,12 @@ implementation and qualification are closed, including signed-fixture
 systemd update, rollback, interruption recovery, and native x86_64/aarch64
 release artifacts. Phase 10 lifecycle qualification is closed, including
 native systemd install/uninstall/reinstall evidence on both supported targets.
-Production updates remain unavailable until a maintainer-provisioned trust
-root and signed release are available; technical Phase 10 closure does not
-authorize publication.
-Implementation status lives in
+Production updates remain unavailable: releases are checksums-only and
+`update check` / `update run` fail closed (R004b). Apple silicon macOS
+headless server publication is maintainer-authorized under
+[ADR-014](../plans/adr/014-macos-apple-silicon-release-authorization.md);
+operator “supported” claims wait on C015 teardown evidence and C005
+packaging closure. Implementation status lives in
 [the planning registry](../plans/registry.md).
 
 ## Full deep-dive index

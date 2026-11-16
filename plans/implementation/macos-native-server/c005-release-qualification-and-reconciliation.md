@@ -1,8 +1,11 @@
 # macOS Native Server C005 — Native E2E, Distribution, and Release-Gate Reconciliation
 
-Status: **blocked** (hard C001+C002 for any product qualification; C003 required for routed claims; C004 required for gateway claims; external controlled host and maintainer authorization required for release).
+Status: **active** (2026-11-16). Hard C001–C004 gates discharged by corrective
+closures; maintainer release authority amended by **ADR-014**. Remaining:
+C015 controlled-host teardown evidence, Darwin helper companion packaging
+docs/script, operator matrix publication, and this plan's closure record.
 Baseline: `plans/macos-native-support@fc51146e811cabebd042d852449c6e7f4f854265`.
-Source: corrective roadmap C005; M006/M007 plans and `plans/closure/macos-native-server/{006,007}-status.md`; ADR-008 and ADR-006.
+Source: corrective roadmap C005; M006/M007 plans and `plans/closure/macos-native-server/{006,007}-status.md`; ADR-008, ADR-006, **ADR-014**.
 Primary class: corrective / qualification / release invariant.
 
 ## Objective
@@ -39,13 +42,14 @@ Apple silicon only, and no hosted macOS runner can reboot or reach the
 private-LAN peer, so the Intel legs were structurally unreachable rather than
 merely unattempted.
 
-Nothing else in this plan changes. The release-authority requirement stands —
-MUST-NOT-release remains until every targeted-mode security and operational
-gate passes and a specific maintainer authorization changes the recorded
-verdict under the proper ADR/release-policy authority — and the rule that no
-mode is represented as supported solely because its code works is unchanged.
-The requirement for an explicit maintainer-approved ADR addendum and an
-explicit amendment of M007 gate scope before authorizing a release is
-unchanged, as is the requirement that an unsupported OS/arch/mode must visibly
-refuse. C005 remains open, the macOS support floor stays macOS 13.0, and
-Linux is unaffected.
+## Amendment (2026-11-16) — ADR-014
+
+Maintainer authorization landed as
+`plans/adr/014-macos-apple-silicon-release-authorization.md`. It amends M007
+MUST-NOT-release for Apple silicon under checksums-only policy, advanced-admin
+gateway labeling, and no Darwin self-update. Eggpack already contracts
+`aarch64-apple-darwin` on `macos-15`. This plan's remaining work is the
+publication gate in ADR-014 §5: C015 controlled-host teardown evidence,
+companion helper packaging for `system install --helper`, operator matrix
+docs, and `plans/closure/macos-native-server-corrective/c005-status.md`.
+Unsupported OS/arch/mode must still visibly refuse. Linux is unaffected.

@@ -15,4 +15,4 @@
 
 - `README.md` is the operator entry point (summary only, not a second manual).
 - Procedures live in `docs/development.md` (gates, local netd/serve, fixtures), `docs/operations-runbook.md`, `docs/state-backup-restore.md`, and `docs/client-enrollment.md`.
-- Installation and transactional self-update are not implemented (Phase 10 planned, M001 ready); never document them as available.
+- Production self-update stays fail-closed (checksums-only; no trust root). Apple silicon macOS publication is maintainer-authorized under ADR-014; operator “supported” claims wait on C015/C005 closure — do not document a shipped macOS release early.

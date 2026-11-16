@@ -1,24 +1,20 @@
-//! Darwin (macOS) platform facts for the headless server target (M001).
+//! Darwin (macOS) platform facts for the headless server target.
 //!
 //! Owner: headless Darwin WireGuard *server*, not a macOS client app.
 //! Linux remains the canonical qualified deployment.
 //!
 //! Support floor: macOS 13.0 (Ventura) or newer, on `aarch64-apple-darwin`
-//! (Apple Silicon). The floor is chosen because `utun`/`wireguard-go`, launchd
-//! system daemons, and the PF anchor model M005 evaluates are all available and
-//! supportable there; older releases are not qualified and must fail closed
-//! rather than degrade silently.
+//! (Apple Silicon). Controlled-host evidence exists on macOS 15.x hosted and
+//! macOS 26.6.2 arm64 guests. Older releases are not qualified and must fail
+//! closed rather than degrade silently.
 //!
-//! Apple silicon is the only Darwin target for this line (ADR-009). An Intel
-//! Mac is not a supported target: the product refuses it at install time
-//! rather than running a build that was never qualified there. Rosetta
-//! translation never counts as native support.
+//! Apple silicon is the only Darwin target (ADR-009). Intel Macs are refused
+//! at install time. Rosetta never counts as native support.
 //!
-//! M001 status: no Darwin network mutation is implemented. Every Darwin host
-//! backend reports [`crate::platform::BackendCapability::Unsupported`] (when
-//! the lack of support is known) or `Unknown` (when qualification is pending
-//! in M002–M005). A Darwin compile and a loopback management smoke test are
-//! not a working VPN server.
+//! Release authority: ADR-014 amends M007 MUST-NOT-release for Apple silicon
+//! under checksums-only policy. Operator “supported” claims wait on C015
+//! teardown evidence and C005 packaging closure. Darwin self-update is not
+//! authorized.
 
 /// Minimum supported macOS release for the headless server target.
 pub const MIN_MACOS_VERSION: &str = "13.0";

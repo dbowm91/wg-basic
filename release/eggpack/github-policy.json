@@ -14,6 +14,13 @@
       "label": "ubuntu-24.04-arm",
       "cargo_zigbuild": false,
       "zig": false
+    },
+    {
+      "os": "macos",
+      "arch": "aarch64",
+      "label": "macos-15",
+      "cargo_zigbuild": false,
+      "zig": false
     }
   ],
   "checkout": {

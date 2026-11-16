@@ -376,10 +376,45 @@ fn run_darwin(command: Option<Command>) -> Result<(), String> {
             SystemCommand::Status => darwin_system_status(),
             SystemCommand::Uninstall => darwin_system_uninstall(),
         },
-        Some(Command::Update { action }) => {
-            let _ = action;
-            Err("update check/run/recover is not supported on macOS in M001: no Darwin release target or trust root; see M006".into())
-        }
+        Some(Command::Update { action }) => match action {
+            // Same CLI surface as Linux. Production stays fail-closed without a
+            // Minisign trust root; even with a key, Darwin self-update stays
+            // refused until C005 publishes an aarch64-apple-darwin artifact and
+            // an approved trust policy (checksums-only today).
+            UpdateCommand::Check => {
+                wg_basic::update::require_production_key()?;
+                Err(
+                    "macOS release updates are unavailable: ADR-014 authorizes Apple silicon publication under checksums-only policy but does not authorize Darwin self-update"
+                        .into(),
+                )
+            }
+            UpdateCommand::Run => {
+                if !nix::unistd::Uid::effective().is_root() {
+                    return Err(
+                        "system update requires effective root; no automatic sudo is performed"
+                            .into(),
+                    );
+                }
+                wg_basic::update::require_production_key()?;
+                Err(
+                    "macOS release updates are unavailable: ADR-014 authorizes Apple silicon publication under checksums-only policy but does not authorize Darwin self-update"
+                        .into(),
+                )
+            }
+            UpdateCommand::Recover => {
+                if !nix::unistd::Uid::effective().is_root() {
+                    return Err(
+                        "update recovery requires effective root; no automatic sudo is performed"
+                            .into(),
+                    );
+                }
+                wg_basic::update::require_production_key()?;
+                Err(
+                    "macOS release updates are unavailable: ADR-014 authorizes Apple silicon publication under checksums-only policy but does not authorize Darwin self-update"
+                        .into(),
+                )
+            }
+        },
         Some(Command::Health { state, socket }) => {
             let runtime = wg_basic::management::ManagementRuntime::open(&state, &socket)
                 .map_err(|error| error.to_string())?;

@@ -27,3 +27,15 @@ support = "required"
 rust = "stable"
 cargo_zigbuild = "0.23.3"
 zig = "0.14.1"
+
+[[targets]]
+target = "aarch64-apple-darwin"
+strategy = "native_cargo"
+host_os = "macos"
+host_arch = "aarch64"
+floor = { kind = "macos", major = 13, minor = 0 }
+qualification = "native"
+support = "required"
+
+[targets.toolchain]
+rust = "stable"

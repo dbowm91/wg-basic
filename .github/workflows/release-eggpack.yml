@@ -86,12 +86,76 @@ jobs:
           EGGPACK_RELEASE_TAG: "${{ inputs.release_tag }}"
         run: |
           head_sha="$(git rev-parse --verify HEAD^{commit})"
-          'eggpack' 'ci' '_resolve-release' '--contract' 'release/eggpack/distribution.toml' '--pack-config' 'release/eggpack/pack.toml' '--build-bindings' 'release/eggpack/build-bindings.toml' '--qualification-bindings' 'release/eggpack/qualification-bindings.toml' '--consumer-validators' 'release/eggpack/consumer-validators.json' '--selected' 'linux-x64,linux-arm64' '--tag' "$EGGPACK_RELEASE_TAG" '--source-revision' "$head_sha" '--template' 'release/eggpack/github-template.json' '--source-root' '${{ github.workspace }}' '--output-plan' './eggpack-runtime/release-plan.json' '--output-ci-plan' './eggpack-runtime/release-ci-plan.json' '--output-github-policy' './eggpack-runtime/github-draft.json' '--identity-mode' 'v_prefixed_stable_semver'
+          'eggpack' 'ci' '_resolve-release' '--contract' 'release/eggpack/distribution.toml' '--pack-config' 'release/eggpack/pack.toml' '--build-bindings' 'release/eggpack/build-bindings.toml' '--qualification-bindings' 'release/eggpack/qualification-bindings.toml' '--consumer-validators' 'release/eggpack/consumer-validators.json' '--selected' 'linux-x64,linux-arm64,macos-arm64' '--tag' "$EGGPACK_RELEASE_TAG" '--source-revision' "$head_sha" '--template' 'release/eggpack/github-template.json' '--source-root' '${{ github.workspace }}' '--output-plan' './eggpack-runtime/release-plan.json' '--output-ci-plan' './eggpack-runtime/release-ci-plan.json' '--output-github-policy' './eggpack-runtime/github-draft.json' '--identity-mode' 'v_prefixed_stable_semver'
       - name: Upload runtime release identity
         uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
         with:
           name: "eggpack-runtime-identity"
           path: "./eggpack-runtime"
+          if-no-files-found: error
+          retention-days: 7
+  build_aarch64_apple_darwin:
+    needs: resolve
+    runs-on: "macos-15"
+    permissions:
+      contents: read
+    timeout-minutes: 60
+    continue-on-error: false
+    steps:
+      - name: Check out source
+        uses: "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
+        with:
+          ref: "${{ needs.resolve.outputs.source_sha }}"
+      - name: Verify frozen source checkout
+        shell: bash
+        env:
+          EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
+        run: test "$(git rev-parse --verify HEAD^{commit})" = "$EGGPACK_EXPECTED_SOURCE_SHA"
+      - name: Fetch release tag for local verification
+        shell: bash
+        env:
+          EGGPACK_RELEASE_TAG: "${{ inputs.release_tag }}"
+          EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
+        run: "set -euo pipefail\ntag=\"$EGGPACK_RELEASE_TAG\"\nif [ -z \"$tag\" ] || [ \"${#tag}\" -gt 128 ]; then\n  echo 'release tag is empty or oversized' >&2\n  exit 1\nfi\nref=\"refs/tags/$tag\"\ngit check-ref-format \"$ref\"\ngit fetch --no-tags --depth=1 origin \"$ref:$ref\"\npeeled=\"$(git rev-parse --verify \"$ref^{commit}\")\"\nif [ \"$peeled\" != \"$EGGPACK_EXPECTED_SOURCE_SHA\" ]; then\n  echo 'release tag does not peel to the frozen source revision' >&2\n  exit 1\nfi\n"
+
+      - name: Download runtime release identity
+        uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
+        with:
+          name: "eggpack-runtime-identity"
+          path: "./eggpack-runtime"
+          if-no-files-found: error
+      - name: Set up Rust toolchain
+        uses: "dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c"
+        with:
+          toolchain: "stable"
+          targets: "aarch64-apple-darwin"
+      - name: Verify Rust toolchain
+        shell: bash
+        run: cargo +'stable' --version
+      - name: Install pinned Eggpack tool
+        shell: bash
+        timeout-minutes: 20
+        run: |
+          cargo install --git https://github.com/eggstack/eggpack --rev a0fec987f2d13ed182ab4973cda363ff12b73870 --locked eggpack-cli
+          eggpack --version
+      - name: Verify checked-out release source
+        shell: bash
+        env:
+          EGGPACK_RELEASE_TAG: "${{ inputs.release_tag }}"
+        run: "'eggpack' 'ci' '_verify-source' '--release-plan' 'eggpack-runtime/release-plan.json' '--github-policy' 'eggpack-runtime/github-draft.json' '--expected-tag' \"$EGGPACK_RELEASE_TAG\" '--source-root' '${{ github.workspace }}'"
+      - name: Build "aarch64-apple-darwin / wg-basic"
+        shell: bash
+        env:
+          CARGO_TARGET_DIR: "${{ runner.temp }}/eggpack/${{ github.run_id }}-${{ github.run_attempt }}"
+        run: "'cargo' '+stable' 'build' '--release' '--locked' '--target' 'aarch64-apple-darwin' '--package' 'wg-basic' '--bin' 'wg-basic'"
+      - name: Capture canonical build handoff
+        shell: bash
+        run: "'eggpack' 'ci' '_capture-build' '--release-plan' 'eggpack-runtime/release-plan.json' '--build-bindings' 'release/eggpack/build-bindings.toml' '--target' 'aarch64-apple-darwin' '--cargo-target-dir' '${{ runner.temp }}/eggpack/${{ github.run_id }}-${{ github.run_attempt }}' '--output-dir' './eggpack-build/build_aarch64_apple_darwin'"
+      - name: Upload canonical build handoff
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        with:
+          name: "eggpack-build-handoff-aarch64-apple-darwin"
+          path: "./eggpack-build/build_aarch64_apple_darwin"
           if-no-files-found: error
           retention-days: 7
   build_aarch64_unknown_linux_gnu:
@@ -312,6 +376,62 @@ jobs:
           path: "./eggpack-build/build_x86_64_unknown_linux_gnu"
           if-no-files-found: error
           retention-days: 7
+  qualify_build_aarch64_apple_darwin:
+    needs: [ build_aarch64_apple_darwin, resolve ]
+    runs-on: "macos-15"
+    permissions:
+      contents: read
+    timeout-minutes: 60
+    continue-on-error: false
+    steps:
+      - name: Check out source
+        uses: "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
+        with:
+          ref: "${{ needs.resolve.outputs.source_sha }}"
+      - name: Verify frozen source checkout
+        shell: bash
+        env:
+          EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
+        run: test "$(git rev-parse --verify HEAD^{commit})" = "$EGGPACK_EXPECTED_SOURCE_SHA"
+      - name: Fetch release tag for local verification
+        shell: bash
+        env:
+          EGGPACK_RELEASE_TAG: "${{ inputs.release_tag }}"
+          EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
+        run: "set -euo pipefail\ntag=\"$EGGPACK_RELEASE_TAG\"\nif [ -z \"$tag\" ] || [ \"${#tag}\" -gt 128 ]; then\n  echo 'release tag is empty or oversized' >&2\n  exit 1\nfi\nref=\"refs/tags/$tag\"\ngit check-ref-format \"$ref\"\ngit fetch --no-tags --depth=1 origin \"$ref:$ref\"\npeeled=\"$(git rev-parse --verify \"$ref^{commit}\")\"\nif [ \"$peeled\" != \"$EGGPACK_EXPECTED_SOURCE_SHA\" ]; then\n  echo 'release tag does not peel to the frozen source revision' >&2\n  exit 1\nfi\n"
+
+      - name: Download runtime release identity
+        uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
+        with:
+          name: "eggpack-runtime-identity"
+          path: "./eggpack-runtime"
+          if-no-files-found: error
+      - name: Install pinned Eggpack tool
+        shell: bash
+        timeout-minutes: 20
+        run: |
+          cargo install --git https://github.com/eggstack/eggpack --rev a0fec987f2d13ed182ab4973cda363ff12b73870 --locked eggpack-cli
+          eggpack --version
+      - name: Verify checked-out release source
+        shell: bash
+        env:
+          EGGPACK_RELEASE_TAG: "${{ inputs.release_tag }}"
+        run: "'eggpack' 'ci' '_verify-source' '--release-plan' 'eggpack-runtime/release-plan.json' '--github-policy' 'eggpack-runtime/github-draft.json' '--expected-tag' \"$EGGPACK_RELEASE_TAG\" '--source-root' '${{ github.workspace }}'"
+      - name: Download build handoff
+        uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
+        with:
+          name: "eggpack-build-handoff-aarch64-apple-darwin"
+          path: "./eggpack-handoff/build_aarch64_apple_darwin"
+      - name: Qualify target
+        shell: bash
+        run: "'eggpack' 'ci' '_qualify-target' '--contract' 'release/eggpack/distribution.toml' '--release-plan' 'eggpack-runtime/release-plan.json' '--build-bindings' 'release/eggpack/build-bindings.toml' '--qualification-bindings' 'release/eggpack/qualification-bindings.toml' '--target' 'aarch64-apple-darwin' '--candidate-dir' './eggpack-handoff/build_aarch64_apple_darwin/candidates' '--build-handoff' './eggpack-handoff/build_aarch64_apple_darwin/build-handoff.json' '--output-dir' './eggpack-qualification/build_aarch64_apple_darwin'"
+      - name: Upload qualification evidence
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        with:
+          name: "eggpack-evidence-aarch64-apple-darwin"
+          path: "./eggpack-qualification/build_aarch64_apple_darwin"
+          if-no-files-found: error
+          retention-days: 7
   qualify_build_aarch64_unknown_linux_gnu:
     needs: [ build_aarch64_unknown_linux_gnu, resolve ]
     runs-on: "ubuntu-24.04-arm"
@@ -422,6 +542,65 @@ jobs:
         with:
           name: "eggpack-evidence-x86_64-unknown-linux-gnu"
           path: "./eggpack-qualification/build_x86_64_unknown_linux_gnu"
+          if-no-files-found: error
+          retention-days: 7
+  validate_build_aarch64_apple_darwin:
+    needs: [ qualify_build_aarch64_apple_darwin, resolve ]
+    runs-on: "macos-15"
+    permissions:
+      contents: read
+    timeout-minutes: 60
+    continue-on-error: false
+    steps:
+      - name: Check out source
+        uses: "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
+        with:
+          ref: "${{ needs.resolve.outputs.source_sha }}"
+      - name: Verify frozen source checkout
+        shell: bash
+        env:
+          EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
+        run: test "$(git rev-parse --verify HEAD^{commit})" = "$EGGPACK_EXPECTED_SOURCE_SHA"
+      - name: Fetch release tag for local verification
+        shell: bash
+        env:
+          EGGPACK_RELEASE_TAG: "${{ inputs.release_tag }}"
+          EGGPACK_EXPECTED_SOURCE_SHA: "${{ needs.resolve.outputs.source_sha }}"
+        run: "set -euo pipefail\ntag=\"$EGGPACK_RELEASE_TAG\"\nif [ -z \"$tag\" ] || [ \"${#tag}\" -gt 128 ]; then\n  echo 'release tag is empty or oversized' >&2\n  exit 1\nfi\nref=\"refs/tags/$tag\"\ngit check-ref-format \"$ref\"\ngit fetch --no-tags --depth=1 origin \"$ref:$ref\"\npeeled=\"$(git rev-parse --verify \"$ref^{commit}\")\"\nif [ \"$peeled\" != \"$EGGPACK_EXPECTED_SOURCE_SHA\" ]; then\n  echo 'release tag does not peel to the frozen source revision' >&2\n  exit 1\nfi\n"
+
+      - name: Download runtime release identity
+        uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
+        with:
+          name: "eggpack-runtime-identity"
+          path: "./eggpack-runtime"
+          if-no-files-found: error
+      - name: Install pinned Eggpack tool
+        shell: bash
+        timeout-minutes: 20
+        run: |
+          cargo install --git https://github.com/eggstack/eggpack --rev a0fec987f2d13ed182ab4973cda363ff12b73870 --locked eggpack-cli
+          eggpack --version
+      - name: Verify checked-out release source
+        shell: bash
+        env:
+          EGGPACK_RELEASE_TAG: "${{ inputs.release_tag }}"
+        run: "'eggpack' 'ci' '_verify-source' '--release-plan' 'eggpack-runtime/release-plan.json' '--github-policy' 'eggpack-runtime/github-draft.json' '--expected-tag' \"$EGGPACK_RELEASE_TAG\" '--source-root' '${{ github.workspace }}'"
+      - name: Download qualification handoff
+        uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
+        with:
+          name: "eggpack-evidence-aarch64-apple-darwin"
+          path: "./eggpack-handoff/build_aarch64_apple_darwin"
+      - name: Create consumer evidence directory
+        shell: bash
+        run: "mkdir -p './eggpack-consumer/build_aarch64_apple_darwin'"
+      - name: Validate exact candidate (consumer)
+        shell: bash
+        run: "'eggpack' 'ci' '_validate-consumer' '--consumer-validators' 'release/eggpack/consumer-validators.json' '--target' 'aarch64-apple-darwin' '--candidate-dir' './eggpack-handoff/build_aarch64_apple_darwin/candidates' '--build-handoff' './eggpack-handoff/build_aarch64_apple_darwin/build-handoff.json' '--evidence' './eggpack-handoff/build_aarch64_apple_darwin/evidence.json' '--source-root' '${{ github.workspace }}' '--output' './eggpack-consumer/build_aarch64_apple_darwin/consumer-evidence.json'"
+      - name: Upload consumer validation evidence
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        with:
+          name: "eggpack-consumer-evidence-aarch64-apple-darwin"
+          path: "./eggpack-consumer/build_aarch64_apple_darwin"
           if-no-files-found: error
           retention-days: 7
   validate_build_aarch64_unknown_linux_gnu:
@@ -543,7 +722,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
   required_gate:
-    needs: [ validate_build_aarch64_unknown_linux_gnu, validate_build_x86_64_unknown_linux_gnu, resolve ]
+    needs: [ validate_build_aarch64_apple_darwin, validate_build_aarch64_unknown_linux_gnu, validate_build_x86_64_unknown_linux_gnu, resolve ]
     runs-on: "ubuntu-24.04"
     permissions:
       contents: read
@@ -582,6 +761,11 @@ jobs:
         env:
           EGGPACK_RELEASE_TAG: "${{ inputs.release_tag }}"
         run: "'eggpack' 'ci' '_verify-source' '--release-plan' 'eggpack-runtime/release-plan.json' '--github-policy' 'eggpack-runtime/github-draft.json' '--expected-tag' \"$EGGPACK_RELEASE_TAG\" '--source-root' '${{ github.workspace }}'"
+      - name: Download qualification "aarch64-apple-darwin"
+        uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
+        with:
+          name: "eggpack-evidence-aarch64-apple-darwin"
+          path: "./eggpack-inputs/aarch64-apple-darwin"
       - name: Download qualification "aarch64-unknown-linux-gnu"
         uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
         with:
@@ -592,6 +776,11 @@ jobs:
         with:
           name: "eggpack-evidence-x86_64-unknown-linux-gnu"
           path: "./eggpack-inputs/x86_64-unknown-linux-gnu"
+      - name: Download consumer evidence "aarch64-apple-darwin"
+        uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
+        with:
+          name: "eggpack-consumer-evidence-aarch64-apple-darwin"
+          path: "./eggpack-inputs/aarch64-apple-darwin"
       - name: Download consumer evidence "aarch64-unknown-linux-gnu"
         uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
         with:
@@ -648,6 +837,11 @@ jobs:
         env:
           EGGPACK_RELEASE_TAG: "${{ inputs.release_tag }}"
         run: "'eggpack' 'ci' '_verify-source' '--release-plan' 'eggpack-runtime/release-plan.json' '--github-policy' 'eggpack-runtime/github-draft.json' '--expected-tag' \"$EGGPACK_RELEASE_TAG\" '--source-root' '${{ github.workspace }}'"
+      - name: Download qualification "aarch64-apple-darwin"
+        uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
+        with:
+          name: "eggpack-evidence-aarch64-apple-darwin"
+          path: "./eggpack-inputs/aarch64-apple-darwin"
       - name: Download qualification "aarch64-unknown-linux-gnu"
         uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
         with:
@@ -658,6 +852,11 @@ jobs:
         with:
           name: "eggpack-evidence-x86_64-unknown-linux-gnu"
           path: "./eggpack-inputs/x86_64-unknown-linux-gnu"
+      - name: Download consumer evidence "aarch64-apple-darwin"
+        uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
+        with:
+          name: "eggpack-consumer-evidence-aarch64-apple-darwin"
+          path: "./eggpack-inputs/aarch64-apple-darwin"
       - name: Download consumer evidence "aarch64-unknown-linux-gnu"
         uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
         with:

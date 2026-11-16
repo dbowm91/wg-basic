@@ -130,6 +130,14 @@ python3 scripts/build-wireguard-go-helper.py \
   --output-dir /tmp/wgb-helper --target aarch64-apple-darwin
 ```
 
+For release-shaped companion assets next to the Eggpack Darwin binary (ADR-014 /
+C005), package the same helper under stable asset names:
+
+```sh
+python3 scripts/package-darwin-release-helper.py --output-dir /tmp/wgb-darwin-assets
+# → wireguard-go-aarch64-apple-darwin (+ .sha256) and wireguard-go.provenance.json
+```
+
 The builder refuses to continue unless the clone resolves to the declared
 commit, the checkout is clean, the license marker is present, and `go` is the
 declared version. It writes three files: the helper, `wireguard-go.sha256`,

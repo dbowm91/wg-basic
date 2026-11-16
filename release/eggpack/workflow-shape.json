@@ -2,6 +2,15 @@
   "build_bindings": {
     "schema_version": 1,
     "targets": {
+      "aarch64-apple-darwin": [
+        {
+          "binary": "wg-basic",
+          "package": "wg-basic",
+          "selector": {
+            "kind": "direct"
+          }
+        }
+      ],
       "aarch64-unknown-linux-gnu": [
         {
           "binary": "wg-basic",
@@ -23,6 +32,17 @@
     }
   },
   "consumer_validators": {
+    "aarch64-apple-darwin": {
+      "interpreter": "python3",
+      "schema_version": 1,
+      "script": "scripts/release-smoke.py",
+      "selector": {
+        "kind": "direct"
+      },
+      "stderr_limit": 65536,
+      "stdout_limit": 65536,
+      "timeout_ms": 120000
+    },
     "aarch64-unknown-linux-gnu": {
       "interpreter": "python3",
       "schema_version": 1,
@@ -49,6 +69,19 @@
   "qualification_bindings": {
     "schema_version": 1,
     "targets": {
+      "aarch64-apple-darwin": {
+        "smoke": {
+          "argv": [
+            "--version"
+          ],
+          "selector": {
+            "kind": "direct"
+          },
+          "stderr_limit": 8192,
+          "stdout_limit": 8192,
+          "timeout_ms": 10000
+        }
+      },
       "aarch64-unknown-linux-gnu": {
         "smoke": {
           "argv": [
@@ -80,7 +113,8 @@
   "schema_version": 1,
   "selected_aliases": [
     "linux-x64",
-    "linux-arm64"
+    "linux-arm64",
+    "macos-arm64"
   ],
   "staging": {
     "provider": "git_hub_draft",
@@ -88,6 +122,22 @@
     "tag_source": "dispatch_input"
   },
   "targets": [
+    {
+      "floor": {
+        "kind": "macos",
+        "major": 13,
+        "minor": 0
+      },
+      "host_arch": "aarch64",
+      "host_os": "macos",
+      "qualification": "native",
+      "strategy": "native_cargo",
+      "support": "required",
+      "target": "aarch64-apple-darwin",
+      "toolchain": {
+        "rust": "stable"
+      }
+    },
     {
       "floor": {
         "kind": "glibc",

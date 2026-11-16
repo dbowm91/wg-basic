@@ -1,9 +1,13 @@
 # C015 — The macOS managed interface's teardown is refused
 
-Status: **ready** (2026-10-23). Raised by the **F10** finding that C004's
-closure record made when its gateway leg ran the product's own teardown on the
-controlled host. The implementation and the evidence will be recorded in
-`plans/closure/macos-native-server-corrective/c015-status.md`.
+Status: **implemented** (2026-11-16); closure blocked on controlled-host
+disable evidence. Raised by the **F10** finding that C004's closure record
+made when its gateway leg ran the product's own teardown on the controlled
+host. Planner delete accounting for Darwin point-to-point `/32`/`/128` and
+IPv6 link-local landed in `src/reconcile/planner.rs` with host-free unit
+tests. Record controlled-host evidence in
+`plans/closure/macos-native-server-corrective/c015-status.md` only after the
+C004 disable leg is re-run and enforced.
 
 Repository baseline: `5e35a4a` (`plans/macos-native-support`).
 

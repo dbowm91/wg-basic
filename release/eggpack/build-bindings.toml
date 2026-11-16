@@ -3,3 +3,4 @@ schema_version = 1
 [targets]
 "aarch64-unknown-linux-gnu" = [{ selector = { kind = "direct" }, package = "wg-basic", binary = "wg-basic" }]
 "x86_64-unknown-linux-gnu" = [{ selector = { kind = "direct" }, package = "wg-basic", binary = "wg-basic" }]
+"aarch64-apple-darwin" = [{ selector = { kind = "direct" }, package = "wg-basic", binary = "wg-basic" }]

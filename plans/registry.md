@@ -27,18 +27,19 @@ Windows native server implementation is in the tree at the ADR-011 baseline `554
 | `plans/adr/011-windows-server-wireguard-nt.md` | staged Windows Server 2025 x64 direction; dataplane is pinned `wireguard-nt` 1.1; no support claim until closure evidence exists |
 | `plans/adr/012-authentication-expansion-totp-oidc.md` | account settings, TOTP, OIDC/OAuth, allow-listed auto-register, password-auth disable |
 | `plans/adr/013-observability-metrics-and-telemetry-history.md` | Prometheus/JSON scrape policy, cardinality labels, bounded telemetry history |
+| `plans/adr/014-macos-apple-silicon-release-authorization.md` | Maintainer amendment of M007 MUST-NOT-release for Apple silicon; checksums-only; advanced-admin gateway; C015/C005 publication gates |
 
 Implementation handoffs resolve conflicts in this order: canonical specification and terminology; accepted ADRs; subsystem roadmap; implementation plan; current repository evidence.
 
 ## 2. Current posture
 
-wg-basic is a Linux-first WireGuard management appliance with a privilege-separated management service and typed network service. Keep operator documentation factual; installation and transactional self-update are not implemented. No macOS release is authorized; the M007 must-not-release decision remains in force.
+wg-basic is a Linux-first WireGuard management appliance with a privilege-separated management service and typed network service. Keep operator documentation factual. Production self-update stays fail-closed (checksums-only; no trust root). **ADR-014** amends M007: Apple silicon headless server publication is maintainer-authorized under an exact matrix; operator “supported” claims wait on C015 controlled-host teardown evidence and C005 packaging/docs closure. No Intel Mac. No Darwin self-update.
 
 ## 3. Active and recent work
 
 | Workstream | Status | Source of truth |
 |---|---|---|
-| Headless macOS native server/gateway | Active. C001–C010 and C012–C014 are closed; C011 is conditionally closed; C015 is ready; C005 remains blocked on its release-qualification gates and explicit maintainer authorization. No macOS release. | `plans/subsystems/macos-native-server-roadmap.md`; `plans/subsystems/macos-native-server-corrective-roadmap.md`; §4 below |
+| Headless macOS native server/gateway | Active. C001–C010 and C012–C014 closed; C011 conditionally closed; C015 **implemented** (closure blocked on controlled-host disable evidence); C005 **active** under ADR-014 (Eggpack `aarch64-apple-darwin` contracted; helper companion + docs + C005 closure remain). Authorized-pending, not yet a published macOS support claim. | `plans/adr/014-macos-apple-silicon-release-authorization.md`; `plans/subsystems/macos-native-server-roadmap.md`; `plans/subsystems/macos-native-server-corrective-roadmap.md`; §5 below |
 | Operator parity (Linux and Apple silicon) | Closed 2026-11-10; M001–M004 closed. Deferred roadmap items remain deferred; C015 is unchanged. | `plans/subsystems/operator-parity-roadmap.md`; `plans/closure/operator-parity/001-status.md` through `004-status.md` |
 | Release readiness | R001–R003 closed; R004a closed as an unsigned release; R004b waived. Releases remain checksums-only, no trust root is planned, and production self-update stays disabled. | `plans/subsystems/release-readiness-security-roadmap.md`; `plans/closure/release-readiness/004b-waiver-status.md` |
 | Headless Windows Server | Implemented 2026-11-10. M001–M007 closure is blocked on `windows-2025` handshake, route, and translated-echo evidence. No support claim. | `plans/subsystems/windows-native-server-roadmap.md`; `plans/adr/011-windows-server-wireguard-nt.md`; `plans/implementation/windows-native-server/` |
@@ -70,16 +71,15 @@ Milestone **closure** records remain separate; they are created only when mainta
 
 | Work item | Status | Handoff |
 |---|---|---|
-| C015 — managed-interface teardown | Ready. Darwin's observed point-to-point addresses and link-local address do not match the desired address list, so deleting the managed tunnel is refused. Correct the interface delete comparison while preserving refusals for foreign resources; do not reopen C004's firewall work. | `plans/implementation/macos-native-server/c015-macos-interface-teardown-acceptance.md`; C004 evidence in `plans/closure/macos-native-server-corrective/c004-status.md` |
+| ADR-014 — M007 release authorization | Accepted 2026-11-16. Amends MUST-NOT-release for Apple silicon only. | `plans/adr/014-macos-apple-silicon-release-authorization.md`; M007 amendment section in `plans/closure/macos-native-server/007-status.md` |
+| C015 — managed-interface teardown | **Implemented** 2026-11-16. Planner accounts for Darwin `/32`/`/128` and link-local on delete. Closure blocked on controlled-host `network disable` evidence. | `plans/implementation/macos-native-server/c015-macos-interface-teardown-acceptance.md` |
+| C005 — native E2E, distribution, docs | **Active** under ADR-014. Eggpack Darwin target + `macos-15` runner contracted; remaining: helper companion packaging script/docs, operator matrix, C015 host evidence, C005 closure verdict. | `plans/implementation/macos-native-server/c005-release-qualification-and-reconciliation.md` |
 | S001 — PF token, absolute `nft`, health admission | Closed 2026-11-16. Did not reopen C004's anchor contract or C015. | `plans/closure/security-audit/001-status.md` |
-| C005 — native E2E, distribution, and release decision | Blocked. The implementation plan's remaining qualification and authorization gates still apply; M007's must-not-release decision stands until they are explicitly satisfied and amended by the maintainer. | `plans/implementation/macos-native-server/c005-release-qualification-and-reconciliation.md`; `plans/closure/macos-native-server/007-status.md` |
 | C017 — secret-scan corrective | Conditionally closed. Its closure records one previously reported GitGuardian incident for the workspace owner to resolve; repository changes do not clear that recorded dashboard occurrence. | `plans/closure/macos-native-server-corrective/c017-status.md` |
-
-Operator-parity closures did not authorize a Darwin release or change C015. Its deferred items and stop conditions remain in the roadmap.
 
 ## 6. Release disposition
 
-The maintainer waived the signed-production gate on 2026-10-11. Releases are checksums-only; no production signing key or trust root is planned, and `update check` / `update run` fail closed. `v0.1.0` is stable and unsigned. See the R004a/R004b closure records and `docs/release-signing.md` for the release evidence and limitations.
+The maintainer waived the signed-production gate on 2026-10-11. Releases are checksums-only; no production signing key or trust root is planned, and `update check` / `update run` fail closed. `v0.1.0` is stable and unsigned. See the R004a/R004b closure records and `docs/release-signing.md` for the release evidence and limitations. ADR-014 authorizes Apple silicon macOS server publication under that same checksums-only policy once C015 and C005 close; it does not enable Darwin self-update.
 
 ## 7. Planning hygiene
 

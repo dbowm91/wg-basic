@@ -3,7 +3,9 @@
 This guide covers the currently available state and network commands. Examples
 use the Linux default state and socket paths; replace them with the paths used
 by your processes. A supported product installer and transactional self-update
-are not implemented. No macOS release is supported.
+are not implemented. Apple silicon macOS server publication is
+maintainer-authorized under ADR-014; a published support claim still waits on
+C015 and C005 closure. Darwin self-update is unavailable.
 
 ## Protect the state database
 

@@ -34,10 +34,12 @@ service if you no longer need it.
 ## Current status
 
 Linux network control, durable state, management, client enrollment, and
-operational diagnostics are implemented and qualified. A supported product
-installer and transactional self-update are not implemented. Update commands
-fail closed. Releases are checksums-only, with no production signing key or
-trust root. No macOS release is supported.
+operational diagnostics are implemented and qualified. Update commands fail
+closed. Releases are checksums-only, with no production signing key or trust
+root. Apple silicon macOS headless server publication is maintainer-authorized
+under ADR-014; a published “macOS supported” claim still waits on C015
+teardown evidence and C005 packaging closure. Intel Macs are refused. Darwin
+self-update is not available.
 
 ## Documentation
 
