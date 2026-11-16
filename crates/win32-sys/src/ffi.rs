@@ -1737,8 +1737,14 @@ mod nat {
                 *mut MiSession,
             ) -> u32,
             _hosted: *const (),
-            new_instance: unsafe extern "system" fn(
-                *const MiApplication,
+            _new_instance: *const (),
+            _destination_options: *const (),
+            _operation_options: *const (),
+            _subscription_options: *const (),
+            _serializer: *const (),
+            _deserializer: *const (),
+            new_instance_from_class: unsafe extern "system" fn(
+                *mut MiApplication,
                 *const u16,
                 *const std::ffi::c_void,
                 *mut *mut MiInstance,
@@ -1769,6 +1775,22 @@ mod nat {
                 *mut std::ffi::c_void,
                 *mut MiOperation,
             ),
+            _delete_instance: *const (),
+            _invoke: *const (),
+            _enumerate: *const (),
+            _query: *const (),
+            _associator: *const (),
+            _reference: *const (),
+            _subscribe: *const (),
+            get_class: unsafe extern "system" fn(
+                *mut MiSession,
+                u32,
+                *mut std::ffi::c_void,
+                *const u16,
+                *const u16,
+                *mut std::ffi::c_void,
+                *mut MiOperation,
+            ),
         }
         #[repr(C)]
         struct MiInstance {
@@ -1788,7 +1810,8 @@ mod nat {
             set_namespace: unsafe extern "system" fn(*mut MiInstance, *const u16) -> u32,
             _get_namespace: *const (),
             _get_element_count: *const (),
-            add_element: unsafe extern "system" fn(
+            _add_element: *const (),
+            set_element: unsafe extern "system" fn(
                 *mut MiInstance,
                 *const u16,
                 *const MiValue,
@@ -1796,9 +1819,12 @@ mod nat {
                 u32,
             ) -> u32,
         }
+        /// `MI_Value` is a union whose largest member is `MI_Datetime` (40 bytes
+        /// after alignment). The library copies the whole union.
         #[repr(C)]
         union MiValue {
             string: *const u16,
+            _bytes: [u64; 5],
         }
         #[repr(C)]
         struct MiOperation {
@@ -1814,6 +1840,14 @@ mod nat {
             get_instance: unsafe extern "system" fn(
                 *mut MiOperation,
                 *mut *const MiInstance,
+                *mut u8,
+                *mut u32,
+                *mut *const u16,
+                *mut *const MiInstance,
+            ) -> u32,
+            get_class: unsafe extern "system" fn(
+                *mut MiOperation,
+                *mut *const std::ffi::c_void,
                 *mut u8,
                 *mut u32,
                 *mut *const u16,
@@ -1871,55 +1905,134 @@ mod nat {
         }
         let class_name = super::wide("MSFT_NetNat");
         let namespace_name = super::wide("root/StandardCimv2");
+        let text = |wide: *const u16| -> String {
+            if wide.is_null() {
+                return String::new();
+            }
+            unsafe {
+                let mut len = 0usize;
+                while *wide.add(len) != 0 {
+                    len += 1;
+                }
+                String::from_utf16_lossy(std::slice::from_raw_parts(wide, len))
+            }
+        };
+        let release = |instance: *mut MiInstance,
+                       class_operation: *mut MiOperation,
+                       session: *mut MiSession,
+                       application: *mut MiApplication| unsafe {
+            if !instance.is_null() {
+                ((*(*instance).ft).delete)(instance);
+            }
+            if !(*class_operation).ft.is_null() {
+                ((*(*class_operation).ft).close)(class_operation);
+            }
+            ((*(*session).ft).close)(session, std::ptr::null_mut(), std::ptr::null_mut());
+            ((*(*application).ft).close)(application);
+        };
+        let mut class_operation = unsafe { zeroed::<MiOperation>() };
+        unsafe {
+            ((*session.ft).get_class)(
+                &mut session,
+                0,
+                std::ptr::null_mut(),
+                namespace_name.as_ptr(),
+                class_name.as_ptr(),
+                std::ptr::null_mut(),
+                &mut class_operation,
+            );
+        }
+        if class_operation.ft.is_null() {
+            release(
+                std::ptr::null_mut(),
+                &mut class_operation,
+                &mut session,
+                &mut application,
+            );
+            return Err(SysError::invalid("MI_Session_GetClass"));
+        }
+        let mut class_object: *const std::ffi::c_void = std::ptr::null();
+        let mut more = 0u8;
+        let mut result = 0u32;
+        let mut error_text: *const u16 = std::ptr::null();
+        let code = unsafe {
+            ((*class_operation.ft).get_class)(
+                &mut class_operation,
+                &mut class_object,
+                &mut more,
+                &mut result,
+                &mut error_text,
+                std::ptr::null_mut(),
+            )
+        };
+        let detail = text(error_text);
+        if code != 0 || result != 0 || class_object.is_null() {
+            release(
+                std::ptr::null_mut(),
+                &mut class_operation,
+                &mut session,
+                &mut application,
+            );
+            let failed = if code != 0 { code } else { result };
+            return Err(SysError::detailed(
+                "MI_Session_GetClass",
+                Some(failed),
+                detail,
+            ));
+        }
         let mut instance: *mut MiInstance = std::ptr::null_mut();
         let code = unsafe {
-            ((*application.ft).new_instance)(
-                &application,
+            ((*application.ft).new_instance_from_class)(
+                &mut application,
                 class_name.as_ptr(),
-                std::ptr::null(),
+                class_object,
                 &mut instance,
             )
         };
         if code != 0 || instance.is_null() {
-            unsafe {
-                ((*session.ft).close)(&mut session, std::ptr::null_mut(), std::ptr::null_mut());
-                ((*application.ft).close)(&mut application);
-            }
-            return Err(SysError::os("MI_Application_NewInstance", code));
+            release(
+                instance,
+                &mut class_operation,
+                &mut session,
+                &mut application,
+            );
+            return Err(SysError::os("MI_Application_NewInstanceFromClass", code));
         }
         let code = unsafe { ((*(*instance).ft).set_namespace)(instance, namespace_name.as_ptr()) };
         if code != 0 {
-            unsafe {
-                ((*(*instance).ft).delete)(instance);
-                ((*session.ft).close)(&mut session, std::ptr::null_mut(), std::ptr::null_mut());
-                ((*application.ft).close)(&mut application);
-            }
+            release(
+                instance,
+                &mut class_operation,
+                &mut session,
+                &mut application,
+            );
             return Err(SysError::os("MI_Instance_SetNameSpace", code));
         }
         let name_key = super::wide("Name");
         let prefix_key = super::wide("InternalIPInterfaceAddressPrefix");
         let name_value = super::wide(name);
         let prefix_value = super::wide(prefix);
-        let add = |property: &[u16], value: &[u16]| -> Result<(), SysError> {
-            let stored = MiValue {
-                string: value.as_ptr(),
-            };
+        let set = |property: &[u16], value: &[u16]| -> Result<(), SysError> {
+            let mut stored = unsafe { zeroed::<MiValue>() };
+            stored.string = value.as_ptr();
             let code = unsafe {
-                ((*(*instance).ft).add_element)(instance, property.as_ptr(), &stored, 13, 0)
+                ((*(*instance).ft).set_element)(instance, property.as_ptr(), &stored, 13, 0)
             };
             if code == 0 {
                 Ok(())
             } else {
-                Err(SysError::os("MI_Instance_AddElement", code))
+                Err(SysError::os("MI_Instance_SetElement", code))
             }
         };
-        let added = add(&name_key, &name_value).and_then(|()| add(&prefix_key, &prefix_value));
-        if let Err(error) = added {
-            unsafe {
-                ((*(*instance).ft).delete)(instance);
-                ((*session.ft).close)(&mut session, std::ptr::null_mut(), std::ptr::null_mut());
-                ((*application.ft).close)(&mut application);
-            }
+        if let Err(error) =
+            set(&name_key, &name_value).and_then(|()| set(&prefix_key, &prefix_value))
+        {
+            release(
+                instance,
+                &mut class_operation,
+                &mut session,
+                &mut application,
+            );
             return Err(error);
         }
         let mut operation = unsafe { zeroed::<MiOperation>() };
@@ -1935,17 +2048,18 @@ mod nat {
             );
         }
         if operation.ft.is_null() {
-            unsafe {
-                ((*(*instance).ft).delete)(instance);
-                ((*session.ft).close)(&mut session, std::ptr::null_mut(), std::ptr::null_mut());
-                ((*application.ft).close)(&mut application);
-            }
+            release(
+                instance,
+                &mut class_operation,
+                &mut session,
+                &mut application,
+            );
             return Err(SysError::invalid("MI_Session_CreateInstance"));
         }
         let mut created: *const MiInstance = std::ptr::null();
         let mut more = 0u8;
         let mut result = 0u32;
-        let mut error_text: *const u16 = std::ptr::null();
+        error_text = std::ptr::null();
         let code = unsafe {
             ((*operation.ft).get_instance)(
                 &mut operation,
@@ -1956,41 +2070,16 @@ mod nat {
                 std::ptr::null_mut(),
             )
         };
-        let detail = unsafe {
-            if error_text.is_null() {
-                String::new()
-            } else {
-                let mut len = 0usize;
-                while *error_text.add(len) != 0 {
-                    len += 1;
-                }
-                String::from_utf16_lossy(std::slice::from_raw_parts(error_text, len))
-            }
-        };
-        let mut class_text: *const u16 = std::ptr::null();
-        let class_code = unsafe { ((*(*instance).ft).get_class_name)(instance, &mut class_text) };
-        let class_label = unsafe {
-            if class_code != 0 || class_text.is_null() {
-                format!("class-code {class_code}")
-            } else {
-                let mut len = 0usize;
-                while *class_text.add(len) != 0 {
-                    len += 1;
-                }
-                String::from_utf16_lossy(std::slice::from_raw_parts(class_text, len))
-            }
-        };
-        let detail = if detail.is_empty() {
-            class_label
-        } else {
-            format!("{detail} ({class_label})")
-        };
+        let detail = text(error_text);
         unsafe {
             ((*operation.ft).close)(&mut operation);
-            ((*(*instance).ft).delete)(instance);
-            ((*session.ft).close)(&mut session, std::ptr::null_mut(), std::ptr::null_mut());
-            ((*application.ft).close)(&mut application);
         }
+        release(
+            instance,
+            &mut class_operation,
+            &mut session,
+            &mut application,
+        );
         if code != 0 {
             return Err(SysError::detailed(
                 "MI_Operation_GetInstance",
