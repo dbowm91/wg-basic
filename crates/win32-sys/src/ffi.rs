@@ -1784,8 +1784,8 @@ mod nat {
             _destruct: *const (),
             delete: unsafe extern "system" fn(*mut MiInstance) -> u32,
             _is_a: *const (),
-            _get_class_name: *const (),
-            _set_namespace: *const (),
+            get_class_name: unsafe extern "system" fn(*const MiInstance, *mut *const u16) -> u32,
+            set_namespace: unsafe extern "system" fn(*mut MiInstance, *const u16) -> u32,
             _get_namespace: *const (),
             _get_element_count: *const (),
             add_element: unsafe extern "system" fn(
@@ -1848,11 +1848,15 @@ mod nat {
             return Err(SysError::os("MI_Application_Initialize", code));
         }
         let mut session = unsafe { zeroed::<MiSession>() };
+        // Null protocol defaults to WinRM, which does not answer on this host.
+        // Local CIM uses DCOM.
+        let protocol = super::wide("WMIDCOM");
+        let destination = super::wide(".");
         let code = unsafe {
             ((*application.ft).new_session)(
                 &mut application,
-                std::ptr::null(),
-                std::ptr::null(),
+                protocol.as_ptr(),
+                destination.as_ptr(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
@@ -1866,6 +1870,7 @@ mod nat {
             return Err(SysError::os("MI_Application_NewSession", code));
         }
         let class_name = super::wide("MSFT_NetNat");
+        let namespace_name = super::wide("root/StandardCimv2");
         let mut instance: *mut MiInstance = std::ptr::null_mut();
         let code = unsafe {
             ((*application.ft).new_instance)(
@@ -1881,6 +1886,15 @@ mod nat {
                 ((*application.ft).close)(&mut application);
             }
             return Err(SysError::os("MI_Application_NewInstance", code));
+        }
+        let code = unsafe { ((*(*instance).ft).set_namespace)(instance, namespace_name.as_ptr()) };
+        if code != 0 {
+            unsafe {
+                ((*(*instance).ft).delete)(instance);
+                ((*session.ft).close)(&mut session, std::ptr::null_mut(), std::ptr::null_mut());
+                ((*application.ft).close)(&mut application);
+            }
+            return Err(SysError::os("MI_Instance_SetNameSpace", code));
         }
         let name_key = super::wide("Name");
         let prefix_key = super::wide("InternalIPInterfaceAddressPrefix");
@@ -1908,7 +1922,6 @@ mod nat {
             }
             return Err(error);
         }
-        let namespace_name = super::wide("root/StandardCimv2");
         let mut operation = unsafe { zeroed::<MiOperation>() };
         unsafe {
             ((*session.ft).create_instance)(
@@ -1953,6 +1966,24 @@ mod nat {
                 }
                 String::from_utf16_lossy(std::slice::from_raw_parts(error_text, len))
             }
+        };
+        let mut class_text: *const u16 = std::ptr::null();
+        let class_code = unsafe { ((*(*instance).ft).get_class_name)(instance, &mut class_text) };
+        let class_label = unsafe {
+            if class_code != 0 || class_text.is_null() {
+                format!("class-code {class_code}")
+            } else {
+                let mut len = 0usize;
+                while *class_text.add(len) != 0 {
+                    len += 1;
+                }
+                String::from_utf16_lossy(std::slice::from_raw_parts(class_text, len))
+            }
+        };
+        let detail = if detail.is_empty() {
+            class_label
+        } else {
+            format!("{detail} ({class_label})")
         };
         unsafe {
             ((*operation.ft).close)(&mut operation);
