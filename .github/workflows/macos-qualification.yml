@@ -11,7 +11,10 @@ name: macOS qualification
 on:
   workflow_dispatch:
   push:
-    branches: [plans/macos-native-support]
+    branches:
+      - plans/macos-native-support
+      - cursor/operator-parity-m001-m004
+      - main
 
 permissions:
   contents: read

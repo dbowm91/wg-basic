@@ -371,15 +371,18 @@ The leg is qualified by being run **twice on the same guest**: the second
 run's baseline is the proof that the first run left nothing. The commands
 above are how to run it.
 
-### C004 gateway leg and C015 disable evidence
+### C015 disable evidence (hosted) and optional C004 gateway re-run
 
-C004's gateway packet evidence is **closed** on the controlled Apple silicon
-host. Re-run the same leg after the C015 planner fix to prove `network disable`
-removes the managed `utun` and reports enforcement (the historical F10
-degradation pin in `tests/wireguard_darwin_gateway.rs` is retired). Use a
-disposable macOS host; the leg installs the product, mutates PF as the
-administrator, and needs the routed peer driver (it provides
-`observed-source` / `observed-source6`):
+C015's interface teardown is qualified on the disposable GitHub-hosted
+`macos-15` runner by `live_c015_network_disable_removes_the_managed_interface`
+inside `tests/wireguard_darwin_live.rs` (host-only product setup, then
+`network disable` must report enforcement and remove the managed `utun`). The
+`macOS qualification` workflow runs every ignored live test in that target.
+
+Optional controlled-host confirmation of the same disable path under gateway
+mode: re-run C004's leg after the C015 planner fix (the historical F10
+degradation pin in `tests/wireguard_darwin_gateway.rs` is retired). That leg
+mutates PF as the administrator and needs the routed peer driver:
 
 ```sh
 cargo test --locked --no-run --test wireguard_darwin_gateway
@@ -397,8 +400,6 @@ sudo WGB_DARWIN_LIVE=1 WGB_WIREGUARD_GO=/path/to/wireguard-go \
 
 Operator attachment and TN3165 labeling live in the
 [operations runbook](operations-runbook.md#internet-exit-gateway-on-macos).
-Record C015 closure only after this re-run is green without the old
-`not yet enforced` / ownership-conflict degradation.
 
 ## Local netd
 

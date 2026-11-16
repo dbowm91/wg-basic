@@ -44,6 +44,9 @@
 //! - `live_c001_darwin_backend_converges_a_product_shaped_desired_state` (C001):
 //!   the Darwin backend converges a product-shaped desired state and the
 //!   managed device is observed with its addresses and routes.
+//! - `live_c015_network_disable_removes_the_managed_interface` (C015): host-only
+//!   product setup then `network disable` reports enforcement and removes the
+//!   managed `utun` (Darwin point-to-point / link-local delete accounting).
 //!
 //! The controlled-host legs (an off-host Linux-kernel peer, a cold reboot) are
 //! **not** in this target: the hosted job runs every `#[ignore]`d test here, so
@@ -56,6 +59,7 @@
 #![cfg(target_os = "macos")]
 
 use std::collections::HashSet;
+use std::io::Write as _;
 use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
@@ -1883,6 +1887,235 @@ fn live_c001_darwin_backend_converges_a_product_shaped_desired_state() {
             .any(|address| *address == "10.78.0.1/32".parse().unwrap()),
         "the server address must be on the managed device: {observed:?}"
     );
+    evidence.write();
+}
+
+/// C015 live: `network disable` removes the managed interface on a disposable
+/// hosted runner.
+///
+/// Host-only product setup (no PF mutation, no forwarding, no off-host peer)
+/// brings up a managed `utun`. Stopping `serve` for the maintenance lease,
+/// then running `wg-basic network disable`, must report enforcement and leave
+/// the managed device gone. That is the F10 delete-path defect C015 corrects;
+/// gateway NAT traffic stays C004's controlled-host claim.
+#[test]
+#[ignore = "needs WGB_DARWIN_LIVE=1 as root on a disposable macOS host"]
+fn live_c015_network_disable_removes_the_managed_interface() {
+    let mut evidence = Evidence::new("c015-network-disable-teardown");
+    let helper_path = require_live(&mut evidence);
+    let binary = std::env::var("WGB_BINARY").expect("WGB_BINARY must be set");
+    let sw_vers = sh(&mut evidence, "sw_vers", &[]);
+    evidence.log(&sw_vers);
+    let uname = sh(&mut evidence, "uname", &["-m"]);
+    evidence.log(&uname);
+
+    provision_management_identity(&mut evidence);
+    let _cleanup = DisposableDeployment {
+        user: launchd::SERVE_USER.to_owned(),
+        group: launchd::SERVE_GROUP.to_owned(),
+    };
+    resolve_management_identity(&mut evidence);
+    wg_basic::launchd_install::install(Path::new("/"), Path::new(&binary), Path::new(&helper_path))
+        .expect("the transactional installer must complete the deployment");
+    evidence.log("the transactional installer completed the deployment");
+
+    let _firewall = FirewallAllowance {
+        path: launchd::HELPER_PATH.to_owned(),
+    };
+    sh(
+        &mut evidence,
+        FIREWALL_TOOL,
+        &["--add", launchd::HELPER_PATH],
+    );
+
+    let netd_job = format!("system/{}", launchd::NETD_LABEL);
+    let serve_job = format!("system/{}", launchd::SERVE_LABEL);
+    wait_until("both roles running", Duration::from_secs(60), || {
+        launchd_running(&netd_job) && launchd_running(&serve_job)
+    });
+
+    let password = "a disposable administrator password";
+    let mut admin = Command::new("sudo")
+        .args([
+            "-u",
+            launchd::SERVE_USER,
+            launchd::BINARY_PATH,
+            "admin",
+            "set-password",
+            "--username",
+            "admin",
+            "--password-stdin",
+            "--state",
+            launchd::STATE_PATH,
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("provision the administrator");
+    admin
+        .stdin
+        .as_mut()
+        .expect("the password pipe")
+        .write_all(format!("{password}\n").as_bytes())
+        .expect("write the password");
+    let admin_output = admin
+        .wait_with_output()
+        .expect("the administrator provisioning to finish");
+    assert!(
+        admin_output.status.success(),
+        "administrator provisioning failed: {}",
+        String::from_utf8_lossy(&admin_output.stderr)
+    );
+
+    let addr: std::net::SocketAddr = wg_basic::http::config::DEFAULT_BIND
+        .parse()
+        .expect("the default management bind is an address");
+    let origin = format!("http://{addr}");
+    wait_until("the management listener", Duration::from_secs(60), || {
+        std::net::TcpStream::connect(addr).is_ok()
+    });
+
+    let (login_status, login_body, login_headers) = http(
+        addr,
+        "POST",
+        "/api/v1/login",
+        Some(&origin),
+        None,
+        None,
+        &format!(r#"{{"username":"admin","password":"{password}"}}"#),
+    );
+    assert_eq!(login_status, 200, "login: {login_body}");
+    let cookie = login_headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("set-cookie"))
+        .expect("a session cookie")
+        .1
+        .split(';')
+        .next()
+        .expect("the cookie value")
+        .to_owned();
+    let (_, session_body, _) = http(
+        addr,
+        "GET",
+        "/api/v1/session",
+        None,
+        Some(&cookie),
+        None,
+        "",
+    );
+    let csrf = serde_json::from_str::<serde_json::Value>(&session_body).expect("the session body")
+        ["csrf_token"]
+        .as_str()
+        .expect("a CSRF token")
+        .to_owned();
+
+    let utun_before = utun_names();
+    evidence.log(&format!(
+        "utun inventory before host-only setup: {utun_before:?}"
+    ));
+    // Host-only on the hosted runner: loopback advertisement, no forwarding,
+    // no masquerade — stays inside the macos-qualification contract.
+    let setup_body = format!(
+        r#"{{"expected_generation":1,"interface_name":"wg0","tunnel_prefix":"{TUNNEL_V4}","ipv6_tunnel_prefix":"{TUNNEL_V6}","server_address":"{SERVER_V4}","ipv6_server_address":"{SERVER_V6}","listen_port":{LISTEN_PORT},"advertised_endpoint":"127.0.0.1:{LISTEN_PORT}","egress_interface":"lo0","ipv4_forwarding_required":false,"ipv6_forwarding_required":false,"masquerade":false,"default_client_route_policy":{{"prefixes":["0.0.0.0/0","::/0"]}}}}"#
+    );
+    let (setup_status, setup_text, _) = http(
+        addr,
+        "POST",
+        "/api/v1/setup",
+        Some(&origin),
+        Some(&cookie),
+        Some(&csrf),
+        &setup_body,
+    );
+    if setup_status != 200 && setup_status != 202 {
+        capture_daemon_logs(&mut evidence);
+    }
+    assert!(
+        setup_status == 200 || setup_status == 202,
+        "host-only setup must be accepted: {setup_status} {setup_text}"
+    );
+    evidence.log(&format!(
+        "host-only setup answered {setup_status}: {setup_text}"
+    ));
+
+    wait_until("managed utun present", Duration::from_secs(60), || {
+        utun_names().iter().any(|name| !utun_before.contains(name))
+    });
+    let utun_after = utun_names();
+    let managed: Vec<String> = utun_after
+        .iter()
+        .filter(|name| !utun_before.contains(name))
+        .cloned()
+        .collect();
+    evidence.log(&format!(
+        "utun inventory after setup: before={utun_before:?} after={utun_after:?} new={managed:?}"
+    ));
+    assert_eq!(
+        managed.len(),
+        1,
+        "host-only setup must create exactly one managed utun: {managed:?}"
+    );
+    let device = managed[0].clone();
+    let ifconfig_before = sh(&mut evidence, "ifconfig", &[&device]);
+    evidence.log(&format!(
+        "managed interface before disable:\n{ifconfig_before}"
+    ));
+
+    // serve holds the state lease; disable needs it free while netd stays up.
+    let bootout = sh_unchecked(&mut evidence, "launchctl", &["bootout", &serve_job]);
+    evidence.log(&format!("serve bootout answered: {bootout:?}"));
+    wait_until("serve stopped for disable", Duration::from_secs(30), || {
+        !launchd_running(&serve_job)
+    });
+    assert!(
+        launchd_running(&netd_job),
+        "netd must stay available for network disable"
+    );
+
+    let disable = Command::new("sudo")
+        .args([
+            "-u",
+            launchd::SERVE_USER,
+            launchd::BINARY_PATH,
+            "network",
+            "disable",
+            "--state",
+            launchd::STATE_PATH,
+            "--socket",
+            launchd::SOCKET_PATH,
+        ])
+        .output()
+        .expect("the network disable must run");
+    let disable_text = String::from_utf8_lossy(&disable.stdout).trim().to_owned();
+    let disable_errors = String::from_utf8_lossy(&disable.stderr).trim().to_owned();
+    evidence.log(&format!(
+        "the network disable answered: {disable_text} {disable_errors}"
+    ));
+    assert!(
+        disable.status.success(),
+        "network disable must succeed: {disable_errors}"
+    );
+    assert!(
+        disable_text.contains(" and enforced"),
+        "network disable must report enforcement (C015): {disable_text}"
+    );
+
+    let ifconfig_after = sh_unchecked(&mut evidence, "ifconfig", &[&device]);
+    evidence.log(&format!(
+        "ifconfig {device} after disable: success={} output={}",
+        ifconfig_after.0, ifconfig_after.1
+    ));
+    assert!(
+        !ifconfig_after.0,
+        "the managed interface {device} must be gone after network disable: {}",
+        ifconfig_after.1
+    );
+    assert!(
+        !utun_names().iter().any(|name| name == &device),
+        "the managed interface {device} must leave the utun inventory after network disable"
+    );
+    evidence.log("C015: network disable removed the managed utun and reported enforcement");
     evidence.write();
 }
 

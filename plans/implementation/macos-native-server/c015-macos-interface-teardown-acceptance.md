@@ -1,16 +1,19 @@
 # C015 — The macOS managed interface's teardown is refused
 
-Status: **implemented** (2026-11-16); closure blocked on controlled-host
+Status: **implemented** (2026-11-16); closure blocked on hosted-runner
 disable evidence. Raised by the **F10** finding that C004's closure record
 made when its gateway leg ran the product's own teardown on the controlled
 host. Planner delete accounting for Darwin point-to-point `/32`/`/128` and
 IPv6 link-local landed in `src/reconcile/planner.rs` with host-free unit
 tests. The C004 live fixture no longer pins the F10 degradation: it requires
 `network disable` to report enforcement and the managed `utun` to be gone.
-Record controlled-host evidence in
-`plans/closure/macos-native-server-corrective/c015-status.md` only after that
-leg is re-run green on the disposable Apple silicon host (commands in
-`docs/development.md`).
+Hosted evidence path:
+`live_c015_network_disable_removes_the_managed_interface` in
+`tests/wireguard_darwin_live.rs`, run by `.github/workflows/macos-qualification.yml`
+on `macos-15` (host-only; no NAT claim). Record
+`plans/closure/macos-native-server-corrective/c015-status.md` after that job
+is green. Optional: re-run the C004 gateway leg on a controlled host for
+gateway-mode confirmation.
 
 Repository baseline: `5e35a4a` (`plans/macos-native-support`).
 
