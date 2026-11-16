@@ -1266,7 +1266,9 @@ mod tests {
         })
         .unwrap();
         assert!(set.contains("preshared_key="));
-        assert!(!set.contains(&"0".repeat(64)));
+        // The all-zero hex is the clear sentinel for PSK only. Do not scan the
+        // whole payload: a zero public-key fixture hex-encodes to the same digits.
+        assert!(!set.contains(&format!("preshared_key={}\n", "0".repeat(64))));
         let clear = render_uapi_patch(&WireGuardDevicePatch {
             private_key: FieldUpdate::Keep,
             listen_port: FieldUpdate::Keep,
