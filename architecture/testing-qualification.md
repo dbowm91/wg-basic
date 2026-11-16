@@ -106,7 +106,7 @@ source-text assertions that run in the ordinary suite. By category:
 
 | Category | What is pinned |
 |---|---|
-| No shell-out / no escape hatch | No `wg`/`wg-quick`/`ip` invocation; process execution isolated to `src/firewall/nft.rs`; no `sh`/`bash`; the nft backend spawns exactly `nft` |
+| No shell-out / no escape hatch | No `wg`/`wg-quick`/`ip` invocation; process execution isolated to `src/firewall/nft.rs`; no `sh`/`bash`; the nft backend spawns a pinned absolute `nft` path |
 | Closed privileged protocol | No generic `Exec`/`Shell`/`RawNetlink`/`WriteFile`/`Sysctl`/etc. operation in `src/protocol/wire.rs`; operation vocabulary and `PROTOCOL_VERSION = 1` pinned |
 | Privilege separation and layering | Aggregate coordinator database-free; `src/state/` never reaches the privileged boundary; privileged path never opens the DB; management never becomes an HTTP surface; HTTP reaches management only through the bounded worker (`mpsc::channel(capacity)` + `try_send`); backup/restore stay local; store submodules stay one-directional |
 | Authentication secrecy | Closed secret-safe event schema; secret wrappers redact `Debug`/`Display`; raw `SessionToken` has no path into `store::auth` (digests only, one `expose_once`); auth only via the worker thread; no plaintext password parameter reaches a query; migrations are ordered immutable v1-v7 steps; admin password arrives on stdin only |

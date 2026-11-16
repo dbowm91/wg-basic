@@ -624,7 +624,8 @@ fn live_pf_inventory_and_anchor_cycle() {
         &InterfaceName::new("lo0").expect("egress name"),
         &InterfaceName::new(endpoint.utun.clone()).expect("tunnel name"),
         false,
-    );
+    )
+    .expect("token-safe fixture");
     assert!(
         rules.nat.is_empty(),
         "filter-only fixture renders no NAT (no NAT claim here)"
@@ -634,7 +635,8 @@ fn live_pf_inventory_and_anchor_cycle() {
         &InterfaceName::new("lo0").expect("egress name"),
         &InterfaceName::new(endpoint.utun.clone()).expect("tunnel name"),
         true,
-    );
+    )
+    .expect("token-safe fixture");
     assert!(
         !nat_rules.nat.is_empty(),
         "masquerade variant must render NAT"
@@ -1037,7 +1039,8 @@ fn live_forwarding_and_unattached_anchor_probe() {
         &InterfaceName::new(&egress).expect("egress name"),
         &InterfaceName::new(endpoint_b.utun.clone()).expect("tunnel name"),
         true,
-    );
+    )
+    .expect("token-safe fixture");
     assert!(!rules.nat.is_empty(), "masquerade variant must render NAT");
     let scratch = std::env::temp_dir().join(format!("wgb-nat-{}", std::process::id()));
     std::fs::create_dir_all(&scratch).expect("nat scratch dir");

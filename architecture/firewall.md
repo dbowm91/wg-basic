@@ -44,9 +44,9 @@ contract of its own, with a different filter and NAT surface.
 
 The service owns the dedicated `inet wg_basic` table. A table-level marker binds ownership to the installation identity (`wg-basic:v1:<installation-uuid>`); a same-name table carrying another installation's marker is a conflict and is never flushed or deleted. The historical M005 product-only marker `wg-basic:m005:v1` is recognized specifically and reported as a distinct legacy-ownership conflict; it is never silently adopted, because no durable state shipped before Phase 6. The generated table has an accepting forward base chain, an established/related return rule to the managed tunnel, source-family-prefix and explicit-egress allow rules from the tunnel, and a drop for other traffic entering that managed tunnel. IPv4 masquerade rules match only configured IPv4 source prefixes and egress; no IPv6 masquerade rule is generated. Table and chain/rule comments include a deterministic desired-policy hash. Reconciliation compares the normalized JSON for each owned chain and rule with the expected expression model, in addition to checking ownership and object inventory; kernel handles are ignored. Changed expressions with copied comments are detected as drift and replaced.
 
-Mutations are sent as one internally rendered `nft -f -` batch, so replacement is a single nftables transaction. The process is invoked directly, never through a shell. Input is capped at 32 KiB, each output stream at 256 KiB, and execution at five seconds. The binary absence maps to `Unsupported`; permission failures are distinguished; malformed JSON, timeout, and command failures return a redacted backend failure. No nftables command output or generated source is returned in protocol errors.
+Mutations are sent as one internally rendered `nft -f -` batch, so replacement is a single nftables transaction. The process is invoked directly, never through a shell, and never through a `PATH` lookup: the executable is selected from the fixed absolute candidates `/usr/sbin/nft` then `/sbin/nft`, and only a regular, executable, non-symlink file qualifies. Input is capped at 32 KiB, each output stream at 256 KiB, and execution at five seconds. The binary absence maps to `Unsupported`; permission failures are distinguished; malformed JSON, timeout, and command failures return a redacted backend failure. No nftables command output or generated source is returned in protocol errors.
 
-The `nft` executable is a runtime requirement for firewall policy operations. The minimum supported userspace is nftables 0.9.0; netd checks `nft --version` and reports older/missing/unparseable versions as unsupported. The inet-family NAT path requires Linux 5.2 or newer. The repository's rootful qualification uses the Ubuntu runner's packaged nftables and checks `nft --version` before creating namespaces. Runtime compatibility is also validated by JSON table listing and the actual atomic batch; unsupported kernel combinations fail without claiming convergence. The minimum kernel/userspace pair is documented from nftables' [NAT compatibility guidance](https://wiki.nftables.org/wiki-nftables/index.php/Performing_Network_Address_Translation_%28NAT%29). This is a transitional backend. A direct netfilter backend can replace it without changing the protocol policy types.
+The `nft` executable is a runtime requirement for firewall policy operations. The minimum supported userspace is nftables 0.9.0; netd checks the pinned binary's `--version` and reports older/missing/unparseable versions as unsupported. The inet-family NAT path requires Linux 5.2 or newer. The repository's rootful qualification uses the Ubuntu runner's packaged nftables and checks `nft --version` before creating namespaces. Runtime compatibility is also validated by JSON table listing and the actual atomic batch; unsupported kernel combinations fail without claiming convergence. The minimum kernel/userspace pair is documented from nftables' [NAT compatibility guidance](https://wiki.nftables.org/wiki-nftables/index.php/Performing_Network_Address_Translation_%28NAT%29). This is a transitional backend. A direct netfilter backend can replace it without changing the protocol policy types.
 
 ## Interaction with other firewall managers
 
@@ -204,7 +204,12 @@ installation-scoped anchor's rules, digests them for drift detection, and
 verifies that an administrator's parent configuration actually attaches the
 anchor. It performs no I/O, spawns nothing, and mutates no host state; the
 live `pfctl` observation lives in `src/firewall/pfctl.rs`, whose observation
-half is strictly read-only.
+half is strictly read-only. Every interface name a renderer would emit must
+be **one PF token** — one to fifteen bytes from `[A-Za-z0-9._-]`, and not
+`.` or `..`. A name PF would read as negation, a list, a quote, `;`, or `#`
+is refused before any rule text is produced and before any `pfctl` spawn;
+gateway apply returns the existing invalid-policy error and leaves the
+anchor file unchanged.
 
 Attachment verification is **per rule class and token-exact**:
 

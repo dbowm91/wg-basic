@@ -4,7 +4,7 @@ use std::{
     fs,
     io::Write,
     os::unix::fs::PermissionsExt,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, Command, Output, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -133,10 +133,6 @@ struct Netd {
 
 impl Netd {
     fn start(namespace: &str) -> Self {
-        Self::start_with_path(namespace, None)
-    }
-
-    fn start_with_path(namespace: &str, path: Option<&std::ffi::OsStr>) -> Self {
         let suffix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -157,7 +153,6 @@ impl Netd {
             ])
             .env("WG_BASIC_TEST_SOCKET", &socket)
             .env("WG_BASIC_TEST_SHUTDOWN", &shutdown_file)
-            .envs(path.map(|path| [("PATH", path)]).into_iter().flatten())
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())
             .spawn()
@@ -183,6 +178,69 @@ impl Netd {
     fn socket(&self) -> PathBuf {
         self.runtime.join("netd.sock")
     }
+}
+
+/// Overlays the pinned absolute `nft` path with a shim that fails batch loads.
+///
+/// Production `netd` never consults `PATH` for `nft`, so fault injection has to
+/// replace the absolute candidate the pin would select.
+struct PinnedNftFailureOverlay {
+    pinned: PathBuf,
+    backup: PathBuf,
+}
+
+impl PinnedNftFailureOverlay {
+    fn install_failing_batch() -> Self {
+        let pinned = first_pinned_nft_path();
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let backup = PathBuf::from(format!(
+            "{}.wg-basic-bak-{suffix:x}",
+            pinned.to_string_lossy()
+        ));
+        fs::rename(&pinned, &backup).expect("move the real pinned nft aside");
+        fs::write(
+            &pinned,
+            format!(
+                "#!/bin/sh\ncase \" $* \" in *\" -f - \"*) echo 'fixture nft failure' >&2; exit 1;; esac\nexec {} \"$@\"\n",
+                shell_quote_path(&backup)
+            ),
+        )
+        .expect("install the pinned nft failure shim");
+        fs::set_permissions(&pinned, fs::Permissions::from_mode(0o755)).unwrap();
+        Self { pinned, backup }
+    }
+}
+
+impl Drop for PinnedNftFailureOverlay {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.pinned);
+        let _ = fs::rename(&self.backup, &self.pinned);
+    }
+}
+
+fn first_pinned_nft_path() -> PathBuf {
+    for candidate in ["/usr/sbin/nft", "/sbin/nft"] {
+        let path = Path::new(candidate);
+        let Ok(metadata) = fs::symlink_metadata(path) else {
+            continue;
+        };
+        if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+            continue;
+        }
+        if metadata.permissions().mode() & 0o111 == 0 {
+            continue;
+        }
+        return path.to_path_buf();
+    }
+    panic!("no pinned absolute nft path is available for fault injection");
+}
+
+fn shell_quote_path(value: &Path) -> String {
+    let text = value.to_string_lossy();
+    format!("'{}'", text.replace('\'', r"'\''"))
 }
 
 impl Drop for Netd {
@@ -633,33 +691,12 @@ fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
     let per_interface_before = String::from_utf8_lossy(&per_interface_before.stdout)
         .trim()
         .to_owned();
-    let failure_root = std::env::temp_dir().join(format!(
-        "wgb-m002-nft-failure-{:x}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir(&failure_root).unwrap();
-    let real_nft = command("which", &["nft"]);
-    assert!(real_nft.status.success());
-    let real_nft = String::from_utf8_lossy(&real_nft.stdout).trim().to_owned();
-    let wrapper = failure_root.join("nft");
-    fs::write(
-        &wrapper,
-        format!(
-            "#!/bin/sh\ncase \" $* \" in *\" -f - \"*) echo 'fixture nft failure' >&2; exit 1;; esac\nexec {real_nft} \"$@\"\n"
-        ),
-    )
-    .unwrap();
-    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
-    let inherited_path = std::env::var_os("PATH").unwrap_or_default();
-    let fixture_path = std::env::join_paths(
-        std::iter::once(failure_root.clone()).chain(std::env::split_paths(&inherited_path)),
-    )
-    .unwrap();
+    // Production netd executes a pinned absolute nft path and never consults
+    // PATH, so the injected failure overlays that path rather than prepending a
+    // wrapper directory.
+    let nft_failure = PinnedNftFailureOverlay::install_failing_batch();
     drop(server_netd);
-    server_netd = Netd::start_with_path(&server.0, Some(&fixture_path));
+    server_netd = Netd::start(&server.0);
     let ipv6_apply = apply_policy(
         &server_netd,
         server_interface.clone(),
@@ -688,6 +725,8 @@ fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
         "1",
         "ADR-007 global forwarding changed per-interface Host/Router forwarding from {per_interface_before}"
     );
+    // Restore the real binary before the retry so the next netd sees a working nft.
+    drop(nft_failure);
     drop(server_netd);
     server_netd = Netd::start(&server.0);
     let retry = apply_policy(
@@ -701,7 +740,6 @@ fn three_namespace_wireguard_forwarding_nat_restart_and_preservation() {
         ApplyStatus::Applied,
         "IPv6 policy retry: {retry:?}"
     );
-    fs::remove_dir_all(&failure_root).unwrap();
     assert!(
         ping6(&client).status.success(),
         "routed IPv6 return path failed"

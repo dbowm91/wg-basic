@@ -43,10 +43,11 @@ mod service_windows;
 
 pub use pf::{
     anchor_content_matches, anchor_file_content, anchor_file_marker, anchor_file_path, anchor_name,
-    attachment_verified, nat_content_matches, observe_attachments, operator_attachment,
-    owns_anchor_file, render_policy, render_routed_policy, rules_digest, teardown_order,
-    Attachment, AttachmentObservation, OperatorAttachment, PfError, PfRuleSet, RequiredAttachments,
-    ANCHOR_FILE_DIRECTORY, ANCHOR_PREFIX, IPV4_FORWARDING_SYSCTL, IPV6_FORWARDING_SYSCTL,
+    attachment_verified, is_pf_interface_token, nat_content_matches, observe_attachments,
+    operator_attachment, owns_anchor_file, render_policy, render_routed_policy, rules_digest,
+    teardown_order, Attachment, AttachmentObservation, OperatorAttachment, PfError, PfRuleSet,
+    RequiredAttachments, ANCHOR_FILE_DIRECTORY, ANCHOR_PREFIX, IPV4_FORWARDING_SYSCTL,
+    IPV6_FORWARDING_SYSCTL,
 };
 
 pub use policy::{

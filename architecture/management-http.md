@@ -313,6 +313,10 @@ cannot leak by accident.
 
 `/healthz` answers `ok` or `degraded`, and nothing else. No installation ID, no
 generation, no filesystem path, no desired-state fact, no backend failure detail.
+Its admission budget is **independent** of login and mutation admission: a
+burst of unauthenticated liveness probes is shed before the management worker
+queue, so it cannot occupy the slots those commands use. A shed probe returns
+the same unavailable answer the surface already uses for overload.
 
 Both classes are served with `200`. "Degraded" describes the appliance, not the
 request: the request *was* answered. Serving it as `503` would conflate "the

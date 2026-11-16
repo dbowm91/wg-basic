@@ -143,7 +143,7 @@ impl FirewallService {
                     warnings: vec![FirewallWarning::RoutedLanFilterIsOperatorManaged],
                     required_filter_rules: device
                         .as_deref()
-                        .map(|device| render_routed_rules(policy, device))
+                        .and_then(|device| render_routed_rules(policy, device).ok())
                         .unwrap_or_default(),
                     routed_lan: Some(verdict),
                     gateway: None,
@@ -200,6 +200,11 @@ impl FirewallService {
                 }
                 NetworkPolicyMode::Gateway => {
                     let device = self.tunnel_device(wireguard_interface);
+                    // A PF-operator interface name is refused before observation
+                    // and before any `pfctl` spawn, as InvalidPolicy.
+                    if let Some(device) = device.as_deref() {
+                        let _ = render_gateway_rules(policy, device)?;
+                    }
                     let verdict = self.observe_gateway(installation_id, policy, device.as_deref());
                     if let Some(error) = verdict.error() {
                         return Err(error);
@@ -301,12 +306,16 @@ impl FirewallService {
         let Some(content) = observation.anchor_filter.as_deref() else {
             return Err(RoutedLanVerdict::FilterMissing);
         };
-        let expected = pf::render_routed_policy(
+        let expected = match pf::render_routed_policy(
             &policy.source_prefixes,
             &policy.destination_prefixes,
             &policy.egress_interface,
             &tunnel_interface(device),
-        );
+        ) {
+            Ok(rules) => rules,
+            // A name that is not one PF token cannot match a rendered policy.
+            Err(_) => return Err(RoutedLanVerdict::FilterDrift),
+        };
         if !pf::anchor_content_matches(content, &expected) {
             return Err(RoutedLanVerdict::FilterDrift);
         }
@@ -326,7 +335,7 @@ impl FirewallService {
     ) -> GatewayVerdict {
         let forwarding_ok = require_forwarding(policy).is_ok();
         let anchor = pf::anchor_name(installation_id);
-        let expected = device.map(|device| render_gateway_rules(policy, device));
+        let expected = device.and_then(|device| render_gateway_rules(policy, device).ok());
         let observation = pfctl::observe(&anchor).ok();
         gateway_verdict(
             forwarding_ok,
@@ -349,8 +358,11 @@ impl FirewallService {
         policy: &DesiredNetworkPolicy,
         device: &str,
     ) -> Result<(), FirewallError> {
+        // Token refusal happens before any anchor-file write and before any
+        // `pfctl` spawn. A name PF would read as an operator or a list leaves
+        // the installation's anchor unchanged.
+        let expected = render_gateway_rules(policy, device)?;
         let anchor = pf::anchor_name(installation_id);
-        let expected = render_gateway_rules(policy, device);
         let content = pf::anchor_file_content(installation_id, &expected);
         pfctl::install_anchor(&anchor, &content).map_err(map_apply_error)?;
         let observation = pfctl::observe(&anchor).map_err(map_observation_error)?;
@@ -531,14 +543,18 @@ fn empty_plan(wireguard_interface: &InterfaceName) -> FirewallPlanSummary {
 }
 
 /// The filter rules an operator has to install for one routed-LAN policy.
-fn render_routed_rules(policy: &DesiredNetworkPolicy, device: &str) -> Vec<String> {
-    pf::render_routed_policy(
+fn render_routed_rules(
+    policy: &DesiredNetworkPolicy,
+    device: &str,
+) -> Result<Vec<String>, FirewallError> {
+    Ok(pf::render_routed_policy(
         &policy.source_prefixes,
         &policy.destination_prefixes,
         &policy.egress_interface,
         &tunnel_interface(device),
     )
-    .filter
+    .map_err(|_| FirewallError::InvalidPolicy)?
+    .filter)
 }
 
 /// The gateway verdict, decided from facts already gathered.
@@ -601,14 +617,19 @@ fn gateway_verdict(
 ///
 /// The gateway translates IPv4 and routes IPv6: the masquerade is decided by
 /// the policy's NAT mode, and the renderer never emits a translation rule for
-/// an IPv6 prefix.
-fn render_gateway_rules(policy: &DesiredNetworkPolicy, device: &str) -> pf::PfRuleSet {
+/// an IPv6 prefix. A name that is not one PF token is refused as an invalid
+/// policy before any rule text is produced.
+fn render_gateway_rules(
+    policy: &DesiredNetworkPolicy,
+    device: &str,
+) -> Result<pf::PfRuleSet, FirewallError> {
     pf::render_policy(
         &policy.source_prefixes,
         &policy.egress_interface,
         &tunnel_interface(device),
         policy.nat == NatMode::Masquerade,
     )
+    .map_err(|_| FirewallError::InvalidPolicy)
 }
 
 /// What releasing the managed anchor did.
@@ -857,9 +878,28 @@ mod tests {
     }
 
     #[test]
+    fn install_gateway_anchor_refuses_a_pf_operator_before_pfctl() {
+        // Darwin-gated by this module's `cfg(target_os = "macos")`. The
+        // refusal is proven without spawning `pfctl`: a token failure returns
+        // InvalidPolicy before the anchor file is written.
+        let service = FirewallService::new();
+        let mut policy = gateway_policy();
+        policy.egress_interface = InterfaceName::new("!en0").unwrap();
+        let error = service
+            .install_gateway_anchor(installation(), &policy, "utun7")
+            .expect_err("a PF-operator egress must be refused");
+        assert_eq!(error, FirewallError::InvalidPolicy);
+        assert_eq!(
+            render_gateway_rules(&policy, "utun7"),
+            Err(FirewallError::InvalidPolicy)
+        );
+    }
+
+    #[test]
     fn the_gateway_verdict_names_the_missing_prerequisite() {
         let anchor = "wg-basic-v1-1c0ffee";
-        let expected = render_gateway_rules(&gateway_policy(), "utun7");
+        let expected =
+            render_gateway_rules(&gateway_policy(), "utun7").expect("token-safe fixture");
         let attached = pfctl::PfObservation {
             parent_filter: format!("anchor \"com.apple/*\" all\nanchor \"{anchor}\" all\n"),
             parent_nat: format!("nat-anchor \"com.apple/*\" all\nnat-anchor \"{anchor}\" all\n"),

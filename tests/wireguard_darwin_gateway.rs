@@ -1322,6 +1322,7 @@ fn expected_rules(egress: &str, device: &str) -> PfRuleSet {
         &InterfaceName::new(device).expect("the tunnel device name"),
         true,
     )
+    .expect("token-safe fixture")
 }
 
 /// The C004 live leg: a gateway that translates IPv4 and routes IPv6.

@@ -53,18 +53,46 @@ pub struct PfRuleSet {
     pub nat: Vec<String>,
 }
 
+/// Whether `name` is one PF interface token the product may emit.
+///
+/// PF treats `!` as negation and `{a,b}` as a list. A stored [`InterfaceName`]
+/// may still contain those characters; this predicate is the firewall-side
+/// refusal so a legal stored name cannot widen a rendered rule into a second
+/// grammar. One to fifteen bytes from `[A-Za-z0-9._-]`, and not `.` or `..`.
+pub fn is_pf_interface_token(name: &str) -> bool {
+    if name.is_empty() || name.len() > 15 || name == "." || name == ".." {
+        return false;
+    }
+    name.bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
+/// Refuses an interface name PF would read as an operator or a list.
+fn require_pf_interface_token(name: &crate::domain::InterfaceName) -> Result<(), PfError> {
+    if is_pf_interface_token(name.as_str()) {
+        Ok(())
+    } else {
+        Err(PfError::InvalidInterfaceToken)
+    }
+}
+
 /// Renders the dedicated anchor for one typed policy.
 ///
 /// - `tunnel_prefixes`: source prefixes allowed into the tunnel interface;
 /// - `egress`: outbound interface for forwarded/NAT traffic;
 /// - `masquerade`: IPv4 NAT on egress (never NAT66: IPv6 prefixes are
 ///   categorically excluded from `nat` even when masquerade is set).
+///
+/// Both interface names must be a single PF token. A name that fails is
+/// refused before any rule text is produced.
 pub fn render_policy(
     tunnel_prefixes: &[crate::domain::NetworkPrefix],
     egress: &crate::domain::InterfaceName,
     tunnel_interface: &crate::domain::InterfaceName,
     masquerade: bool,
-) -> PfRuleSet {
+) -> Result<PfRuleSet, PfError> {
+    require_pf_interface_token(egress)?;
+    require_pf_interface_token(tunnel_interface)?;
     let mut seen = BTreeSet::new();
     let mut filter = Vec::new();
     for prefix in tunnel_prefixes {
@@ -89,7 +117,7 @@ pub fn render_policy(
             }
         }
     }
-    PfRuleSet { filter, nat }
+    Ok(PfRuleSet { filter, nat })
 }
 
 /// Renders the dedicated anchor for a routed-LAN policy.
@@ -125,7 +153,9 @@ pub fn render_routed_policy(
     destination_prefixes: &[crate::domain::NetworkPrefix],
     egress: &crate::domain::InterfaceName,
     tunnel_interface: &crate::domain::InterfaceName,
-) -> PfRuleSet {
+) -> Result<PfRuleSet, PfError> {
+    require_pf_interface_token(egress)?;
+    require_pf_interface_token(tunnel_interface)?;
     let mut filter = Vec::new();
     for source in source_prefixes {
         for destination in destination_prefixes {
@@ -150,10 +180,10 @@ pub fn render_routed_policy(
             ));
         }
     }
-    PfRuleSet {
+    Ok(PfRuleSet {
         filter,
         nat: Vec::new(),
-    }
+    })
 }
 
 /// The directory the host's packet filter reads anchor rules from.
@@ -651,6 +681,8 @@ pub enum PfError {
     AttachmentMissing,
     #[error("observed anchor content drifted from the rendered policy")]
     Drifted,
+    #[error("interface name is not a single PF token")]
+    InvalidInterfaceToken,
     #[error("PF backend is unsupported on this host or build")]
     Unsupported,
 }
@@ -683,7 +715,8 @@ mod tests {
     fn rendering_masks_masquerade_without_nat66() {
         let egress: crate::domain::InterfaceName = "en0".parse().unwrap();
         let tunnel: crate::domain::InterfaceName = "wg0".parse().unwrap();
-        let rendered = render_policy(&prefixes(), &egress, &tunnel, true);
+        let rendered =
+            render_policy(&prefixes(), &egress, &tunnel, true).expect("token-safe fixture");
         assert!(rendered
             .filter
             .iter()
@@ -693,9 +726,72 @@ mod tests {
             !rendered.nat.iter().any(|rule| rule.contains("2001:db8")),
             "IPv6 is routed, never NAT66"
         );
-        let plain = render_policy(&prefixes(), &egress, &tunnel, false);
+        let plain =
+            render_policy(&prefixes(), &egress, &tunnel, false).expect("token-safe fixture");
         assert!(plain.nat.is_empty());
         assert!(!plain.filter.is_empty());
+    }
+
+    #[test]
+    fn pf_interface_tokens_accept_ordinary_names_and_refuse_operators() {
+        for accepted in ["en0", "utun4", "bridge0", "wg0", "eth0.100", "br-lan"] {
+            assert!(
+                is_pf_interface_token(accepted),
+                "{accepted} must be one PF token"
+            );
+        }
+        let too_long = "a".repeat(16);
+        for refused in [
+            "!en0",
+            "{en0,lo0}",
+            "en0\"",
+            "en0;",
+            "en0#",
+            ".",
+            "..",
+            "",
+            "en0 en1",
+            "en0/1",
+            "en0:1",
+            too_long.as_str(),
+        ] {
+            assert!(
+                !is_pf_interface_token(refused),
+                "{refused:?} must not be one PF token"
+            );
+        }
+    }
+
+    #[test]
+    fn both_renderers_refuse_a_pf_operator_interface_name() {
+        let tunnel: crate::domain::InterfaceName = "utun4".parse().unwrap();
+        let sources = vec!["10.8.0.0/24".parse().unwrap()];
+        let destinations = vec!["192.168.9.0/24".parse().unwrap()];
+        for bad in ["!en0", "{en0,lo0}", "en0\"", "en0;", "en0#"] {
+            let egress: crate::domain::InterfaceName = bad.parse().unwrap();
+            assert_eq!(
+                render_policy(&sources, &egress, &tunnel, true),
+                Err(PfError::InvalidInterfaceToken),
+                "gateway render must refuse {bad}"
+            );
+            assert_eq!(
+                render_routed_policy(&sources, &destinations, &egress, &tunnel),
+                Err(PfError::InvalidInterfaceToken),
+                "routed render must refuse {bad}"
+            );
+        }
+        for bad in [".", ".."] {
+            // `.` and `..` are refused by the token rule even though
+            // `InterfaceName` would accept them as ordinary strings.
+            assert!(!is_pf_interface_token(bad));
+        }
+        let egress: crate::domain::InterfaceName = "en0".parse().unwrap();
+        assert!(render_policy(&sources, &egress, &tunnel, true).is_ok());
+        assert!(render_routed_policy(&sources, &destinations, &egress, &tunnel).is_ok());
+        let utun: crate::domain::InterfaceName = "utun4".parse().unwrap();
+        assert!(render_policy(&sources, &egress, &utun, false).is_ok());
+        let bridge: crate::domain::InterfaceName = "bridge0".parse().unwrap();
+        assert!(render_policy(&sources, &bridge, &tunnel, false).is_ok());
     }
 
     /// The real macOS 26.6.2 main filter ruleset, as `pfctl -s rules` printed
@@ -894,7 +990,8 @@ rdr-anchor \"com.apple.internet-sharing\" all
     fn drift_is_detected_by_digest() {
         let egress: crate::domain::InterfaceName = "en0".parse().unwrap();
         let tunnel: crate::domain::InterfaceName = "wg0".parse().unwrap();
-        let rendered = render_policy(&prefixes(), &egress, &tunnel, true);
+        let rendered =
+            render_policy(&prefixes(), &egress, &tunnel, true).expect("token-safe fixture");
         let digest = rules_digest(&rendered);
         let mut drifted = rendered.clone();
         drifted.filter.push("pass in all".into());
@@ -928,7 +1025,8 @@ rdr-anchor \"com.apple.internet-sharing\" all
         let egress: crate::domain::InterfaceName = "en0".parse().unwrap();
         let tunnel: crate::domain::InterfaceName = "utun7".parse().unwrap();
         let (sources, destinations) = routed();
-        let rendered = render_routed_policy(&sources, &destinations, &egress, &tunnel);
+        let rendered = render_routed_policy(&sources, &destinations, &egress, &tunnel)
+            .expect("token-safe fixture");
         assert!(rendered.nat.is_empty(), "a routed LAN never NATs");
         assert_eq!(rendered.filter.len(), 4);
         assert!(rendered
@@ -955,7 +1053,8 @@ rdr-anchor \"com.apple.internet-sharing\" all
         let egress: crate::domain::InterfaceName = "en0".parse().unwrap();
         let tunnel: crate::domain::InterfaceName = "utun7".parse().unwrap();
         let (sources, destinations) = routed();
-        let rendered = render_routed_policy(&sources, &destinations, &egress, &tunnel);
+        let rendered = render_routed_policy(&sources, &destinations, &egress, &tunnel)
+            .expect("token-safe fixture");
         assert!(rendered
             .filter
             .iter()
@@ -994,7 +1093,8 @@ rdr-anchor \"com.apple.internet-sharing\" all
             "10.20.20.0/24".parse().unwrap(),
             "2001:db8:20::/64".parse().unwrap(),
         ];
-        let rendered = render_routed_policy(&sources, &destinations, &egress, &tunnel);
+        let rendered = render_routed_policy(&sources, &destinations, &egress, &tunnel)
+            .expect("token-safe fixture");
         // Two legs, an ingress and an egress rule each, per family: eight
         // rules in all.
         assert_eq!(rendered.filter.len(), 8);
@@ -1064,7 +1164,8 @@ pass out on utun0 inet6 from 2001:db8:20::/64 to 2001:db8:77::/64 flags S/SA kee
             "10.20.20.0/24".parse().unwrap(),
             "2001:db8:20::/64".parse().unwrap(),
         ];
-        let rendered = render_routed_policy(&sources, &destinations, &egress, &tunnel);
+        let rendered = render_routed_policy(&sources, &destinations, &egress, &tunnel)
+            .expect("token-safe fixture");
         assert!(
             anchor_content_matches(REAL_MACOS_ROUTED_ANCHOR_RULESET, &rendered),
             "the rules PF prints back are the rules the product rendered"
@@ -1085,7 +1186,8 @@ pass out on utun0 inet6 from 2001:db8:20::/64 to 2001:db8:77::/64 flags S/SA kee
             "10.20.20.0/24".parse().unwrap(),
             "2001:db8:20::/64".parse().unwrap(),
         ];
-        let rendered = render_routed_policy(&sources, &destinations, &egress, &tunnel);
+        let rendered = render_routed_policy(&sources, &destinations, &egress, &tunnel)
+            .expect("token-safe fixture");
         let stateless = "\
 pass in on utun0 inet from 10.77.0.0/24 to 10.20.20.0/24
 pass in on utun0 inet6 from 2001:db8:77::/64 to 2001:db8:20::/64 flags S/SA keep state
@@ -1100,7 +1202,8 @@ pass out on en0 inet6 from 2001:db8:77::/64 to 2001:db8:20::/64 flags S/SA keep 
         let egress: crate::domain::InterfaceName = "en0".parse().unwrap();
         let tunnel: crate::domain::InterfaceName = "utun7".parse().unwrap();
         let (sources, destinations) = routed();
-        let rendered = render_routed_policy(&sources, &destinations, &egress, &tunnel);
+        let rendered = render_routed_policy(&sources, &destinations, &egress, &tunnel)
+            .expect("token-safe fixture");
         let observed = format!("{}\n", rendered.filter.join("\n"));
         assert!(anchor_content_matches(&observed, &rendered));
     }
@@ -1110,7 +1213,8 @@ pass out on en0 inet6 from 2001:db8:77::/64 to 2001:db8:20::/64 flags S/SA keep 
         let egress: crate::domain::InterfaceName = "en0".parse().unwrap();
         let tunnel: crate::domain::InterfaceName = "utun7".parse().unwrap();
         let (sources, destinations) = routed();
-        let rendered = render_routed_policy(&sources, &destinations, &egress, &tunnel);
+        let rendered = render_routed_policy(&sources, &destinations, &egress, &tunnel)
+            .expect("token-safe fixture");
 
         // An extra rule widens the policy and is never accepted.
         let mut widened = rendered.filter.clone();
@@ -1158,7 +1262,7 @@ pass out on en0 inet6 from 2001:db8:77::/64 to 2001:db8:20::/64 flags S/SA keep 
         let egress: crate::domain::InterfaceName = "en0".parse().unwrap();
         let tunnel: crate::domain::InterfaceName = "utun7".parse().unwrap();
         let sources = vec!["10.77.0.0/24".parse().unwrap()];
-        render_policy(&sources, &egress, &tunnel, true)
+        render_policy(&sources, &egress, &tunnel, true).expect("token-safe fixture")
     }
 
     /// The real macOS 26.6.2 rendering of a masquerade rule, as
@@ -1224,7 +1328,8 @@ nat on en0 inet from 10.77.0.0/24 to any -> (en0) round-robin
         let egress: crate::domain::InterfaceName = "en0".parse().unwrap();
         let tunnel: crate::domain::InterfaceName = "utun7".parse().unwrap();
         let sources = vec!["10.77.0.0/24".parse().unwrap()];
-        let rendered = render_policy(&sources, &egress, &tunnel, false);
+        let rendered =
+            render_policy(&sources, &egress, &tunnel, false).expect("token-safe fixture");
         assert!(rendered.nat.is_empty());
 
         assert!(nat_content_matches("", &rendered));

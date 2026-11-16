@@ -420,6 +420,68 @@ async fn limiter_before_hashing() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_saturated_health_budget_still_admits_login() {
+    // `/healthz` has its own admission budget. A spent health bucket must not
+    // stop a login from reaching the login limiter's allow path, and an
+    // admitted health answer must still be only the two liveness tokens.
+    let scratch = Scratch::new();
+    let client = worker_with_admin(&scratch).await;
+
+    let health = spent_limiter();
+    let instant = std::time::Instant::now();
+    assert!(health.check(loopback(), instant).is_allowed(), "drain it");
+    assert!(
+        !health.check(loopback(), instant).is_allowed(),
+        "the health budget must now be empty"
+    );
+
+    let api = AuthenticatedApi::with_health_limiter(
+        client.clone(),
+        Arc::new(OriginPolicy::loopback_only(loopback())),
+        wide_limiter(),
+        health,
+    );
+    assert!(
+        !api.health_limiter()
+            .check(loopback(), std::time::Instant::now())
+            .is_allowed(),
+        "further health probes are shed before the worker"
+    );
+
+    let body = login_body();
+    let login_head = head(
+        "POST",
+        "/api/v1/login",
+        "127.0.0.1:8000",
+        &[
+            ("content-type", "application/json"),
+            ("origin", "http://127.0.0.1:8000"),
+        ],
+    );
+    api.login(&login_head, &body, loopback())
+        .await
+        .expect("a spent health budget must not block login admission");
+
+    // An admitted `/healthz` still collapses to the two liveness tokens.
+    let open_health = AuthenticatedApi::new(
+        client,
+        Arc::new(OriginPolicy::loopback_only(loopback())),
+        wide_limiter(),
+    );
+    let health = open_health
+        .worker_health()
+        .await
+        .expect("an admitted health read still answers");
+    let token = wg_basic::http::Readiness::from_health(&health)
+        .public_token()
+        .expect("liveness projects to a public token");
+    assert!(
+        token == "ok" || token == "degraded",
+        "health body tokens stay sealed: {token}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_throttled_login_does_not_answer_at_all() {
     // The refusal is an error, not a 503 masquerading as one: no `Set-Cookie`,
     // no body, nothing a client could mistake for a successful authentication.

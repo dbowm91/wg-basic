@@ -6,7 +6,6 @@
 //! process restart rather than in-process reconstruction.
 
 use std::{
-    ffi::OsString,
     fs,
     io::Write,
     os::unix::fs::PermissionsExt,
@@ -217,16 +216,6 @@ struct Netd {
 
 impl Netd {
     fn start(namespace: &str) -> Self {
-        Self::start_with_path(namespace, None)
-    }
-
-    /// Starts netd with an optional fixture-private `PATH` prepended.
-    ///
-    /// The override exists so a case can put a fault-injecting `nft` in front of
-    /// the real one for this process only. Nothing in production reads `PATH`
-    /// for anything but `nft`, so this changes no wg-basic behaviour other than
-    /// which binary that one call reaches.
-    fn start_with_path(namespace: &str, path_override: Option<&OsString>) -> Self {
         let suffix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -235,15 +224,10 @@ impl Netd {
         fs::create_dir(&runtime).unwrap();
         fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
         let socket = runtime.join("netd.sock");
-        let mut command = Command::new("ip");
-        command
+        let child = Command::new("ip")
             .args(["netns", "exec", namespace])
             .arg(executable())
-            .args(["netd", "--socket", socket.to_str().unwrap()]);
-        if let Some(path) = path_override {
-            command.env("PATH", path);
-        }
-        let child = command
+            .args(["netd", "--socket", socket.to_str().unwrap()])
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())
             .spawn()
@@ -319,23 +303,22 @@ fn eventually(mut predicate: impl FnMut() -> bool) -> bool {
 /// still observes the owned table and genuinely reaches its mutation; only that
 /// mutation fails, deterministically.
 ///
-/// It installs transparent and is switched on with [`Self::arm`], so the same
+/// Production `netd` executes a pinned absolute `nft` path and never consults
+/// `PATH`, so this fixture overlays that pinned path with a shim script. It
+/// installs transparent and is switched on with [`Self::arm`], so the same
 /// live netd can converge, fail, and recover without a restart. That is what
 /// makes the recovery run an **equal-generation retry** rather than a fresh
 /// apply against a netd that has forgotten the generation.
 struct NftFailureShim {
     directory: PathBuf,
     kill_switch: PathBuf,
+    pinned: PathBuf,
+    backup: PathBuf,
 }
 
 impl NftFailureShim {
     fn install(prefix: &str) -> Self {
-        let inherited = std::env::var_os("PATH").unwrap_or_default();
-        let real = std::env::split_paths(&inherited)
-            .map(|directory| directory.join("nft"))
-            .find(|candidate| candidate.is_file())
-            .expect("nft must be on PATH for this suite to mean anything");
-
+        let pinned = first_pinned_nft_path();
         let suffix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -344,12 +327,20 @@ impl NftFailureShim {
         fs::create_dir(&directory).unwrap();
         fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
         let kill_switch = directory.join("recovered");
+        // Keep the real binary in the same directory so restore is a rename,
+        // not a rewrite of package-manager-owned content from a temp copy.
+        let backup = PathBuf::from(format!(
+            "{}.wg-basic-bak-{suffix:x}",
+            pinned.to_string_lossy()
+        ));
+        fs::rename(&pinned, &backup).expect("move the real pinned nft aside");
 
         let script = format!(
             "#!/bin/sh\n\
-             # Fixture-private nft shim. Read-only probes are forwarded to the real\n\
-             # binary so the firewall layer still observes state and reaches its\n\
-             # mutation; the mutation itself is refused until the kill switch exists.\n\
+             # Fixture-private nft shim at the pinned absolute path. Read-only\n\
+             # probes are forwarded to the real binary so the firewall layer still\n\
+             # observes state and reaches its mutation; the mutation itself is\n\
+             # refused until the kill switch exists.\n\
              real_nft={}\n\
              kill_switch={}\n\
              if [ -e \"$kill_switch\" ]; then\n\
@@ -362,16 +353,17 @@ impl NftFailureShim {
              \t\t;;\n\
              esac\n\
              exec \"$real_nft\" \"$@\"\n",
-            shell_quote(&real),
+            shell_quote(&backup),
             shell_quote(&kill_switch),
         );
-        let shim = directory.join("nft");
-        fs::write(&shim, script).unwrap();
-        fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(&pinned, script).expect("install the nft failure shim at the pinned path");
+        fs::set_permissions(&pinned, fs::Permissions::from_mode(0o755)).unwrap();
 
         let this = Self {
             directory,
             kill_switch,
+            pinned,
+            backup,
         };
         // Installs transparent: a case arms the failure only for the step it is
         // qualifying, so the setup around it exercises the real backend.
@@ -389,20 +381,32 @@ impl NftFailureShim {
     fn disarm(&self) {
         fs::write(&self.kill_switch, "recovered").unwrap();
     }
-
-    /// The `PATH` to hand to the process under test.
-    fn path(&self) -> OsString {
-        let inherited = std::env::var_os("PATH").unwrap_or_default();
-        let mut entries = vec![self.directory.clone()];
-        entries.extend(std::env::split_paths(&inherited));
-        std::env::join_paths(entries).expect("fixture PATH is constructible")
-    }
 }
 
 impl Drop for NftFailureShim {
     fn drop(&mut self) {
+        let _ = fs::remove_file(&self.pinned);
+        let _ = fs::rename(&self.backup, &self.pinned);
         let _ = fs::remove_dir_all(&self.directory);
     }
+}
+
+/// The first absolute `nft` candidate production `netd` would select.
+fn first_pinned_nft_path() -> PathBuf {
+    for candidate in ["/usr/sbin/nft", "/sbin/nft"] {
+        let path = Path::new(candidate);
+        let Ok(metadata) = fs::symlink_metadata(path) else {
+            continue;
+        };
+        if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+            continue;
+        }
+        if metadata.permissions().mode() & 0o111 == 0 {
+            continue;
+        }
+        return path.to_path_buf();
+    }
+    panic!("no pinned absolute nft path is available for fault injection");
 }
 
 /// Single-quotes a path for `/bin/sh`.
@@ -787,10 +791,11 @@ fn a_partially_applied_generation_recovers_after_a_restart() {
 /// Disable-path fault injection: the firewall layer refuses to remove the owned
 /// policy, so the interface teardown that follows it must not happen.
 ///
-/// The failure is injected into netd's `nft` through a fixture-private `PATH`,
-/// so this qualifies the *shipped* disable ordering — firewall removal first,
-/// interface second — rather than a test-only branch. The recovery run reuses
-/// the same live netd, which is what makes it an equal-generation retry.
+/// The failure is injected by overlaying the pinned absolute `nft` path that
+/// production `netd` executes, so this qualifies the *shipped* disable ordering
+/// — firewall removal first, interface second — rather than a test-only branch.
+/// The recovery run reuses the same live netd, which is what makes it an
+/// equal-generation retry.
 #[test]
 fn a_failing_firewall_blocks_the_disable_and_recovers_on_equal_generation_retry() {
     let namespace = Namespace::new("wgm3h");
@@ -804,7 +809,7 @@ fn a_failing_firewall_blocks_the_disable_and_recovers_on_equal_generation_retry(
     let installation = installation_of(&temp.db());
     let expected_marker = format!("wg-basic:v1:{installation}");
 
-    let netd = Netd::start_with_path(namespace.name(), Some(&shim.path()));
+    let netd = Netd::start(namespace.name());
     let converged = run_management(namespace.name(), &temp.db(), &netd.socket());
     assert!(
         converged.status.success(),

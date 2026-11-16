@@ -20,7 +20,7 @@ Each successful mutation is followed by re-observation. The receipt distinguishe
 
 Example from the kernel fixture: first apply creates the WireGuard link, configures its key/listen port, adds one address and one route, and brings the link up; it reports `Applied`. Repeating the same desired state reports `NoChange` with zero mutations. Unit fault injection allows the address add and then fails the link-state operation; the first result is `PartialFailure` with one completed action, the retry completes the one remaining operation, and a third apply is `NoChange`.
 
-Production link, address, route, and WireGuard reconciliation calls Rust netlink APIs and contains no `ip` subprocess. The M005 firewall backend invokes `nft` directly as a bounded transition path; it does not use a shell or accept caller-authored nftables text. Linux integration fixtures use `ip netns`/`ip` only to set up and inspect disposable namespaces.
+Production link, address, route, and WireGuard reconciliation calls Rust netlink APIs and contains no `ip` subprocess. The M005 firewall backend invokes a pinned absolute `nft` path directly as a bounded transition path; it does not use a shell, consult `PATH`, or accept caller-authored nftables text. Linux integration fixtures use `ip netns`/`ip` only to set up and inspect disposable namespaces.
 
 ## Darwin reconciliation (C001)
 

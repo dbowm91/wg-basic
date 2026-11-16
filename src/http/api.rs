@@ -301,6 +301,19 @@ impl RequestGuard {
     }
 }
 
+/// Default `/healthz` admission budget: a short burst, independent of login.
+///
+/// Sized so a flood of unauthenticated liveness probes is shed before the
+/// management worker queue, leaving login and mutation admission untouched.
+const DEFAULT_HEALTH_GLOBAL_BUCKET: crate::http::Bucket = crate::http::Bucket {
+    capacity: 8,
+    refill_per_second: 8.0,
+};
+const DEFAULT_HEALTH_PEER_BUCKET: crate::http::Bucket = crate::http::Bucket {
+    capacity: 8,
+    refill_per_second: 8.0,
+};
+
 /// The authenticated API surface: policy plus the two worker-backed operations.
 #[derive(Clone, Debug)]
 pub struct AuthenticatedApi {
@@ -308,6 +321,7 @@ pub struct AuthenticatedApi {
     guard: RequestGuard,
     limiter: Arc<LoginLimiter>,
     enrollment_limiter: Arc<LoginLimiter>,
+    health_limiter: Arc<LoginLimiter>,
 }
 
 impl AuthenticatedApi {
@@ -316,6 +330,28 @@ impl AuthenticatedApi {
         worker: WorkerClient,
         policy: Arc<OriginPolicy>,
         limiter: Arc<LoginLimiter>,
+    ) -> Self {
+        Self::with_health_limiter(
+            worker,
+            policy,
+            limiter,
+            Arc::new(LoginLimiter::new(
+                DEFAULT_HEALTH_GLOBAL_BUCKET,
+                DEFAULT_HEALTH_PEER_BUCKET,
+                128,
+            )),
+        )
+    }
+
+    /// Builds the API with an explicit `/healthz` admission budget.
+    ///
+    /// Used by tests that need a spent health budget without racing the
+    /// default refill rate.
+    pub fn with_health_limiter(
+        worker: WorkerClient,
+        policy: Arc<OriginPolicy>,
+        limiter: Arc<LoginLimiter>,
+        health_limiter: Arc<LoginLimiter>,
     ) -> Self {
         Self {
             worker,
@@ -326,6 +362,7 @@ impl AuthenticatedApi {
                 crate::http::Bucket::per_second(5, 1),
                 128,
             )),
+            health_limiter,
         }
     }
 
@@ -339,9 +376,22 @@ impl AuthenticatedApi {
         &self.limiter
     }
 
+    /// The unauthenticated `/healthz` admission budget.
+    pub fn health_limiter(&self) -> &LoginLimiter {
+        &self.health_limiter
+    }
+
     /// Independent admission budget for public one-time capability consumes.
     pub(crate) fn admit_enrollment(&self, peer: SocketAddr) -> Admission {
         self.enrollment_limiter.check(peer, Instant::now())
+    }
+
+    /// Independent admission budget for unauthenticated liveness probes.
+    ///
+    /// Runs before the management worker queue, so a spent health budget cannot
+    /// occupy the slots login and mutations use.
+    pub(crate) fn admit_health(&self, peer: SocketAddr) -> Admission {
+        self.health_limiter.check(peer, Instant::now())
     }
 
     pub(crate) fn canonical_origin(&self) -> String {
