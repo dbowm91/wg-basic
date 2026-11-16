@@ -1845,6 +1845,8 @@ mod nat {
                 *mut *const u16,
                 *mut *const MiInstance,
             ) -> u32,
+            // GetIndication sits between GetInstance and GetClass.
+            _get_indication: *const (),
             get_class: unsafe extern "system" fn(
                 *mut MiOperation,
                 *mut *const std::ffi::c_void,
