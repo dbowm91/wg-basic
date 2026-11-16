@@ -1682,32 +1682,10 @@ mod nat {
     }
 
     pub fn create(name: &str, prefix: &str) -> Result<(), SysError> {
-        // New-NetNat starts the Windows NAT Driver before the provider will
-        // accept a new instance. The cmdlet is the intrinsic `CreateInstance`
-        // operation, not an extrinsic method named Create.
+        // New-NetNat starts the Windows NAT Driver, then creates the instance
+        // through the MI client. MSFT_NetNat has no extrinsic WMI method.
         let _ = super::ensure_running("WinNat");
-        let connection = connect()?;
-        let created = connection.exec_class_method::<MSFT_NetNat, _, MethodOutput>(
-            "CreateInstance",
-            NatCreate {
-                Name: name.to_owned(),
-                InternalIPInterfaceAddressPrefix: prefix.to_owned(),
-            },
-        );
-        match created {
-            Ok(output) if output.ReturnValue == 0 => Ok(()),
-            Ok(output) => Err(SysError::os(
-                "MSFT_NetNat.CreateInstance",
-                output.ReturnValue,
-            )),
-            Err(error) => {
-                if list().is_ok_and(|rows| rows.iter().any(|row| row.name == name)) {
-                    Ok(())
-                } else {
-                    Err(explain("MSFT_NetNat.CreateInstance", error))
-                }
-            }
-        }
+        mi_create(name, prefix)
     }
 
     pub fn delete(name: &str) -> Result<(), SysError> {
@@ -1730,6 +1708,251 @@ mod nat {
                     None,
                 )
                 .map_err(|error| hresult("MSFT_NetNat.DeleteInstance", error))?;
+        }
+        Ok(())
+    }
+
+    fn mi_create(name: &str, prefix: &str) -> Result<(), SysError> {
+        use std::mem::zeroed;
+        use windows_sys::Win32::System::LibraryLoader::{
+            LoadLibraryExW, LOAD_LIBRARY_SEARCH_SYSTEM32,
+        };
+
+        #[repr(C)]
+        struct MiApplication {
+            reserved1: u64,
+            reserved2: isize,
+            ft: *const MiApplicationFt,
+        }
+        #[repr(C)]
+        struct MiApplicationFt {
+            close: unsafe extern "system" fn(*mut MiApplication) -> u32,
+            new_session: unsafe extern "system" fn(
+                *mut MiApplication,
+                *const u16,
+                *const u16,
+                *mut std::ffi::c_void,
+                *mut std::ffi::c_void,
+                *mut *mut MiInstance,
+                *mut MiSession,
+            ) -> u32,
+            _hosted: *const (),
+            new_instance: unsafe extern "system" fn(
+                *const MiApplication,
+                *const u16,
+                *const std::ffi::c_void,
+                *mut *mut MiInstance,
+            ) -> u32,
+        }
+        #[repr(C)]
+        struct MiSession {
+            reserved1: u64,
+            reserved2: isize,
+            ft: *const MiSessionFt,
+        }
+        #[repr(C)]
+        struct MiSessionFt {
+            close: unsafe extern "system" fn(
+                *mut MiSession,
+                *mut std::ffi::c_void,
+                *mut std::ffi::c_void,
+            ) -> u32,
+            _get_application: *const (),
+            _get_instance: *const (),
+            _modify_instance: *const (),
+            create_instance: unsafe extern "system" fn(
+                *mut MiSession,
+                u32,
+                *mut std::ffi::c_void,
+                *const u16,
+                *const MiInstance,
+                *mut std::ffi::c_void,
+                *mut MiOperation,
+            ),
+        }
+        #[repr(C)]
+        struct MiInstance {
+            ft: *const MiInstanceFt,
+            class_decl: *const std::ffi::c_void,
+            server_name: *const u16,
+            namespace_name: *const u16,
+            reserved: [isize; 4],
+        }
+        #[repr(C)]
+        struct MiInstanceFt {
+            _clone: *const (),
+            _destruct: *const (),
+            delete: unsafe extern "system" fn(*mut MiInstance) -> u32,
+            _is_a: *const (),
+            _get_class_name: *const (),
+            _set_namespace: *const (),
+            _get_namespace: *const (),
+            _get_element_count: *const (),
+            add_element: unsafe extern "system" fn(
+                *mut MiInstance,
+                *const u16,
+                *const MiValue,
+                u32,
+                u32,
+            ) -> u32,
+        }
+        #[repr(C)]
+        union MiValue {
+            string: *const u16,
+        }
+        #[repr(C)]
+        struct MiOperation {
+            reserved1: u64,
+            reserved2: isize,
+            ft: *const MiOperationFt,
+        }
+        #[repr(C)]
+        struct MiOperationFt {
+            close: unsafe extern "system" fn(*mut MiOperation) -> u32,
+            _cancel: *const (),
+            _get_session: *const (),
+            get_instance: unsafe extern "system" fn(
+                *mut MiOperation,
+                *mut *const MiInstance,
+                *mut u8,
+                *mut u32,
+                *mut *const u16,
+                *mut *const MiInstance,
+            ) -> u32,
+        }
+
+        let dll = super::wide("mi.dll");
+        let module = unsafe {
+            LoadLibraryExW(
+                dll.as_ptr(),
+                std::ptr::null_mut(),
+                LOAD_LIBRARY_SEARCH_SYSTEM32,
+            )
+        };
+        if module.is_null() {
+            return Err(SysError::last("LoadLibraryExW mi.dll"));
+        }
+        let init = unsafe {
+            super::proc::<
+                unsafe extern "system" fn(
+                    u32,
+                    *const u16,
+                    *mut *mut MiInstance,
+                    *mut MiApplication,
+                ) -> u32,
+            >(module, b"MI_Application_InitializeV1\0")?
+        };
+        let mut application = unsafe { zeroed::<MiApplication>() };
+        let code = unsafe { init(0, std::ptr::null(), std::ptr::null_mut(), &mut application) };
+        if code != 0 || application.ft.is_null() {
+            return Err(SysError::os("MI_Application_Initialize", code));
+        }
+        let mut session = unsafe { zeroed::<MiSession>() };
+        let code = unsafe {
+            ((*application.ft).new_session)(
+                &mut application,
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut session,
+            )
+        };
+        if code != 0 || session.ft.is_null() {
+            unsafe {
+                ((*application.ft).close)(&mut application);
+            }
+            return Err(SysError::os("MI_Application_NewSession", code));
+        }
+        let class_name = super::wide("MSFT_NetNat");
+        let mut instance: *mut MiInstance = std::ptr::null_mut();
+        let code = unsafe {
+            ((*application.ft).new_instance)(
+                &application,
+                class_name.as_ptr(),
+                std::ptr::null(),
+                &mut instance,
+            )
+        };
+        if code != 0 || instance.is_null() {
+            unsafe {
+                ((*session.ft).close)(&mut session, std::ptr::null_mut(), std::ptr::null_mut());
+                ((*application.ft).close)(&mut application);
+            }
+            return Err(SysError::os("MI_Application_NewInstance", code));
+        }
+        let name_key = super::wide("Name");
+        let prefix_key = super::wide("InternalIPInterfaceAddressPrefix");
+        let name_value = super::wide(name);
+        let prefix_value = super::wide(prefix);
+        let add = |property: &[u16], value: &[u16]| -> Result<(), SysError> {
+            let stored = MiValue {
+                string: value.as_ptr(),
+            };
+            let code = unsafe {
+                ((*(*instance).ft).add_element)(instance, property.as_ptr(), &stored, 13, 0)
+            };
+            if code == 0 {
+                Ok(())
+            } else {
+                Err(SysError::os("MI_Instance_AddElement", code))
+            }
+        };
+        let added = add(&name_key, &name_value).and_then(|()| add(&prefix_key, &prefix_value));
+        if let Err(error) = added {
+            unsafe {
+                ((*(*instance).ft).delete)(instance);
+                ((*session.ft).close)(&mut session, std::ptr::null_mut(), std::ptr::null_mut());
+                ((*application.ft).close)(&mut application);
+            }
+            return Err(error);
+        }
+        let namespace_name = super::wide("root/StandardCimv2");
+        let mut operation = unsafe { zeroed::<MiOperation>() };
+        unsafe {
+            ((*session.ft).create_instance)(
+                &mut session,
+                0,
+                std::ptr::null_mut(),
+                namespace_name.as_ptr(),
+                instance,
+                std::ptr::null_mut(),
+                &mut operation,
+            );
+        }
+        if operation.ft.is_null() {
+            unsafe {
+                ((*(*instance).ft).delete)(instance);
+                ((*session.ft).close)(&mut session, std::ptr::null_mut(), std::ptr::null_mut());
+                ((*application.ft).close)(&mut application);
+            }
+            return Err(SysError::invalid("MI_Session_CreateInstance"));
+        }
+        let mut created: *const MiInstance = std::ptr::null();
+        let mut more = 0u8;
+        let mut result = 0u32;
+        let code = unsafe {
+            ((*operation.ft).get_instance)(
+                &mut operation,
+                &mut created,
+                &mut more,
+                &mut result,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+        unsafe {
+            ((*operation.ft).close)(&mut operation);
+            ((*(*instance).ft).delete)(instance);
+            ((*session.ft).close)(&mut session, std::ptr::null_mut(), std::ptr::null_mut());
+            ((*application.ft).close)(&mut application);
+        }
+        if code != 0 {
+            return Err(SysError::os("MI_Operation_GetInstance", code));
+        }
+        if result != 0 {
+            return Err(SysError::os("MI_Session_CreateInstance", result));
         }
         Ok(())
     }
@@ -1794,22 +2017,9 @@ mod nat {
 
     #[derive(Deserialize)]
     #[allow(non_camel_case_types)]
-    struct MSFT_NetNat {
-        #[serde(default)]
-        Name: String,
-    }
-
-    #[derive(Deserialize)]
-    #[allow(non_camel_case_types)]
     struct MSFT_NetFirewallRule {
         #[serde(default)]
         DisplayName: String,
-    }
-
-    #[derive(Serialize)]
-    struct NatCreate {
-        Name: String,
-        InternalIPInterfaceAddressPrefix: String,
     }
 
     #[derive(Serialize)]
