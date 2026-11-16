@@ -1289,7 +1289,7 @@ mod tests {
         )
         .unwrap();
         assert!(present.peers[0].preshared_key_configured);
-        assert!(!format!("{present:?}").contains("01".repeat(8)));
+        assert!(!format!("{present:?}").contains(&"01".repeat(8)));
         let absent = parse_uapi_device(
             &interface(),
             &dump(&[
