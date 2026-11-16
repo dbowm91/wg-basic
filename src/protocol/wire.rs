@@ -70,9 +70,8 @@ pub struct ResponseEnvelope {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "result", content = "value", rename_all = "snake_case")]
-// The observation-bearing variants are inherently larger than the rest. Boxing
-// them would add an allocation and would leak into the public wire API that
-// every caller pattern-matches on, for a few bytes once per request.
+// Boxing would add an allocation and change the wire API to save only a few
+// bytes per request.
 #[allow(clippy::large_enum_variant)]
 pub enum ResponseBody {
     Pong {

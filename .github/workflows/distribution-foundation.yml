@@ -41,7 +41,7 @@ jobs:
         run: python3 scripts/test-release-provenance.py
       - name: Check signing bundle source/run preflight
         run: python3 scripts/test-release-signing-bundle.py
-      - name: Check verified-install instructions and wrapper trust labels
+      - name: Check deployment-status docs and wrapper trust labels
         run: python3 scripts/test-verified-install.py
       - name: Check candidate source and manifest identity binding
         run: python3 scripts/test-release-smoke.py

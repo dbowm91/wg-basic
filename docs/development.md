@@ -778,8 +778,8 @@ eggpack ci check --workflow-shape release/eggpack/workflow-shape.json \
 ```
 
 Run the local non-network regression fixtures for dispatch input handling,
-provenance receipt binding, signing-bundle source/run checks, installer trust
-labels, and asset identity:
+provenance receipt binding, signing-bundle source/run checks, deployment-status
+documentation, installer trust labels, and asset identity:
 
 ```sh
 python3 scripts/test-release-workflow-security.py

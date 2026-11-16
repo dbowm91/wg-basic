@@ -1,77 +1,51 @@
 # wg-basic
 
-Linux-native WireGuard appliance in one small Rust binary. Unprivileged
-`serve` owns the SQLite desired state and the management HTTP surface;
-privileged `netd` applies it to the kernel through typed local-IPC
-operations. The database is authoritative, kernel state is reconciled
-from it, and `netd` never opens the database.
+Linux-first WireGuard management appliance. The unprivileged `serve` process
+owns the SQLite desired state and management UI. The privileged `netd` process
+applies network changes through typed local IPC and never opens the database.
 
-## Quickstart
+## Try the local demo
 
-Needs Rust 1.89.0 (pinned by `rust-toolchain.toml`) and loopback only —
-no root, no namespaces:
+This quickstart runs the management UI on loopback. It does not start `netd`,
+create a VPN, or configure host networking. It requires Rust 1.89.0, selected
+by `rust-toolchain.toml`.
 
-```sh
-cargo build --locked
-install -d -m 700 /tmp/wg-basic-runtime
-printf '%s\n' 'a strong administrator password' | \
-  cargo run --locked -- admin set-password --password-stdin \
-    --state /tmp/wg-basic-runtime/state.db
+```bash
+set -eu
+RUNTIME="$(mktemp -d)"
+chmod 700 "$RUNTIME"
+printf 'Demo state: %s\n' "$RUNTIME"
+read -r -s -p "Administrator password: " ADMIN_PASSWORD
+printf '\n'
+printf '%s\n' "$ADMIN_PASSWORD" | cargo run --locked -- \
+  admin set-password --password-stdin --state "$RUNTIME/state.db"
+unset ADMIN_PASSWORD
 cargo run --locked -- serve \
-  --state /tmp/wg-basic-runtime/state.db \
-  --socket /tmp/wg-basic-runtime/netd.sock
+  --state "$RUNTIME/state.db" \
+  --socket "$RUNTIME/netd.sock"
 ```
 
-In another terminal, check liveness, log in, and read back the session:
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000) and sign in as `admin`
+with the password you entered. The service stays in the foreground. Stop it
+with Ctrl-C. Health will report degraded because this demo does not run `netd`.
+The demo state is in the printed directory. Remove it after stopping the
+service if you no longer need it.
 
-```sh
-curl -s http://127.0.0.1:8000/healthz
-curl -s -c cookies.txt http://127.0.0.1:8000/api/v1/login \
-  -H 'Host: 127.0.0.1:8000' \
-  -H 'Origin: http://127.0.0.1:8000' \
-  -H 'Content-Type: application/json' \
-  --data '{"username":"admin","password":"a strong administrator password"}'
-curl -s http://127.0.0.1:8000/api/v1/session -b cookies.txt \
-  -H 'Host: 127.0.0.1:8000' \
-  -H 'Origin: http://127.0.0.1:8000'
-```
+## Current status
 
-Then open `http://127.0.0.1:8000/` for the operator UI, and stop `serve`
-with Ctrl-C (it drains, closes the database, and exits `0`).
+Linux network control, durable state, management, client enrollment, and
+operational diagnostics are implemented and qualified. A supported product
+installer and transactional self-update are not implemented. Update commands
+fail closed. Releases are checksums-only, with no production signing key or
+trust root. No macOS release is supported.
 
-`healthz` reports `degraded` here because no privileged `netd` is
-running — expected for the loopback demo. Real networking needs `netd`
-as root plus server setup; see
-[local netd](docs/development.md#local-netd) and
-[client enrollment](docs/client-enrollment.md).
+## Documentation
 
-## Status
-
-Network control, durable state/restart reconciliation, management/auth,
-product/enrollment/UI, and operational hardening are implemented and
-qualified in Linux namespaces. Native systemd installation and M004's
-update, rollback, and recovery transaction are technically qualified on
-current x86_64 and aarch64 GNU release artifacts. Phase 10 lifecycle
-qualification is closed, including fresh install, state-preserving
-uninstall/reinstall, and guarded purge. `v0.1.0` is released as a stable
-checksums-only build (unsigned, no trust root by maintainer decision):
-production `update check` and `update run` stay fail-closed, so every
-release needs a fresh install. See
-[plans/registry.md](plans/registry.md).
-
-The `--version` release installer is a lower-assurance HTTPS/GitHub bootstrap.
-There is no signed-manifest installation path; verify downloads against the
-published SHA-256 digests — see [docs/installation.md](docs/installation.md)
-and [docs/release-signing.md](docs/release-signing.md).
-
-## Docs
-
-| Document | Covers |
+| Document | Purpose |
 |---|---|
-| [docs/installation.md](docs/installation.md) | Native installation, authenticity status, state-preserving uninstall/reinstall |
-| [docs/release-signing.md](docs/release-signing.md) | Checksums-only release policy, source/run preflight, retained signing reference |
-| [docs/development.md](docs/development.md) | Gates, local `netd`/`serve`, credentials, test fixtures |
-| [docs/operations-runbook.md](docs/operations-runbook.md) | Backup, recovery, disable/purge |
-| [docs/state-backup-restore.md](docs/state-backup-restore.md) | Backup/restore/verify mechanics |
-| [docs/client-enrollment.md](docs/client-enrollment.md) | Config/QR export, one-time enrollment links |
-| [architecture/overview.md](architecture/overview.md) | System design and component index |
+| [Deployment status](docs/installation.md) | What is and is not available for installation |
+| [Operations runbook](docs/operations-runbook.md) | Check state, disable networking, and prepare a purge |
+| [State backup and restore](docs/state-backup-restore.md) | Protect, verify, restore, and purge the database |
+| [Client configuration and enrollment](docs/client-enrollment.md) | Export profiles, configure routes, and share one-time links |
+| [Development](docs/development.md) | Local services, build gates, and test fixtures |
+| [Architecture overview](architecture/overview.md) | System design and component index |
