@@ -699,20 +699,30 @@ fn sync_file(path: &Path) -> Result<(), StateError> {
 
 /// fsyncs the directory so a rename is durable, not just the file contents.
 fn sync_directory(path: &Path) -> Result<(), StateError> {
-    let directory =
-        fs::File::open(path).map_err(|_| StateError::Corrupt("directory could not be synced"))?;
-    #[cfg(unix)]
+    #[cfg(windows)]
     {
-        use std::os::unix::io::AsRawFd;
-        let _ = directory.as_raw_fd();
+        // NTFS commits the rename itself. `File::open` on a directory does not
+        // yield a handle `FlushFileBuffers` accepts.
+        let metadata =
+            fs::metadata(path).map_err(|_| StateError::Corrupt("directory could not be synced"))?;
+        if metadata.is_dir() {
+            Ok(())
+        } else {
+            Err(StateError::Corrupt("directory could not be synced"))
+        }
     }
-    match directory.sync_all() {
-        Ok(()) => Ok(()),
-        // NTFS makes the rename durable. FlushFileBuffers rejects a directory
-        // handle, so that refusal is not a failed restore.
-        #[cfg(windows)]
-        Err(error) if matches!(error.raw_os_error(), Some(1 | 5 | 87)) => Ok(()),
-        Err(_) => Err(StateError::Corrupt("directory could not be synced")),
+    #[cfg(not(windows))]
+    {
+        let directory = fs::File::open(path)
+            .map_err(|_| StateError::Corrupt("directory could not be synced"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            let _ = directory.as_raw_fd();
+        }
+        directory
+            .sync_all()
+            .map_err(|_| StateError::Corrupt("directory could not be synced"))
     }
 }
 
