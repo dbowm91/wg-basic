@@ -2063,10 +2063,41 @@ fn live_c015_network_disable_removes_the_managed_interface() {
     ));
 
     // serve holds the state lease; disable needs it free while netd stays up.
-    let bootout = sh_unchecked(&mut evidence, "launchctl", &["bootout", &serve_job]);
-    evidence.log(&format!("serve bootout answered: {bootout:?}"));
-    wait_until("serve stopped for disable", Duration::from_secs(30), || {
-        !launchd_running(&serve_job)
+    // launchd "not running" is not enough — wait until the serve process and
+    // its flock are gone (same shape as the C004 gateway stop path).
+    let serve_listing = "ps -o pid,ppid,stat,command -ax | grep '[w]g-basic serve' || true";
+    let serve_pids = || -> Vec<u32> {
+        let output = Command::new("sh")
+            .args(["-c", &serve_listing])
+            .output()
+            .expect("list serve processes");
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|line| line.split_whitespace().next())
+            .filter_map(|field| field.parse().ok())
+            .collect()
+    };
+    let before = serve_pids();
+    evidence.log(&format!("serve processes before stop: {before:?}"));
+    let _ = sh_unchecked(&mut evidence, "launchctl", &["disable", &serve_job]);
+    let _ = sh_unchecked(&mut evidence, "launchctl", &["kill", "SIGTERM", &serve_job]);
+    wait_until(
+        "serve process released the term",
+        Duration::from_secs(30),
+        || !serve_pids().iter().any(|pid| before.contains(pid)),
+    );
+    let _ = sh_unchecked(&mut evidence, "launchctl", &["kill", "SIGKILL", &serve_job]);
+    let _ = sh_unchecked(&mut evidence, "launchctl", &["bootout", &serve_job]);
+    wait_until("serve process gone", Duration::from_secs(30), || {
+        serve_pids().is_empty()
+    });
+    let lock = format!("{}/state.db.serve.lock", launchd::STATE_DIR);
+    wait_until("serve lease free", Duration::from_secs(30), || {
+        let holders = Command::new("sh")
+            .args(["-c", &format!("lsof {lock} 2>/dev/null || true")])
+            .output()
+            .expect("lsof serve lock");
+        String::from_utf8_lossy(&holders.stdout).trim().is_empty()
     });
     assert!(
         launchd_running(&netd_job),
