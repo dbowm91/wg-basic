@@ -76,6 +76,10 @@ pub fn open_connection(
         .map_err(|_| StateError::DatabaseOpenFailed)?;
 
     validation::configure(&connection)?;
+    // SQLite creates the WAL sidecars with the process default ACL. On Windows
+    // that ACL is not the database's protected DACL, so narrow them before
+    // any later identity read.
+    restrict_sqlite_sidecars(&canonical)?;
     let starting_version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(StateError::database)?;
@@ -87,6 +91,23 @@ pub fn open_connection(
     )?;
     migrations::run_migrations(&mut connection)?;
     Ok(connection)
+}
+
+fn restrict_sqlite_sidecars(database: &Path) -> Result<(), StateError> {
+    for suffix in ["-wal", "-shm"] {
+        let mut name = database.as_os_str().to_owned();
+        name.push(suffix);
+        let sidecar = std::path::PathBuf::from(name);
+        if !sidecar.exists() {
+            continue;
+        }
+        crate::state::privacy::restrict_secret(&sidecar).map_err(|_| {
+            StateError::DatabaseTooPermissive {
+                path: sidecar.display().to_string(),
+            }
+        })?;
+    }
+    Ok(())
 }
 
 /// Resolves symlink components in the database parent directory.
@@ -135,6 +156,7 @@ pub(crate) fn open_connection_without_migrating(
     )
     .map_err(|_| StateError::DatabaseOpenFailed)?;
     validation::configure(&connection)?;
+    restrict_sqlite_sidecars(&canonical)?;
     Ok(connection)
 }
 
@@ -211,13 +233,11 @@ mod tests {
         apply_migrations, initialize_at_version, recovery_snapshot, recovery_snapshot_path,
         Migration, MIGRATIONS,
     };
-    use super::validation::DATABASE_MODE;
     use super::*;
     use crate::domain::DesiredGeneration;
     use crate::state::store::StateStore;
-    use std::{fs, os::unix::fs::MetadataExt};
     use std::{
-        os::unix::fs::PermissionsExt,
+        fs,
         path::{Path, PathBuf},
     };
 
@@ -234,7 +254,7 @@ mod tests {
             ));
             let _ = fs::remove_dir_all(&path);
             fs::create_dir(&path).unwrap();
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+            crate::state::privacy::restrict_directory(&path).unwrap();
             Self { path }
         }
 
@@ -306,7 +326,7 @@ mod tests {
 
     fn current_test_uid() -> u32 {
         // Portable (M001): `geteuid` on Linux and Darwin; no `/proc` read.
-        nix::unistd::geteuid().as_raw()
+        crate::state::privacy::current_uid()
     }
 
     #[test]
@@ -1091,11 +1111,12 @@ mod tests {
 
         recovery_snapshot(&connection, &temp.db(), 1, 2).unwrap();
 
-        let metadata = fs::symlink_metadata(&expected).expect("snapshot must exist");
-        assert!(metadata.is_file());
+        let metadata = crate::state::privacy::inspect(&expected, current_test_uid())
+            .expect("snapshot must exist");
+        assert!(metadata.is_file);
         assert_eq!(
-            metadata.mode() & 0o777,
-            DATABASE_MODE,
+            metadata.mode & 0o077,
+            0,
             "a recovery snapshot holds the same secrets as the database"
         );
 

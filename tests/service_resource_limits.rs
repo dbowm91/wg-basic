@@ -1,3 +1,4 @@
+#![cfg(unix)]
 //! Phase 7 M004 §7: abuse and resource qualification.
 //!
 //! # What "bounded" has to mean here

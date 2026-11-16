@@ -27,6 +27,7 @@ mod diagnostic;
 mod error;
 mod inuse;
 mod model;
+pub(crate) mod privacy;
 mod projection;
 mod schema;
 mod service_lease;
@@ -76,3 +77,8 @@ pub(crate) fn now_seconds() -> i64 {
 /// Phase 10 owns installation; this is the documented direction, not a frozen
 /// service layout.
 pub const DEFAULT_STATE_PATH: &str = "/var/lib/wg-basic/state.db";
+
+/// Whether `path` is a regular secret file this process is allowed to remove.
+pub fn secret_file_owned_here(path: &std::path::Path) -> bool {
+    privacy::secret_file_owned_by_us(path)
+}

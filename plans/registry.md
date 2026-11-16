@@ -4,6 +4,8 @@ Status: active
 
 Last registry cleanup: 2026-11-14. This file is the compact planning control surface; detailed requirements, decisions, and evidence remain in their canonical plans and closure records.
 
+Windows native server implementation is in the tree at the ADR-011 baseline `554de7a3b5ae83700222a290664fbbbeb3cd521a`. M001–M007 are implemented and their closure is blocked on `windows-2025` evidence. No support sentence is published.
+
 ## 1. Canonical planning authority
 
 | Document | Role |
@@ -22,6 +24,7 @@ Last registry cleanup: 2026-11-14. This file is the compact planning control sur
 | `plans/adr/008-macos-headless-platform-backends.md` | staged headless macOS backends and PF policy |
 | `plans/adr/009-apple-silicon-only-darwin-target.md` | Apple silicon as the only Darwin target |
 | `plans/adr/010-privileged-helper-supervision.md` | privileged supervision of the WireGuard helper |
+| `plans/adr/011-windows-server-wireguard-nt.md` | staged Windows Server 2025 x64 direction; dataplane is pinned `wireguard-nt` 1.1; no support claim until closure evidence exists |
 
 Implementation handoffs resolve conflicts in this order: canonical specification and terminology; accepted ADRs; subsystem roadmap; implementation plan; current repository evidence.
 
@@ -36,6 +39,7 @@ wg-basic is a Linux-first WireGuard management appliance with a privilege-separa
 | Headless macOS native server/gateway | Active. C001–C010 and C012–C014 are closed; C011 is conditionally closed; C015 is ready; C005 remains blocked on its release-qualification gates and explicit maintainer authorization. No macOS release. | `plans/subsystems/macos-native-server-roadmap.md`; `plans/subsystems/macos-native-server-corrective-roadmap.md`; §4 below |
 | Operator parity (Linux and Apple silicon) | Closed 2026-11-10; M001–M004 closed. Deferred roadmap items remain deferred; C015 is unchanged. | `plans/subsystems/operator-parity-roadmap.md`; `plans/closure/operator-parity/001-status.md` through `004-status.md` |
 | Release readiness | R001–R003 closed; R004a closed as an unsigned release; R004b waived. Releases remain checksums-only, no trust root is planned, and production self-update stays disabled. | `plans/subsystems/release-readiness-security-roadmap.md`; `plans/closure/release-readiness/004b-waiver-status.md` |
+| Headless Windows Server | Implemented 2026-11-10. M001–M007 closure is blocked on `windows-2025` handshake, route, and translated-echo evidence. No support claim. | `plans/subsystems/windows-native-server-roadmap.md`; `plans/adr/011-windows-server-wireguard-nt.md`; `plans/implementation/windows-native-server/` |
 
 Other closed subsystem history remains in its roadmap and closure records; it is not repeated here.
 

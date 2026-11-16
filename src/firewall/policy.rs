@@ -437,6 +437,10 @@ pub enum FirewallError {
     InvalidPolicy,
     #[error("an nftables table with the wg-basic name has unrecognized ownership")]
     TableOwnershipConflict,
+    /// A WinNAT object this installation did not record is already present.
+    /// The product does not delete it.
+    #[error("a NetNAT this installation does not own is already present")]
+    ForeignNetNat,
     #[error("the owned nftables table carries the pre-Phase-6 product-only marker")]
     LegacyTableOwnership,
     #[error("nftables or forwarding backend failed")]

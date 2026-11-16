@@ -1,3 +1,4 @@
+#![cfg(unix)]
 //! Phase 7 M002 qualification: real schema v1→v2, credentials, and sessions.
 //!
 //! M002's central claim is that a *real* production migration exists and that

@@ -1,3 +1,4 @@
+#![cfg(unix)]
 //! State-compatibility portion of the Phase 9 old/new binary rehearsal.
 //!
 //! The dedicated CI job builds the immutable Phase 8 binary separately and

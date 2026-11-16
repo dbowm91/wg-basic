@@ -453,7 +453,6 @@ mod tests {
     /// dev-dependency.
     mod tempdir {
         use std::fs;
-        use std::os::unix::fs::PermissionsExt;
         use std::path::PathBuf;
         use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -470,7 +469,7 @@ mod tests {
                 ));
                 let _ = fs::remove_dir_all(&path);
                 fs::create_dir(&path).unwrap();
-                fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+                crate::state::privacy::restrict_directory(&path).unwrap();
                 Self(path)
             }
 

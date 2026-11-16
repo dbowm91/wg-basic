@@ -1,3 +1,4 @@
+#![cfg(unix)]
 //! Phase 7 M004 §6: end-to-end service qualification against real processes.
 //!
 //! M001 note: the four netd-dependent tests are Linux-only until M002

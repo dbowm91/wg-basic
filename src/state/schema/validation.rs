@@ -9,76 +9,74 @@
 use super::OpenIntent;
 use crate::state::error::StateError;
 use rusqlite::Connection;
-use std::{
-    fs,
-    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
-    path::Path,
-};
+use std::path::Path;
 
 /// `PRAGMA synchronous` value for `FULL`.
 pub(super) const SQLITE_SYNCHRONOUS_FULL: i64 = 2;
-/// The restrictive mode a secret-bearing database must carry.
-pub(super) const DATABASE_MODE: u32 = 0o600;
 pub(super) fn verify_path(
     path: &Path,
     intent: OpenIntent,
     expected_uid: u32,
 ) -> Result<(), StateError> {
     let parent = path.parent().ok_or(StateError::MissingPath)?;
-    let parent_metadata = fs::symlink_metadata(parent).map_err(|_| StateError::MissingParent {
-        path: parent.display().to_string(),
+    let parent_metadata = crate::state::privacy::inspect(parent, expected_uid).map_err(|_| {
+        StateError::MissingParent {
+            path: parent.display().to_string(),
+        }
     })?;
-    if !parent_metadata.is_dir() {
+    if !parent_metadata.is_dir {
         return Err(StateError::ParentNotDirectory {
             path: parent.display().to_string(),
         });
     }
-    if parent_metadata.uid() != expected_uid {
+    if parent_metadata.owner != expected_uid {
         return Err(StateError::ParentWrongOwner {
             path: parent.display().to_string(),
-            owner: parent_metadata.uid(),
+            owner: parent_metadata.owner,
             expected: expected_uid,
         });
     }
-    if parent_metadata.mode() & 0o022 != 0 {
+    if parent_metadata.mode & 0o022 != 0 {
         return Err(StateError::ParentTooPermissive {
             path: parent.display().to_string(),
         });
     }
 
-    match fs::symlink_metadata(path) {
+    match crate::state::privacy::inspect(path, expected_uid) {
         Ok(metadata) => {
-            if metadata.file_type().is_symlink() {
+            if metadata.is_symlink {
                 return Err(StateError::DatabaseIsSymlink {
                     path: path.display().to_string(),
                 });
             }
-            if !metadata.is_file() {
+            if !metadata.is_file {
                 return Err(StateError::DatabaseNotRegularFile {
                     path: path.display().to_string(),
                 });
             }
-            if metadata.uid() != expected_uid {
+            if metadata.owner != expected_uid {
                 return Err(StateError::DatabaseWrongOwner {
                     path: path.display().to_string(),
-                    owner: metadata.uid(),
+                    owner: metadata.owner,
                     expected: expected_uid,
                 });
             }
             // Ownership is already proven above, so group/world access can be
             // safely narrowed rather than merely refused. The file holds server
             // and client private keys and preshared keys.
-            if metadata.mode() & 0o077 != 0 {
-                fs::set_permissions(path, fs::Permissions::from_mode(DATABASE_MODE)).map_err(
-                    |_| StateError::DatabaseTooPermissive {
+            if metadata.mode & 0o077 != 0 {
+                crate::state::privacy::restrict_secret(path).map_err(|_| {
+                    StateError::DatabaseTooPermissive {
                         path: path.display().to_string(),
-                    },
-                )?;
+                    }
+                })?;
                 let narrowed =
-                    fs::symlink_metadata(path).map_err(|_| StateError::DatabaseTooPermissive {
-                        path: path.display().to_string(),
+                    crate::state::privacy::inspect(path, expected_uid).map_err(|_| {
+                        StateError::DatabaseTooPermissive {
+                            path: path.display().to_string(),
+                        }
                     })?;
-                if narrowed.mode() & 0o077 != 0 {
+                if narrowed.mode & 0o077 != 0 {
                     return Err(StateError::DatabaseTooPermissive {
                         path: path.display().to_string(),
                     });
@@ -108,11 +106,7 @@ pub(super) fn verify_path(
         // Create the file with the restrictive mode up front. Letting SQLite
         // create it would briefly expose a world-readable file (and its WAL
         // sidecars inherit the database mode) before any check could run.
-        fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(DATABASE_MODE)
-            .open(path)
+        crate::state::privacy::create_secret_file(path)
             .map_err(|_| StateError::DatabaseOpenFailed)?;
     }
     Ok(())

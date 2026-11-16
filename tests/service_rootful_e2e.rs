@@ -1,3 +1,4 @@
+#![cfg(unix)]
 //! Phase 7 M004 §6: the rootful end-to-end fixture.
 //!
 //! # Why this one needs root
