@@ -34,6 +34,7 @@ pub mod launchd;
 #[cfg(target_os = "macos")]
 pub mod launchd_install;
 pub mod management;
+pub mod observability;
 pub mod operational;
 pub mod platform;
 pub mod product;

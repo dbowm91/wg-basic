@@ -1,13 +1,16 @@
 mod auth;
 mod generation;
 mod identifiers;
+mod idp;
 mod intent;
 mod interface_name;
 mod keys;
 mod network;
+mod oidc;
 mod owner;
 mod secret;
 mod state;
+mod totp;
 
 pub use auth::{
     argon2_params, check_password_policy, AuthError, CsrfToken, PasswordPolicyError,
@@ -19,10 +22,16 @@ pub use generation::{
     DesiredGeneration, InstallationId, INITIAL_DESIRED_GENERATION, MAX_DESIRED_GENERATION,
 };
 pub use identifiers::{ClientId, InterfaceId, PeerId, PrincipalId, SessionId};
+pub use idp::{
+    email_allowed_by_domain_list, email_domain, format_allowed_domains, parse_allowed_domains,
+    username_from_idp_email,
+};
 pub use intent::{
     DesiredAddress, LinkLifecycle, ManagedRoute, OwnershipDeclaration, ResourcePresence,
 };
 pub use interface_name::InterfaceName;
+pub use oidc::OidcClientSecret;
+pub use totp::{TotpSecret, TOTP_DIGITS, TOTP_STEP_SECONDS, TOTP_VERIFICATION_WINDOW};
 // Key generation is platform-independent; keep it in `domain` so management
 // can create identities even when no network backend is available.
 pub use keys::{derive_public_key, generate_keypair, generate_preshared_key, WireGuardKeyPair};

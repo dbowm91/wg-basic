@@ -266,8 +266,110 @@ that failed to revoke sessions would leave a stolen cookie valid after the
 operator changed the password specifically to lock the attacker out, so the two
 must not be separable.
 
+`change_password_and_revoke_sibling_sessions` is the browser counterpart: it
+updates the verifier and deletes every session for that principal **except** the
+session that completed the change, so the operator is not signed out of their
+own tab while stolen cookies elsewhere still die.
+
 Provisioning and reset are deliberately the same operation: both set a new
 verifier for a username, and both must leave no usable prior session.
+
+## Signed-in account settings
+
+`GET /api/v1/account` returns a secret-free projection of the current
+principal: username, whether password authentication is enabled, whether TOTP is
+enabled, and the principal id. TOTP secrets never appear on this route.
+`POST /api/v1/account/password` accepts JSON with
+`current_password` and `new_password`, requires Host + exact Origin + CSRF,
+reuses the login limiter before Argon2, and is bounded at 8 KiB. A wrong current
+password is the same opaque `401` family as login. Success appends an
+`admin_password_changed` audit row (principal id only) and does not advance
+desired generation. CLI `wg-basic admin set-password` remains the break-glass
+path and still revokes **every** session.
+
+## TOTP second factor
+
+Migration 013 adds `admin_principal_totp` (enrolled and pending secrets,
+enablement flag) and `admin_totp_pre_sessions` (digest-only challenge tokens).
+Neither table advances `desired_generation`.
+
+Enrollment is a signed-in flow: `POST /api/v1/account/totp/begin` returns an
+`otpauth://` URI and a first-party SVG QR (same renderer as client config
+export). `POST /api/v1/account/totp/confirm` promotes the pending secret after a
+valid six-digit code. `POST /api/v1/account/totp/disable` requires the current
+password and a valid TOTP code while password auth remains enabled.
+
+When TOTP is enabled, `POST /api/v1/login` verifies the password but does **not**
+mint a product session. It returns a short-lived `pre_session_token` (≤ 5 minutes,
+single-use, digest-stored, login limiter before work). `POST /api/v1/login/totp`
+rate-limited the same way completes login into a normal session cookie.
+Verification uses RFC 6238 with SHA-1, 30-second steps, six digits, and a ±1 step
+window.
+
+Audit rows `admin_totp_enabled` and `admin_totp_disabled` record principal id
+only.
+
+## Generic OIDC (optional IdP)
+
+Migration 015 adds durable provider settings (`oidc_provider_settings`), short-lived
+authorization handoff rows (`oidc_auth_transients`), and digest-only completion
+tokens (`oidc_auth_completions`). None of these tables advance
+`desired_generation`.
+
+When enabled and the canonical origin is HTTPS, the management UI shows a second
+sign-in path beside local password login. Configuration is edited from the
+**Account** pane (`PATCH /api/v1/auth/oidc/settings`, CSRF + exact Origin) or the
+same API directly. Enabling OIDC is refused unless `OriginPolicy` is secure —
+plain loopback HTTP cannot turn it on.
+
+| Route | Role |
+| --- | --- |
+| `GET /api/v1/auth/oidc/public` | Safe advertisement (`enabled`, button label) for the login page |
+| `GET /api/v1/auth/oidc/login` | Starts PKCE authorization against the configured issuer |
+| `GET /api/v1/auth/oidc/callback` | IdP redirect; exchanges `code` for tokens on the worker |
+| `GET /api/v1/auth/oidc/complete` | Upgrades the one-shot completion cookie into a product session |
+| `GET /api/v1/auth/oidc/link` | Signed-in operator links the IdP subject to the local principal |
+| `GET /api/v1/auth/oidc/link/callback` | Linking redirect target |
+| `GET` / `PATCH /api/v1/auth/oidc/settings` | Safe provider projection / mutation (secret is write-only on read) |
+
+The authorization code exchange uses `client_secret_post` (`oauth2::AuthType::RequestBody`).
+IdP outbound HTTP and discovery run on the bounded worker inside a scoped OS thread so
+blocking `reqwest` does not occupy a Tokio worker.
+
+### Completion cookie carveout
+
+Product session cookies stay `SameSite=Strict` (see above). The IdP redirect is a
+cross-site GET, so the callback cannot set the session cookie directly. Instead the
+callback mints a **one-shot completion bearer** (digest stored, 60 s lifetime) and
+sets `wg_basic_oidc_complete` with `SameSite=Lax`, `HttpOnly`, and `Secure` when the
+canonical origin is HTTPS. A same-origin `GET /api/v1/auth/oidc/complete` exchanges
+that cookie for the ordinary Strict session profile and expires the completion cookie.
+
+Bad `state`, `code`, or IdP failures refuse without distinguishing cause. OIDC login
+does not bypass TOTP when TOTP is enabled on the linked principal — the worker applies
+the same second-factor rules as password login before issuing a session.
+
+## Multi-provider IdP and policy (M004)
+
+Migration 016 adds `auth_idp_policy` (auto-register, domain allow-list, auto-launch,
+password-auth toggle), `oauth_branded_providers` (`google`, `github`), and a `provider`
+column on `oidc_auth_transients` so each in-flight authorization records which
+provider started it.
+
+`GET /api/v1/auth/public` returns `password_auth_enabled`, enabled provider buttons
+(`oidc`, `google`, `github`), optional `auto_launch`, and `recovery_only` when
+password auth is off and no IdP can log in (CLI recovery messaging only — no
+unauthenticated bootstrap).
+
+Branded providers reuse the same completion cookie and `GET /api/v1/auth/oidc/complete`
+handoff as generic OIDC. GitHub completes via access-token user/email fetch; Google
+uses OIDC discovery against the stored issuer (default Google accounts).
+
+`PATCH /api/v1/auth/idp/policy` refuses disabling password auth unless at least one
+enabled principal has an IdP subject link. `wg-basic admin set-password` always
+re-enables password auth in durable policy before resetting the verifier.
+
+Audit rows: `admin_idp_linked`, `admin_idp_auto_registered`, `admin_password_auth_toggled`.
 
 ## A login body is JSON, never a form
 

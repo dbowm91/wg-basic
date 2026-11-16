@@ -31,6 +31,7 @@ pub mod api;
 pub mod assets;
 pub mod config;
 pub mod headers;
+pub mod oidc_cookie;
 pub mod origin;
 pub mod ratelimit;
 pub mod readiness;
@@ -53,5 +54,8 @@ pub use ratelimit::{Admission, Bucket, LoginLimiter};
 pub use readiness::{Dependency, Readiness};
 pub use response::{Liveness, MAX_MANAGEMENT_BODY_BYTES};
 pub use serve::{run, run_blocking, run_publishing, ServeConfig, ServeError, ServeReport};
-pub use service::ManagementService;
+pub use service::{
+    ManagementService, JSON_METRICS_PATH, METRICS_SETTINGS_PATH, OIDC_CALLBACK_PATH,
+    OIDC_COMPLETE_PATH, PROMETHEUS_METRICS_PATH,
+};
 pub use session_cookie::{CookieProfile, SessionCookieError};

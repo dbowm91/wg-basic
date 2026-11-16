@@ -960,7 +960,7 @@ fn the_security_perimeter_holds_over_the_real_wire() {
         "the shell needs no CSP concession: the policy is the same one every \
          other response carries"
     );
-    for asset in ["/assets/app.css", "/assets/app.js"] {
+    for asset in ["/assets/app.css", "/assets/app.js", "/assets/charts.js"] {
         let reply = browser.get(asset);
         assert_eq!(reply.status, 200, "{asset}");
     }

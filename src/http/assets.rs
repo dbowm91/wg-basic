@@ -40,22 +40,24 @@ pub const APP_CSS: &str = include_str!("assets/app.css");
 
 /// The script, served at `/assets/app.js`.
 pub const APP_JS: &str = include_str!("assets/app.js");
+
+/// First-party sparkline helpers, served at `/assets/charts.js`.
+pub const CHARTS_JS: &str = include_str!("assets/charts.js");
 pub const ENROLL_HTML: &str = include_str!("assets/enroll.html");
 pub const ENROLL_JS: &str = include_str!("assets/enroll.js");
 
 /// The total embedded payload, as a ceiling rather than an observation.
 ///
-/// 48 KiB bounds the full management shell: independent IPv4/IPv6 route
-/// controls, the platform setup form, client expiry, preshared-key controls,
-/// and the client MTU field. The complete same-origin UI stays small enough
-/// to review.
-pub const MAX_EMBEDDED_ASSET_BYTES: usize = 48 * 1024;
+/// 128 KiB bounds the full management shell through Phase 12 account, theme,
+/// and telemetry UI growth while remaining small enough to review as first-
+/// party embedded assets (no CDN, no build step).
+pub const MAX_EMBEDDED_ASSET_BYTES: usize = 128 * 1024;
 
 /// The largest single embedded asset, as a ceiling.
 ///
-/// The client script crossed 24 KiB when setup, expiry, preshared-key, and
-/// MTU controls landed in the same file.
-pub const MAX_EMBEDDED_ASSET_BYTES_EACH: usize = 28 * 1024;
+/// 64 KiB leaves room for account settings and first-party sparklines in
+/// `app.js` without inviting a third-party charting dependency.
+pub const MAX_EMBEDDED_ASSET_BYTES_EACH: usize = 64 * 1024;
 
 /// One embedded asset: where it is served, what it is, and what it contains.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -97,6 +99,13 @@ pub const INVENTORY: &[Asset] = &[
         content_type: "text/javascript; charset=utf-8",
         name: "app.js",
         body: APP_JS,
+        mutates_the_document: true,
+    },
+    Asset {
+        path: "/assets/charts.js",
+        content_type: "text/javascript; charset=utf-8",
+        name: "charts.js",
+        body: CHARTS_JS,
         mutates_the_document: true,
     },
     Asset {
@@ -316,6 +325,7 @@ mod tests {
             "/api/v1/setup",
             "/api/v1/clients",
             "/api/v1/clients/telemetry",
+            "/api/v1/clients/telemetry-history",
             "/api/v1/audit",
             "/api/v1/network-prerequisites",
             "/enrollment-links/",
@@ -356,8 +366,17 @@ mod tests {
             "the page must never read document.cookie; the bearer is HttpOnly on purpose"
         );
         assert!(
-            !APP_JS.contains("localStorage") && !APP_JS.contains("sessionStorage"),
-            "nothing about this session belongs in persistent client storage"
+            !APP_JS.contains("sessionStorage"),
+            "nothing about this session belongs in sessionStorage"
+        );
+        assert!(
+            APP_JS.contains("wg-basic-theme"),
+            "theme preference is the only allowed localStorage key"
+        );
+        assert!(
+            !APP_JS.contains("localStorage.setItem(THEME_KEY, csrf")
+                && !APP_JS.contains("localStorage.setItem(\"csrf"),
+            "session material must never be written to localStorage"
         );
     }
 
@@ -368,16 +387,54 @@ mod tests {
         assert!(APP_JS.contains("!document.hidden && csrf"));
         assert!(APP_JS.contains("visibilitychange"));
         assert!(APP_JS.contains("7000"));
-        for forbidden in [
-            "setTimeout(",
-            "eval(",
-            "console.log",
-            "localStorage",
-            "sessionStorage",
-        ] {
+        for forbidden in ["setTimeout(", "eval(", "console.log", "sessionStorage"] {
             assert!(!APP_JS.contains(forbidden), "app.js contains {forbidden}");
         }
         assert!(!APP_JS.contains("document.cookie"));
+        assert!(
+            APP_JS.contains("wg-basic-theme"),
+            "theme preference may use localStorage; session secrets may not"
+        );
+    }
+
+    #[test]
+    fn theme_switcher_defaults_to_system_and_supports_explicit_override() {
+        assert!(INDEX_HTML.contains("id=\"theme-select\""));
+        assert!(INDEX_HTML.contains("value=\"system\""));
+        assert!(INDEX_HTML.contains("value=\"light\""));
+        assert!(INDEX_HTML.contains("value=\"dark\""));
+        assert!(APP_CSS.contains("[data-theme=\"light\"]"));
+        assert!(APP_CSS.contains("[data-theme=\"dark\"]"));
+        assert!(APP_CSS.contains(":root:not([data-theme])"));
+        assert!(APP_JS.contains("data-theme"));
+        assert!(APP_JS.contains("wg-basic-theme"));
+        assert!(ENROLL_HTML.contains("id=\"theme-select\""));
+        assert!(ENROLL_HTML.contains("/assets/app.css"));
+        assert!(ENROLL_JS.contains("wg-basic-theme"));
+        assert!(ENROLL_JS.contains("data-theme"));
+    }
+
+    #[test]
+    fn sparklines_use_first_party_deltas_and_no_third_party_charting() {
+        assert!(INDEX_HTML.contains(r#"<script src="/assets/charts.js"></script>"#));
+        assert!(APP_JS.contains("/api/v1/clients/telemetry-history"));
+        assert!(APP_JS.contains("wgBasicSparkline"));
+        assert!(CHARTS_JS.contains("counterDeltas"));
+        assert!(CHARTS_JS.contains("cur >= prev ? cur - prev : cur"));
+        assert!(CHARTS_JS.contains("themeColor(\"--accent\""));
+        assert!(CHARTS_JS.contains("themeColor(\"--ok\""));
+        for forbidden in ["chart.js", "Chart(", "d3.", "cdn.", "unpkg"] {
+            assert!(
+                !CHARTS_JS.to_ascii_lowercase().contains(forbidden),
+                "charts.js must not use third-party charting ({forbidden})"
+            );
+        }
+    }
+
+    #[test]
+    fn sparkline_styles_use_theme_variables() {
+        assert!(APP_CSS.contains(".sparkline-canvas"));
+        assert!(APP_CSS.contains(".sparkline-empty"));
     }
 
     #[test]

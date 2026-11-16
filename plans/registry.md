@@ -25,6 +25,8 @@ Windows native server implementation is in the tree at the ADR-011 baseline `554
 | `plans/adr/009-apple-silicon-only-darwin-target.md` | Apple silicon as the only Darwin target |
 | `plans/adr/010-privileged-helper-supervision.md` | privileged supervision of the WireGuard helper |
 | `plans/adr/011-windows-server-wireguard-nt.md` | staged Windows Server 2025 x64 direction; dataplane is pinned `wireguard-nt` 1.1; no support claim until closure evidence exists |
+| `plans/adr/012-authentication-expansion-totp-oidc.md` | account settings, TOTP, OIDC/OAuth, allow-listed auto-register, password-auth disable |
+| `plans/adr/013-observability-metrics-and-telemetry-history.md` | Prometheus/JSON scrape policy, cardinality labels, bounded telemetry history |
 
 Implementation handoffs resolve conflicts in this order: canonical specification and terminology; accepted ADRs; subsystem roadmap; implementation plan; current repository evidence.
 
@@ -41,10 +43,30 @@ wg-basic is a Linux-first WireGuard management appliance with a privilege-separa
 | Release readiness | R001–R003 closed; R004a closed as an unsigned release; R004b waived. Releases remain checksums-only, no trust root is planned, and production self-update stays disabled. | `plans/subsystems/release-readiness-security-roadmap.md`; `plans/closure/release-readiness/004b-waiver-status.md` |
 | Headless Windows Server | Implemented 2026-11-10. M001–M007 closure is blocked on `windows-2025` handshake, route, and translated-echo evidence. No support claim. | `plans/subsystems/windows-native-server-roadmap.md`; `plans/adr/011-windows-server-wireguard-nt.md`; `plans/implementation/windows-native-server/` |
 | Security-audit corrective (S001) | Closed 2026-11-16. PF token refusal, absolute `nft` pin, and separate `/healthz` admission landed. | `plans/closure/security-audit/001-status.md` |
+| Phase 12 operator auth expansion | **Implemented** M001–M004 in tree (2026-11-16). Account password, TOTP, generic OIDC, Google/GitHub, allow-list auto-register, password-auth disable + CLI recovery. Closure records pending maintainer evidence. | `plans/subsystems/operator-auth-expansion-roadmap.md`; `plans/implementation/operator-auth-expansion/`; ADR-012 |
+| Phase 12 operator UI polish | **Implemented** M001–M003 in tree (theme, sparklines, related polish). Closure records pending. | `plans/subsystems/operator-ui-polish-roadmap.md`; `plans/implementation/operator-ui-polish/` |
+| Phase 12 observability metrics | **Implemented** M001–M003 in tree (Prometheus, JSON scrape, bounded telemetry history). Closure records pending. | `plans/subsystems/observability-metrics-roadmap.md`; ADR-013 |
 
 Other closed subsystem history remains in its roadmap and closure records; it is not repeated here.
 
-## 4. Current macOS handoffs and blockers
+## 4. Phase 12 status (implemented in tree)
+
+| Work item | Status | Handoff |
+|---|---|---|
+| Auth M001 — account password change | Implemented. | `plans/implementation/operator-auth-expansion/001-account-password-change.md` |
+| Auth M002 — TOTP | Implemented. | `plans/implementation/operator-auth-expansion/002-totp-second-factor.md` |
+| Auth M003 — generic OIDC | Implemented. | `plans/implementation/operator-auth-expansion/003-generic-oidc.md` |
+| Auth M004 — Google/GitHub, allow-list, password disable | Implemented. | `plans/implementation/operator-auth-expansion/004-oauth-providers-allowlist-password-disable.md` |
+| UI M001 — theme switcher + asset ceilings | Implemented. | `plans/implementation/operator-ui-polish/001-theme-switcher-and-asset-ceilings.md` |
+| UI M002 — visual polish | Implemented. | `plans/implementation/operator-ui-polish/002-visual-polish.md` |
+| UI M003 — telemetry sparklines | Implemented. | `plans/implementation/operator-ui-polish/003-telemetry-sparklines.md` |
+| Observability M001 — Prometheus scrape | Implemented. | `plans/implementation/observability-metrics/001-prometheus-scrape.md` |
+| Observability M002 — JSON metrics | Implemented. | `plans/implementation/observability-metrics/002-json-metrics.md` |
+| Observability M003 — telemetry history | Implemented. | `plans/implementation/observability-metrics/003-telemetry-history.md` |
+
+Milestone **closure** records remain separate; they are created only when maintainer evidence exists (`plans/003-planning-process.md` §6).
+
+## 5. Current macOS handoffs and blockers
 
 | Work item | Status | Handoff |
 |---|---|---|
@@ -55,11 +77,11 @@ Other closed subsystem history remains in its roadmap and closure records; it is
 
 Operator-parity closures did not authorize a Darwin release or change C015. Its deferred items and stop conditions remain in the roadmap.
 
-## 5. Release disposition
+## 6. Release disposition
 
 The maintainer waived the signed-production gate on 2026-10-11. Releases are checksums-only; no production signing key or trust root is planned, and `update check` / `update run` fail closed. `v0.1.0` is stable and unsigned. See the R004a/R004b closure records and `docs/release-signing.md` for the release evidence and limitations.
 
-## 6. Planning hygiene
+## 7. Planning hygiene
 
 - Plans describe intended or active work; current-behavior documentation describes only implemented behavior.
 - Do not create closure records before evidence exists. Historical closure records remain period-accurate when corrective work follows.

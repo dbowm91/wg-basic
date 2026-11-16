@@ -12,13 +12,68 @@
     <main>
       <header class="topbar">
         <div><h1>wg-basic</h1><p class="subtitle">Private network management</p></div>
-        <button type="button" class="secondary" id="logout" hidden>Sign out</button>
+        <div class="topbar-actions">
+          <label class="theme-switcher">Theme
+            <select id="theme-select" aria-label="Color theme">
+              <option value="system">System</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </label>
+          <button type="button" class="secondary" id="account" hidden>Account</button>
+          <button type="button" class="secondary" id="logout" hidden>Sign out</button>
+        </div>
       </header>
 
       <div id="banner-slot"><p id="banner" role="status" aria-live="polite" hidden></p></div>
 
-      <section id="login-pane">
+      <section id="account-pane" class="operator-panel" hidden>
+        <div class="section-heading"><h2>Account</h2><button type="button" class="secondary close-account">Close</button></div>
+        <p class="panel-lead">Change your password or manage two-factor authentication.</p>
+        <p id="account-summary" class="note" role="status"></p>
+        <section id="totp-pane" class="form-grid" aria-labelledby="totp-heading">
+          <h3 id="totp-heading">Two-factor authentication (TOTP)</h3>
+          <p id="totp-status" class="note" role="status"></p>
+          <div id="totp-disabled-controls" hidden>
+            <button type="button" id="totp-begin">Enable authenticator app</button>
+          </div>
+          <div id="totp-enroll-controls" class="form-grid" hidden>
+            <p class="note">Scan this QR code with your authenticator app, then enter the six-digit code.</p>
+            <div id="totp-qr" class="qr-shell" aria-hidden="true"></div>
+            <label>Verification code <input id="totp-confirm-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" /></label>
+            <button type="button" id="totp-confirm">Confirm TOTP</button>
+            <button type="button" class="secondary" id="totp-cancel-enroll">Cancel</button>
+          </div>
+          <form id="totp-disable-form" class="form-grid" hidden autocomplete="on">
+            <label>Current password <input type="password" name="current_password" autocomplete="current-password" required /></label>
+            <label>Authenticator code <input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required /></label>
+            <button type="submit">Disable TOTP</button>
+          </form>
+        </section>
+        <form id="password-form" class="form-grid" autocomplete="on">
+          <label>Current password <input type="password" name="current_password" autocomplete="current-password" required /></label>
+          <label>New password <input type="password" name="new_password" autocomplete="new-password" required /></label>
+          <label>Confirm new password <input type="password" name="confirm_password" autocomplete="new-password" required /></label>
+          <button type="submit">Change password</button>
+        </form>
+        <section id="oidc-admin-pane" class="form-grid" aria-labelledby="oidc-admin-heading">
+          <h3 id="oidc-admin-heading">OIDC provider</h3>
+          <p id="oidc-settings-note" class="note" role="status"></p>
+          <form id="oidc-settings-form" class="form-grid" autocomplete="off">
+            <label>Issuer URL <input name="issuer" id="oidc-issuer" autocomplete="off" /></label>
+            <label>Client ID <input name="client_id" id="oidc-client-id" autocomplete="off" /></label>
+            <label>Client secret <input type="password" name="set_client_secret" id="oidc-client-secret" autocomplete="new-password" placeholder="Leave blank to keep" /></label>
+            <label>Sign-in button label <input name="display_name" id="oidc-display-name" autocomplete="off" /></label>
+            <label class="check"><input name="enabled" type="checkbox" id="oidc-enabled" /> Enable OIDC sign-in (requires HTTPS canonical origin)</label>
+            <button type="submit">Save OIDC settings</button>
+          </form>
+        </section>
+      </section>
+
+      <section id="login-pane" class="operator-panel">
         <h2>Sign in</h2>
+        <p class="panel-lead">Sign in with the administrator password configured on this host.</p>
+        <p id="idp-recovery-note" class="note login-footnote" hidden>Password sign-in is disabled and no identity provider is configured. On the host, run <code>wg-basic admin set-password --password-stdin</code> to restore password access.</p>
         <form id="login-form" autocomplete="on">
           <label for="username">Username</label>
           <input type="text" id="username" name="username" autocomplete="username" autocapitalize="none" required />
@@ -26,7 +81,15 @@
           <input type="password" id="password" name="password" autocomplete="current-password" required />
           <button type="submit">Sign in</button>
         </form>
-        <p class="note">Set or reset the administrator password locally with <code>wg-basic admin set-password --password-stdin</code>.</p>
+        <div id="idp-provider-buttons" class="form-grid" hidden></div>
+        <form id="login-totp-form" class="form-grid" hidden autocomplete="on">
+          <p class="note">Enter the six-digit code from your authenticator app.</p>
+          <label for="login-totp-code">Authenticator code</label>
+          <input id="login-totp-code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required />
+          <button type="submit">Verify and sign in</button>
+          <button type="button" class="secondary" id="login-totp-cancel">Back</button>
+        </form>
+        <p class="note login-footnote">Set or reset the administrator password locally with <code>wg-basic admin set-password --password-stdin</code>.</p>
       </section>
 
       <section id="setup-pane" hidden>
@@ -68,11 +131,13 @@
 
         <section id="clients-pane">
           <div class="section-heading"><h2>Clients</h2><button type="button" id="new-client">Add client</button></div>
-          <form id="client-filters" class="inline-form">
-            <label>Filter <input name="query" placeholder="name or address" /></label>
-            <label>State <select name="enabled"><option value="all">All</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label>
-            <label>Expiry <select name="expiry"><option value="all">All</option><option value="none">No deadline</option><option value="scheduled">Scheduled</option><option value="expired">Expired</option></select></label>
-          </form>
+          <div class="filter-bar">
+            <form id="client-filters" class="inline-form">
+              <label>Filter <input name="query" placeholder="name or address" /></label>
+              <label>State <select name="enabled"><option value="all">All</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label>
+              <label>Expiry <select name="expiry"><option value="all">All</option><option value="none">No deadline</option><option value="scheduled">Scheduled</option><option value="expired">Expired</option></select></label>
+            </form>
+          </div>
           <form id="create-form" class="inline-form" hidden>
             <label>Client name <input name="label" maxlength="128" required /></label>
             <label>Requested IPv6 address <input name="ipv6_address" placeholder="automatic" /></label>
@@ -82,14 +147,33 @@
             <label class="check"><input name="preshared_key" type="checkbox" /> Generate a preshared key</label>
             <button type="submit">Create client</button><button type="button" class="secondary" id="cancel-create">Cancel</button>
           </form>
-          <div class="table-wrap"><table><thead><tr><th>Client</th><th>VPN address</th><th>State</th><th>Last handshake</th><th>Traffic</th><th>Actions</th></tr></thead><tbody id="client-rows"></tbody></table></div>
-          <p id="empty-clients" class="note" hidden>No clients yet. Add a client to create its first connection.</p>
+          <div id="client-table-wrap" class="table-wrap" hidden>
+            <table class="client-table">
+              <thead><tr><th>Client</th><th>VPN address</th><th>State</th><th>Last handshake</th><th>Traffic <span class="th-hint">(live · ~1h trend)</span></th><th>Actions</th></tr></thead>
+              <tbody id="client-rows"></tbody>
+            </table>
+          </div>
+          <div id="empty-clients" class="empty-state" hidden>
+            <p class="empty-title">No clients yet</p>
+            <p class="empty-detail">Add a client to issue VPN credentials and connection settings.</p>
+          </div>
+          <div id="empty-clients-filtered" class="empty-state" hidden>
+            <p class="empty-title">No matching clients</p>
+            <p class="empty-detail">Try a different filter or clear the search field.</p>
+          </div>
+          <div id="empty-telemetry" class="empty-state" hidden>
+            <p class="empty-title">No live peers yet</p>
+            <p class="empty-detail">Handshake and traffic appear after a client connects to the tunnel.</p>
+          </div>
         </section>
 
         <section id="audit-pane">
           <div class="section-heading"><h2>Recent activity</h2><button type="button" class="secondary" id="more-audit" hidden>Older events</button></div>
           <ol id="audit-list" class="audit-list"></ol>
-          <p id="empty-audit" class="note" hidden>No activity recorded yet.</p>
+          <div id="empty-audit" class="empty-state" hidden>
+            <p class="empty-title">No activity yet</p>
+            <p class="empty-detail">Configuration changes and client actions will appear here.</p>
+          </div>
         </section>
       </div>
 
@@ -119,6 +203,7 @@
         <div id="artifact" hidden></div>
       </dialog>
     </main>
+    <script src="/assets/charts.js"></script>
     <script src="/assets/app.js"></script>
   </body>
 </html>

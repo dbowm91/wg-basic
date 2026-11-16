@@ -164,7 +164,7 @@ DNS server storage is deferred until a consumer exists. It must never be overloa
 
 ### Live telemetry is not persisted
 
-There is deliberately no column for latest handshake, observed peer endpoint, RX/TX counters, ifindex, kernel route handle, or nftables handle/counter. Those are observed from the kernel and are never authoritative configuration. `the_schema_contains_no_live_telemetry_columns` asserts this against the created schema.
+There is deliberately no column for latest handshake, observed peer endpoint, RX/TX counters, ifindex, kernel route handle, or nftables handle/counter on **desired-state** tables. Those are observed from the kernel and are never authoritative configuration. `the_schema_contains_no_live_telemetry_columns` asserts this against the created schema except the operational `telemetry_samples` cache (migration 014), which stores bounded sparkline points and does not advance `desired_generation`.
 
 ## Connection contract
 

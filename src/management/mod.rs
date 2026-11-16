@@ -55,8 +55,13 @@ mod auth;
 mod coordinator;
 mod error;
 mod health;
+mod idp_auth;
+mod metrics;
+mod oidc;
 mod runtime;
 mod worker;
+mod worker_idp_auth;
+mod worker_oidc;
 
 /// A session as the worker hands it out.
 ///
@@ -67,21 +72,33 @@ mod worker;
 /// in a later edit.
 pub use crate::state::{AttemptDisposition, SessionRecord, StoredSession};
 pub use auth::{
-    set_password_at, status_at, AdminStatus, AuthError, AuthService, IssuedSession,
-    VerificationCost,
+    set_password_at, status_at, AccountView, AdminStatus, AuthError, AuthService, IssuedPreSession,
+    IssuedSession, LoginOutcome, TotpEnrollView, VerificationCost,
 };
 pub use coordinator::{CoordinatorAction, ReconcileCoordinator};
 pub use error::{FailureClass, ManagementError, ProjectionFailure};
 pub use health::{BackendProbe, ConvergenceState, ManagementHealth};
+pub use idp_auth::{
+    resolve_login_principal, AuthIdpPolicyUpdate, AuthIdpPolicyView, BrandedProviderSettingsUpdate,
+    BrandedProviderSettingsView, IdpAuthError, IdpAuthService, IdpLoginPublicView, IdpProviderKey,
+};
+pub use metrics::{
+    MetricsSettingsError, MetricsSettingsService, MetricsSettingsUpdate, MetricsSettingsView,
+};
+pub use oidc::{
+    CallbackClaims, OidcAuthorizeStart, OidcCallbackSuccess, OidcError, OidcLinkStart,
+    OidcPublicView, OidcService, OidcSettingsUpdate, OidcSettingsView,
+};
 pub use runtime::project_diagnostic_intent;
 pub use runtime::{
     ForwardingObservation, ManagementRuntime, NetworkPrerequisites, OperatorAttachmentView,
     PrerequisiteRefusal, ReconcileOutcome,
 };
 pub use worker::{
-    spawn, ClientMutationReply, ProductFailure, ProductSnapshotReply, SetupReply, StartupReconcile,
-    WorkerClient, WorkerCommand, WorkerConfig, WorkerError, WorkerStartup, BACKEND_STARTUP_WAIT,
-    DEFAULT_QUEUE_CAPACITY, DEFAULT_REPLY_DEADLINE,
+    record_telemetry_sample, spawn, ClientMutationReply, ProductFailure, ProductSnapshotReply,
+    SetupReply, StartupReconcile, WorkerClient, WorkerCommand, WorkerConfig, WorkerError,
+    WorkerStartup, BACKEND_STARTUP_WAIT, DEFAULT_QUEUE_CAPACITY, DEFAULT_REPLY_DEADLINE,
+    TELEMETRY_SAMPLE_INTERVAL,
 };
 
 /// Makes a scratch directory private enough for the state store's parent check.

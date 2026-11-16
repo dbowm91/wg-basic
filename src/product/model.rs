@@ -494,6 +494,18 @@ pub enum AuditAction {
     EnrollmentCapabilityCreated,
     EnrollmentCapabilityRevoked,
     EnrollmentCapabilityConsumed,
+    /// The local administrator changed their password over HTTP or the UI.
+    AdminPasswordChanged,
+    /// TOTP second factor was enabled for a principal.
+    AdminTotpEnabled,
+    /// TOTP second factor was disabled for a principal.
+    AdminTotpDisabled,
+    /// An IdP identity was linked to a principal.
+    AdminIdpLinked,
+    /// A new administrator was created via IdP auto-register.
+    AdminIdpAutoRegistered,
+    /// Password login was enabled or disabled in IdP policy.
+    AdminPasswordAuthToggled,
 }
 
 impl AuditAction {
@@ -515,6 +527,12 @@ impl AuditAction {
             AuditAction::EnrollmentCapabilityCreated => "enrollment_capability_created",
             AuditAction::EnrollmentCapabilityRevoked => "enrollment_capability_revoked",
             AuditAction::EnrollmentCapabilityConsumed => "enrollment_capability_consumed",
+            AuditAction::AdminPasswordChanged => "admin_password_changed",
+            AuditAction::AdminTotpEnabled => "admin_totp_enabled",
+            AuditAction::AdminTotpDisabled => "admin_totp_disabled",
+            AuditAction::AdminIdpLinked => "admin_idp_linked",
+            AuditAction::AdminIdpAutoRegistered => "admin_idp_auto_registered",
+            AuditAction::AdminPasswordAuthToggled => "admin_password_auth_toggled",
         }
     }
 }
@@ -532,6 +550,7 @@ pub enum AuditResourceKind {
     Server,
     Client,
     EnrollmentCapability,
+    Principal,
 }
 
 impl AuditResourceKind {
@@ -540,6 +559,7 @@ impl AuditResourceKind {
             AuditResourceKind::Server => "server",
             AuditResourceKind::Client => "client",
             AuditResourceKind::EnrollmentCapability => "enrollment_capability",
+            AuditResourceKind::Principal => "principal",
         }
     }
 }
@@ -620,10 +640,19 @@ pub enum ClientObservationStatus {
 pub struct ClientTelemetry {
     pub client_id: ClientId,
     pub peer_id: PeerId,
+    /// Operator label (`client_product_settings.label`).
+    pub name: String,
+    /// Managed interface name for Prometheus `interface` label.
+    pub interface: String,
     pub enabled: bool,
     pub observation: ClientObservationStatus,
     pub drift: bool,
+    pub public_key: PublicKey,
     pub endpoint: Option<std::net::SocketAddr>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ipv4_address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ipv6_address: Option<String>,
     /// Absolute Unix seconds from the WireGuard kernel's last-handshake value.
     pub latest_handshake_unix_seconds: Option<u64>,
     pub latest_handshake_age_seconds: Option<u64>,

@@ -39,6 +39,9 @@ pub const JSON_CONTENT_TYPE: &str = "application/json";
 /// short phrases that must not invite a parser.
 pub const TEXT_CONTENT_TYPE: &str = "text/plain; charset=utf-8";
 
+/// Prometheus text exposition (OpenMetrics text 0.0.4).
+pub const PROMETHEUS_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
+
 /// Builds a response with an explicit media type.
 ///
 /// The one construction path. `Response::builder()` is not reachable from
@@ -148,6 +151,30 @@ pub fn not_found() -> Response {
     literal(StatusCode::NOT_FOUND, "not found")
 }
 
+/// `302 Found` redirect to a relative location without a body.
+///
+/// Locations are caller-chosen same-origin paths only; dynamic values never come
+/// from a request field on this surface.
+pub fn redirect_to(location: &str) -> Response {
+    debug_assert!(
+        location.starts_with('/')
+            || location.starts_with("http://")
+            || location.starts_with("https://"),
+        "redirect targets are same-origin paths or IdP authorize URLs"
+    );
+    let status = StatusCode::new(302).expect("302 Found is a valid HTTP status");
+    Response::builder()
+        .status(status)
+        .header("content-type", TEXT_CONTENT_TYPE)
+        .expect("a constant media type is a valid header")
+        .header("cache-control", NO_STORE)
+        .expect("a constant cache policy is a valid header")
+        .header("location", location)
+        .expect("a redirect location is a valid header")
+        .body(ResponseBody::Empty)
+        .expect("a status was set")
+}
+
 /// `405 method not allowed` for a known route reached by an unknown method.
 pub fn method_not_allowed() -> Response {
     literal(StatusCode::METHOD_NOT_ALLOWED, "method not allowed")
@@ -168,6 +195,34 @@ pub fn unavailable() -> Response {
 /// Reached only by a coding error, never by user input.
 pub fn internal_error() -> Response {
     literal(StatusCode::INTERNAL_SERVER_ERROR, "internal error")
+}
+
+/// `400` when Prometheus scrape is disabled in settings.
+pub fn metrics_not_enabled() -> Response {
+    literal(StatusCode::BAD_REQUEST, "metrics not enabled")
+}
+
+/// `401` for a missing or invalid metrics Bearer credential.
+pub fn metrics_unauthorized() -> Response {
+    literal(unauthorized(), "unauthorized")
+}
+
+fn unauthorized() -> StatusCode {
+    StatusCode::new(401).expect("401 Unauthorized is a valid HTTP status")
+}
+
+/// `200` Prometheus text exposition body.
+pub fn prometheus(body: Vec<u8>) -> Response {
+    build(
+        StatusCode::OK,
+        PROMETHEUS_CONTENT_TYPE,
+        ResponseBody::Bytes(body),
+    )
+}
+
+/// `200` JSON metrics exposition body.
+pub fn metrics_json(body: Vec<u8>) -> Response {
+    build(StatusCode::OK, JSON_CONTENT_TYPE, ResponseBody::Bytes(body))
 }
 
 #[cfg(test)]

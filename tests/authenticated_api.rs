@@ -29,12 +29,15 @@ use std::{
         Arc,
     },
 };
+use totp_lite::{totp_custom, Sha1};
 use wg_basic::{
+    domain::{TOTP_DIGITS, TOTP_STEP_SECONDS},
     http::{
         headers::header_value, Admission, AuthenticatedApi, Bucket, LoginLimiter, OriginPolicy,
         RequestGuard, RequestRejection, CSRF_HEADER,
     },
-    management::{spawn, WorkerClient, WorkerConfig},
+    management::{spawn, LoginOutcome, WorkerClient, WorkerConfig},
+    state::StateStore,
 };
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -815,5 +818,324 @@ fn a_refusal_always_carries_a_usable_retry_after() {
                 "got {retry_after_seconds} for capacity {capacity} refill {refill}"
             );
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Account password change (auth expansion M001)
+// ---------------------------------------------------------------------------
+
+async fn logged_in_sessions(
+    scratch: &Scratch,
+) -> (WorkerClient, AuthenticatedApi, String, String, String) {
+    let client = worker_with_admin(scratch).await;
+    let api = loopback_api(client.clone());
+    let login_head = |cookie: Option<&str>| {
+        let mut extra = vec![
+            ("content-type", "application/json"),
+            ("origin", "http://127.0.0.1:8000"),
+        ];
+        if let Some(cookie) = cookie {
+            extra.push(("cookie", cookie));
+        }
+        head("POST", "/api/v1/login", "127.0.0.1:8000", &extra)
+    };
+    let first = api
+        .login(&login_head(None), &login_body(), loopback())
+        .await
+        .expect("first login");
+    let mut first = first;
+    let first_cookie = cookie_pair(&header_value(&first, "set-cookie").expect("cookie"));
+    let second = api
+        .login(&login_head(None), &login_body(), loopback())
+        .await
+        .expect("second login");
+    let second = second;
+    let second_cookie = cookie_pair(&header_value(&second, "set-cookie").expect("cookie"));
+    let csrf = csrf_token_of(&body_of(&mut first));
+    assert_ne!(first_cookie, second_cookie);
+    (client, api, first_cookie, second_cookie, csrf)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn account_read_and_password_change_revoke_siblings_not_the_completing_session() {
+    let scratch = Scratch::new();
+    let (client, api, keep_cookie, sibling_cookie, csrf) = logged_in_sessions(&scratch).await;
+
+    let account = api
+        .authenticate(&head(
+            "GET",
+            "/api/v1/account",
+            "127.0.0.1:8000",
+            &[("cookie", &keep_cookie)],
+        ))
+        .await
+        .expect("session");
+    let view = api
+        .account(&account)
+        .await
+        .expect("account view")
+        .take_body()
+        .unwrap()
+        .into_bytes()
+        .unwrap();
+    let view: serde_json::Value = serde_json::from_slice(&view).unwrap();
+    assert_eq!(view["username"], "admin");
+    assert_eq!(view["password_auth_enabled"], true);
+    assert_eq!(view["totp_enabled"], false);
+    assert!(view.get("principal_id").and_then(|v| v.as_str()).is_some());
+
+    let new_password = "a different administrator password";
+    let change_body =
+        format!(r#"{{"current_password":"{PASSWORD}","new_password":"{new_password}"}}"#);
+    let change = api
+        .change_account_password(
+            &head(
+                "POST",
+                "/api/v1/account/password",
+                "127.0.0.1:8000",
+                &[
+                    ("content-type", "application/json"),
+                    ("origin", "http://127.0.0.1:8000"),
+                    ("cookie", &keep_cookie),
+                    (CSRF_HEADER, &csrf),
+                ],
+            ),
+            change_body.as_bytes(),
+            loopback(),
+            &account,
+        )
+        .await
+        .expect("password accepted");
+
+    assert_eq!(change.status().as_u16(), 204);
+
+    assert!(api
+        .authenticate(&head(
+            "GET",
+            "/api/v1/session",
+            "127.0.0.1:8000",
+            &[("cookie", &keep_cookie)],
+        ))
+        .await
+        .is_some());
+    assert!(api
+        .authenticate(&head(
+            "GET",
+            "/api/v1/session",
+            "127.0.0.1:8000",
+            &[("cookie", &sibling_cookie)],
+        ))
+        .await
+        .is_none());
+    assert!(client
+        .authenticate("admin".to_owned(), PASSWORD.to_owned())
+        .await
+        .is_err());
+    assert!(client
+        .authenticate("admin".to_owned(), new_password.to_owned())
+        .await
+        .is_ok());
+
+    let audit = client.audit_page(None).await.expect("audit");
+    let event = audit
+        .events
+        .iter()
+        .find(|row| row.action.as_str() == "admin_password_changed")
+        .expect("password change is audited");
+    let rendered = format!("{event:?}");
+    assert!(!rendered.contains(PASSWORD));
+    assert!(!rendered.contains(new_password));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_wrong_current_password_on_account_change_is_an_opaque_401() {
+    let scratch = Scratch::new();
+    let (client, api, cookie, _sibling, csrf) = logged_in_sessions(&scratch).await;
+    let session = api
+        .authenticate(&head(
+            "GET",
+            "/api/v1/session",
+            "127.0.0.1:8000",
+            &[("cookie", &cookie)],
+        ))
+        .await
+        .expect("session");
+    let before = client.admin_status().await.expect("status").expect("admin");
+
+    let body =
+        format!(r#"{{"current_password":"not-it","new_password":"{PASSWORD}-replacement"}}"#);
+    assert_eq!(
+        api.change_account_password(
+            &head(
+                "POST",
+                "/api/v1/account/password",
+                "127.0.0.1:8000",
+                &[
+                    ("content-type", "application/json"),
+                    ("origin", "http://127.0.0.1:8000"),
+                    ("cookie", &cookie),
+                    (CSRF_HEADER, &csrf),
+                ],
+            ),
+            body.as_bytes(),
+            loopback(),
+            &session,
+        )
+        .await
+        .unwrap_err(),
+        RequestRejection::NotAuthenticated
+    );
+
+    let after = client.admin_status().await.expect("status").expect("admin");
+    assert_eq!(before.updated_at, after.updated_at);
+    assert!(client
+        .authenticate("admin".to_owned(), PASSWORD.to_owned())
+        .await
+        .is_ok());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn account_routes_require_authentication_origin_and_csrf() {
+    let scratch = Scratch::new();
+    let (_, api, cookie, _, _csrf) = logged_in_sessions(&scratch).await;
+    let session = api
+        .authenticate(&head(
+            "GET",
+            "/api/v1/session",
+            "127.0.0.1:8000",
+            &[("cookie", &cookie)],
+        ))
+        .await
+        .expect("session");
+
+    assert!(api
+        .authenticate(&head("GET", "/api/v1/account", "127.0.0.1:8000", &[]))
+        .await
+        .is_none());
+
+    assert_eq!(
+        api.guard()
+            .check_origin(&head(
+                "POST",
+                "/api/v1/account/password",
+                "127.0.0.1:8000",
+                &[("origin", "https://evil.example")],
+            ))
+            .unwrap_err(),
+        RequestRejection::OriginNotAllowed
+    );
+    assert_eq!(
+        api.guard()
+            .check_csrf(
+                &head(
+                    "POST",
+                    "/api/v1/account/password",
+                    "127.0.0.1:8000",
+                    &[("content-type", "application/json")],
+                ),
+                &session,
+            )
+            .unwrap_err(),
+        RequestRejection::CsrfMissing
+    );
+}
+
+fn totp_code_now(secret_b32: &str) -> String {
+    const ALPHABET: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    let mut bytes = Vec::new();
+    let mut buffer = 0u32;
+    let mut bits_left = 0;
+    for byte in secret_b32.bytes() {
+        let upper = byte.to_ascii_uppercase();
+        let index = ALPHABET.iter().position(|&c| c == upper).unwrap();
+        buffer = (buffer << 5) | u32::from(index as u8);
+        bits_left += 5;
+        if bits_left >= 8 {
+            bits_left -= 8;
+            bytes.push((buffer >> bits_left) as u8);
+            buffer &= (1 << bits_left) - 1;
+        }
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    totp_custom::<Sha1>(TOTP_STEP_SECONDS, TOTP_DIGITS, &bytes, now)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn totp_enroll_login_and_disable_flow() {
+    let scratch = Scratch::new();
+    let client = worker_with_admin(&scratch).await;
+    let api = loopback_api(client.clone());
+    let status = client.admin_status().await.unwrap().unwrap();
+    client
+        .begin_totp_enroll(status.principal_id)
+        .await
+        .expect("enroll");
+    let store = StateStore::open(scratch.db()).unwrap();
+    let pending = store
+        .totp_pending_secret(status.principal_id)
+        .unwrap()
+        .unwrap();
+    let code = totp_code_now(pending.expose_for_storage());
+    client
+        .confirm_totp_enroll(status.principal_id, code.clone())
+        .await
+        .expect("confirm");
+    assert!(store.totp_enabled(status.principal_id).unwrap());
+
+    let login_head = |cookie: Option<&str>| {
+        let mut extra = vec![
+            ("content-type", "application/json"),
+            ("origin", "http://127.0.0.1:8000"),
+        ];
+        if let Some(cookie) = cookie {
+            extra.push(("cookie", cookie));
+        }
+        head("POST", "/api/v1/login", "127.0.0.1:8000", &extra)
+    };
+    let mut challenge_response = api
+        .login(&login_head(None), &login_body(), loopback())
+        .await
+        .expect("password accepted");
+    let challenge: serde_json::Value =
+        serde_json::from_str(&body_of(&mut challenge_response)).unwrap();
+    assert_eq!(challenge["totp_required"], true);
+    assert!(header_value(&challenge_response, "set-cookie").is_none());
+    let verify_body = format!(
+        r#"{{"pre_session_token":"{}","code":"{code}"}}"#,
+        challenge["pre_session_token"].as_str().unwrap()
+    );
+    let verified = api
+        .verify_totp_login(&login_head(None), verify_body.as_bytes(), loopback())
+        .await
+        .expect("totp accepted");
+    assert!(header_value(&verified, "set-cookie").is_some());
+
+    let account = client.account_view(status.principal_id).await.unwrap();
+    let rendered = serde_json::to_string(&account).unwrap();
+    assert!(account.totp_enabled);
+    assert!(!rendered.contains(pending.expose_for_storage()));
+
+    client
+        .disable_totp(status.principal_id, PASSWORD.to_owned(), code.clone())
+        .await
+        .expect("disable");
+    assert!(matches!(
+        client.authenticate("admin".into(), PASSWORD.into()).await,
+        Ok(LoginOutcome::Session(_))
+    ));
+
+    let audit = client.audit_page(None).await.expect("audit");
+    for action in ["admin_totp_enabled", "admin_totp_disabled"] {
+        let event = audit
+            .events
+            .iter()
+            .find(|row| row.action.as_str() == action)
+            .unwrap_or_else(|| panic!("missing {action}"));
+        let rendered = format!("{event:?}");
+        assert!(!rendered.contains(pending.expose_for_storage()));
     }
 }

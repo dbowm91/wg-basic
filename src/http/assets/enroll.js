@@ -1,5 +1,40 @@
 "use strict";
 (() => {
+  const THEME_KEY = "wg-basic-theme";
+  const applyTheme = (choice) => {
+    const root = document.documentElement;
+    if (choice === "light" || choice === "dark") root.setAttribute("data-theme", choice);
+    else root.removeAttribute("data-theme");
+  };
+  const readStoredTheme = () => {
+    try {
+      const value = localStorage.getItem(THEME_KEY);
+      return value === "light" || value === "dark" || value === "system" ? value : "system";
+    } catch (_) {
+      return "system";
+    }
+  };
+  const persistTheme = (choice) => {
+    try {
+      if (choice === "system") localStorage.removeItem(THEME_KEY);
+      else localStorage.setItem(THEME_KEY, choice);
+    } catch (_) { /* theme preference is best-effort */ }
+  };
+  applyTheme(readStoredTheme());
+  const select = document.getElementById("theme-select");
+  if (select) {
+    select.value = readStoredTheme();
+    select.addEventListener("change", () => {
+      const choice = select.value === "light" || select.value === "dark" ? select.value : "system";
+      persistTheme(choice);
+      applyTheme(choice);
+    });
+  }
+  const media = window.matchMedia("(prefers-color-scheme: dark)");
+  const onSystemChange = () => { if (readStoredTheme() === "system") applyTheme("system"); };
+  if (typeof media.addEventListener === "function") media.addEventListener("change", onSystemChange);
+  else if (typeof media.addListener === "function") media.addListener(onSystemChange);
+
   const status = document.getElementById("status");
   const link = document.getElementById("download");
   const token = new URLSearchParams(location.hash.slice(1)).get("token");

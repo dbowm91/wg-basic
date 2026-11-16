@@ -55,7 +55,7 @@ wg-basic is not initially:
 - an HA/multi-primary control plane;
 - a requirement to match every wg-easy feature before the first useful release.
 
-OIDC, TOTP, multi-admin RBAC, AmneziaWG, third-party upstream VPN import, policy-rich per-client firewalls, and multi-server coordination MAY be added later only if they preserve the product's simplicity and privilege boundaries.
+OIDC, TOTP, multi-admin RBAC, AmneziaWG, third-party upstream VPN import, policy-rich per-client firewalls, and multi-server coordination MAY be added later only if they preserve the product's simplicity and privilege boundaries. Phase 12 planning for OIDC/TOTP auth parity, UI polish, and Prometheus/JSON/sparkline observability lives under `plans/002-long-term-roadmap.md` §14.1 and ADRs 012–013; fine-grained RBAC and the other MAY items remain unplanned.
 
 ## 4. Architectural principles
 

@@ -79,6 +79,36 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "client_mtu",
         sql: include_str!("../migrations/010_client_mtu.sql"),
     },
+    Migration {
+        version: 11,
+        name: "observability_metrics",
+        sql: include_str!("../migrations/011_observability_metrics.sql"),
+    },
+    Migration {
+        version: 12,
+        name: "json_metrics_enabled",
+        sql: include_str!("../migrations/012_json_metrics_enabled.sql"),
+    },
+    Migration {
+        version: 13,
+        name: "admin_totp",
+        sql: include_str!("../migrations/013_admin_totp.sql"),
+    },
+    Migration {
+        version: 14,
+        name: "telemetry_samples",
+        sql: include_str!("../migrations/014_telemetry_samples.sql"),
+    },
+    Migration {
+        version: 15,
+        name: "oidc_auth",
+        sql: include_str!("../migrations/015_oidc_auth.sql"),
+    },
+    Migration {
+        version: 16,
+        name: "auth_idp_expansion",
+        sql: include_str!("../migrations/016_auth_idp_expansion.sql"),
+    },
 ];
 
 /// The schema version a current binary writes.

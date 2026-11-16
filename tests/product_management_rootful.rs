@@ -125,6 +125,7 @@ static COUNTER: AtomicU64 = AtomicU64::new(0);
 const EMBEDDED_ASSET_BYTES: usize = include_str!("../src/http/assets/index.html").len()
     + include_str!("../src/http/assets/app.css").len()
     + include_str!("../src/http/assets/app.js").len()
+    + include_str!("../src/http/assets/charts.js").len()
     + include_str!("../src/http/assets/enroll.html").len()
     + include_str!("../src/http/assets/enroll.js").len();
 

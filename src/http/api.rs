@@ -14,8 +14,23 @@
 //! | `DELETE` | `/api/v1/enrollment-links/<id>` | session | **required** | **exact** |
 //! | `POST` | `/api/v1/enroll/<id>/consume` | token | none | **exact** |
 //! | `GET` | `/api/v1/clients/telemetry` | session | none | — |
+//! | `GET` | `/api/v1/clients/telemetry-history` | session | none | — |
 //! | `GET` | `/api/v1/audit[/<timestamp>/<event-id>]` | session | none | — |
+//! | `GET` | `/api/v1/account` | session | none | — |
+//! | `POST` | `/api/v1/account/password` | session | **required** | **exact** |
 //! | `GET` | `/healthz` | none | none | — |
+//! | `GET` | `/metrics/prometheus` | Bearer / loopback | none | — |
+//! | `GET` | `/metrics/json` | Bearer / loopback | none | — |
+//! | `GET` | `/api/v1/metrics-settings` | session | none | — |
+//! | `PATCH` | `/api/v1/metrics-settings` | session | **required** | **exact** |
+//! | `GET` | `/api/v1/auth/oidc/public` | none | none | — |
+//! | `GET` | `/api/v1/auth/oidc/login` | none | none | — |
+//! | `GET` | `/api/v1/auth/oidc/callback` | none | none | — |
+//! | `GET` | `/api/v1/auth/oidc/complete` | Lax completion | none | — |
+//! | `GET` | `/api/v1/auth/oidc/link` | session | none | — |
+//! | `GET` | `/api/v1/auth/oidc/link/callback` | none | none | — |
+//! | `GET` | `/api/v1/auth/oidc/settings` | session | none | — |
+//! | `PATCH` | `/api/v1/auth/oidc/settings` | session | **required** | **exact** |
 //!
 //! # Two pieces, split on purpose
 //!
@@ -56,12 +71,20 @@
 
 use super::{
     headers,
+    oidc_cookie::{
+        completion_expire_cookie, completion_set_cookie, presented_completion_token,
+        OIDC_COMPLETION_COOKIE_MAX_AGE_SECONDS,
+    },
     origin::{OriginPolicy, CSRF_HEADER},
     ratelimit::{Admission, LoginLimiter},
     response, session_cookie,
 };
-use crate::management::{
-    BackendProbe, IssuedSession, ManagementHealth, StoredSession, WorkerClient, WorkerError,
+use crate::{
+    domain::PrincipalId,
+    management::{
+        BackendProbe, IssuedSession, LoginOutcome, ManagementHealth, MetricsSettingsUpdate,
+        OidcSettingsUpdate, StoredSession, WorkerClient, WorkerError,
+    },
 };
 use eggserve_primitives::{request_head::RequestHead, Response, ResponseBody, StatusCode};
 use std::{net::SocketAddr, sync::Arc, time::Instant};
@@ -76,8 +99,27 @@ pub const UNSAFE_METHODS: &[&str] = &["POST", "PUT", "PATCH", "DELETE"];
 /// request. Well below the EggServe hard ceiling, so this tighter bound is the one
 /// that actually applies.
 pub const LOGIN_BODY_LIMIT: usize = 4 * 1024;
+/// The largest a TOTP login completion body may be, in bytes.
+pub const LOGIN_TOTP_BODY_LIMIT: usize = 1024;
 /// Tiny token-only consume envelope; config never travels in a request body.
 pub const ENROLLMENT_BODY_LIMIT: usize = 1024;
+/// The largest an account password-change body may be, in bytes.
+pub const ACCOUNT_PASSWORD_BODY_LIMIT: usize = 8 * 1024;
+/// The largest a metrics-settings patch body may be, in bytes.
+pub const METRICS_SETTINGS_BODY_LIMIT: usize = 4 * 1024;
+/// The largest an OIDC settings patch body may be, in bytes.
+pub const OIDC_SETTINGS_BODY_LIMIT: usize = 8 * 1024;
+
+const OIDC_COMPLETE_TARGET: &str = "/api/v1/auth/oidc/complete";
+
+const DEFAULT_OIDC_CALLBACK_GLOBAL_BUCKET: crate::http::Bucket = crate::http::Bucket {
+    capacity: 20,
+    refill_per_second: 4.0,
+};
+const DEFAULT_OIDC_CALLBACK_PEER_BUCKET: crate::http::Bucket = crate::http::Bucket {
+    capacity: 6,
+    refill_per_second: 1.0,
+};
 
 /// HTTP 401, which EggServe does not name as a constant.
 ///
@@ -314,6 +356,17 @@ const DEFAULT_HEALTH_PEER_BUCKET: crate::http::Bucket = crate::http::Bucket {
     refill_per_second: 8.0,
 };
 
+/// Default `/metrics/prometheus` admission budget: independent of login and `/healthz`.
+const DEFAULT_SCRAPE_GLOBAL_BUCKET: crate::http::Bucket = crate::http::Bucket {
+    capacity: 8,
+    refill_per_second: 8.0,
+};
+const DEFAULT_SCRAPE_PEER_BUCKET: crate::http::Bucket = crate::http::Bucket {
+    capacity: 8,
+    refill_per_second: 8.0,
+};
+const DEFAULT_SCRAPE_TRACKED_PEERS: usize = 128;
+
 /// The authenticated API surface: policy plus the two worker-backed operations.
 #[derive(Clone, Debug)]
 pub struct AuthenticatedApi {
@@ -322,6 +375,8 @@ pub struct AuthenticatedApi {
     limiter: Arc<LoginLimiter>,
     enrollment_limiter: Arc<LoginLimiter>,
     health_limiter: Arc<LoginLimiter>,
+    scrape_limiter: Arc<LoginLimiter>,
+    oidc_callback_limiter: Arc<LoginLimiter>,
 }
 
 impl AuthenticatedApi {
@@ -353,6 +408,24 @@ impl AuthenticatedApi {
         limiter: Arc<LoginLimiter>,
         health_limiter: Arc<LoginLimiter>,
     ) -> Self {
+        Self::with_scrape_limiter(worker, policy, limiter, health_limiter, None)
+    }
+
+    /// Builds the API with explicit `/healthz` and `/metrics/prometheus` budgets.
+    pub fn with_scrape_limiter(
+        worker: WorkerClient,
+        policy: Arc<OriginPolicy>,
+        limiter: Arc<LoginLimiter>,
+        health_limiter: Arc<LoginLimiter>,
+        scrape_limiter: Option<Arc<LoginLimiter>>,
+    ) -> Self {
+        let scrape_limiter = scrape_limiter.unwrap_or_else(|| {
+            Arc::new(LoginLimiter::new(
+                DEFAULT_SCRAPE_GLOBAL_BUCKET,
+                DEFAULT_SCRAPE_PEER_BUCKET,
+                DEFAULT_SCRAPE_TRACKED_PEERS,
+            ))
+        });
         Self {
             worker,
             guard: RequestGuard::new(policy),
@@ -363,6 +436,12 @@ impl AuthenticatedApi {
                 128,
             )),
             health_limiter,
+            scrape_limiter,
+            oidc_callback_limiter: Arc::new(LoginLimiter::new(
+                DEFAULT_OIDC_CALLBACK_GLOBAL_BUCKET,
+                DEFAULT_OIDC_CALLBACK_PEER_BUCKET,
+                256,
+            )),
         }
     }
 
@@ -381,6 +460,11 @@ impl AuthenticatedApi {
         &self.health_limiter
     }
 
+    /// The unauthenticated scrape admission budget.
+    pub fn scrape_limiter(&self) -> &LoginLimiter {
+        &self.scrape_limiter
+    }
+
     /// Independent admission budget for public one-time capability consumes.
     pub(crate) fn admit_enrollment(&self, peer: SocketAddr) -> Admission {
         self.enrollment_limiter.check(peer, Instant::now())
@@ -392,6 +476,16 @@ impl AuthenticatedApi {
     /// occupy the slots login and mutations use.
     pub(crate) fn admit_health(&self, peer: SocketAddr) -> Admission {
         self.health_limiter.check(peer, Instant::now())
+    }
+
+    /// Independent admission budget for Prometheus scrape.
+    pub(crate) fn admit_scrape(&self, peer: SocketAddr) -> Admission {
+        self.scrape_limiter.check(peer, Instant::now())
+    }
+
+    /// Independent admission budget for OIDC authorize/token callbacks.
+    pub(crate) fn admit_oidc_callback(&self, peer: SocketAddr) -> Admission {
+        self.oidc_callback_limiter.check(peer, Instant::now())
     }
 
     pub(crate) fn canonical_origin(&self) -> String {
@@ -461,7 +555,8 @@ impl AuthenticatedApi {
             .authenticate(credentials.username, credentials.password)
             .await
         {
-            Ok(issued) => Ok(self.login_success(&issued)),
+            Ok(LoginOutcome::Session(issued)) => Ok(self.login_success(&issued)),
+            Ok(LoginOutcome::TotpChallenge(challenge)) => Ok(self.login_totp_challenge(&challenge)),
             Err(WorkerError::Rejected) => {
                 // One generic answer for a wrong password, an unknown username,
                 // and a disabled principal. `check_origin` has already refused any
@@ -501,6 +596,129 @@ impl AuthenticatedApi {
         self.json(StatusCode::OK, &payload, Some(cookie))
     }
 
+    fn login_totp_challenge(&self, challenge: &crate::management::IssuedPreSession) -> Response {
+        let payload = TotpChallengePayload {
+            totp_required: true,
+            pre_session_token: challenge.token.expose_once().to_owned(),
+            expires_at: challenge.expires_at,
+        };
+        self.json(StatusCode::OK, &payload, None)
+    }
+
+    /// Handles `POST /api/v1/login/totp`.
+    pub async fn verify_totp_login(
+        &self,
+        head: &RequestHead,
+        body: &[u8],
+        peer: SocketAddr,
+    ) -> Result<Response, RequestRejection> {
+        match self.limiter.check(peer, Instant::now()) {
+            Admission::Refused {
+                retry_after_seconds,
+            } => {
+                return Err(RequestRejection::Throttled {
+                    retry_after_seconds,
+                })
+            }
+            Admission::Allowed { .. } => {}
+        }
+        self.guard.check_login_content_type(head)?;
+        if body.len() > LOGIN_TOTP_BODY_LIMIT {
+            return Err(RequestRejection::BodyTooLarge);
+        }
+        let credentials = parse_login_totp_body(body).ok_or(RequestRejection::BodyMalformed)?;
+        match self
+            .worker
+            .verify_totp_login(credentials.pre_session_token, credentials.code)
+            .await
+        {
+            Ok(issued) => Ok(self.login_success(&issued)),
+            Err(WorkerError::Rejected) => Err(RequestRejection::NotAuthenticated),
+            Err(_) => Ok(response::unavailable()),
+        }
+    }
+
+    pub async fn begin_totp_enroll(
+        &self,
+        session: &StoredSession,
+    ) -> Result<Response, WorkerError> {
+        let view = self
+            .worker
+            .begin_totp_enroll(session.session.principal_id)
+            .await?;
+        Ok(self.json(StatusCode::OK, &view, None))
+    }
+
+    pub async fn confirm_totp_enroll(
+        &self,
+        head: &RequestHead,
+        body: &[u8],
+        peer: SocketAddr,
+        session: &StoredSession,
+    ) -> Result<Response, RequestRejection> {
+        match self.limiter.check(peer, Instant::now()) {
+            Admission::Refused {
+                retry_after_seconds,
+            } => {
+                return Err(RequestRejection::Throttled {
+                    retry_after_seconds,
+                })
+            }
+            Admission::Allowed { .. } => {}
+        }
+        self.guard.check_json_content_type(head)?;
+        if body.len() > ACCOUNT_PASSWORD_BODY_LIMIT {
+            return Err(RequestRejection::BodyTooLarge);
+        }
+        let request = parse_totp_code_body(body).ok_or(RequestRejection::BodyMalformed)?;
+        match self
+            .worker
+            .confirm_totp_enroll(session.session.principal_id, request.code)
+            .await
+        {
+            Ok(()) => Ok(self.build(StatusCode::NO_CONTENT, ResponseBody::Empty, None)),
+            Err(WorkerError::Rejected) => Err(RequestRejection::NotAuthenticated),
+            Err(_) => Ok(response::unavailable()),
+        }
+    }
+
+    pub async fn disable_totp(
+        &self,
+        head: &RequestHead,
+        body: &[u8],
+        peer: SocketAddr,
+        session: &StoredSession,
+    ) -> Result<Response, RequestRejection> {
+        match self.limiter.check(peer, Instant::now()) {
+            Admission::Refused {
+                retry_after_seconds,
+            } => {
+                return Err(RequestRejection::Throttled {
+                    retry_after_seconds,
+                })
+            }
+            Admission::Allowed { .. } => {}
+        }
+        self.guard.check_json_content_type(head)?;
+        if body.len() > ACCOUNT_PASSWORD_BODY_LIMIT {
+            return Err(RequestRejection::BodyTooLarge);
+        }
+        let request = parse_disable_totp_body(body).ok_or(RequestRejection::BodyMalformed)?;
+        match self
+            .worker
+            .disable_totp(
+                session.session.principal_id,
+                request.current_password,
+                request.code,
+            )
+            .await
+        {
+            Ok(()) => Ok(self.build(StatusCode::NO_CONTENT, ResponseBody::Empty, None)),
+            Err(WorkerError::Rejected) => Err(RequestRejection::NotAuthenticated),
+            Err(_) => Ok(response::unavailable()),
+        }
+    }
+
     /// Handles `POST /api/v1/logout`.
     ///
     /// `presented` is the raw token the browser sent. Revocation is keyed by the
@@ -527,6 +745,409 @@ impl AuthenticatedApi {
             csrf_token: session.session.csrf_token.expose_once().to_owned(),
         };
         self.json(StatusCode::OK, &payload, None)
+    }
+
+    /// Handles `GET /api/v1/metrics-settings`.
+    pub async fn metrics_settings(&self) -> Result<Response, WorkerError> {
+        let view = self.worker.metrics_settings().await?;
+        Ok(self.json(StatusCode::OK, &view, None))
+    }
+
+    /// Handles `PATCH /api/v1/metrics-settings`.
+    pub async fn update_metrics_settings(
+        &self,
+        head: &RequestHead,
+        body: &[u8],
+    ) -> Result<Response, RequestRejection> {
+        self.guard.check_json_content_type(head)?;
+        if body.len() > METRICS_SETTINGS_BODY_LIMIT {
+            return Err(RequestRejection::BodyTooLarge);
+        }
+        let patch = parse_metrics_settings_body(body).ok_or(RequestRejection::BodyMalformed)?;
+        match self.worker.update_metrics_settings(patch).await {
+            Ok(view) => Ok(self.json(StatusCode::OK, &view, None)),
+            Err(WorkerError::Rejected) => Err(RequestRejection::BodyMalformed),
+            Err(_) => Ok(response::unavailable()),
+        }
+    }
+
+    pub async fn oidc_public(&self) -> Result<Response, WorkerError> {
+        let view = self.worker.oidc_public(self.canonical_origin()).await?;
+        Ok(self.json(StatusCode::OK, &view, None))
+    }
+
+    pub async fn idp_login_public(&self) -> Result<Response, WorkerError> {
+        let view = self
+            .worker
+            .idp_login_public(self.canonical_origin())
+            .await?;
+        Ok(self.json(StatusCode::OK, &view, None))
+    }
+
+    pub async fn idp_policy_view(&self) -> Result<Response, WorkerError> {
+        let view = self.worker.idp_policy_view().await?;
+        Ok(self.json(StatusCode::OK, &view, None))
+    }
+
+    pub async fn update_idp_policy(
+        &self,
+        head: &RequestHead,
+        body: &[u8],
+        principal_id: PrincipalId,
+    ) -> Result<Response, RequestRejection> {
+        self.guard.check_json_content_type(head)?;
+        if body.len() > OIDC_SETTINGS_BODY_LIMIT {
+            return Err(RequestRejection::BodyTooLarge);
+        }
+        let patch: crate::management::AuthIdpPolicyUpdate =
+            serde_json::from_slice(body).map_err(|_| RequestRejection::BodyMalformed)?;
+        match self.worker.update_idp_policy(principal_id, patch).await {
+            Ok(view) => Ok(self.json(StatusCode::OK, &view, None)),
+            Err(WorkerError::Rejected) => Err(RequestRejection::BodyMalformed),
+            Err(_) => Ok(response::unavailable()),
+        }
+    }
+
+    pub async fn idp_login_start(
+        &self,
+        provider: crate::management::IdpProviderKey,
+        canonical_origin: String,
+    ) -> Result<Response, WorkerError> {
+        let start = self
+            .worker
+            .idp_begin_login(provider, canonical_origin)
+            .await?;
+        Ok(response::redirect_to(&start.authorize_url))
+    }
+
+    pub async fn idp_link_start(
+        &self,
+        provider: crate::management::IdpProviderKey,
+        session: &StoredSession,
+        canonical_origin: String,
+    ) -> Result<Response, WorkerError> {
+        let start = self
+            .worker
+            .idp_begin_link(provider, session.session.principal_id, canonical_origin)
+            .await?;
+        Ok(response::redirect_to(&start.authorize_url))
+    }
+
+    pub async fn idp_login_callback(
+        &self,
+        provider: crate::management::IdpProviderKey,
+        state: &str,
+        code: &str,
+        peer: SocketAddr,
+    ) -> Response {
+        if let Admission::Refused { .. } = self.admit_oidc_callback(peer) {
+            return response::unavailable();
+        }
+        match self
+            .worker
+            .idp_login_callback(
+                provider,
+                state.to_owned(),
+                code.to_owned(),
+                self.canonical_origin(),
+            )
+            .await
+        {
+            Ok(success) => self.oidc_callback_success(&success),
+            Err(_) => response::redirect_to("/"),
+        }
+    }
+
+    pub async fn idp_link_callback(
+        &self,
+        provider: crate::management::IdpProviderKey,
+        state: &str,
+        code: &str,
+        peer: SocketAddr,
+    ) -> Response {
+        if let Admission::Refused { .. } = self.admit_oidc_callback(peer) {
+            return response::unavailable();
+        }
+        match self
+            .worker
+            .idp_link_callback(
+                provider,
+                state.to_owned(),
+                code.to_owned(),
+                self.canonical_origin(),
+            )
+            .await
+        {
+            Ok(()) => response::redirect_to("/?oidc_link=ok"),
+            Err(_) => response::redirect_to("/"),
+        }
+    }
+
+    pub async fn branded_settings(
+        &self,
+        provider: crate::management::IdpProviderKey,
+    ) -> Result<Response, WorkerError> {
+        let view = self.worker.branded_settings(provider).await?;
+        Ok(self.json(StatusCode::OK, &view, None))
+    }
+
+    pub async fn update_branded_settings(
+        &self,
+        head: &RequestHead,
+        body: &[u8],
+        provider: crate::management::IdpProviderKey,
+    ) -> Result<Response, RequestRejection> {
+        self.guard.check_json_content_type(head)?;
+        if body.len() > OIDC_SETTINGS_BODY_LIMIT {
+            return Err(RequestRejection::BodyTooLarge);
+        }
+        let patch: crate::management::BrandedProviderSettingsUpdate =
+            serde_json::from_slice(body).map_err(|_| RequestRejection::BodyMalformed)?;
+        match self
+            .worker
+            .update_branded_settings(provider, patch, self.canonical_origin())
+            .await
+        {
+            Ok(view) => Ok(self.json(StatusCode::OK, &view, None)),
+            Err(WorkerError::Rejected) => Err(RequestRejection::BodyMalformed),
+            Err(_) => Ok(response::unavailable()),
+        }
+    }
+
+    pub async fn oidc_settings(&self) -> Result<Response, WorkerError> {
+        let view = self.worker.oidc_settings().await?;
+        Ok(self.json(StatusCode::OK, &view, None))
+    }
+
+    pub async fn update_oidc_settings(
+        &self,
+        head: &RequestHead,
+        body: &[u8],
+    ) -> Result<Response, RequestRejection> {
+        self.guard.check_json_content_type(head)?;
+        if body.len() > OIDC_SETTINGS_BODY_LIMIT {
+            return Err(RequestRejection::BodyTooLarge);
+        }
+        let patch: OidcSettingsUpdate =
+            serde_json::from_slice(body).map_err(|_| RequestRejection::BodyMalformed)?;
+        match self
+            .worker
+            .update_oidc_settings(patch, self.canonical_origin())
+            .await
+        {
+            Ok(view) => Ok(self.json(StatusCode::OK, &view, None)),
+            Err(WorkerError::Rejected) => Err(RequestRejection::BodyMalformed),
+            Err(_) => Ok(response::unavailable()),
+        }
+    }
+
+    pub async fn oidc_login_start(&self) -> Result<Response, WorkerError> {
+        let start = self
+            .worker
+            .oidc_begin_login(self.canonical_origin())
+            .await?;
+        Ok(response::redirect_to(&start.authorize_url))
+    }
+
+    pub async fn oidc_link_start(&self, session: &StoredSession) -> Result<Response, WorkerError> {
+        let start = self
+            .worker
+            .oidc_begin_link(session.session.principal_id, self.canonical_origin())
+            .await?;
+        Ok(response::redirect_to(&start.authorize_url))
+    }
+
+    pub async fn oidc_login_callback(&self, state: &str, code: &str, peer: SocketAddr) -> Response {
+        if let Admission::Refused { .. } = self.admit_oidc_callback(peer) {
+            return response::unavailable();
+        }
+        match self
+            .worker
+            .oidc_login_callback(state.to_owned(), code.to_owned(), self.canonical_origin())
+            .await
+        {
+            Ok(success) => self.oidc_callback_success(&success),
+            Err(_) => response::redirect_to("/"),
+        }
+    }
+
+    pub async fn oidc_link_callback(&self, state: &str, code: &str, peer: SocketAddr) -> Response {
+        if let Admission::Refused { .. } = self.admit_oidc_callback(peer) {
+            return response::unavailable();
+        }
+        match self
+            .worker
+            .oidc_link_callback(state.to_owned(), code.to_owned(), self.canonical_origin())
+            .await
+        {
+            Ok(()) => response::redirect_to("/?oidc_link=ok"),
+            Err(_) => response::redirect_to("/"),
+        }
+    }
+
+    pub async fn oidc_complete(&self, head: &RequestHead) -> Result<Response, RequestRejection> {
+        let cookie_header = header(head, "cookie");
+        let Some(token) = presented_completion_token(cookie_header) else {
+            return Err(RequestRejection::NotAuthenticated);
+        };
+        match self.worker.oidc_exchange_completion(token).await {
+            Ok(LoginOutcome::Session(issued)) => Ok(self.oidc_session_success(&issued)),
+            Ok(LoginOutcome::TotpChallenge(challenge)) => Ok(self.login_totp_challenge(&challenge)),
+            Err(WorkerError::Rejected) => Err(RequestRejection::NotAuthenticated),
+            Err(_) => Ok(response::unavailable()),
+        }
+    }
+
+    fn oidc_callback_success(&self, outcome: &crate::management::OidcCallbackSuccess) -> Response {
+        let redirect = response::redirect_to(OIDC_COMPLETE_TARGET);
+        let Ok(completion) = completion_set_cookie(
+            self.guard.policy(),
+            &outcome.completion_token,
+            OIDC_COMPLETION_COOKIE_MAX_AGE_SECONDS,
+        ) else {
+            return response::internal_error();
+        };
+        headers::with_set_cookie(redirect, &completion)
+    }
+
+    fn oidc_session_success(&self, issued: &IssuedSession) -> Response {
+        let lifetime = issued
+            .session
+            .expires_at
+            .saturating_sub(issued.session.created_at);
+        let session_cookie = match session_cookie::session_set_cookie(
+            self.guard.policy(),
+            &issued.token,
+            lifetime,
+        ) {
+            Ok(cookie) => cookie,
+            Err(_) => return response::internal_error(),
+        };
+        let redirect = response::redirect_to("/");
+        let redirect = headers::with_set_cookie(redirect, &session_cookie);
+        headers::with_set_cookie(redirect, &completion_expire_cookie(self.guard.policy()))
+    }
+
+    /// Handles `GET /metrics/prometheus`. Session cookies are ignored.
+    pub async fn prometheus_scrape(&self, head: &RequestHead, peer: SocketAddr) -> Response {
+        let settings = match self.authorize_metrics_scrape(head, peer).await {
+            Ok(settings) => settings,
+            Err(response) => return response,
+        };
+        if !settings.prometheus_enabled {
+            return response::metrics_not_enabled();
+        }
+        self.metrics_scrape_from_telemetry(|snapshot| {
+            let body = crate::observability::prometheus_text_from_telemetry(snapshot);
+            response::prometheus(body.into_bytes())
+        })
+        .await
+    }
+
+    /// Handles `GET /metrics/json`. Session cookies are ignored.
+    pub async fn json_metrics_scrape(&self, head: &RequestHead, peer: SocketAddr) -> Response {
+        let settings = match self.authorize_metrics_scrape(head, peer).await {
+            Ok(settings) => settings,
+            Err(response) => return response,
+        };
+        if !settings.json_metrics_enabled {
+            return response::metrics_not_enabled();
+        }
+        self.metrics_scrape_from_telemetry(|snapshot| {
+            let payload = crate::observability::json_metrics_from_telemetry(snapshot);
+            match serde_json::to_vec(&payload) {
+                Ok(body) => response::metrics_json(body),
+                Err(_) => response::internal_error(),
+            }
+        })
+        .await
+    }
+
+    async fn authorize_metrics_scrape(
+        &self,
+        head: &RequestHead,
+        peer: SocketAddr,
+    ) -> Result<crate::management::MetricsSettingsView, Response> {
+        match self.admit_scrape(peer) {
+            Admission::Refused { .. } => return Err(response::unavailable()),
+            Admission::Allowed { .. } => {}
+        }
+        let settings = match self.worker.metrics_settings().await {
+            Ok(view) => view,
+            Err(_) => return Err(response::unavailable()),
+        };
+        if settings.bearer_password_configured {
+            let Some(password) = presented_metrics_bearer(head) else {
+                return Err(response::metrics_unauthorized());
+            };
+            match self.worker.verify_metrics_bearer(password.to_owned()).await {
+                Ok(true) => {}
+                Ok(false) => return Err(response::metrics_unauthorized()),
+                Err(_) => return Err(response::unavailable()),
+            }
+        } else if !peer.ip().is_loopback() {
+            return Err(response::metrics_unauthorized());
+        }
+        Ok(settings)
+    }
+
+    async fn metrics_scrape_from_telemetry(
+        &self,
+        build: impl FnOnce(&crate::product::ClientTelemetrySnapshot) -> Response,
+    ) -> Response {
+        match self.worker.client_telemetry().await {
+            Ok(snapshot) => build(&snapshot),
+            Err(_) => response::unavailable(),
+        }
+    }
+
+    /// Handles `GET /api/v1/account`.
+    pub async fn account(&self, session: &StoredSession) -> Result<Response, WorkerError> {
+        let view = self
+            .worker
+            .account_view(session.session.principal_id)
+            .await?;
+        Ok(self.json(StatusCode::OK, &view, None))
+    }
+
+    /// Handles `POST /api/v1/account/password`.
+    pub async fn change_account_password(
+        &self,
+        head: &RequestHead,
+        body: &[u8],
+        peer: SocketAddr,
+        session: &StoredSession,
+    ) -> Result<Response, RequestRejection> {
+        match self.limiter.check(peer, Instant::now()) {
+            Admission::Refused {
+                retry_after_seconds,
+            } => {
+                return Err(RequestRejection::Throttled {
+                    retry_after_seconds,
+                })
+            }
+            Admission::Allowed { .. } => {}
+        }
+        self.guard.check_json_content_type(head)?;
+        if body.len() > ACCOUNT_PASSWORD_BODY_LIMIT {
+            return Err(RequestRejection::BodyTooLarge);
+        }
+        let credentials =
+            parse_change_password_body(body).ok_or(RequestRejection::BodyMalformed)?;
+        match self
+            .worker
+            .change_password(
+                session.session.principal_id,
+                credentials.current_password,
+                credentials.new_password,
+                session.session.id,
+            )
+            .await
+        {
+            Ok(()) => Ok(self.build(StatusCode::NO_CONTENT, ResponseBody::Empty, None)),
+            Err(WorkerError::Rejected) => Err(RequestRejection::NotAuthenticated),
+            Err(_) => Ok(response::unavailable()),
+        }
     }
 
     /// Handles `GET /api/v1/health`.
@@ -628,6 +1249,13 @@ struct SessionPayload {
     csrf_token: String,
 }
 
+#[derive(Debug, serde::Serialize)]
+struct TotpChallengePayload {
+    totp_required: bool,
+    pre_session_token: String,
+    expires_at: i64,
+}
+
 /// The JSON body of a login request.
 #[derive(serde::Deserialize)]
 struct LoginBody {
@@ -642,6 +1270,138 @@ struct LoginBody {
 /// client, which is a worse trade than ignoring them.
 fn parse_login_body(body: &[u8]) -> Option<LoginBody> {
     serde_json::from_slice::<LoginBody>(body).ok()
+}
+
+#[derive(serde::Deserialize)]
+struct ChangePasswordBody {
+    current_password: String,
+    new_password: String,
+}
+
+fn parse_change_password_body(body: &[u8]) -> Option<ChangePasswordBody> {
+    serde_json::from_slice::<ChangePasswordBody>(body).ok()
+}
+
+#[derive(serde::Deserialize)]
+struct LoginTotpBody {
+    pre_session_token: String,
+    code: String,
+}
+
+fn parse_login_totp_body(body: &[u8]) -> Option<LoginTotpBody> {
+    serde_json::from_slice::<LoginTotpBody>(body).ok()
+}
+
+#[derive(serde::Deserialize)]
+struct TotpCodeBody {
+    code: String,
+}
+
+fn parse_totp_code_body(body: &[u8]) -> Option<TotpCodeBody> {
+    serde_json::from_slice::<TotpCodeBody>(body).ok()
+}
+
+#[derive(serde::Deserialize)]
+struct DisableTotpBody {
+    current_password: String,
+    code: String,
+}
+
+fn parse_disable_totp_body(body: &[u8]) -> Option<DisableTotpBody> {
+    serde_json::from_slice::<DisableTotpBody>(body).ok()
+}
+
+#[derive(serde::Deserialize)]
+struct MetricsSettingsBody {
+    #[serde(default)]
+    prometheus_enabled: Option<bool>,
+    #[serde(default)]
+    json_metrics_enabled: Option<bool>,
+    #[serde(default)]
+    set_bearer_password: Option<String>,
+    #[serde(default)]
+    clear_bearer_password: Option<bool>,
+}
+
+/// Parsed `state` and `code` from an OIDC redirect query.
+pub fn parse_oidc_callback_query(query: Option<&str>) -> Option<(String, String)> {
+    let query = query?;
+    let mut state = None;
+    let mut code = None;
+    for pair in query.split('&') {
+        if pair.is_empty() {
+            continue;
+        }
+        let (key, value) = pair.split_once('=')?;
+        match key {
+            "state" => state = Some(percent_decode(value)),
+            "code" => code = Some(percent_decode(value)),
+            _ => {}
+        }
+    }
+    match (state, code) {
+        (Some(state), Some(code)) if !state.is_empty() && !code.is_empty() => Some((state, code)),
+        _ => None,
+    }
+}
+
+fn percent_decode(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            let Ok(hi) = hex_nibble(bytes[index + 1]) else {
+                decoded.push(bytes[index]);
+                index += 1;
+                continue;
+            };
+            let Ok(lo) = hex_nibble(bytes[index + 2]) else {
+                decoded.push(bytes[index]);
+                index += 1;
+                continue;
+            };
+            decoded.push((hi << 4) | lo);
+            index += 3;
+        } else if bytes[index] == b'+' {
+            decoded.push(b' ');
+            index += 1;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).unwrap_or_else(|_| value.to_owned())
+}
+
+fn hex_nibble(byte: u8) -> Result<u8, ()> {
+    match byte {
+        b'0'..=b'9' => Ok(byte - b'0'),
+        b'a'..=b'f' => Ok(byte - b'a' + 10),
+        b'A'..=b'F' => Ok(byte - b'A' + 10),
+        _ => Err(()),
+    }
+}
+
+fn parse_metrics_settings_body(body: &[u8]) -> Option<MetricsSettingsUpdate> {
+    let parsed = serde_json::from_slice::<MetricsSettingsBody>(body).ok()?;
+    Some(MetricsSettingsUpdate {
+        prometheus_enabled: parsed.prometheus_enabled,
+        json_metrics_enabled: parsed.json_metrics_enabled,
+        set_bearer_password: parsed.set_bearer_password,
+        clear_bearer_password: parsed.clear_bearer_password.unwrap_or(false),
+    })
+}
+
+/// Reads `Authorization: Bearer …` for metrics scrape. Session cookies are not used.
+fn presented_metrics_bearer(head: &RequestHead) -> Option<&str> {
+    let value = header(head, "authorization")?;
+    const PREFIX: &str = "Bearer ";
+    if !value.starts_with(PREFIX) {
+        return None;
+    }
+    let token = value[PREFIX.len()..].trim();
+    (!token.is_empty()).then_some(token)
 }
 
 /// Whether a `Content-Type` names JSON.

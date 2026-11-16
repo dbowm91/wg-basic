@@ -20,6 +20,14 @@ pages.
 | Method | Path                | Auth    | CSRF     | Origin | Body |
 | ------ | ------------------- | ------- | -------- | ------ | ---- |
 | `POST` | `/api/v1/login`     | none    | none     | exact  | JSON ≤ 4 KiB |
+| `GET`  | `/api/v1/auth/oidc/public` | none | none | — | none |
+| `GET`  | `/api/v1/auth/oidc/login` | none | none | — | none |
+| `GET`  | `/api/v1/auth/oidc/callback` | none | none | — | none |
+| `GET`  | `/api/v1/auth/oidc/complete` | Lax completion cookie | none | — | none |
+| `GET`  | `/api/v1/auth/oidc/link` | session | none | — | none |
+| `GET`  | `/api/v1/auth/oidc/link/callback` | none | none | — | none |
+| `GET`  | `/api/v1/auth/oidc/settings` | session | none | — | none |
+| `PATCH`| `/api/v1/auth/oidc/settings` | session | required | exact | JSON ≤ 8 KiB |
 | `POST` | `/api/v1/logout`    | session | required | exact  | none |
 | `GET`  | `/api/v1/session`   | session | none     | —      | none |
 | `GET`  | `/api/v1/health`    | session | none     | —      | none |
@@ -39,8 +47,13 @@ pages.
 | `GET` | `/enroll/<canonical-uuid>` | capability page | none | — | none |
 | `POST` | `/api/v1/enroll/<canonical-uuid>/consume` | capability token | none | exact | JSON ≤ 1 KiB |
 | `GET` | `/api/v1/clients/telemetry` | session | none | — | none |
+| `GET` | `/api/v1/clients/telemetry-history` | session | none | — | none |
 | `GET` | `/api/v1/audit` | session | none | — | none |
 | `GET` | `/api/v1/audit/<unix-seconds>/<event-uuid>` | session | none | — | none |
+| `GET` | `/api/v1/metrics-settings` | session | none | — | none |
+| `PATCH` | `/api/v1/metrics-settings` | session | required | exact | JSON ≤ 4 KiB |
+| `GET` | `/metrics/prometheus` | Bearer or loopback | none | — | none |
+| `GET` | `/metrics/json` | Bearer or loopback | none | — | none |
 | `GET`  | `/healthz`          | none    | none     | —      | none |
 | `GET`  | `/`                 | none    | none     | —      | none |
 | `GET`  | `/assets/app.css`   | none    | none     | —      | none |
@@ -102,9 +115,13 @@ src/http/                          src/management/
 
 `src/http/assets.rs` embeds the operator shell and enrollment page at compile
 time with `include_str!`. There is no document root, filesystem lookup at
-request time, external origin, or build step. The five embedded files total
-14,431 bytes. They need no inline script or style, so the `default-src 'self'`
-policy every other response already carries applies unchanged.
+request time, external origin, or build step. Inventory ceilings are 128 KiB
+total and 64 KiB per asset so Phase 12 account/theme/telemetry UI can grow
+without a CDN or build step. Theme is client-side only (System / Light /
+Dark via `data-theme` and `localStorage` key `wg-basic-theme`); it is not
+stored in SQLite. The shell and enrollment page need no inline script or
+style, so the `default-src 'self'` policy every other response already
+carries applies unchanged.
 
 HTTP code never opens the database and never contacts `netd`. A request handler
 reaching either would block a Tokio worker thread on synchronous disk I/O or on a
@@ -262,6 +279,29 @@ peer when full. An unbounded map keyed by client address is a memory-exhaustion
 vector by itself. Counters are in memory only: a lockout persisted to disk would
 let anyone who can reach the login form permanently lock the operator out.
 
+## The OIDC callback limiter runs before the worker
+
+OIDC login and link callbacks (`/api/v1/auth/oidc/callback`,
+`/api/v1/auth/oidc/link/callback`) are unauthenticated GETs driven by the IdP
+redirect. Each one triggers discovery, token exchange, and ID-token verification on
+the bounded worker — work that must not run unbounded during an authorization-code
+flood.
+
+`AuthenticatedApi::admit_oidc_callback` therefore uses a **second** `LoginLimiter`
+instance, independent of password login and from `/healthz` admission. It is checked
+before the callback query is parsed and before a worker command is submitted.
+
+| Bucket          | Burst | Refill | What it defends                         |
+| --------------- | ----- | ------ | --------------------------------------- |
+| Global          | 20    | 4/s    | Total callback processing rate          |
+| Per transport peer | 6  | 1/s    | One host consuming the global budget    |
+
+A throttled callback is `429` with `too many attempts`, same literal family as login
+throttling. Successful login callbacks redirect to `/api/v1/auth/oidc/complete` with
+the Lax completion cookie (see [authentication](authentication.md)); the completion
+route itself is not rate-limited separately because it only upgrades an already-minted
+one-shot token on a same-origin GET.
+
 ## The bounded worker
 
 `ManagementRuntime` and `StateStore` are synchronous on purpose, and `netd`
@@ -354,6 +394,28 @@ A backend that dies after the last successful reconcile is invisible to
 
 Neither payload has a receipt, error string, or key-material field, so neither
 can carry one.
+
+## Prometheus scrape (`/metrics/prometheus`)
+
+Off by default (`metrics_settings.prometheus_enabled`). When enabled without a
+Bearer secret, only **loopback** peers receive `200`; other peers get `401`.
+When a Bearer secret is configured, **every** peer must present
+`Authorization: Bearer …`; administrator session cookies are ignored. Admission
+uses a dedicated limiter (8 global / 8 per-peer per second, 128 tracked peers)
+before `client_telemetry` observe; saturation returns `503 unavailable`, and
+observe failure returns the same fail-closed answer. Disabled scrape returns
+`400 metrics not enabled`. Exposition is built by `observability::prometheus`
+from the live telemetry join (labels `client_id`, `name`, `interface`, `enabled`,
+optional address labels; never endpoint-as-label).
+
+## JSON scrape (`/metrics/json`)
+
+Off by default (`metrics_settings.json_metrics_enabled`). Admission, Bearer/loopback
+policy, disabled `400 metrics not enabled`, and the shared scrape limiter match
+Prometheus. JSON uses the same live telemetry join via `observability::json`:
+aggregate `wireguard_*_peers` counts, a bounded `clients` list (name, enabled,
+addresses, public key, endpoint, latest handshake, rx/tx), and the shared
+`truncated` flag (1,024 ceiling).
 
 ## Readiness is one lossy projection
 

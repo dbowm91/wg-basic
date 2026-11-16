@@ -171,6 +171,18 @@ const PRODUCTION_SOURCES: &[(&str, &str)] = &[
         "src/management/auth.rs",
         include_str!("../src/management/auth.rs"),
     ),
+    (
+        "src/management/oidc.rs",
+        include_str!("../src/management/oidc.rs"),
+    ),
+    (
+        "src/management/worker_oidc.rs",
+        include_str!("../src/management/worker_oidc.rs"),
+    ),
+    (
+        "src/state/store/oidc.rs",
+        include_str!("../src/state/store/oidc.rs"),
+    ),
     ("src/http/mod.rs", include_str!("../src/http/mod.rs")),
     ("src/http/config.rs", include_str!("../src/http/config.rs")),
     ("src/http/api.rs", include_str!("../src/http/api.rs")),
@@ -188,6 +200,10 @@ const PRODUCTION_SOURCES: &[(&str, &str)] = &[
         include_str!("../src/http/assets/app.js"),
     ),
     (
+        "src/http/assets/charts.js",
+        include_str!("../src/http/assets/charts.js"),
+    ),
+    (
         "src/http/headers.rs",
         include_str!("../src/http/headers.rs"),
     ),
@@ -203,6 +219,10 @@ const PRODUCTION_SOURCES: &[(&str, &str)] = &[
     (
         "src/http/session_cookie.rs",
         include_str!("../src/http/session_cookie.rs"),
+    ),
+    (
+        "src/http/oidc_cookie.rs",
+        include_str!("../src/http/oidc_cookie.rs"),
     ),
     (
         "src/http/service.rs",
@@ -771,19 +791,30 @@ fn the_management_role_never_becomes_an_http_surface() {
             "axum",
             "actix",
             "warp::",
-            "reqwest",
             "TcpListener",
             "crate::http",
         ],
         "management is the reconcile role, never the HTTP surface",
     );
+    for (path, source) in PRODUCTION_SOURCES {
+        if !path.starts_with("src/management/") || *path == "src/management/oidc.rs" {
+            continue;
+        }
+        assert!(
+            !code_only(source).contains("reqwest"),
+            "{path} must not use reqwest; outbound IdP HTTP is confined to oidc.rs"
+        );
+    }
     // The one async primitive management may use is the worker's bounded queue.
     for (path, source) in PRODUCTION_SOURCES {
-        if path.starts_with("src/management/") && *path != "src/management/worker.rs" {
+        if path.starts_with("src/management/")
+            && *path != "src/management/worker.rs"
+            && *path != "src/management/worker_oidc.rs"
+        {
             assert!(
                 !code_only(source).contains("tokio::"),
                 "{path} must not use an async runtime; only the bounded worker queue \
-                 in src/management/worker.rs may"
+                 in src/management/worker.rs (and its typed client helpers) may"
             );
         }
     }
@@ -818,7 +849,9 @@ fn the_http_boundary_never_reaches_the_durable_store_or_the_kernel() {
 fn the_management_http_surface_ships_no_router_or_client_crate() {
     // ADR-003: the service embeds `eggserve-server` and `eggserve-primitives`
     // directly. A router framework or an HTTP client dependency would reintroduce
-    // exactly the transitive surface ADR-003 was written to avoid.
+    // exactly the transitive surface ADR-003 was written to avoid — except the
+    // reviewed OIDC worker client (ADR-012 §2.9), which uses blocking `reqwest`
+    // only inside `src/management/oidc.rs`, never on the HTTP surface.
     let manifest = code_only(include_str!("../Cargo.toml"));
     for forbidden in [
         "eggserve-core",
@@ -828,14 +861,34 @@ fn the_management_http_surface_ships_no_router_or_client_crate() {
         "actix-rt",
         "warp",
         "tower-http",
-        "reqwest",
         "ureq",
         "hyper-tls",
-        "rustls",
     ] {
         assert!(
             !manifest.contains(forbidden),
             "Cargo.toml must not depend on {forbidden}: ADR-003 embeds EggServe directly"
+        );
+    }
+    assert!(
+        !manifest.contains("rustls ="),
+        "Cargo.toml must not depend on rustls directly; TLS features belong on the OIDC client stack"
+    );
+    assert!(
+        manifest.contains("reqwest"),
+        "generic OIDC requires an explicit blocking HTTP client dependency"
+    );
+    assert_code_avoids(
+        "src/http/",
+        &["reqwest"],
+        "the HTTP surface must not perform outbound IdP HTTP",
+    );
+    for (path, source) in PRODUCTION_SOURCES {
+        if !path.starts_with("src/management/") || *path == "src/management/oidc.rs" {
+            continue;
+        }
+        assert!(
+            !code_only(source).contains("reqwest"),
+            "{path} must not use reqwest; outbound IdP HTTP is confined to oidc.rs"
         );
     }
 }
@@ -1247,17 +1300,14 @@ fn the_management_surface_emits_no_cors_header_at_all() {
 
 #[test]
 fn the_management_surface_ships_no_token_or_oauth_dependency() {
-    // The session bearer is a random token stored as a digest and looked up in
-    // the database. A JWT library would mean a second, self-validating
-    // credential system with its own key management — strictly more attack
-    // surface for no property this appliance needs, and revocation would become
-    // impossible without a denylist.
+    // Product sessions stay opaque digests in SQLite. JWT/OAuth *session* middleware
+    // is forbidden. Generic OIDC login is allowed only via the audited client crate
+    // named in ALLOWED_OIDC_CRATES (ADR-012 §2.9).
+    const ALLOWED_OIDC_CRATES: &[&str] = &["openidconnect", "oauth2"];
     let manifest = code_only(include_str!("../Cargo.toml"));
     for forbidden in [
         "jsonwebtoken",
         "jwt",
-        "oauth",
-        "openid",
         "paseto",
         "iron-session",
         "tower-sessions",
@@ -1269,6 +1319,33 @@ fn the_management_surface_ships_no_token_or_oauth_dependency() {
             "Cargo.toml must not depend on {forbidden}: sessions are opaque server-side tokens"
         );
     }
+    for line in manifest.lines() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with('"') || !trimmed.contains('=') {
+            continue;
+        }
+        let name = trimmed
+            .trim_start_matches('"')
+            .split('"')
+            .next()
+            .unwrap_or("");
+        if name.contains("oauth") || name.contains("openid") {
+            assert!(
+                ALLOWED_OIDC_CRATES.contains(&name),
+                "only explicit OIDC client crates may ship: found {name}"
+            );
+        }
+    }
+    let oidc_cookie = source_of("src/http/oidc_cookie.rs");
+    assert!(
+        oidc_cookie.contains("SameSite::Lax"),
+        "the OIDC completion carveout must be an explicit Lax one-shot cookie"
+    );
+    let session_cookie = source_of("src/http/session_cookie.rs");
+    assert!(
+        session_cookie.contains("SameSite::Strict"),
+        "product session cookies must remain Strict"
+    );
 }
 
 #[test]
@@ -1516,6 +1593,7 @@ fn no_embedded_asset_names_an_external_origin() {
         "src/http/assets/index.html",
         "src/http/assets/app.css",
         "src/http/assets/app.js",
+        "src/http/assets/charts.js",
     ] {
         let body = source_of(name);
         for forbidden in [
@@ -1648,7 +1726,7 @@ fn the_shell_is_embedded_at_compile_time_and_never_read_from_disk() {
     let assets = shippable(source_of("src/http/assets.rs"));
     assert_eq!(
         assets.matches("include_str!").count(),
-        5,
+        6,
         "each embedded asset must be an include_str!, so the binary is the only source"
     );
     for forbidden in [
@@ -1709,7 +1787,6 @@ fn the_shell_uses_product_routes_without_exposing_internal_operations() {
             "/api/v1/peers",
             "/api/v1/interfaces",
             "wg-quick",
-            "localStorage",
             "sessionStorage",
             "console.log",
         ] {
@@ -1726,16 +1803,23 @@ fn the_shell_uses_product_routes_without_exposing_internal_operations() {
         "/api/v1/login",
         "/api/v1/logout",
         "/api/v1/session",
+        "/api/v1/account",
+        "/api/v1/account/password",
         "/api/v1/server",
         "/api/v1/setup",
         "/api/v1/clients",
         "/api/v1/clients/telemetry",
+        "/api/v1/clients/telemetry-history",
         "/api/v1/audit",
     ] {
         assert!(js.contains(allowed), "the shell should use {allowed}");
     }
     assert!(js.contains("expected_generation"));
     assert!(js.contains("visibilitychange"));
+    // Theme preference may use localStorage; session secrets must not.
+    assert!(js.contains("wg-basic-theme"));
+    assert!(!js.contains("localStorage.setItem(\"csrf"));
+    assert!(!js.contains("localStorage.setItem(THEME_KEY, csrf"));
 }
 
 #[test]

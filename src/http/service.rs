@@ -50,7 +50,7 @@ use crate::{
         ClientId, ClientRoutePolicy, DesiredGeneration, InterfaceName, NetworkPolicyMode,
         NetworkPrefix, MAX_ROUTED_LAN_DESTINATIONS,
     },
-    management::{ProductFailure, WorkerError},
+    management::{IdpProviderKey, ProductFailure, WorkerError},
     product::{
         AdvertisedEndpoint, ClientCreateCommand, ClientDeleteCommand, ClientEnabled, ClientLabel,
         ClientUpdateCommand, PresharedKeyRequest, ServerSetupCommand, SetClientEnabledCommand,
@@ -87,6 +87,61 @@ pub const SESSION_PATH: &str = "/api/v1/session";
 /// The authenticated health route.
 pub const API_HEALTH_PATH: &str = "/api/v1/health";
 
+/// The signed-in account settings read route.
+pub const ACCOUNT_PATH: &str = "/api/v1/account";
+
+/// The signed-in password-change mutation route.
+pub const ACCOUNT_PASSWORD_PATH: &str = "/api/v1/account/password";
+
+/// Completes login when TOTP is enabled.
+pub const LOGIN_TOTP_PATH: &str = "/api/v1/login/totp";
+
+/// Begin TOTP enrollment for the signed-in principal.
+pub const ACCOUNT_TOTP_BEGIN_PATH: &str = "/api/v1/account/totp/begin";
+
+/// Confirm TOTP enrollment with a verification code.
+pub const ACCOUNT_TOTP_CONFIRM_PATH: &str = "/api/v1/account/totp/confirm";
+
+/// Disable TOTP for the signed-in principal.
+pub const ACCOUNT_TOTP_DISABLE_PATH: &str = "/api/v1/account/totp/disable";
+
+/// Whether generic OIDC login is advertised to the browser.
+pub const OIDC_PUBLIC_PATH: &str = "/api/v1/auth/oidc/public";
+/// Start the OIDC authorization redirect.
+pub const OIDC_LOGIN_PATH: &str = "/api/v1/auth/oidc/login";
+/// OIDC login redirect target (IdP → product).
+pub const OIDC_CALLBACK_PATH: &str = "/api/v1/auth/oidc/callback";
+/// Exchange the Lax completion cookie for a Strict session.
+pub const OIDC_COMPLETE_PATH: &str = "/api/v1/auth/oidc/complete";
+/// Start IdP subject link for the signed-in principal.
+pub const OIDC_LINK_PATH: &str = "/api/v1/auth/oidc/link";
+/// OIDC link redirect target (IdP → product).
+pub const OIDC_LINK_CALLBACK_PATH: &str = "/api/v1/auth/oidc/link/callback";
+/// Durable generic OIDC provider settings (safe read).
+pub const OIDC_SETTINGS_PATH: &str = "/api/v1/auth/oidc/settings";
+/// Unified unauthenticated login surface (password + providers).
+pub const IDP_PUBLIC_PATH: &str = "/api/v1/auth/public";
+pub const IDP_POLICY_PATH: &str = "/api/v1/auth/idp/policy";
+pub const GOOGLE_LOGIN_PATH: &str = "/api/v1/auth/google/login";
+pub const GOOGLE_CALLBACK_PATH: &str = "/api/v1/auth/google/callback";
+pub const GOOGLE_LINK_PATH: &str = "/api/v1/auth/google/link";
+pub const GOOGLE_LINK_CALLBACK_PATH: &str = "/api/v1/auth/google/link/callback";
+pub const GOOGLE_SETTINGS_PATH: &str = "/api/v1/auth/google/settings";
+pub const GITHUB_LOGIN_PATH: &str = "/api/v1/auth/github/login";
+pub const GITHUB_CALLBACK_PATH: &str = "/api/v1/auth/github/callback";
+pub const GITHUB_LINK_PATH: &str = "/api/v1/auth/github/link";
+pub const GITHUB_LINK_CALLBACK_PATH: &str = "/api/v1/auth/github/link/callback";
+pub const GITHUB_SETTINGS_PATH: &str = "/api/v1/auth/github/settings";
+
+/// Prometheus text scrape route.
+pub const PROMETHEUS_METRICS_PATH: &str = "/metrics/prometheus";
+
+/// JSON metrics scrape route.
+pub const JSON_METRICS_PATH: &str = "/metrics/json";
+
+/// Authenticated metrics settings read route.
+pub const METRICS_SETTINGS_PATH: &str = "/api/v1/metrics-settings";
+
 /// The operator shell, and the only route that is not under `/api` or `/healthz`.
 ///
 /// Unauthenticated on purpose: it has to be reachable for an operator to have
@@ -108,8 +163,65 @@ pub enum Route {
     Session,
     /// Authenticated management health.
     ApiHealth,
+    /// Signed-in account settings (safe read).
+    Account,
+    /// Signed-in password change (unsafe).
+    AccountPassword,
+    /// Complete password login when TOTP is enabled.
+    LoginTotp,
+    /// Begin TOTP enrollment.
+    AccountTotpBegin,
+    /// Confirm TOTP enrollment.
+    AccountTotpConfirm,
+    /// Disable TOTP.
+    AccountTotpDisable,
+    /// OIDC public login affordance.
+    OidcPublic,
+    /// OIDC authorization redirect.
+    OidcLogin,
+    /// OIDC login callback.
+    OidcCallback,
+    /// OIDC completion cookie exchange.
+    OidcComplete,
+    /// OIDC account link redirect.
+    OidcLink,
+    /// OIDC link callback.
+    OidcLinkCallback,
+    /// OIDC provider settings (safe read).
+    OidcSettings,
+    /// OIDC provider settings mutation.
+    OidcSettingsPatch,
+    /// Unified IdP login public view.
+    IdpLoginPublic,
+    /// IdP auto-register / password policy (safe read).
+    IdpPolicy,
+    /// IdP policy mutation.
+    IdpPolicyPatch,
+    /// Branded provider login redirect.
+    GoogleLogin,
+    GoogleCallback,
+    GoogleLink,
+    GoogleLinkCallback,
+    GoogleSettings,
+    GoogleSettingsPatch,
+    GithubLogin,
+    GithubCallback,
+    GithubLink,
+    GithubLinkCallback,
+    GithubSettings,
+    GithubSettingsPatch,
+    /// Prometheus text exposition (Bearer or loopback).
+    PrometheusMetrics,
+    /// JSON metrics exposition (Bearer or loopback).
+    JsonMetrics,
+    /// Durable metrics scrape settings (safe read).
+    MetricsSettings,
+    /// Metrics settings mutation (unsafe).
+    MetricsSettingsPatch,
     /// Authenticated, fresh client peer observation.
     ClientTelemetry,
+    /// Authenticated bounded per-client telemetry history.
+    ClientTelemetryHistory,
     /// Authenticated read of forwarding, attachment, and policy prerequisites.
     NetworkPrerequisites,
     /// Bounded audit query with an optional stable cursor.
@@ -148,6 +260,7 @@ impl Route {
         matches!(
             self,
             Self::Login
+                | Self::LoginTotp
                 | Self::Product(
                     ProductRoute::Setup
                         | ProductRoute::Clients
@@ -158,6 +271,15 @@ impl Route {
                 )
                 | Self::Product(ProductRoute::EnrollmentLinks, _)
                 | Self::EnrollmentConsume(_)
+                | Self::AccountPassword
+                | Self::AccountTotpBegin
+                | Self::AccountTotpConfirm
+                | Self::AccountTotpDisable
+                | Self::MetricsSettingsPatch
+                | Self::OidcSettingsPatch
+                | Self::IdpPolicyPatch
+                | Self::GoogleSettingsPatch
+                | Self::GithubSettingsPatch
         )
     }
 
@@ -172,11 +294,45 @@ impl Route {
             | Self::Session
             | Self::ApiHealth
             | Self::ClientTelemetry
+            | Self::ClientTelemetryHistory
             | Self::NetworkPrerequisites
             | Self::Audit(_)
             | Self::Shell
             | Self::Asset => method == "GET",
-            Self::Login | Self::Logout => method == "POST",
+            Self::Login
+            | Self::LoginTotp
+            | Self::Logout
+            | Self::AccountPassword
+            | Self::AccountTotpBegin
+            | Self::AccountTotpConfirm
+            | Self::AccountTotpDisable => method == "POST",
+            Self::Account
+            | Self::MetricsSettings
+            | Self::OidcPublic
+            | Self::OidcLogin
+            | Self::OidcCallback
+            | Self::OidcComplete
+            | Self::OidcLink
+            | Self::OidcLinkCallback
+            | Self::OidcSettings
+            | Self::IdpLoginPublic
+            | Self::IdpPolicy
+            | Self::GoogleLogin
+            | Self::GoogleCallback
+            | Self::GoogleLink
+            | Self::GoogleLinkCallback
+            | Self::GoogleSettings
+            | Self::GithubLogin
+            | Self::GithubCallback
+            | Self::GithubLink
+            | Self::GithubLinkCallback
+            | Self::GithubSettings => method == "GET",
+            Self::MetricsSettingsPatch
+            | Self::OidcSettingsPatch
+            | Self::IdpPolicyPatch
+            | Self::GoogleSettingsPatch
+            | Self::GithubSettingsPatch => method == "PATCH",
+            Self::PrometheusMetrics | Self::JsonMetrics => method == "GET",
             Self::Product(route, _) => match route {
                 ProductRoute::Server => method == "GET",
                 ProductRoute::Setup | ProductRoute::Enable | ProductRoute::Disable => {
@@ -204,7 +360,19 @@ impl Route {
 }
 
 fn request_has_body(route: Route, method: &str) -> bool {
-    route.accepts_body() && matches!(method, "POST" | "PATCH" | "DELETE")
+    refine_route(route, method).accepts_body() && matches!(method, "POST" | "PATCH" | "DELETE")
+}
+
+/// Maps a path-level route plus HTTP method to the handler variant.
+fn refine_route(matched: Route, method: &str) -> Route {
+    match (matched, method) {
+        (Route::MetricsSettings, "PATCH") => Route::MetricsSettingsPatch,
+        (Route::OidcSettings, "PATCH") => Route::OidcSettingsPatch,
+        (Route::IdpPolicy, "PATCH") => Route::IdpPolicyPatch,
+        (Route::GoogleSettings, "PATCH") => Route::GoogleSettingsPatch,
+        (Route::GithubSettings, "PATCH") => Route::GithubSettingsPatch,
+        _ => matched,
+    }
 }
 
 /// Resolves a request target to a route.
@@ -219,7 +387,36 @@ pub fn route(path: &str) -> Route {
         LOGOUT_PATH => Route::Logout,
         SESSION_PATH => Route::Session,
         API_HEALTH_PATH => Route::ApiHealth,
+        ACCOUNT_PATH => Route::Account,
+        ACCOUNT_PASSWORD_PATH => Route::AccountPassword,
+        LOGIN_TOTP_PATH => Route::LoginTotp,
+        ACCOUNT_TOTP_BEGIN_PATH => Route::AccountTotpBegin,
+        ACCOUNT_TOTP_CONFIRM_PATH => Route::AccountTotpConfirm,
+        ACCOUNT_TOTP_DISABLE_PATH => Route::AccountTotpDisable,
+        OIDC_PUBLIC_PATH => Route::OidcPublic,
+        OIDC_LOGIN_PATH => Route::OidcLogin,
+        OIDC_CALLBACK_PATH => Route::OidcCallback,
+        OIDC_COMPLETE_PATH => Route::OidcComplete,
+        OIDC_LINK_PATH => Route::OidcLink,
+        OIDC_LINK_CALLBACK_PATH => Route::OidcLinkCallback,
+        OIDC_SETTINGS_PATH => Route::OidcSettings,
+        IDP_PUBLIC_PATH => Route::IdpLoginPublic,
+        IDP_POLICY_PATH => Route::IdpPolicy,
+        GOOGLE_LOGIN_PATH => Route::GoogleLogin,
+        GOOGLE_CALLBACK_PATH => Route::GoogleCallback,
+        GOOGLE_LINK_PATH => Route::GoogleLink,
+        GOOGLE_LINK_CALLBACK_PATH => Route::GoogleLinkCallback,
+        GOOGLE_SETTINGS_PATH => Route::GoogleSettings,
+        GITHUB_LOGIN_PATH => Route::GithubLogin,
+        GITHUB_CALLBACK_PATH => Route::GithubCallback,
+        GITHUB_LINK_PATH => Route::GithubLink,
+        GITHUB_LINK_CALLBACK_PATH => Route::GithubLinkCallback,
+        GITHUB_SETTINGS_PATH => Route::GithubSettings,
+        PROMETHEUS_METRICS_PATH => Route::PrometheusMetrics,
+        JSON_METRICS_PATH => Route::JsonMetrics,
+        METRICS_SETTINGS_PATH => Route::MetricsSettings,
         "/api/v1/clients/telemetry" => Route::ClientTelemetry,
+        "/api/v1/clients/telemetry-history" => Route::ClientTelemetryHistory,
         "/api/v1/network-prerequisites" => Route::NetworkPrerequisites,
         "/api/v1/audit" => Route::Audit(None),
         SHELL_PATH => Route::Shell,
@@ -333,7 +530,7 @@ impl ManagementService {
         }
 
         // 3 and 4. Route and method.
-        let matched = route(head.target().path());
+        let matched = refine_route(route(head.target().path()), head.method().as_str());
         if !matched.accepts(head.method().as_str()) {
             // A known route reached by an unknown method says so; an unknown
             // route stays a 404 so a prober cannot enumerate the surface.
@@ -406,11 +603,261 @@ impl ManagementService {
                     Err(error) => response_for_worker_error(error),
                 }
             }
+            Route::Account => {
+                let Some(session) = self.api.authenticate(head).await else {
+                    return refusal(RequestRejection::NotAuthenticated);
+                };
+                match self.api.account(&session).await {
+                    Ok(response) => response,
+                    Err(error) => response_for_worker_error(error),
+                }
+            }
+            Route::AccountPassword => {
+                let Some(session) = self.api.authenticate(head).await else {
+                    return refusal(RequestRejection::NotAuthenticated);
+                };
+                if let Err(rejection) = guard.check_csrf(head, &session) {
+                    return refusal(rejection);
+                }
+                match self
+                    .api
+                    .change_account_password(head, body, peer, &session)
+                    .await
+                {
+                    Ok(response) => response,
+                    Err(rejection) => refusal(rejection),
+                }
+            }
+            Route::LoginTotp => match self.api.verify_totp_login(head, body, peer).await {
+                Ok(response) => response,
+                Err(rejection) => refusal(rejection),
+            },
+            Route::AccountTotpBegin => {
+                let Some(session) = self.api.authenticate(head).await else {
+                    return refusal(RequestRejection::NotAuthenticated);
+                };
+                if let Err(rejection) = guard.check_csrf(head, &session) {
+                    return refusal(rejection);
+                }
+                match self.api.begin_totp_enroll(&session).await {
+                    Ok(response) => response,
+                    Err(error) => response_for_worker_error(error),
+                }
+            }
+            Route::AccountTotpConfirm => {
+                let Some(session) = self.api.authenticate(head).await else {
+                    return refusal(RequestRejection::NotAuthenticated);
+                };
+                if let Err(rejection) = guard.check_csrf(head, &session) {
+                    return refusal(rejection);
+                }
+                match self
+                    .api
+                    .confirm_totp_enroll(head, body, peer, &session)
+                    .await
+                {
+                    Ok(response) => response,
+                    Err(rejection) => refusal(rejection),
+                }
+            }
+            Route::AccountTotpDisable => {
+                let Some(session) = self.api.authenticate(head).await else {
+                    return refusal(RequestRejection::NotAuthenticated);
+                };
+                if let Err(rejection) = guard.check_csrf(head, &session) {
+                    return refusal(rejection);
+                }
+                match self.api.disable_totp(head, body, peer, &session).await {
+                    Ok(response) => response,
+                    Err(rejection) => refusal(rejection),
+                }
+            }
+            Route::OidcPublic => match self.api.oidc_public().await {
+                Ok(response) => response,
+                Err(error) => response_for_worker_error(error),
+            },
+            Route::OidcLogin => match self.api.oidc_login_start().await {
+                Ok(response) => response,
+                Err(error) => response_for_worker_error(error),
+            },
+            Route::OidcCallback => {
+                let Some((state, code)) =
+                    super::api::parse_oidc_callback_query(head.target().query())
+                else {
+                    return response::redirect_to("/");
+                };
+                self.api.oidc_login_callback(&state, &code, peer).await
+            }
+            Route::OidcComplete => match self.api.oidc_complete(head).await {
+                Ok(response) => response,
+                Err(rejection) => refusal(rejection),
+            },
+            Route::OidcLink => {
+                let Some(session) = self.api.authenticate(head).await else {
+                    return refusal(RequestRejection::NotAuthenticated);
+                };
+                match self.api.oidc_link_start(&session).await {
+                    Ok(response) => response,
+                    Err(error) => response_for_worker_error(error),
+                }
+            }
+            Route::OidcLinkCallback => {
+                let Some((state, code)) =
+                    super::api::parse_oidc_callback_query(head.target().query())
+                else {
+                    return response::redirect_to("/");
+                };
+                self.api.oidc_link_callback(&state, &code, peer).await
+            }
+            Route::OidcSettings => {
+                let Some(session) = self.api.authenticate(head).await else {
+                    return refusal(RequestRejection::NotAuthenticated);
+                };
+                let _ = session;
+                match self.api.oidc_settings().await {
+                    Ok(response) => response,
+                    Err(error) => response_for_worker_error(error),
+                }
+            }
+            Route::OidcSettingsPatch => {
+                let Some(session) = self.api.authenticate(head).await else {
+                    return refusal(RequestRejection::NotAuthenticated);
+                };
+                if let Err(rejection) = guard.check_csrf(head, &session) {
+                    return refusal(rejection);
+                }
+                match self.api.update_oidc_settings(head, body).await {
+                    Ok(response) => response,
+                    Err(rejection) => refusal(rejection),
+                }
+            }
+            Route::IdpLoginPublic => match self.api.idp_login_public().await {
+                Ok(response) => response,
+                Err(error) => response_for_worker_error(error),
+            },
+            Route::IdpPolicy => {
+                let Some(session) = self.api.authenticate(head).await else {
+                    return refusal(RequestRejection::NotAuthenticated);
+                };
+                let _ = session;
+                match self.api.idp_policy_view().await {
+                    Ok(response) => response,
+                    Err(error) => response_for_worker_error(error),
+                }
+            }
+            Route::IdpPolicyPatch => {
+                let Some(session) = self.api.authenticate(head).await else {
+                    return refusal(RequestRejection::NotAuthenticated);
+                };
+                if let Err(rejection) = guard.check_csrf(head, &session) {
+                    return refusal(rejection);
+                }
+                match self
+                    .api
+                    .update_idp_policy(head, body, session.session.principal_id)
+                    .await
+                {
+                    Ok(response) => response,
+                    Err(rejection) => refusal(rejection),
+                }
+            }
+            Route::GoogleLogin => self.idp_login_route(IdpProviderKey::Google).await,
+            Route::GoogleCallback => {
+                let Some((state, code)) =
+                    super::api::parse_oidc_callback_query(head.target().query())
+                else {
+                    return response::redirect_to("/");
+                };
+                self.api
+                    .idp_login_callback(IdpProviderKey::Google, &state, &code, peer)
+                    .await
+            }
+            Route::GoogleLink => self.idp_link_route(IdpProviderKey::Google, head).await,
+            Route::GoogleLinkCallback => {
+                let Some((state, code)) =
+                    super::api::parse_oidc_callback_query(head.target().query())
+                else {
+                    return response::redirect_to("/");
+                };
+                self.api
+                    .idp_link_callback(IdpProviderKey::Google, &state, &code, peer)
+                    .await
+            }
+            Route::GoogleSettings => {
+                self.branded_settings_route(IdpProviderKey::Google, head)
+                    .await
+            }
+            Route::GoogleSettingsPatch => {
+                self.branded_settings_patch_route(IdpProviderKey::Google, head, body, guard)
+                    .await
+            }
+            Route::GithubLogin => self.idp_login_route(IdpProviderKey::Github).await,
+            Route::GithubCallback => {
+                let Some((state, code)) =
+                    super::api::parse_oidc_callback_query(head.target().query())
+                else {
+                    return response::redirect_to("/");
+                };
+                self.api
+                    .idp_login_callback(IdpProviderKey::Github, &state, &code, peer)
+                    .await
+            }
+            Route::GithubLink => self.idp_link_route(IdpProviderKey::Github, head).await,
+            Route::GithubLinkCallback => {
+                let Some((state, code)) =
+                    super::api::parse_oidc_callback_query(head.target().query())
+                else {
+                    return response::redirect_to("/");
+                };
+                self.api
+                    .idp_link_callback(IdpProviderKey::Github, &state, &code, peer)
+                    .await
+            }
+            Route::GithubSettings => {
+                self.branded_settings_route(IdpProviderKey::Github, head)
+                    .await
+            }
+            Route::GithubSettingsPatch => {
+                self.branded_settings_patch_route(IdpProviderKey::Github, head, body, guard)
+                    .await
+            }
+            Route::PrometheusMetrics => self.api.prometheus_scrape(head, peer).await,
+            Route::JsonMetrics => self.api.json_metrics_scrape(head, peer).await,
+            Route::MetricsSettings => {
+                if self.api.authenticate(head).await.is_none() {
+                    return refusal(RequestRejection::NotAuthenticated);
+                }
+                match self.api.metrics_settings().await {
+                    Ok(response) => response,
+                    Err(error) => response_for_worker_error(error),
+                }
+            }
+            Route::MetricsSettingsPatch => {
+                let Some(session) = self.api.authenticate(head).await else {
+                    return refusal(RequestRejection::NotAuthenticated);
+                };
+                if let Err(rejection) = guard.check_csrf(head, &session) {
+                    return refusal(rejection);
+                }
+                match self.api.update_metrics_settings(head, body).await {
+                    Ok(response) => response,
+                    Err(rejection) => refusal(rejection),
+                }
+            }
             Route::ClientTelemetry => {
                 if self.api.authenticate(head).await.is_none() {
                     return refusal(RequestRejection::NotAuthenticated);
                 }
                 match self.api.worker().client_telemetry().await {
+                    Ok(snapshot) => json_response(eggserve_primitives::StatusCode::OK, &snapshot),
+                    Err(_) => response::unavailable(),
+                }
+            }
+            Route::ClientTelemetryHistory => {
+                if self.api.authenticate(head).await.is_none() {
+                    return refusal(RequestRejection::NotAuthenticated);
+                }
+                match self.api.worker().telemetry_history().await {
                     Ok(snapshot) => json_response(eggserve_primitives::StatusCode::OK, &snapshot),
                     Err(_) => response::unavailable(),
                 }
@@ -958,6 +1405,70 @@ fn refusal(rejection: RequestRejection) -> Response {
 /// is neither: it renders as `401` through the route's own refusal path and never
 /// reaches this function, because the route needs to know that a refusal happened
 /// rather than that a command succeeded.
+impl ManagementService {
+    async fn idp_login_route(&self, provider: crate::management::IdpProviderKey) -> Response {
+        match self
+            .api
+            .idp_login_start(provider, self.api.canonical_origin())
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => response_for_worker_error(error),
+        }
+    }
+
+    async fn idp_link_route(
+        &self,
+        provider: crate::management::IdpProviderKey,
+        head: &RequestHead,
+    ) -> Response {
+        let Some(session) = self.api.authenticate(head).await else {
+            return refusal(RequestRejection::NotAuthenticated);
+        };
+        match self
+            .api
+            .idp_link_start(provider, &session, self.api.canonical_origin())
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => response_for_worker_error(error),
+        }
+    }
+
+    async fn branded_settings_route(
+        &self,
+        provider: crate::management::IdpProviderKey,
+        head: &RequestHead,
+    ) -> Response {
+        if self.api.authenticate(head).await.is_none() {
+            return refusal(RequestRejection::NotAuthenticated);
+        }
+        match self.api.branded_settings(provider).await {
+            Ok(response) => response,
+            Err(error) => response_for_worker_error(error),
+        }
+    }
+
+    async fn branded_settings_patch_route(
+        &self,
+        provider: crate::management::IdpProviderKey,
+        head: &RequestHead,
+        body: &[u8],
+        guard: &super::api::RequestGuard,
+    ) -> Response {
+        let Some(session) = self.api.authenticate(head).await else {
+            return refusal(RequestRejection::NotAuthenticated);
+        };
+        if let Err(rejection) = guard.check_csrf(head, &session) {
+            return refusal(rejection);
+        }
+        match self.api.update_branded_settings(head, body, provider).await {
+            Ok(response) => response,
+            Err(rejection) => refusal(rejection),
+        }
+    }
+}
+
 fn response_for_worker_error(error: WorkerError) -> Response {
     match error {
         WorkerError::Saturated
@@ -992,6 +1503,8 @@ impl Service for ManagementService {
                         LOGIN_BODY_LIMIT
                     } else if matches!(matched, Route::EnrollmentConsume(_)) {
                         super::api::ENROLLMENT_BODY_LIMIT
+                    } else if matches!(matched, Route::AccountPassword) {
+                        super::api::ACCOUNT_PASSWORD_BODY_LIMIT
                     } else {
                         PRODUCT_BODY_LIMIT
                     }) as u64,
@@ -1011,11 +1524,20 @@ impl Service for ManagementService {
             .connection()
             .remote_addr
             .unwrap_or_else(|| SocketAddr::from(([127, 0, 0, 1], 0)));
-        let matched = route(head.target().path());
+        let matched = refine_route(route(head.target().path()), head.method().as_str());
         let body_limit = if matches!(matched, Route::Login) {
             LOGIN_BODY_LIMIT
+        } else if matches!(matched, Route::LoginTotp) {
+            super::api::LOGIN_TOTP_BODY_LIMIT
         } else if matches!(matched, Route::EnrollmentConsume(_)) {
             super::api::ENROLLMENT_BODY_LIMIT
+        } else if matches!(matched, Route::AccountPassword)
+            || matches!(
+                matched,
+                Route::AccountTotpConfirm | Route::AccountTotpDisable
+            )
+        {
+            super::api::ACCOUNT_PASSWORD_BODY_LIMIT
         } else {
             PRODUCT_BODY_LIMIT
         };
@@ -1263,7 +1785,16 @@ mod tests {
         assert_eq!(route("/api/v1/logout"), Route::Logout);
         assert_eq!(route("/api/v1/session"), Route::Session);
         assert_eq!(route("/api/v1/health"), Route::ApiHealth);
+        assert_eq!(route("/api/v1/account"), Route::Account);
+        assert_eq!(route("/api/v1/account/password"), Route::AccountPassword);
+        assert_eq!(route(PROMETHEUS_METRICS_PATH), Route::PrometheusMetrics);
+        assert_eq!(route(JSON_METRICS_PATH), Route::JsonMetrics);
+        assert_eq!(route(METRICS_SETTINGS_PATH), Route::MetricsSettings);
         assert_eq!(route("/api/v1/clients/telemetry"), Route::ClientTelemetry);
+        assert_eq!(
+            route("/api/v1/clients/telemetry-history"),
+            Route::ClientTelemetryHistory
+        );
         assert_eq!(
             route("/api/v1/network-prerequisites"),
             Route::NetworkPrerequisites
@@ -1316,12 +1847,15 @@ mod tests {
     #[test]
     fn only_declared_json_routes_accept_bodies() {
         assert!(Route::Login.accepts_body());
+        assert!(Route::AccountPassword.accepts_body());
         for matched in [
             Route::Healthz,
             Route::Logout,
             Route::Session,
             Route::ApiHealth,
+            Route::Account,
             Route::ClientTelemetry,
+            Route::ClientTelemetryHistory,
             Route::NetworkPrerequisites,
             Route::Audit(None),
             Route::Shell,
@@ -1347,10 +1881,13 @@ mod tests {
         assert!(Route::Session.accepts("GET"));
         assert!(Route::ApiHealth.accepts("GET"));
         assert!(Route::ClientTelemetry.accepts("GET"));
+        assert!(Route::ClientTelemetryHistory.accepts("GET"));
         assert!(Route::NetworkPrerequisites.accepts("GET"));
         assert!(Route::Audit(None).accepts("GET"));
         assert!(Route::Login.accepts("POST"));
         assert!(Route::Logout.accepts("POST"));
+        assert!(Route::Account.accepts("GET"));
+        assert!(Route::AccountPassword.accepts("POST"));
 
         // HEAD is answered nowhere, so a prober cannot use it to read a body it
         // was not allowed a GET for.
@@ -1359,10 +1896,13 @@ mod tests {
             Route::Session,
             Route::ApiHealth,
             Route::ClientTelemetry,
+            Route::ClientTelemetryHistory,
             Route::NetworkPrerequisites,
             Route::Audit(None),
             Route::Login,
             Route::Logout,
+            Route::Account,
+            Route::AccountPassword,
         ] {
             assert!(!matched.accepts("HEAD"), "{matched:?} must refuse HEAD");
         }

@@ -35,10 +35,17 @@
 //! the store that owns them, exactly as it does for desired state.
 
 mod auth;
+mod auth_idp;
 mod convergence;
 pub(crate) mod desired;
+mod metrics;
+mod oidc;
 pub(crate) mod product;
+mod telemetry;
+
+pub use telemetry::TelemetrySampleInsert;
 pub(crate) mod sql;
+mod totp;
 
 use super::{
     error::StateError,
@@ -52,6 +59,12 @@ use std::{
 };
 
 pub use auth::{PrincipalRecord, SessionRecord, StoredSession, MAX_LIVE_SESSIONS_PER_PRINCIPAL};
+pub use auth_idp::{AuthIdpPolicyRecord, BrandedOAuthProviderRecord};
+pub use oidc::{
+    OidcProviderRecord, OidcTransientKind, OidcTransientRecord, OIDC_COMPLETION_LIFETIME_SECONDS,
+    OIDC_TRANSIENT_LIFETIME_SECONDS,
+};
+pub use totp::TOTP_PRE_SESSION_LIFETIME_SECONDS;
 
 /// The authoritative unprivileged application-state store.
 pub struct StateStore {

@@ -61,7 +61,10 @@ pub use store::product::{
     MAX_LIVE_ENROLLMENT_CAPABILITIES_PER_CLIENT,
 };
 pub use store::{
-    PrincipalRecord, SessionRecord, StateStore, StoredSession, MAX_LIVE_SESSIONS_PER_PRINCIPAL,
+    AuthIdpPolicyRecord, BrandedOAuthProviderRecord, OidcProviderRecord, OidcTransientKind,
+    OidcTransientRecord, PrincipalRecord, SessionRecord, StateStore, StoredSession,
+    TelemetrySampleInsert, MAX_LIVE_SESSIONS_PER_PRINCIPAL, OIDC_COMPLETION_LIFETIME_SECONDS,
+    OIDC_TRANSIENT_LIFETIME_SECONDS, TOTP_PRE_SESSION_LIFETIME_SECONDS,
 };
 
 /// Current Unix time in seconds, the same clock every stored timestamp uses.

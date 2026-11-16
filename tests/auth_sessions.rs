@@ -24,13 +24,33 @@ use wg_basic::{
         SessionTokenDigest, ARGON2ID_PHC_PREFIX, ARGON2_ITERATIONS, ARGON2_MEMORY_KIB,
         ARGON2_PARALLELISM, MIN_PASSWORD_BYTES,
     },
-    management::{spawn, AuthService, WorkerClient, WorkerConfig, WorkerStartup},
+    management::{
+        spawn, AuthService, IssuedSession, LoginOutcome, WorkerClient, WorkerConfig, WorkerStartup,
+    },
     state::{SessionRecord, StateStore},
 };
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 const PASSWORD: &str = "an administrator password";
+
+fn expect_session(outcome: LoginOutcome) -> IssuedSession {
+    match outcome {
+        LoginOutcome::Session(issued) => issued,
+        LoginOutcome::TotpChallenge(_) => {
+            panic!("expected a product session, not a TOTP challenge")
+        }
+    }
+}
+
+async fn login_session(client: &WorkerClient, username: &str, password: &str) -> IssuedSession {
+    expect_session(
+        client
+            .authenticate(username.to_owned(), password.to_owned())
+            .await
+            .expect("authentication crosses the worker"),
+    )
+}
 
 /// A self-cleaning scratch directory.
 struct Scratch(PathBuf);
@@ -355,10 +375,7 @@ async fn the_worker_owns_credential_and_session_operations() {
         .expect("provisioning crosses the worker");
     assert_eq!(status.username, "admin");
 
-    let issued = client
-        .authenticate("admin".into(), PASSWORD.into())
-        .await
-        .expect("authentication crosses the worker");
+    let issued = login_session(&client, "admin", PASSWORD).await;
 
     let resolved = client
         .resolve_session(issued.token.expose_once().to_owned())
@@ -414,14 +431,8 @@ async fn a_password_reset_across_the_worker_revokes_every_session() {
         .await
         .unwrap();
 
-    let first = client
-        .authenticate("admin".into(), PASSWORD.into())
-        .await
-        .unwrap();
-    let second = client
-        .authenticate("admin".into(), PASSWORD.into())
-        .await
-        .unwrap();
+    let first = login_session(&client, "admin", PASSWORD).await;
+    let second = login_session(&client, "admin", PASSWORD).await;
     assert_eq!(
         client.admin_status().await.unwrap().unwrap().live_sessions,
         2
@@ -464,10 +475,7 @@ async fn authentication_across_the_worker_never_advances_the_desired_generation(
         .set_admin_password("admin".into(), PASSWORD.into())
         .await
         .unwrap();
-    let issued = client
-        .authenticate("admin".into(), PASSWORD.into())
-        .await
-        .unwrap();
+    let issued = login_session(&client, "admin", PASSWORD).await;
     client
         .resolve_session(issued.token.expose_once().to_owned())
         .await
@@ -476,10 +484,7 @@ async fn authentication_across_the_worker_never_advances_the_desired_generation(
         .revoke_session(issued.token.expose_once().to_owned())
         .await
         .unwrap();
-    client
-        .authenticate("admin".into(), PASSWORD.into())
-        .await
-        .unwrap();
+    login_session(&client, "admin", PASSWORD).await;
     client.purge_expired_sessions().await.unwrap();
     startup.stop().await.unwrap();
 
@@ -503,10 +508,7 @@ async fn the_raw_token_is_absent_from_the_database_after_a_worker_login() {
         .set_admin_password("admin".into(), PASSWORD.into())
         .await
         .unwrap();
-    let issued = client
-        .authenticate("admin".into(), PASSWORD.into())
-        .await
-        .unwrap();
+    let issued = login_session(&client, "admin", PASSWORD).await;
     startup.stop().await.unwrap();
 
     // Read the file with an independent connection so this proves what is on
@@ -621,8 +623,8 @@ fn a_csrf_token_is_issued_per_session_and_is_not_the_bearer() {
     let auth = AuthService::new(&store);
     auth.set_password("admin", PASSWORD).unwrap();
 
-    let first = auth.authenticate("admin", PASSWORD).unwrap();
-    let second = auth.authenticate("admin", PASSWORD).unwrap();
+    let first = expect_session(auth.authenticate("admin", PASSWORD).unwrap());
+    let second = expect_session(auth.authenticate("admin", PASSWORD).unwrap());
     assert_ne!(
         first.csrf_token().expose_once(),
         second.csrf_token().expose_once(),

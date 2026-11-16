@@ -27,9 +27,13 @@ pub use crate::domain::AuthError;
 use crate::{
     domain::{
         check_password_policy, CsrfToken, PasswordVerifier, PrincipalId, SessionId, SessionToken,
-        TIMING_EQUALISER_VERIFIER,
+        TotpSecret, TIMING_EQUALISER_VERIFIER,
     },
-    state::{PrincipalRecord, SessionRecord, StateError, StateStore, StoredSession},
+    product::export::render_qr_svg,
+    state::{
+        PrincipalRecord, SessionRecord, StateError, StateStore, StoredSession,
+        TOTP_PRE_SESSION_LIFETIME_SECONDS,
+    },
 };
 use std::{
     sync::OnceLock,
@@ -81,6 +85,44 @@ impl IssuedSession {
     }
 }
 
+/// A short-lived TOTP challenge issued after password success.
+#[derive(Debug)]
+pub struct IssuedPreSession {
+    pub principal_id: PrincipalId,
+    /// The challenge bearer. Handed out exactly once.
+    pub token: SessionToken,
+    pub expires_at: i64,
+}
+
+/// What password authentication may conclude as.
+#[derive(Debug)]
+pub enum LoginOutcome {
+    Session(IssuedSession),
+    TotpChallenge(IssuedPreSession),
+}
+
+/// One-time enrollment material for the account settings surface.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub struct TotpEnrollView {
+    pub otpauth_uri: String,
+    pub qr_svg: String,
+}
+
+/// Issuer name embedded in otpauth URIs.
+const TOTP_ISSUER: &str = "wg-basic";
+
+/// What a signed-in operator may learn about their account over HTTP.
+///
+/// Deliberately secret-free: no verifier, no password material, and no session
+/// bearer. Placeholder flags reserve space for later TOTP and IdP milestones.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub struct AccountView {
+    pub username: String,
+    pub password_auth_enabled: bool,
+    pub totp_enabled: bool,
+    pub principal_id: PrincipalId,
+}
+
 /// What an operator may learn about the local administrator.
 ///
 /// Deliberately has no field for a verifier, a token, or a password, so this can
@@ -115,6 +157,15 @@ pub fn set_password_at(
 ) -> Result<AdminStatus, AuthError> {
     let store = open_or_initialize(path).map_err(|_| AuthError::StorageUnavailable)?;
     let auth = AuthService::new(&store);
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs() as i64)
+        .unwrap_or(0);
+    if let Ok(policy) = store.auth_idp_policy() {
+        if !policy.password_auth_enabled {
+            let _ = store.set_password_auth_enabled(true, now);
+        }
+    }
     auth.set_password(username, password)?;
     // Re-read through the same safe projection the HTTP surface will use, so
     // the CLI and M003 cannot report different things.
@@ -244,7 +295,12 @@ impl<'a> AuthService<'a> {
     /// unknown username and a disabled principal: if those produced a different
     /// answer, this function would be a username oracle, and the cost of Argon2
     /// would leak the difference too.
-    pub fn authenticate(&self, username: &str, password: &str) -> Result<IssuedSession, AuthError> {
+    pub fn authenticate(&self, username: &str, password: &str) -> Result<LoginOutcome, AuthError> {
+        if let Ok(policy) = self.store.auth_idp_policy() {
+            if !policy.password_auth_enabled {
+                return Err(self.reject_without_principal(password));
+            }
+        }
         // The policy still applies on the way in: an over-long candidate must
         // not be hashed, so a login cannot be used to submit unbounded Argon2
         // work.
@@ -265,7 +321,139 @@ impl<'a> AuthService<'a> {
         if !principal.verifier.verify(password) {
             return Err(AuthError::CredentialsRejected);
         }
-        self.issue_session(principal.id)
+        if self
+            .store
+            .totp_enabled(principal.id)
+            .map_err(map_store_error)?
+        {
+            return self
+                .issue_pre_session(principal.id)
+                .map(LoginOutcome::TotpChallenge);
+        }
+        self.issue_session(principal.id).map(LoginOutcome::Session)
+    }
+
+    /// Completes login after a password challenge when TOTP is enabled.
+    pub fn verify_totp_login(
+        &self,
+        presented: &str,
+        code: &str,
+    ) -> Result<IssuedSession, AuthError> {
+        if presented.is_empty() {
+            return Err(AuthError::CredentialsRejected);
+        }
+        let digest = SessionToken::digest_of(presented);
+        let now = now_seconds();
+        let principal_id = self
+            .store
+            .resolve_totp_pre_session(&digest, now)
+            .map_err(map_store_error)?
+            .ok_or(AuthError::CredentialsRejected)?;
+        let secret = self
+            .store
+            .totp_secret_for_verification(principal_id)
+            .map_err(map_store_error)?
+            .ok_or(AuthError::CredentialsRejected)?;
+        if !secret.verify_code(code, now) {
+            return Err(AuthError::CredentialsRejected);
+        }
+        self.store
+            .revoke_totp_pre_session(&digest)
+            .map_err(|_| AuthError::StorageUnavailable)?;
+        self.issue_session(principal_id)
+    }
+
+    /// Starts TOTP enrollment for the signed-in principal.
+    pub fn begin_totp_enroll(
+        &self,
+        principal_id: PrincipalId,
+    ) -> Result<TotpEnrollView, AuthError> {
+        let principal = self
+            .store
+            .principal_by_id(principal_id)
+            .map_err(map_store_error)?
+            .ok_or(AuthError::NoPrincipal)?;
+        if !principal.enabled {
+            return Err(AuthError::CredentialsRejected);
+        }
+        if self
+            .store
+            .totp_enabled(principal_id)
+            .map_err(map_store_error)?
+        {
+            return Err(AuthError::CredentialsRejected);
+        }
+        let secret = TotpSecret::generate()?;
+        let now = now_seconds();
+        self.store
+            .set_totp_pending_secret(principal_id, &secret, now)
+            .map_err(|_| AuthError::StorageUnavailable)?;
+        let otpauth_uri = secret.otpauth_uri(TOTP_ISSUER, &principal.username);
+        let qr_svg = render_qr_svg(&otpauth_uri)
+            .map_err(|_| AuthError::SessionUnavailable)?
+            .expose()
+            .to_owned();
+        Ok(TotpEnrollView {
+            otpauth_uri,
+            qr_svg,
+        })
+    }
+
+    /// Promotes a pending enroll secret after a valid verification code.
+    pub fn confirm_totp_enroll(
+        &self,
+        principal_id: PrincipalId,
+        code: &str,
+    ) -> Result<(), AuthError> {
+        let pending = self
+            .store
+            .totp_pending_secret(principal_id)
+            .map_err(map_store_error)?
+            .ok_or(AuthError::CredentialsRejected)?;
+        if !pending.verify_code(code, now_seconds()) {
+            return Err(AuthError::CredentialsRejected);
+        }
+        self.store
+            .confirm_totp_enrollment(principal_id, now_seconds())
+            .map_err(|_| AuthError::StorageUnavailable)
+    }
+
+    /// Removes TOTP after password proof (password auth remains enabled in M002).
+    pub fn disable_totp(
+        &self,
+        principal_id: PrincipalId,
+        current_password: &str,
+        code: &str,
+    ) -> Result<(), AuthError> {
+        let principal = self
+            .store
+            .principal_by_id(principal_id)
+            .map_err(map_store_error)?
+            .ok_or(AuthError::NoPrincipal)?;
+        if !principal.enabled {
+            return Err(AuthError::CredentialsRejected);
+        }
+        if !principal.verifier.verify(current_password) {
+            return Err(AuthError::CredentialsRejected);
+        }
+        if !self
+            .store
+            .totp_enabled(principal_id)
+            .map_err(map_store_error)?
+        {
+            return Err(AuthError::CredentialsRejected);
+        }
+        let secret = self
+            .store
+            .totp_secret_for_verification(principal_id)
+            .map_err(map_store_error)?
+            .ok_or(AuthError::CredentialsRejected)?;
+        if !secret.verify_code(code, now_seconds()) {
+            return Err(AuthError::CredentialsRejected);
+        }
+        self.store
+            .disable_totp(principal_id, now_seconds())
+            .map_err(|_| AuthError::StorageUnavailable)
     }
 
     /// Spends an Argon2 verification against the fixed dummy verifier, then
@@ -277,6 +465,22 @@ impl<'a> AuthService<'a> {
     fn reject_without_principal(&self, password: &str) -> AuthError {
         equaliser().verify(password);
         AuthError::CredentialsRejected
+    }
+
+    /// Issues a session after an external identity factor succeeded.
+    pub(crate) fn issue_session_for_principal(
+        &self,
+        principal_id: PrincipalId,
+    ) -> Result<IssuedSession, AuthError> {
+        self.issue_session(principal_id)
+    }
+
+    /// Issues a TOTP challenge after an external identity factor succeeded.
+    pub(crate) fn issue_pre_session_for_principal(
+        &self,
+        principal_id: PrincipalId,
+    ) -> Result<IssuedPreSession, AuthError> {
+        self.issue_pre_session(principal_id)
     }
 
     /// Issues a session for an already-authenticated principal.
@@ -302,6 +506,21 @@ impl<'a> AuthService<'a> {
             .insert_session(&session, &token.digest())
             .map_err(|_| AuthError::SessionUnavailable)?;
         Ok(IssuedSession { session, token })
+    }
+
+    /// Issues a digest-stored TOTP login challenge.
+    fn issue_pre_session(&self, principal_id: PrincipalId) -> Result<IssuedPreSession, AuthError> {
+        let token = SessionToken::generate()?;
+        let created_at = now_seconds();
+        let expires_at = created_at + TOTP_PRE_SESSION_LIFETIME_SECONDS;
+        self.store
+            .insert_totp_pre_session(principal_id, &token.digest(), created_at, expires_at)
+            .map_err(|_| AuthError::SessionUnavailable)?;
+        Ok(IssuedPreSession {
+            principal_id,
+            token,
+            expires_at,
+        })
     }
 
     /// Resolves a presented bearer token to its live session.
@@ -344,6 +563,65 @@ impl<'a> AuthService<'a> {
         self.store
             .purge_expired_sessions(now_seconds())
             .map_err(|_| AuthError::StorageUnavailable)
+    }
+
+    /// Projects one principal for the account settings surface.
+    pub fn account_view(&self, principal_id: PrincipalId) -> Result<AccountView, AuthError> {
+        let principal = self
+            .store
+            .principal_by_id(principal_id)
+            .map_err(map_store_error)?
+            .ok_or(AuthError::NoPrincipal)?;
+        if !principal.enabled {
+            return Err(AuthError::CredentialsRejected);
+        }
+        let password_auth_enabled = self
+            .store
+            .auth_idp_policy()
+            .map(|policy| policy.password_auth_enabled)
+            .unwrap_or(true);
+        Ok(AccountView {
+            username: principal.username,
+            password_auth_enabled,
+            totp_enabled: self
+                .store
+                .totp_enabled(principal.id)
+                .map_err(map_store_error)?,
+            principal_id: principal.id,
+        })
+    }
+
+    /// Verifies the current password, replaces the verifier, and revokes siblings.
+    pub fn change_password(
+        &self,
+        principal_id: PrincipalId,
+        current: &str,
+        new: &str,
+        keep_session_id: SessionId,
+    ) -> Result<(), AuthError> {
+        check_password_policy(new.as_bytes()).map_err(|_| AuthError::CredentialsRejected)?;
+        let principal = self
+            .store
+            .principal_by_id(principal_id)
+            .map_err(map_store_error)?
+            .ok_or(AuthError::NoPrincipal)?;
+        if !principal.enabled {
+            return Err(AuthError::CredentialsRejected);
+        }
+        if !principal.verifier.verify(current) {
+            return Err(AuthError::CredentialsRejected);
+        }
+        let verifier = PasswordVerifier::hash(new).map_err(|_| AuthError::MalformedVerifier)?;
+        let now = now_seconds();
+        self.store
+            .change_password_and_revoke_sibling_sessions(
+                principal_id,
+                verifier,
+                keep_session_id,
+                now,
+            )
+            .map_err(|_| AuthError::StorageUnavailable)?;
+        Ok(())
     }
 
     /// The safe operator-facing projection of the local administrator.
@@ -487,6 +765,15 @@ mod tests {
 
     const PASSWORD: &str = "a long enough admin password";
 
+    fn expect_session(outcome: LoginOutcome) -> IssuedSession {
+        match outcome {
+            LoginOutcome::Session(issued) => issued,
+            LoginOutcome::TotpChallenge(_) => {
+                panic!("expected a product session, not a TOTP challenge")
+            }
+        }
+    }
+
     #[test]
     fn provisioning_then_authenticating_issues_a_session() {
         let (_dir, store) = store();
@@ -495,7 +782,7 @@ mod tests {
         let principal = auth.set_password("admin", PASSWORD).unwrap();
         assert!(principal.enabled);
 
-        let issued = auth.authenticate("admin", PASSWORD).unwrap();
+        let issued = expect_session(auth.authenticate("admin", PASSWORD).unwrap());
         assert_eq!(issued.session.principal_id, principal.id);
         assert!(issued.session.expires_at > issued.session.created_at);
 
@@ -510,7 +797,7 @@ mod tests {
         let (_dir, store) = store();
         let auth = AuthService::new(&store);
         auth.set_password("admin", PASSWORD).unwrap();
-        let issued = auth.authenticate("admin", PASSWORD).unwrap();
+        let issued = expect_session(auth.authenticate("admin", PASSWORD).unwrap());
 
         let digests = store.session_digests_for_test().unwrap();
         assert_eq!(digests.len(), 1);
@@ -569,7 +856,7 @@ mod tests {
         let (_dir, store) = store();
         let auth = AuthService::new(&store);
         auth.set_password("admin", PASSWORD).unwrap();
-        let issued = auth.authenticate("admin", PASSWORD).unwrap();
+        let issued = expect_session(auth.authenticate("admin", PASSWORD).unwrap());
 
         auth.revoke_session(issued.token.expose_once()).unwrap();
         assert_eq!(
@@ -608,7 +895,7 @@ mod tests {
         let (_dir, store) = store();
         let auth = AuthService::new(&store);
         auth.set_password("admin", PASSWORD).unwrap();
-        let issued = auth.authenticate("admin", PASSWORD).unwrap();
+        let issued = expect_session(auth.authenticate("admin", PASSWORD).unwrap());
         let digest = issued.token.digest();
 
         // Expiry is evaluated against an explicit `now`, so the rule is proven
@@ -638,13 +925,83 @@ mod tests {
     }
 
     #[test]
+    fn browser_password_change_keeps_one_session_and_revokes_siblings() {
+        let (_dir, store) = store();
+        let auth = AuthService::new(&store);
+        auth.set_password("admin", PASSWORD).unwrap();
+
+        let first = expect_session(auth.authenticate("admin", PASSWORD).unwrap());
+        let second = expect_session(auth.authenticate("admin", PASSWORD).unwrap());
+        assert_eq!(store.session_count().unwrap(), 2);
+
+        let new_password = "another long password for the account";
+        auth.change_password(
+            first.session.principal_id,
+            PASSWORD,
+            new_password,
+            first.session.id,
+        )
+        .unwrap();
+
+        assert!(
+            auth.resolve_session(first.token.expose_once()).is_ok(),
+            "the completing session must stay valid"
+        );
+        assert!(
+            auth.resolve_session(second.token.expose_once()).is_err(),
+            "sibling sessions must be revoked"
+        );
+        assert_eq!(
+            auth.authenticate("admin", PASSWORD).err(),
+            Some(AuthError::CredentialsRejected)
+        );
+        assert!(matches!(
+            auth.authenticate("admin", new_password),
+            Ok(LoginOutcome::Session(_))
+        ));
+    }
+
+    #[test]
+    fn a_wrong_current_password_leaves_the_verifier_unchanged() {
+        let (_dir, store) = store();
+        let auth = AuthService::new(&store);
+        let principal = auth.set_password("admin", PASSWORD).unwrap();
+        let issued = expect_session(auth.authenticate("admin", PASSWORD).unwrap());
+        let before = store
+            .principal_verifier_for_test(principal.id)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            auth.change_password(
+                principal.id,
+                "definitely not the password",
+                "another long password entirely",
+                issued.session.id,
+            )
+            .err(),
+            Some(AuthError::CredentialsRejected)
+        );
+
+        let after = store
+            .principal_verifier_for_test(principal.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(before, after);
+        assert!(matches!(
+            auth.authenticate("admin", PASSWORD),
+            Ok(LoginOutcome::Session(_))
+        ));
+    }
+
+    #[test]
     fn a_password_reset_revokes_every_prior_session() {
         let (_dir, store) = store();
         let auth = AuthService::new(&store);
         auth.set_password("admin", PASSWORD).unwrap();
 
-        let first = auth.authenticate("admin", PASSWORD).unwrap();
-        let second = auth.authenticate("admin", PASSWORD).unwrap();
+        let first = expect_session(auth.authenticate("admin", PASSWORD).unwrap());
+        let second = expect_session(auth.authenticate("admin", PASSWORD).unwrap());
         assert_eq!(store.session_count().unwrap(), 2);
 
         let new_password = "an entirely different long password";
@@ -662,7 +1019,10 @@ mod tests {
             Some(AuthError::CredentialsRejected),
             "the old password must stop working"
         );
-        assert!(auth.authenticate("admin", new_password).is_ok());
+        assert!(matches!(
+            auth.authenticate("admin", new_password),
+            Ok(LoginOutcome::Session(_))
+        ));
     }
 
     #[test]
@@ -672,10 +1032,10 @@ mod tests {
         let auth = AuthService::new(&store);
 
         auth.set_password("admin", PASSWORD).unwrap();
-        let issued = auth.authenticate("admin", PASSWORD).unwrap();
+        let issued = expect_session(auth.authenticate("admin", PASSWORD).unwrap());
         auth.resolve_session(issued.token.expose_once()).unwrap();
         auth.revoke_session(issued.token.expose_once()).unwrap();
-        auth.authenticate("admin", PASSWORD).unwrap();
+        expect_session(auth.authenticate("admin", PASSWORD).unwrap());
         auth.purge_expired_sessions().unwrap();
 
         let after = store.installation_metadata().unwrap();
@@ -761,7 +1121,7 @@ mod tests {
         assert!(auth.status().unwrap().is_none());
 
         auth.set_password("admin", PASSWORD).unwrap();
-        let issued = auth.authenticate("admin", PASSWORD).unwrap();
+        let issued = expect_session(auth.authenticate("admin", PASSWORD).unwrap());
         let status = auth.status().unwrap().unwrap();
         assert_eq!(status.username, "admin");
         assert!(status.enabled);
@@ -779,8 +1139,8 @@ mod tests {
         let auth = AuthService::new(&store);
         auth.set_password("admin", PASSWORD).unwrap();
 
-        let first = auth.authenticate("admin", PASSWORD).unwrap();
-        let second = auth.authenticate("admin", PASSWORD).unwrap();
+        let first = expect_session(auth.authenticate("admin", PASSWORD).unwrap());
+        let second = expect_session(auth.authenticate("admin", PASSWORD).unwrap());
         assert_eq!(store.session_count().unwrap(), 2);
 
         // Sweep strictly beyond both expiries. Sessions issued in the same
@@ -800,7 +1160,7 @@ mod tests {
         let (_dir, store) = store();
         let auth = AuthService::new(&store);
         auth.set_password("admin", PASSWORD).unwrap();
-        let issued = auth.authenticate("admin", PASSWORD).unwrap();
+        let issued = expect_session(auth.authenticate("admin", PASSWORD).unwrap());
 
         // One second before expiry: nothing is due.
         assert_eq!(
@@ -995,6 +1355,94 @@ mod tests {
             "a disabled principal refused in {disabled:?} against {wrong_password:?}; the \
              equaliser should be in the same order of magnitude, not merely slower"
         );
+    }
+
+    #[test]
+    fn totp_enroll_confirm_and_login_require_second_factor() {
+        let (_dir, store) = store();
+        let auth = AuthService::new(&store);
+        let principal = auth.set_password("admin", PASSWORD).unwrap();
+        let enroll = auth.begin_totp_enroll(principal.id).unwrap();
+        assert!(!enroll.qr_svg.is_empty());
+        assert!(enroll.otpauth_uri.contains("otpauth://totp/"));
+        let pending = store.totp_pending_secret(principal.id).unwrap().unwrap();
+        let now = now_seconds();
+        let code = totp_code_for_now(pending.expose_for_storage(), now);
+        auth.confirm_totp_enroll(principal.id, &code).unwrap();
+        let challenge = match auth.authenticate("admin", PASSWORD).unwrap() {
+            LoginOutcome::TotpChallenge(challenge) => challenge,
+            LoginOutcome::Session(_) => panic!("password login must stop at TOTP"),
+        };
+        assert!(auth
+            .verify_totp_login(challenge.token.expose_once(), "000000")
+            .is_err());
+        let issued = auth
+            .verify_totp_login(challenge.token.expose_once(), &code)
+            .unwrap();
+        assert_eq!(issued.session.principal_id, principal.id);
+        assert!(auth
+            .verify_totp_login(challenge.token.expose_once(), &code)
+            .is_err());
+    }
+
+    fn totp_code_for_now(secret_b32: &str, now: i64) -> String {
+        use crate::domain::{TOTP_DIGITS, TOTP_STEP_SECONDS};
+        use totp_lite::{totp_custom, Sha1};
+        totp_custom::<Sha1>(
+            TOTP_STEP_SECONDS,
+            TOTP_DIGITS,
+            &decode_base32_vec(secret_b32),
+            now.max(0) as u64,
+        )
+    }
+
+    fn decode_base32_vec(input: &str) -> Vec<u8> {
+        const ALPHABET: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+        let mut bytes = Vec::new();
+        let mut buffer = 0u32;
+        let mut bits_left = 0;
+        for byte in input.bytes() {
+            let upper = byte.to_ascii_uppercase();
+            let index = ALPHABET.iter().position(|&c| c == upper).unwrap();
+            buffer = (buffer << 5) | u32::from(index as u8);
+            bits_left += 5;
+            if bits_left >= 8 {
+                bits_left -= 8;
+                bytes.push((buffer >> bits_left) as u8);
+                buffer &= (1 << bits_left) - 1;
+            }
+        }
+        bytes
+    }
+
+    #[test]
+    fn totp_disable_restores_password_only_login() {
+        let (_dir, store) = store();
+        let auth = AuthService::new(&store);
+        let principal = auth.set_password("admin", PASSWORD).unwrap();
+        auth.begin_totp_enroll(principal.id).unwrap();
+        let pending = store.totp_pending_secret(principal.id).unwrap().unwrap();
+        let now = now_seconds();
+        let code = totp_code_for_now(pending.expose_for_storage(), now);
+        auth.confirm_totp_enroll(principal.id, &code).unwrap();
+        auth.disable_totp(principal.id, PASSWORD, &code).unwrap();
+        assert!(matches!(
+            auth.authenticate("admin", PASSWORD).unwrap(),
+            LoginOutcome::Session(_)
+        ));
+    }
+
+    #[test]
+    fn account_view_never_carries_totp_secrets() {
+        let (_dir, store) = store();
+        let auth = AuthService::new(&store);
+        let principal = auth.set_password("admin", PASSWORD).unwrap();
+        auth.begin_totp_enroll(principal.id).unwrap();
+        let view = auth.account_view(principal.id).unwrap();
+        assert!(!view.totp_enabled);
+        let rendered = serde_json::to_string(&view).unwrap();
+        let pending = store.totp_pending_secret(principal.id).unwrap().unwrap();
+        assert!(!rendered.contains(pending.expose_for_storage()));
     }
 
     #[test]

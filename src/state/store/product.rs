@@ -127,6 +127,14 @@ impl ProductAudit {
             resource_id: Some(id.to_string()),
         }
     }
+
+    pub fn principal(action: AuditAction, id: impl ToString) -> Self {
+        Self {
+            action,
+            resource_kind: AuditResourceKind::Principal,
+            resource_id: Some(id.to_string()),
+        }
+    }
 }
 
 impl StateStore {
@@ -959,6 +967,9 @@ fn parse_action(value: &str) -> Option<AuditAction> {
         AuditAction::EnrollmentCapabilityCreated,
         AuditAction::EnrollmentCapabilityRevoked,
         AuditAction::EnrollmentCapabilityConsumed,
+        AuditAction::AdminPasswordChanged,
+        AuditAction::AdminTotpEnabled,
+        AuditAction::AdminTotpDisabled,
     ]
     .into_iter()
     .find(|action| action.as_str() == value)
@@ -969,6 +980,7 @@ fn parse_resource_kind(value: &str) -> Option<AuditResourceKind> {
         AuditResourceKind::Server,
         AuditResourceKind::Client,
         AuditResourceKind::EnrollmentCapability,
+        AuditResourceKind::Principal,
     ]
     .into_iter()
     .find(|kind| kind.as_str() == value)

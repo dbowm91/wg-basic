@@ -61,6 +61,7 @@ CORS policy. Setup, create, update, enable, disable, and delete use an explicit
 | POST | `/api/v1/enroll/<uuid>/consume` | Consume a valid capability exactly once |
 | GET | `/api/v1/network-prerequisites` | Read forwarding, attachment lines, and the current policy verdict |
 | GET | `/api/v1/clients/telemetry` | Observe live WireGuard peer telemetry |
+| GET | `/api/v1/clients/telemetry-history` | Read bounded per-client telemetry samples |
 | GET | `/api/v1/audit` | Read the newest audit page |
 | GET | `/api/v1/audit/<unix-seconds>/<event-uuid>` | Read the next stable audit page |
 
@@ -95,7 +96,15 @@ Telemetry is a fresh read-only observation through the worker and existing
 public key, then returned with stable client/peer IDs, present/missing state,
 drift, endpoint, absolute Unix-second handshake time and age, and byte counts.
 It is never written to SQLite. At most 1,024 client rows are returned; an
-explicit `truncated` flag identifies larger installations. Audit pages contain
+explicit `truncated` flag identifies larger installations.
+
+While a server is configured, the worker samples live telemetry every **30**
+seconds into `telemetry_samples`, retaining the newest **120** points per client
+(~one hour). History is an operational cache: it does not advance
+`DesiredGeneration`, is not required for reconcile, and may be lost on restore.
+`GET /api/v1/clients/telemetry-history` returns chronological points per client
+for sparklines (session-authenticated safe `GET`). Client delete cascades
+samples. Audit pages contain
 at most 100 immutable events and use timestamp plus event ID to continue
 newest-first ordering.
 
@@ -158,15 +167,18 @@ create/edit/enable/disable/delete, an optional deadline, a generate-or-clear
 preshared key, an optional client MTU, name/address/state/expiry filters over
 the loaded client list, explicit config/QR export, one-time link
 create/revoke, bounded visible-page telemetry refresh, and recent audit
-history. Saving a client does not send a preshared-key verb. Generate and
-clear are separate requests, and the page says a device must re-import.
-Enabling a client whose expiry state is `expired` clears the deadline in that
-request. Mutations carry the generation from the latest API read; a `409`
-refreshes current state and asks the operator to review before trying again.
-Committed but not enforced mutations retain an explicit pending/degraded
-message, with disable/delete wording that does not claim access was revoked.
-Credential artifacts are loaded only after an operator action and are cleared
-from the dialog on close; the UI does not persist them in browser storage.
+history. A System/Light/Dark theme switcher defaults to System
+(`prefers-color-scheme`) and may persist an explicit override in browser
+`localStorage` only; theme is not a server preference. Saving a client does
+not send a preshared-key verb. Generate and clear are separate requests, and
+the page says a device must re-import. Enabling a client whose expiry state
+is `expired` clears the deadline in that request. Mutations carry the
+generation from the latest API read; a `409` refreshes current state and asks
+the operator to review before trying again. Committed but not enforced
+mutations retain an explicit pending/degraded message, with disable/delete
+wording that does not claim access was revoked. Credential artifacts are
+loaded only after an operator action and are cleared from the dialog on
+close; the UI does not persist them in browser storage.
 
 ## Operational boundary
 

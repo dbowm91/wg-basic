@@ -44,20 +44,25 @@
 //! references into a caller's frame.
 
 use super::{
-    auth::{AdminStatus, AuthError, AuthService, IssuedSession},
+    auth::{
+        AccountView, AdminStatus, AuthError, AuthService, IssuedSession, LoginOutcome,
+        TotpEnrollView,
+    },
     error::ManagementError,
     health::{BackendProbe, ManagementHealth},
+    metrics::{MetricsSettingsService, MetricsSettingsUpdate, MetricsSettingsView},
     runtime::{ManagementRuntime, NetworkPrerequisites},
 };
 use crate::{
-    domain::{DesiredGeneration, PrincipalId},
+    domain::{DesiredGeneration, PrincipalId, SessionId},
     product::{
-        AuditCursor, AuditPage, ClientCreateCommand, ClientDeleteCommand, ClientObservationStatus,
-        ClientTelemetry, ClientTelemetrySnapshot, ClientUpdateCommand, CreatedEnrollmentLink,
-        EnrollmentCapabilityId, EnrollmentToken, ProductClient, ProductMutationReceipt,
-        ProductServer, ProductService, SecretArtifact, ServerSetupCommand, SetClientEnabledCommand,
+        AuditAction, AuditCursor, AuditPage, ClientCreateCommand, ClientDeleteCommand,
+        ClientObservationStatus, ClientTelemetry, ClientTelemetrySnapshot, ClientUpdateCommand,
+        CreatedEnrollmentLink, EnrollmentCapabilityId, EnrollmentToken, ProductClient,
+        ProductMutationReceipt, ProductServer, ProductService, SecretArtifact, ServerSetupCommand,
+        SetClientEnabledCommand,
     },
-    state::{AttemptDisposition, StoredSession},
+    state::{AttemptDisposition, ProductAudit, StoredSession},
 };
 use std::{
     path::{Path, PathBuf},
@@ -65,7 +70,7 @@ use std::{
     sync::mpsc as std_mpsc,
     sync::{Arc, Mutex},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -140,7 +145,27 @@ pub enum WorkerCommand {
     Authenticate {
         username: String,
         password: String,
+        reply: oneshot::Sender<Result<LoginOutcome, AuthFailure>>,
+    },
+    VerifyTotpLogin {
+        pre_session_token: String,
+        code: String,
         reply: oneshot::Sender<Result<IssuedSession, AuthFailure>>,
+    },
+    BeginTotpEnroll {
+        principal_id: PrincipalId,
+        reply: oneshot::Sender<Result<TotpEnrollView, AuthFailure>>,
+    },
+    ConfirmTotpEnroll {
+        principal_id: PrincipalId,
+        code: String,
+        reply: oneshot::Sender<Result<(), AuthFailure>>,
+    },
+    DisableTotp {
+        principal_id: PrincipalId,
+        current_password: String,
+        code: String,
+        reply: oneshot::Sender<Result<(), AuthFailure>>,
     },
     /// Resolve a presented bearer token to a live session.
     ResolveSession {
@@ -165,6 +190,153 @@ pub enum WorkerCommand {
     AdminStatus {
         reply: oneshot::Sender<Result<Option<AdminStatus>, AuthFailure>>,
     },
+    /// The signed-in principal's account settings projection.
+    AccountView {
+        principal_id: PrincipalId,
+        reply: oneshot::Sender<Result<AccountView, AuthFailure>>,
+    },
+    /// Replace the verifier after proving the current password; revoke siblings.
+    ChangePassword {
+        principal_id: PrincipalId,
+        current_password: String,
+        new_password: String,
+        keep_session_id: SessionId,
+        reply: oneshot::Sender<Result<(), AuthFailure>>,
+    },
+    /// Durable Prometheus scrape settings (does not advance desired generation).
+    MetricsSettingsView {
+        reply: oneshot::Sender<Result<MetricsSettingsView, MetricsFailure>>,
+    },
+    UpdateMetricsSettings {
+        patch: MetricsSettingsUpdate,
+        reply: oneshot::Sender<Result<MetricsSettingsView, MetricsFailure>>,
+    },
+    VerifyMetricsBearer {
+        password: String,
+        reply: oneshot::Sender<bool>,
+    },
+    OidcPublicView {
+        canonical_origin: String,
+        reply: oneshot::Sender<
+            Result<crate::management::OidcPublicView, super::worker_oidc::OidcFailure>,
+        >,
+    },
+    OidcSettingsView {
+        reply: oneshot::Sender<
+            Result<crate::management::OidcSettingsView, super::worker_oidc::OidcFailure>,
+        >,
+    },
+    UpdateOidcSettings {
+        patch: crate::management::OidcSettingsUpdate,
+        canonical_origin: String,
+        reply: oneshot::Sender<
+            Result<crate::management::OidcSettingsView, super::worker_oidc::OidcFailure>,
+        >,
+    },
+    OidcBeginLogin {
+        canonical_origin: String,
+        reply: oneshot::Sender<
+            Result<crate::management::OidcAuthorizeStart, super::worker_oidc::OidcFailure>,
+        >,
+    },
+    OidcBeginLink {
+        principal_id: PrincipalId,
+        canonical_origin: String,
+        reply: oneshot::Sender<
+            Result<crate::management::OidcLinkStart, super::worker_oidc::OidcFailure>,
+        >,
+    },
+    OidcLoginCallback {
+        state: String,
+        code: String,
+        canonical_origin: String,
+        reply: oneshot::Sender<
+            Result<crate::management::OidcCallbackSuccess, super::worker_oidc::OidcFailure>,
+        >,
+    },
+    OidcLinkCallback {
+        state: String,
+        code: String,
+        canonical_origin: String,
+        reply: oneshot::Sender<Result<(), super::worker_oidc::OidcFailure>>,
+    },
+    OidcExchangeCompletion {
+        token: String,
+        reply: oneshot::Sender<Result<LoginOutcome, super::worker_oidc::OidcFailure>>,
+    },
+    IdpLoginPublicView {
+        canonical_origin: String,
+        reply: oneshot::Sender<
+            Result<crate::management::IdpLoginPublicView, super::worker_idp_auth::IdpFailure>,
+        >,
+    },
+    IdpPolicyView {
+        reply: oneshot::Sender<
+            Result<crate::management::AuthIdpPolicyView, super::worker_idp_auth::IdpFailure>,
+        >,
+    },
+    UpdateIdpPolicy {
+        principal_id: PrincipalId,
+        patch: crate::management::AuthIdpPolicyUpdate,
+        reply: oneshot::Sender<
+            Result<crate::management::AuthIdpPolicyView, super::worker_idp_auth::IdpFailure>,
+        >,
+    },
+    BrandedProviderSettingsView {
+        provider: crate::management::IdpProviderKey,
+        reply: oneshot::Sender<
+            Result<
+                crate::management::BrandedProviderSettingsView,
+                super::worker_idp_auth::IdpFailure,
+            >,
+        >,
+    },
+    UpdateBrandedProviderSettings {
+        provider: crate::management::IdpProviderKey,
+        patch: crate::management::BrandedProviderSettingsUpdate,
+        canonical_origin: String,
+        reply: oneshot::Sender<
+            Result<
+                crate::management::BrandedProviderSettingsView,
+                super::worker_idp_auth::IdpFailure,
+            >,
+        >,
+    },
+    IdpBeginLogin {
+        provider: crate::management::IdpProviderKey,
+        canonical_origin: String,
+        reply: oneshot::Sender<
+            Result<crate::management::OidcAuthorizeStart, super::worker_idp_auth::IdpFailure>,
+        >,
+    },
+    IdpBeginLink {
+        provider: crate::management::IdpProviderKey,
+        principal_id: PrincipalId,
+        canonical_origin: String,
+        reply: oneshot::Sender<
+            Result<crate::management::OidcLinkStart, super::worker_idp_auth::IdpFailure>,
+        >,
+    },
+    IdpLoginCallback {
+        provider: crate::management::IdpProviderKey,
+        state: String,
+        code: String,
+        canonical_origin: String,
+        reply: oneshot::Sender<
+            Result<crate::management::OidcCallbackSuccess, super::worker_idp_auth::IdpFailure>,
+        >,
+    },
+    IdpLinkCallback {
+        provider: crate::management::IdpProviderKey,
+        state: String,
+        code: String,
+        canonical_origin: String,
+        reply: oneshot::Sender<Result<(), super::worker_idp_auth::IdpFailure>>,
+    },
+    IdpExchangeCompletion {
+        token: String,
+        reply: oneshot::Sender<Result<LoginOutcome, super::worker_idp_auth::IdpFailure>>,
+    },
     /// The safe product snapshot: the managed server and its clients.
     ///
     /// Read-only, and secret-free by construction: the reply type has no field
@@ -175,6 +347,11 @@ pub enum WorkerCommand {
     /// Fresh live observation mapped to stable product client IDs.
     ClientTelemetry {
         reply: oneshot::Sender<Result<ClientTelemetrySnapshot, ProductFailure>>,
+    },
+    /// Bounded per-client telemetry history for sparklines.
+    TelemetryHistory {
+        reply:
+            oneshot::Sender<Result<crate::observability::TelemetryHistorySnapshot, ProductFailure>>,
     },
     /// The current forwarding, attachment, and policy prerequisites.
     ///
@@ -248,6 +425,9 @@ pub struct ProductSnapshotReply {
 
 /// Maximum number of per-client observations returned in one response.
 pub const CLIENT_TELEMETRY_LIMIT: usize = 1_024;
+/// Worker-owned telemetry sampling interval (ADR-013 §2.5).
+pub const TELEMETRY_SAMPLE_INTERVAL: Duration =
+    Duration::from_secs(crate::observability::TELEMETRY_SAMPLE_INTERVAL_SECONDS);
 /// Maximum number of audit events in one page.
 pub const AUDIT_PAGE_LIMIT: usize = 100;
 
@@ -385,6 +565,23 @@ impl From<AuthError> for AuthFailure {
                 Self::Storage
             }
         }
+    }
+}
+
+/// Why a metrics-settings command was refused.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum MetricsFailure {
+    #[error("the metrics settings could not be applied")]
+    Rejected,
+    #[error("the metrics settings store is unavailable")]
+    Storage,
+}
+
+fn metrics_failure(error: crate::management::MetricsSettingsError) -> MetricsFailure {
+    match error {
+        crate::management::MetricsSettingsError::StorageUnavailable => MetricsFailure::Storage,
+        crate::management::MetricsSettingsError::PasswordRejected
+        | crate::management::MetricsSettingsError::InvalidUpdate => MetricsFailure::Rejected,
     }
 }
 
@@ -596,11 +793,71 @@ impl WorkerClient {
         &self,
         username: String,
         password: String,
-    ) -> Result<IssuedSession, WorkerError> {
+    ) -> Result<LoginOutcome, WorkerError> {
         let (reply, answer) = oneshot::channel();
         self.admit(WorkerCommand::Authenticate {
             username,
             password,
+            reply,
+        })
+        .await?;
+        self.auth_reply(answer).await
+    }
+
+    pub async fn verify_totp_login(
+        &self,
+        pre_session_token: String,
+        code: String,
+    ) -> Result<IssuedSession, WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::VerifyTotpLogin {
+            pre_session_token,
+            code,
+            reply,
+        })
+        .await?;
+        self.auth_reply(answer).await
+    }
+
+    pub async fn begin_totp_enroll(
+        &self,
+        principal_id: PrincipalId,
+    ) -> Result<TotpEnrollView, WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::BeginTotpEnroll {
+            principal_id,
+            reply,
+        })
+        .await?;
+        self.auth_reply(answer).await
+    }
+
+    pub async fn confirm_totp_enroll(
+        &self,
+        principal_id: PrincipalId,
+        code: String,
+    ) -> Result<(), WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::ConfirmTotpEnroll {
+            principal_id,
+            code,
+            reply,
+        })
+        .await?;
+        self.auth_reply(answer).await
+    }
+
+    pub async fn disable_totp(
+        &self,
+        principal_id: PrincipalId,
+        current_password: String,
+        code: String,
+    ) -> Result<(), WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::DisableTotp {
+            principal_id,
+            current_password,
+            code,
             reply,
         })
         .await?;
@@ -652,6 +909,62 @@ impl WorkerClient {
         self.auth_reply(answer).await
     }
 
+    pub async fn account_view(
+        &self,
+        principal_id: PrincipalId,
+    ) -> Result<AccountView, WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::AccountView {
+            principal_id,
+            reply,
+        })
+        .await?;
+        self.auth_reply(answer).await
+    }
+
+    pub async fn change_password(
+        &self,
+        principal_id: PrincipalId,
+        current_password: String,
+        new_password: String,
+        keep_session_id: SessionId,
+    ) -> Result<(), WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::ChangePassword {
+            principal_id,
+            current_password,
+            new_password,
+            keep_session_id,
+            reply,
+        })
+        .await?;
+        self.auth_reply(answer).await
+    }
+
+    pub async fn metrics_settings(&self) -> Result<MetricsSettingsView, WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::MetricsSettingsView { reply })
+            .await?;
+        self.metrics_reply(answer).await
+    }
+
+    pub async fn update_metrics_settings(
+        &self,
+        patch: MetricsSettingsUpdate,
+    ) -> Result<MetricsSettingsView, WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::UpdateMetricsSettings { patch, reply })
+            .await?;
+        self.metrics_reply(answer).await
+    }
+
+    pub async fn verify_metrics_bearer(&self, password: String) -> Result<bool, WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::VerifyMetricsBearer { password, reply })
+            .await?;
+        self.await_reply(answer).await
+    }
+
     /// The safe product snapshot: the managed server and its clients.
     pub async fn product_snapshot(&self) -> Result<ProductSnapshotReply, WorkerError> {
         let (reply, answer) = oneshot::channel();
@@ -669,6 +982,15 @@ impl WorkerClient {
     pub async fn client_telemetry(&self) -> Result<ClientTelemetrySnapshot, WorkerError> {
         let (reply, answer) = oneshot::channel();
         self.admit(WorkerCommand::ClientTelemetry { reply }).await?;
+        self.product_reply(answer).await
+    }
+
+    pub async fn telemetry_history(
+        &self,
+    ) -> Result<crate::observability::TelemetryHistorySnapshot, WorkerError> {
+        let (reply, answer) = oneshot::channel();
+        self.admit(WorkerCommand::TelemetryHistory { reply })
+            .await?;
         self.product_reply(answer).await
     }
 
@@ -823,6 +1145,17 @@ impl WorkerClient {
         }
     }
 
+    async fn metrics_reply(
+        &self,
+        answer: oneshot::Receiver<Result<MetricsSettingsView, MetricsFailure>>,
+    ) -> Result<MetricsSettingsView, WorkerError> {
+        match self.await_reply(answer).await? {
+            Ok(value) => Ok(value),
+            Err(MetricsFailure::Rejected) => Err(WorkerError::Rejected),
+            Err(MetricsFailure::Storage) => Err(WorkerError::Storage),
+        }
+    }
+
     /// Asks the worker to stop.
     ///
     /// The request cannot be refused. A stop request that rides the bounded
@@ -844,7 +1177,7 @@ impl WorkerClient {
     /// Admission never blocks: a full queue is reported as
     /// [`WorkerError::Saturated`] rather than awaited, so overload cannot
     /// accumulate as pending requests waiting for the worker to catch up.
-    async fn admit(&self, command: WorkerCommand) -> Result<(), WorkerError> {
+    pub(crate) async fn admit(&self, command: WorkerCommand) -> Result<(), WorkerError> {
         let sender = self.sender.lock().map_err(|_| WorkerError::Stopped)?;
         let Some(sender) = sender.as_ref() else {
             return Err(WorkerError::Stopped);
@@ -1051,6 +1384,7 @@ fn run(
         .store()
         .purge_expired_sessions(now)
         .and_then(|_| runtime.store().prune_terminal_enrollment_capabilities(now))
+        .and_then(|_| runtime.store().prune_all_telemetry_samples())
     {
         let _ = startup.send(StartupOutcome::Fatal(error.into()));
         return;
@@ -1149,11 +1483,12 @@ fn client_telemetry(
             truncated: false,
         });
     };
+    let interface = server.name.as_str().to_owned();
     let observed = runtime
         .observe_wireguard_device(server.name)
         .map_err(|_| ProductFailure::StateUnavailable)?;
     let (clients, unassociated_peer_count, truncated) =
-        project_client_telemetry(clients, &observed, observed_at);
+        project_client_telemetry(clients, &observed, observed_at, &interface);
     Ok(ClientTelemetrySnapshot {
         observed_at_unix_seconds: observed_at,
         clients,
@@ -1166,6 +1501,7 @@ fn project_client_telemetry(
     clients: Vec<ProductClient>,
     observed: &crate::wireguard::ObservedWireGuardDevice,
     observed_at: u64,
+    interface: &str,
 ) -> (Vec<ClientTelemetry>, usize, bool) {
     let by_key = observed
         .peers
@@ -1193,6 +1529,8 @@ fn project_client_telemetry(
             ClientTelemetry {
                 client_id: client.client_id,
                 peer_id: client.peer_id,
+                name: client.settings.label.as_str().to_owned(),
+                interface: interface.to_owned(),
                 enabled,
                 observation: if present {
                     ClientObservationStatus::Present
@@ -1200,7 +1538,12 @@ fn project_client_telemetry(
                     ClientObservationStatus::Missing
                 },
                 drift: enabled != present,
+                public_key: client.public_key.clone(),
                 endpoint: peer.and_then(|peer| peer.endpoint),
+                ipv4_address: Some(client.assigned_address.addr().to_string()),
+                ipv6_address: client
+                    .assigned_ipv6_address
+                    .map(|net| net.addr().to_string()),
                 latest_handshake_unix_seconds: latest,
                 latest_handshake_age_seconds: latest.map(|time| observed_at.saturating_sub(time)),
                 rx_bytes: peer.and_then(|peer| peer.rx_bytes),
@@ -1317,6 +1660,76 @@ fn expiry_wait(runtime: &ManagementRuntime) -> Option<Duration> {
     Some(Duration::from_secs((soonest - now).max(1) as u64))
 }
 
+fn telemetry_sampling_configured(runtime: &ManagementRuntime) -> bool {
+    ProductService::new(runtime.store())
+        .server()
+        .ok()
+        .flatten()
+        .is_some()
+}
+
+fn telemetry_sample_is_due(worker_started: Instant, last: Option<Instant>) -> bool {
+    let anchor = last.unwrap_or(worker_started);
+    Instant::now().duration_since(anchor) >= TELEMETRY_SAMPLE_INTERVAL
+}
+
+fn telemetry_sample_wait(
+    runtime: &ManagementRuntime,
+    worker_started: Instant,
+    last: Option<Instant>,
+) -> Option<Duration> {
+    if !telemetry_sampling_configured(runtime) {
+        return None;
+    }
+    let anchor = last.unwrap_or(worker_started);
+    let elapsed = Instant::now().duration_since(anchor);
+    if elapsed >= TELEMETRY_SAMPLE_INTERVAL {
+        Some(Duration::ZERO)
+    } else {
+        Some(TELEMETRY_SAMPLE_INTERVAL - elapsed)
+    }
+}
+
+fn combine_waits(left: Option<Duration>, right: Option<Duration>) -> Option<Duration> {
+    match (left, right) {
+        (None, None) => None,
+        (Some(wait), None) | (None, Some(wait)) => Some(wait),
+        (Some(left), Some(right)) => Some(left.min(right)),
+    }
+}
+
+/// Records one bounded sample set from a live observation. Does not advance generation.
+pub fn record_telemetry_sample(runtime: &ManagementRuntime) -> Result<(), ProductFailure> {
+    if !telemetry_sampling_configured(runtime) {
+        return Ok(());
+    }
+    let snapshot = client_telemetry(runtime)?;
+    let samples = snapshot
+        .clients
+        .iter()
+        .map(|client| crate::state::TelemetrySampleInsert {
+            client_id: client.client_id,
+            observed_at_unix: snapshot.observed_at_unix_seconds,
+            rx_bytes: client.rx_bytes.unwrap_or(0),
+            tx_bytes: client.tx_bytes.unwrap_or(0),
+            handshake_age_seconds: client.latest_handshake_age_seconds,
+        })
+        .collect::<Vec<_>>();
+    runtime
+        .store()
+        .insert_telemetry_samples(&samples)
+        .map_err(|_| ProductFailure::StateUnavailable)
+}
+
+fn telemetry_history(
+    runtime: &ManagementRuntime,
+) -> Result<crate::observability::TelemetryHistorySnapshot, ProductFailure> {
+    runtime
+        .store()
+        .telemetry_history(None)
+        .map_err(|_| ProductFailure::StateUnavailable)
+}
+
 fn serve(
     runtime: ManagementRuntime,
     receiver: &mut mpsc::Receiver<WorkerCommand>,
@@ -1332,6 +1745,8 @@ fn serve(
         Err(_) => return,
     };
     timer.block_on(async {
+        let worker_started = Instant::now();
+        let mut last_telemetry_sample: Option<Instant> = None;
         loop {
             // A stop request discards the backlog rather than working through it:
             // the worker is leaving, and every queued command would otherwise hold
@@ -1342,17 +1757,41 @@ fn serve(
             // After startup, an expiry failure must not take the listener down.
             // The next wake tries the same clients again.
             let _ = expire_due(&runtime);
-            let command = if let Some(wait) = expiry_wait(&runtime) {
-                tokio::select! {
+            let wait = combine_waits(
+                expiry_wait(&runtime),
+                telemetry_sample_wait(&runtime, worker_started, last_telemetry_sample),
+            );
+            #[allow(clippy::large_enum_variant)]
+            enum Wake {
+                Command(WorkerCommand),
+                Timer,
+            }
+            let wake = match wait {
+                None => match receiver.recv().await {
+                    Some(command) => Wake::Command(command),
+                    None => break,
+                },
+                Some(duration) if duration.is_zero() => Wake::Timer,
+                Some(duration) => tokio::select! {
                     biased;
-                    command = receiver.recv() => command,
-                    _ = tokio::time::sleep(wait) => continue,
-                }
-            } else {
-                receiver.recv().await
+                    command = receiver.recv() => match command {
+                        Some(command) => Wake::Command(command),
+                        None => break,
+                    },
+                    _ = tokio::time::sleep(duration) => Wake::Timer,
+                },
             };
-            let Some(command) = command else {
-                break;
+            if matches!(wake, Wake::Timer) {
+                if telemetry_sampling_configured(&runtime)
+                    && telemetry_sample_is_due(worker_started, last_telemetry_sample)
+                    && record_telemetry_sample(&runtime).is_ok()
+                {
+                    last_telemetry_sample = Some(Instant::now());
+                }
+                continue;
+            }
+            let Wake::Command(command) = wake else {
+                continue;
             };
             if stopping.load(Ordering::Acquire) {
                 break;
@@ -1397,6 +1836,68 @@ fn serve(
                             .map_err(AuthFailure::from),
                     );
                 }
+                WorkerCommand::VerifyTotpLogin {
+                    pre_session_token,
+                    code,
+                    reply,
+                } => {
+                    let auth = AuthService::new(runtime.store());
+                    let _ = reply.send(
+                        auth.verify_totp_login(&pre_session_token, &code)
+                            .map_err(AuthFailure::from),
+                    );
+                }
+                WorkerCommand::BeginTotpEnroll {
+                    principal_id,
+                    reply,
+                } => {
+                    let auth = AuthService::new(runtime.store());
+                    let _ = reply.send(
+                        auth.begin_totp_enroll(principal_id)
+                            .map_err(AuthFailure::from),
+                    );
+                }
+                WorkerCommand::ConfirmTotpEnroll {
+                    principal_id,
+                    code,
+                    reply,
+                } => {
+                    let auth = AuthService::new(runtime.store());
+                    let result = auth
+                        .confirm_totp_enroll(principal_id, &code)
+                        .map_err(AuthFailure::from);
+                    if result.is_ok() {
+                        let audit = ProductAudit::principal(
+                            crate::product::AuditAction::AdminTotpEnabled,
+                            principal_id,
+                        );
+                        let _ = runtime
+                            .store()
+                            .append_audit_event(Some(principal_id), audit);
+                    }
+                    let _ = reply.send(result);
+                }
+                WorkerCommand::DisableTotp {
+                    principal_id,
+                    current_password,
+                    code,
+                    reply,
+                } => {
+                    let auth = AuthService::new(runtime.store());
+                    let result = auth
+                        .disable_totp(principal_id, &current_password, &code)
+                        .map_err(AuthFailure::from);
+                    if result.is_ok() {
+                        let audit = ProductAudit::principal(
+                            crate::product::AuditAction::AdminTotpDisabled,
+                            principal_id,
+                        );
+                        let _ = runtime
+                            .store()
+                            .append_audit_event(Some(principal_id), audit);
+                    }
+                    let _ = reply.send(result);
+                }
                 WorkerCommand::ResolveSession { presented, reply } => {
                     let auth = AuthService::new(runtime.store());
                     let _ = reply.send(auth.resolve_session(&presented).map_err(AuthFailure::from));
@@ -1423,11 +1924,82 @@ fn serve(
                     let auth = AuthService::new(runtime.store());
                     let _ = reply.send(auth.status().map_err(AuthFailure::from));
                 }
+                WorkerCommand::AccountView {
+                    principal_id,
+                    reply,
+                } => {
+                    let auth = AuthService::new(runtime.store());
+                    let _ = reply.send(auth.account_view(principal_id).map_err(AuthFailure::from));
+                }
+                WorkerCommand::ChangePassword {
+                    principal_id,
+                    current_password,
+                    new_password,
+                    keep_session_id,
+                    reply,
+                } => {
+                    let auth = AuthService::new(runtime.store());
+                    let result = auth
+                        .change_password(
+                            principal_id,
+                            &current_password,
+                            &new_password,
+                            keep_session_id,
+                        )
+                        .map_err(AuthFailure::from);
+                    if result.is_ok() {
+                        let audit = ProductAudit::principal(
+                            AuditAction::AdminPasswordChanged,
+                            principal_id,
+                        );
+                        let _ = runtime
+                            .store()
+                            .append_audit_event(Some(principal_id), audit);
+                    }
+                    let _ = reply.send(result);
+                }
+                WorkerCommand::MetricsSettingsView { reply } => {
+                    let service = MetricsSettingsService::new(runtime.store());
+                    let _ = reply.send(service.view().map_err(metrics_failure));
+                }
+                WorkerCommand::UpdateMetricsSettings { patch, reply } => {
+                    let service = MetricsSettingsService::new(runtime.store());
+                    let _ = reply.send(service.update(patch).map_err(metrics_failure));
+                }
+                WorkerCommand::VerifyMetricsBearer { password, reply } => {
+                    let service = MetricsSettingsService::new(runtime.store());
+                    let _ = reply.send(service.verify_bearer(&password));
+                }
+                WorkerCommand::OidcPublicView { .. }
+                | WorkerCommand::OidcSettingsView { .. }
+                | WorkerCommand::UpdateOidcSettings { .. }
+                | WorkerCommand::OidcBeginLogin { .. }
+                | WorkerCommand::OidcBeginLink { .. }
+                | WorkerCommand::OidcLoginCallback { .. }
+                | WorkerCommand::OidcLinkCallback { .. }
+                | WorkerCommand::OidcExchangeCompletion { .. } => {
+                    assert!(super::worker_oidc::dispatch_oidc(&runtime, command));
+                }
+                WorkerCommand::IdpLoginPublicView { .. }
+                | WorkerCommand::IdpPolicyView { .. }
+                | WorkerCommand::UpdateIdpPolicy { .. }
+                | WorkerCommand::BrandedProviderSettingsView { .. }
+                | WorkerCommand::UpdateBrandedProviderSettings { .. }
+                | WorkerCommand::IdpBeginLogin { .. }
+                | WorkerCommand::IdpBeginLink { .. }
+                | WorkerCommand::IdpLoginCallback { .. }
+                | WorkerCommand::IdpLinkCallback { .. }
+                | WorkerCommand::IdpExchangeCompletion { .. } => {
+                    assert!(super::worker_idp_auth::dispatch_idp(&runtime, command));
+                }
                 WorkerCommand::ProductSnapshot { reply } => {
                     let _ = reply.send(product_snapshot(&runtime));
                 }
                 WorkerCommand::ClientTelemetry { reply } => {
                     let _ = reply.send(client_telemetry(&runtime));
+                }
+                WorkerCommand::TelemetryHistory { reply } => {
+                    let _ = reply.send(telemetry_history(&runtime));
                 }
                 WorkerCommand::NetworkPrerequisites { reply } => {
                     let _ = reply.send(
@@ -1588,7 +2160,7 @@ mod tests {
             peers: Vec::new(),
         };
         let (telemetry, unassociated, truncated) =
-            project_client_telemetry(clients, &observed, 1_800_000_000);
+            project_client_telemetry(clients, &observed, 1_800_000_000, "wg0");
         assert_eq!(telemetry.len(), CLIENT_TELEMETRY_LIMIT);
         assert_eq!(unassociated, 0);
         assert!(truncated);
@@ -1886,6 +2458,71 @@ mod tests {
             .expect_err("a stopped worker answers nothing");
         assert!(matches!(error, WorkerError::Stopped), "{error}");
         assert!(error.is_overload());
+    }
+
+    #[test]
+    fn sampling_writes_nothing_without_a_configured_server() {
+        let temp = TempDir::new();
+        let runtime =
+            crate::management::ManagementRuntime::open(&temp.db(), absent_socket(&temp)).unwrap();
+        let gen_before = runtime.store().current_generation().unwrap();
+        record_telemetry_sample(&runtime).unwrap();
+        assert!(runtime
+            .store()
+            .telemetry_history(None)
+            .unwrap()
+            .clients
+            .is_empty());
+        assert_eq!(gen_before, runtime.store().current_generation().unwrap());
+    }
+
+    #[test]
+    fn observe_failure_skips_persisting_samples() {
+        let temp = TempDir::new();
+        let store = StateStore::initialize(temp.db()).unwrap();
+        crate::management::set_password_at(temp.db(), "admin", "an administrator password")
+            .unwrap();
+        let principal = store.principals().unwrap()[0].id;
+        let service = ProductService::new(&store);
+        let setup = ServerSetupCommand {
+            principal_id: principal,
+            expected_generation: crate::domain::INITIAL_DESIRED_GENERATION,
+            interface_name: "wg0".parse().unwrap(),
+            tunnel_prefix: crate::domain::NetworkPrefix::new("10.8.0.0/24".parse().unwrap()),
+            ipv6_tunnel_prefix: None,
+            server_address: None,
+            ipv6_server_address: None,
+            listen_port: 51820,
+            advertised_endpoint: crate::product::AdvertisedEndpoint::new("vpn.example.com", 51820)
+                .unwrap(),
+            egress_interface: "eth0".parse().unwrap(),
+            ipv4_forwarding_required: true,
+            ipv6_forwarding_required: false,
+            masquerade: true,
+            mode: None,
+            destination_prefixes: Vec::new(),
+            default_client_route_policy: Default::default(),
+        };
+        service.setup_server(setup).unwrap();
+        drop(store);
+        let runtime =
+            crate::management::ManagementRuntime::open(&temp.db(), absent_socket(&temp)).unwrap();
+        assert!(record_telemetry_sample(&runtime).is_err());
+        assert!(runtime
+            .store()
+            .telemetry_history(None)
+            .unwrap()
+            .clients
+            .is_empty());
+    }
+
+    #[test]
+    fn the_default_telemetry_sample_interval_matches_adr_013() {
+        assert_eq!(
+            TELEMETRY_SAMPLE_INTERVAL,
+            Duration::from_secs(crate::observability::TELEMETRY_SAMPLE_INTERVAL_SECONDS)
+        );
+        assert_eq!(crate::observability::TELEMETRY_SAMPLES_PER_CLIENT, 120);
     }
 
     #[tokio::test]

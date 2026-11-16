@@ -174,6 +174,38 @@ impl StateStore {
         Ok(revoked)
     }
 
+    /// Replaces the verifier and revokes every session except one.
+    ///
+    /// Browser password change keeps the completing session so the operator is
+    /// not signed out of their own tab; sibling sessions still die, because a
+    /// password change is exactly when stolen cookies must stop working.
+    pub fn change_password_and_revoke_sibling_sessions(
+        &self,
+        principal_id: PrincipalId,
+        verifier: PasswordVerifier,
+        keep_session_id: SessionId,
+        now: i64,
+    ) -> Result<usize, StateError> {
+        let mut connection = self.lock()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(StateError::database)?;
+        transaction
+            .execute(
+                "UPDATE admin_principals SET verifier = ?2, updated_at = ?3 WHERE id = ?1",
+                params![principal_id.to_string(), verifier.expose_for_storage(), now],
+            )
+            .map_err(StateError::database)?;
+        let revoked = transaction
+            .execute(
+                "DELETE FROM admin_sessions WHERE principal_id = ?1 AND id != ?2",
+                params![principal_id.to_string(), keep_session_id.to_string()],
+            )
+            .map_err(StateError::database)?;
+        transaction.commit().map_err(StateError::database)?;
+        Ok(revoked)
+    }
+
     /// Looks up a principal by username.
     ///
     /// The caller must turn `None` into [`AuthError::CredentialsRejected`], the
@@ -185,6 +217,44 @@ impl StateStore {
     ) -> Result<Option<PrincipalRecord>, StateError> {
         let connection = self.lock()?;
         Self::read_principal_by_username(&connection, username)
+    }
+
+    /// Looks up a principal by stable id.
+    pub fn principal_by_id(
+        &self,
+        principal_id: PrincipalId,
+    ) -> Result<Option<PrincipalRecord>, StateError> {
+        let connection = self.lock()?;
+        let row = connection
+            .query_row(
+                "SELECT username, verifier, enabled, created_at, updated_at
+                 FROM admin_principals WHERE id = ?1",
+                [principal_id.to_string()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, i64>(4)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(StateError::database)?;
+        let Some((username, verifier, enabled, created_at, updated_at)) = row else {
+            return Ok(None);
+        };
+        Ok(Some(PrincipalRecord {
+            id: principal_id,
+            username,
+            verifier: PasswordVerifier::parse(verifier).map_err(|_| {
+                StateError::Corrupt("stored credential verifier is not a usable PHC string")
+            })?,
+            enabled: enabled == 1,
+            created_at,
+            updated_at,
+        }))
     }
 
     fn read_principal_by_username(

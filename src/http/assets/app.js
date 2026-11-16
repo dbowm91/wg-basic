@@ -1,9 +1,35 @@
 (() => {
   "use strict";
+  const THEME_KEY = "wg-basic-theme";
+  const applyTheme = (choice) => {
+    const root = document.documentElement;
+    if (choice === "light" || choice === "dark") root.setAttribute("data-theme", choice);
+    else root.removeAttribute("data-theme");
+  };
+  const readStoredTheme = () => {
+    try {
+      const value = localStorage.getItem(THEME_KEY);
+      return value === "light" || value === "dark" || value === "system" ? value : "system";
+    } catch (_) {
+      return "system";
+    }
+  };
+  const persistTheme = (choice) => {
+    try {
+      if (choice === "system") localStorage.removeItem(THEME_KEY);
+      else localStorage.setItem(THEME_KEY, choice);
+    } catch (_) { /* theme preference is best-effort */ }
+  };
+  applyTheme(readStoredTheme());
+
   let csrf = null;
+  let totpPreSession = null;
   let generation = 0;
   let clients = [];
   let telemetry = new Map();
+  let telemetryStatus = "idle";
+  let telemetryHistory = new Map();
+  let telemetryHistoryStatus = "idle";
   let auditCursor = null;
   let poll = null;
   let artifactUrl = null;
@@ -91,12 +117,85 @@
     poll = window.setInterval(() => { if (!document.hidden && csrf) void loadTelemetry(); }, 7000);
   }
 
+  function resetLoginPane() {
+    totpPreSession = null;
+    setVisible("login-totp-form", false);
+    setVisible("login-form", true);
+    $("login-totp-form").reset();
+  }
+
+  function parseAutoLaunchEscape() {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("auto_launch") === "false";
+  }
+
+  async function refreshIdpLogin() {
+    const buttons = $("idp-provider-buttons");
+    if (buttons) buttons.replaceChildren();
+    setVisible("idp-provider-buttons", false);
+    setVisible("idp-recovery-note", false);
+    try {
+      const response = await fetch("/api/v1/auth/public", {
+        credentials: "same-origin",
+        headers: { Accept: "application/json" },
+      });
+      if (!response.ok) return;
+      const view = await json(response);
+      setVisible("login-form", Boolean(view.password_auth_enabled));
+      if (view.recovery_only) {
+        setVisible("login-form", false);
+        setVisible("idp-recovery-note", true);
+        return;
+      }
+      const providers = (view.providers || []).filter((entry) => entry.login_enabled);
+      for (const entry of providers) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "secondary";
+        button.textContent = entry.display_name || entry.key;
+        button.addEventListener("click", () => { window.location.assign(entry.login_path); });
+        buttons.append(button);
+      }
+      setVisible("idp-provider-buttons", providers.length > 0);
+      if (!parseAutoLaunchEscape() && view.auto_launch && providers.some((p) => p.key === view.auto_launch)) {
+        const target = providers.find((p) => p.key === view.auto_launch);
+        if (target) window.location.assign(target.login_path);
+      }
+    } catch (_) {
+      setVisible("idp-provider-buttons", false);
+    }
+  }
+
   async function showSignedOut() {
     csrf = null;
+    totpPreSession = null;
+    resetLoginPane();
+    void refreshIdpLogin();
     stopPolling();
-    setVisible("logout", false); setVisible("login-pane", true);
+    setVisible("logout", false); setVisible("account", false); setVisible("account-pane", false);
+    setVisible("login-pane", true);
     setVisible("setup-pane", false); setVisible("app-pane", false);
+    telemetryStatus = "idle";
+    telemetry = new Map();
+    telemetryHistoryStatus = "idle";
+    telemetryHistory = new Map();
     closeClientDialog();
+  }
+
+  function wireThemeSwitcher() {
+    const select = $("theme-select");
+    if (!select || select.dataset.wired === "1") return;
+    select.dataset.wired = "1";
+    select.value = readStoredTheme();
+    select.addEventListener("change", () => {
+      const choice = select.value === "light" || select.value === "dark" ? select.value : "system";
+      persistTheme(choice);
+      applyTheme(choice);
+    });
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const onSystemChange = () => { if (readStoredTheme() === "system") applyTheme("system"); };
+    if (typeof media.addEventListener === "function") media.addEventListener("change", onSystemChange);
+    else if (typeof media.addListener === "function") media.addListener(onSystemChange);
   }
 
   async function loadSession() {
@@ -104,8 +203,152 @@
     if (!response.ok) { await showSignedOut(); return false; }
     const session = await json(response);
     csrf = session.csrf_token;
-    setVisible("logout", true); setVisible("login-pane", false);
+    setVisible("logout", true); setVisible("account", true); setVisible("login-pane", false);
     return true;
+  }
+
+  function renderTotpAccount(account) {
+    const enabled = Boolean(account.totp_enabled);
+    $("totp-status").textContent = enabled
+      ? "Authenticator app second factor is enabled."
+      : "Authenticator app second factor is not enabled.";
+    setVisible("totp-disabled-controls", !enabled);
+    setVisible("totp-enroll-controls", false);
+    setVisible("totp-disable-form", enabled);
+    $("totp-qr").replaceChildren();
+    if ($("totp-confirm-code")) $("totp-confirm-code").value = "";
+  }
+
+  async function loadOidcSettings() {
+    const response = await api("GET", "/api/v1/auth/oidc/settings");
+    if (!response.ok) {
+      $("oidc-settings-note").textContent = "OIDC settings could not be loaded.";
+      return;
+    }
+    const settings = await json(response);
+    $("oidc-issuer").value = settings.issuer || "";
+    $("oidc-client-id").value = settings.client_id || "";
+    $("oidc-display-name").value = settings.display_name || "";
+    $("oidc-enabled").checked = Boolean(settings.enabled);
+    $("oidc-client-secret").value = "";
+    const secretNote = settings.client_secret_configured
+      ? "A client secret is stored. Enter a new value to replace it."
+      : "No client secret is stored yet.";
+    $("oidc-settings-note").textContent = secretNote;
+  }
+
+  async function saveOidcSettings(event) {
+    event.preventDefault();
+    clearBanner();
+    const data = form("oidc-settings-form");
+    const patch = {
+      issuer: data.issuer,
+      client_id: data.client_id,
+      display_name: data.display_name,
+      enabled: $("oidc-enabled").checked,
+    };
+    if (data.set_client_secret) patch.set_client_secret = data.set_client_secret;
+    const response = await api("PATCH", "/api/v1/auth/oidc/settings", patch);
+    if (!response.ok) {
+      message("OIDC settings could not be saved. Check values and HTTPS canonical origin.", "danger");
+      return;
+    }
+    $("oidc-client-secret").value = "";
+    await loadOidcSettings();
+    message("OIDC settings saved.", "info");
+  }
+
+  async function loadAccount() {
+    const response = await api("GET", "/api/v1/account");
+    if (!response.ok) { message("Account settings could not be loaded.", "danger"); return; }
+    const account = await json(response);
+    const totpNote = account.totp_enabled ? " TOTP is enabled." : "";
+    $("account-summary").textContent = `Signed in as ${account.username}. Password authentication is enabled.${totpNote}`;
+    renderTotpAccount(account);
+    await loadOidcSettings();
+  }
+
+  async function openAccount() {
+    clearBanner();
+    setVisible("account-pane", true);
+    await loadAccount();
+  }
+
+  function closeAccount() {
+    setVisible("account-pane", false);
+    $("password-form").reset();
+    $("totp-disable-form").reset();
+    setVisible("totp-enroll-controls", false);
+    $("totp-qr").replaceChildren();
+  }
+
+  async function beginTotpEnroll() {
+    clearBanner();
+    const response = await api("POST", "/api/v1/account/totp/begin", {});
+    const payload = await json(response);
+    if (!response.ok) {
+      message("TOTP enrollment could not be started.", "danger");
+      return;
+    }
+    setVisible("totp-disabled-controls", false);
+    setVisible("totp-enroll-controls", true);
+    const shell = $("totp-qr");
+    shell.replaceChildren();
+    shell.insertAdjacentHTML("beforeend", payload.qr_svg);
+  }
+
+  async function confirmTotpEnroll() {
+    clearBanner();
+    const code = $("totp-confirm-code").value.trim();
+    const response = await api("POST", "/api/v1/account/totp/confirm", { code });
+    if (response.status === 204) {
+      message("Authenticator second factor is enabled.", "info");
+      await loadAccount();
+      return;
+    }
+    message("The verification code was not accepted.", "danger");
+  }
+
+  async function disableTotp(event) {
+    event.preventDefault();
+    clearBanner();
+    const data = form("totp-disable-form");
+    const response = await api("POST", "/api/v1/account/totp/disable", data);
+    if (response.status === 204) {
+      $("totp-disable-form").reset();
+      message("Authenticator second factor is disabled.", "info");
+      await loadAccount();
+      return;
+    }
+    if (response.status === 401) {
+      message("The password or authenticator code was not accepted.", "danger");
+      return;
+    }
+    message("TOTP could not be disabled right now.", "danger");
+  }
+
+  async function changePassword(event) {
+    event.preventDefault();
+    clearBanner();
+    const data = form("password-form");
+    if (data.new_password !== data.confirm_password) {
+      message("New password and confirmation do not match.", "danger");
+      return;
+    }
+    const response = await api("POST", "/api/v1/account/password", {
+      current_password: data.current_password,
+      new_password: data.new_password,
+    });
+    if (response.status === 204) {
+      $("password-form").reset();
+      message("Password changed. Other signed-in sessions were signed out.", "info");
+      return;
+    }
+    if (response.status === 401) {
+      message("The current password was not accepted.", "danger");
+      return;
+    }
+    message("The password could not be changed right now.", "danger");
   }
 
   async function loadConsole() {
@@ -159,20 +402,15 @@
     renderClients();
   }
 
+  function clientCell(text, className) {
+    const cell = document.createElement("td");
+    if (className) cell.className = className;
+    cell.textContent = text;
+    return cell;
+  }
+
   function renderClients() {
     const tbody = $("client-rows"); tbody.replaceChildren();
-    setVisible("empty-clients", clients.length === 0);
-    const counts = $("health-summary");
-    counts.querySelectorAll("[data-product-count]").forEach((item) => item.remove());
-    for (const [label, value] of [
-      ["Enabled clients", clients.filter((row) => row.settings.enabled === "enabled").length],
-      ["Disabled clients", clients.filter((row) => row.settings.enabled !== "enabled").length],
-      ["Observed clients", telemetry.size],
-    ]) {
-      const card = document.createElement("div"); card.className = "card"; card.dataset.productCount = "true";
-      const title = document.createElement("span"); title.className = "card-label"; title.textContent = label;
-      const output = document.createElement("strong"); output.textContent = String(value); card.append(title, output); counts.append(card);
-    }
     const filters = form("client-filters");
     const query = filters.query.trim().toLowerCase();
     const visible = clients.filter((client) => {
@@ -184,6 +422,23 @@
       if (filters.expiry !== "all" && client.expiry_state !== filters.expiry) return false;
       return true;
     });
+    const hasClients = clients.length > 0;
+    const hasVisible = visible.length > 0;
+    setVisible("empty-clients", !hasClients);
+    setVisible("empty-clients-filtered", hasClients && !hasVisible);
+    setVisible("client-table-wrap", hasVisible);
+    setVisible("empty-telemetry", hasClients && telemetryStatus === "ok" && telemetry.size === 0);
+    const counts = $("health-summary");
+    counts.querySelectorAll("[data-product-count]").forEach((item) => item.remove());
+    for (const [label, value] of [
+      ["Enabled clients", clients.filter((row) => row.settings.enabled === "enabled").length],
+      ["Disabled clients", clients.filter((row) => row.settings.enabled !== "enabled").length],
+      ["Observed clients", telemetry.size],
+    ]) {
+      const card = document.createElement("div"); card.className = "card"; card.dataset.productCount = "true";
+      const title = document.createElement("span"); title.className = "card-label"; title.textContent = label;
+      const output = document.createElement("strong"); output.textContent = String(value); card.append(title, output); counts.append(card);
+    }
     for (const client of visible) {
       const row = document.createElement("tr");
       const live = telemetry.get(client.client_id);
@@ -191,12 +446,31 @@
       const state = (client.settings.enabled === "enabled" ? (live?.observation ?? "unknown") : "disabled") + expiry;
       const drift = live?.drift ? " · needs attention" : "";
       const handshake = live?.latest_handshake_age_seconds == null ? "Never" : `${live.latest_handshake_age_seconds}s ago`;
-      const traffic = live?.rx_bytes == null ? "—" : `↓ ${bytes(live.rx_bytes)} · ↑ ${bytes(live.tx_bytes)}`;
       const addresses = [client.assigned_address, client.assigned_ipv6_address].filter(Boolean).join(" · ");
-      for (const value of [client.settings.label, addresses, state + drift, handshake, traffic]) {
-        const cell = document.createElement("td"); cell.textContent = value; row.append(cell);
+      const trafficCell = document.createElement("td");
+      trafficCell.className = "col-metric";
+      const trafficSummary = document.createElement("span");
+      trafficSummary.textContent = live?.rx_bytes == null ? "—" : `↓ ${bytes(live.rx_bytes)} · ↑ ${bytes(live.tx_bytes)}`;
+      trafficCell.append(trafficSummary);
+      const sparkHost = document.createElement("div");
+      sparkHost.className = "sparkline";
+      if (telemetryHistoryStatus === "ok" && globalThis.wgBasicSparkline) {
+        globalThis.wgBasicSparkline.render(sparkHost, telemetryHistory.get(client.client_id) ?? []);
+      } else if (telemetryHistoryStatus === "unavailable") {
+        const empty = document.createElement("span");
+        empty.className = "sparkline-empty";
+        empty.textContent = "History unavailable";
+        sparkHost.append(empty);
       }
-      const actions = document.createElement("td"); actions.className = "actions";
+      if (sparkHost.childElementCount > 0) trafficCell.append(sparkHost);
+      row.append(
+        clientCell(client.settings.label, "col-name"),
+        clientCell(addresses, "col-address"),
+        clientCell(state + drift, live?.drift ? "col-state state-warn" : "col-state"),
+        clientCell(handshake, "col-metric"),
+        trafficCell,
+      );
+      const actions = document.createElement("td"); actions.className = "actions col-actions";
       actions.append(action("Edit", "edit", client.client_id, client.settings.label));
       actions.append(action(client.settings.enabled === "enabled" ? "Disable" : "Enable", "toggle", client.client_id, client.settings.label));
       actions.append(action("Delete", "delete", client.client_id, client.settings.label)); row.append(actions); tbody.append(row);
@@ -217,12 +491,30 @@
 
   async function loadTelemetry() {
     if (!csrf || document.hidden) return;
-    const response = await api("GET", "/api/v1/clients/telemetry");
-    if (!response.ok) { telemetry = new Map(); renderClients(); $("health-note").textContent = "Live network status is unavailable; saved client settings are unchanged."; return; }
-    const snapshot = await json(response); telemetry = new Map(snapshot.clients.map((row) => [row.client_id, row]));
-    $("health-note").textContent = snapshot.truncated
-      ? `Live status refreshed. ${snapshot.unassociated_peer_count} unassociated peers; client list is truncated.`
-      : `Live status refreshed · ${snapshot.unassociated_peer_count} unassociated peers.`;
+    const [response, historyResponse] = await Promise.all([
+      api("GET", "/api/v1/clients/telemetry"),
+      api("GET", "/api/v1/clients/telemetry-history"),
+    ]);
+    if (!response.ok) {
+      telemetryStatus = "unavailable";
+      telemetry = new Map();
+      $("health-note").textContent = "Live network status is unavailable; saved client settings are unchanged.";
+    } else {
+      telemetryStatus = "ok";
+      const snapshot = await json(response);
+      telemetry = new Map(snapshot.clients.map((row) => [row.client_id, row]));
+      $("health-note").textContent = snapshot.truncated
+        ? `Live status refreshed. ${snapshot.unassociated_peer_count} unassociated peers; client list is truncated.`
+        : `Live status refreshed · ${snapshot.unassociated_peer_count} unassociated peers.`;
+    }
+    if (!historyResponse.ok) {
+      telemetryHistoryStatus = historyResponse.status === 503 ? "unavailable" : "empty";
+      telemetryHistory = new Map();
+    } else {
+      telemetryHistoryStatus = "ok";
+      const history = await json(historyResponse);
+      telemetryHistory = new Map(history.clients.map((row) => [row.client_id, row.points]));
+    }
     renderClients();
   }
 
@@ -366,6 +658,30 @@
     const response = await api("POST", "/api/v1/login", { username: data.username, password: data.password });
     $("login-form").elements.password.value = "";
     if (!response.ok) { message("Those credentials were not accepted.", "danger"); return; }
+    const payload = await json(response);
+    if (payload.totp_required) {
+      totpPreSession = payload.pre_session_token;
+      setVisible("login-form", false);
+      setVisible("login-totp-form", true);
+      return;
+    }
+    await loadConsole();
+  }
+
+  async function loginTotp(event) {
+    event.preventDefault();
+    clearBanner();
+    if (!totpPreSession) { resetLoginPane(); return; }
+    const data = form("login-totp-form");
+    const response = await api("POST", "/api/v1/login/totp", {
+      pre_session_token: totpPreSession,
+      code: data.code,
+    });
+    if (!response.ok) {
+      message("The authenticator code was not accepted.", "danger");
+      return;
+    }
+    resetLoginPane();
     await loadConsole();
   }
 
@@ -447,7 +763,18 @@
   }
 
   function main() {
+    wireThemeSwitcher();
     $("login-form").addEventListener("submit", login);
+    $("login-totp-form").addEventListener("submit", loginTotp);
+    $("login-totp-cancel").addEventListener("click", () => { resetLoginPane(); clearBanner(); });
+    $("totp-begin").addEventListener("click", () => { void beginTotpEnroll(); });
+    $("totp-confirm").addEventListener("click", () => { void confirmTotpEnroll(); });
+    $("totp-cancel-enroll").addEventListener("click", () => {
+      setVisible("totp-enroll-controls", false);
+      $("totp-qr").replaceChildren();
+      void loadAccount();
+    });
+    $("totp-disable-form").addEventListener("submit", disableTotp);
     $("setup-form").addEventListener("submit", submitSetup);
     $("setup-form").addEventListener("input", () => { setupTouched = true; });
     $("setup-form").elements.network_mode.addEventListener("change", renderAttachment);
@@ -456,7 +783,11 @@
     $("clear-preshared").addEventListener("click", () => setPreshared("clear"));
     $("create-form").addEventListener("submit", submitCreate);
     $("edit-form").addEventListener("submit", submitEdit);
+    $("account").addEventListener("click", () => { void openAccount(); });
+    document.querySelectorAll(".close-account").forEach((button) => button.addEventListener("click", closeAccount));
+    $("password-form").addEventListener("submit", changePassword);
     $("logout").addEventListener("click", logout);
+    $("oidc-settings-form").addEventListener("submit", saveOidcSettings);
     $("refresh").addEventListener("click", loadConsole);
     $("new-client").addEventListener("click", () => setVisible("create-form", true));
     $("cancel-create").addEventListener("click", () => setVisible("create-form", false));

@@ -425,22 +425,32 @@ The domain model and firewall abstraction MUST avoid choices that make this a re
 
 ## 14. Phase 12 — Optional advanced capabilities
 
-Status: deferred; each requires fresh research/planning.
+Status: partially planned 2026-11-16. Auth parity, UI polish, and observability are active planning workstreams; other candidates remain deferred.
 
-Candidates:
+### 14.1 Planned workstreams (2026-11-16)
 
-- TOTP;
-- OIDC;
-- multi-admin RBAC;
+Maintainer decisions: full auth parity with wg-easy; allow-listed auto-register; password-auth disable with CLI recovery; larger self-contained embedded shell; Prometheus labels include `name` as well as stable client id; JSON metrics and UI sparkline history in addition to Prometheus.
+
+| Workstream | ADR | Roadmap | First ready handoff |
+|---|---|---|---|
+| Operator auth expansion (account password, TOTP, OIDC/OAuth, allow-list, password disable) | `plans/adr/012-authentication-expansion-totp-oidc.md` | `plans/subsystems/operator-auth-expansion-roadmap.md` | M001 `plans/implementation/operator-auth-expansion/001-account-password-change.md` |
+| Operator UI polish (theme switcher, visual polish, sparklines) | (ceilings/theme under UI roadmap; charts consume ADR-013) | `plans/subsystems/operator-ui-polish-roadmap.md` | M001 `plans/implementation/operator-ui-polish/001-theme-switcher-and-asset-ceilings.md` |
+| Observability metrics (Prometheus, JSON, bounded history) | `plans/adr/013-observability-metrics-and-telemetry-history.md` | `plans/subsystems/observability-metrics-roadmap.md` | M001 `plans/implementation/observability-metrics/001-prometheus-scrape.md` |
+
+Fine-grained multi-admin RBAC remains out of the auth-expansion roadmap (auto-registered users are full administrators, matching current wg-easy).
+
+### 14.2 Still deferred (fresh research required before planning)
+
 - per-client policy groups;
-- Prometheus/OpenMetrics;
 - userspace WireGuard fallback;
 - AmneziaWG-compatible backend;
 - constrained `wg-quick` import;
 - multiple managed server interfaces;
-- external endpoint discovery.
+- external endpoint discovery;
+- fine-grained multi-admin RBAC;
+- i18n / Gravatar.
 
-None is required for the initial product identity.
+None of Phase 12 is required for the initial product identity.
 
 ## 14A. Post-Phase-11 — Native macOS headless server support
 

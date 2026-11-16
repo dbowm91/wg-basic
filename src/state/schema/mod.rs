@@ -392,7 +392,8 @@ mod tests {
             .unwrap();
         assert_eq!(user_version, migrations::supported_version());
         assert_eq!(
-            user_version, 10,
+            user_version,
+            migrations::current_schema_version(),
             "a fresh database is created at the current head, never behind it"
         );
 
@@ -415,6 +416,16 @@ mod tests {
             "client_product_settings",
             "client_dns_servers",
             "audit_events",
+            "metrics_settings",
+            "admin_principal_totp",
+            "admin_totp_pre_sessions",
+            "telemetry_samples",
+            "oidc_provider_settings",
+            "admin_idp_subject_links",
+            "oidc_auth_transients",
+            "oidc_login_completions",
+            "auth_idp_policy",
+            "oauth_branded_providers",
         ] {
             let exists: i64 = connection
                 .query_row(
@@ -465,6 +476,9 @@ mod tests {
 
         let mut columns = Vec::new();
         for table in tables {
+            if table == "telemetry_samples" {
+                continue;
+            }
             let sql: String = connection
                 .query_row(
                     "SELECT sql FROM sqlite_master WHERE name = ?1",
@@ -1001,7 +1015,10 @@ mod tests {
         drop(connection);
 
         let store = StateStore::open(temp.db()).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 10);
+        assert_eq!(
+            store.schema_version().unwrap(),
+            migrations::current_schema_version()
+        );
         assert_eq!(
             store
                 .installation_metadata()

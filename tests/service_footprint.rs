@@ -54,12 +54,14 @@ const PASSWORD: &str = "an administrator password";
 /// Every wait is a deadline; no sleep anywhere in this file.
 const DEADLINE: Duration = Duration::from_secs(60);
 
-/// The long-term engineering signal from the roadmap, in MiB.
+/// Combined serve+netd RSS bound for this suite, in MiB.
 ///
-/// Compared against and *not* enforced as a gate: the plan says not to weaken
-/// security or correctness to meet it. It is printed next to the measured total
-/// so a regression is visible, and asserted only to the loose bound below.
-const TOTAL_FOOTPRINT_SIGNAL_MIB: u64 = 30;
+/// The roadmap's long-term <30 MiB target stays an engineering goal. Auth M003
+/// (generic OIDC) links `openidconnect`, blocking `reqwest`, and `rustls` into
+/// `serve`; qualification hardware measures ~35 MiB combined RSS after that
+/// landing. This bound catches order-of-magnitude regressions without pretending
+/// the old 30 MiB figure still fits the same binary.
+const TOTAL_FOOTPRINT_SIGNAL_MIB: u64 = 40;
 
 /// How many samples every reported figure is a median over.
 const SAMPLES: usize = 5;
@@ -574,6 +576,7 @@ fn the_management_surface_meets_its_footprint_and_latency_shape() {
         "/",
         "/assets/app.css",
         "/assets/app.js",
+        "/assets/charts.js",
         "/enroll",
         "/assets/enroll.js",
     ] {
@@ -596,7 +599,7 @@ fn the_management_surface_meets_its_footprint_and_latency_shape() {
          (engineering signal: <{TOTAL_FOOTPRINT_SIGNAL_MIB} MiB)\n\
          idle CPU over {idle_window:?}: serve {serve_cpu_ticks} ticks, \
          netd {netd_cpu_ticks} ticks\n\
-         embedded shell, all five assets:         {shell_bytes} bytes\n\
+         embedded shell, all six assets:          {shell_bytes} bytes\n\
          worker queue capacity:                  {}\n\
          ===================================================\n",
         kib_to_mib(serve_rss),
@@ -665,7 +668,7 @@ fn the_management_surface_meets_its_footprint_and_latency_shape() {
 
     // The shell is embedded and bounded, so it costs memory once.
     assert!(
-        shell_bytes < 64 * 1024,
+        shell_bytes < 128 * 1024,
         "the embedded shell is {shell_bytes} bytes, past its declared budget"
     );
 
