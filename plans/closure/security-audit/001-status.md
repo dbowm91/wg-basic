@@ -63,10 +63,22 @@ cargo +1.89.0 check --all-targets --locked
 All five completed successfully. `cargo test --locked` reported no failed
 suites.
 
-Rootful `network_control_e2e` was **not** run (not requested; gates skill
-forbids unprompted rootful suites). D2's PATH claim is closed by the unit
-test of path selection; live nft regression against a wrong pin was not
-re-qualified on this host.
+Rootful suites were re-run after the absolute-`nft` pin forced the
+PATH-based failure fixtures to be rewritten as pinned-path overlays:
+
+```sh
+sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo CI=true \
+  cargo test --locked --features linux-integration --test durable_restart \
+  a_failing_firewall_blocks_the_disable -- --test-threads=1
+sudo -E env "PATH=$PATH" CARGO_HOME=/tmp/wg-basic-root-cargo CI=true \
+  cargo test --locked --features linux-integration --test network_control_e2e \
+  three_namespace_wireguard_forwarding_nat_restart_and_preservation \
+  -- --test-threads=1
+```
+
+Both passed on this host. D2's PATH claim remains closed by the unit test of
+path selection; the rootful suites prove live nft still works under the pin
+and that fault injection still reaches the shipped disable/apply paths.
 
 Cross-target `linux-integration` clippy was not run: the Zig cross
 toolchain (`$HOME/wg-toolchain/zigcc`) is absent on this host. Shared
