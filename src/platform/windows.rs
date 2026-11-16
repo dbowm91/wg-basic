@@ -157,9 +157,13 @@ pub fn adapter_guid(installation: InstallationId, interface: InterfaceId) -> [u8
     guid
 }
 
-/// NetNAT object this installation owns. The caller does not choose the name.
+/// Name of the one NetNAT this installation owns. The caller does not choose it.
+///
+/// WinNAT stores that name in an 80-byte key. `wg-basic-` plus 30 hex digits
+/// of the installation id fits, including the terminating NUL.
 pub fn owned_nat_name(installation: InstallationId) -> String {
-    format!("wg-basic-{installation}")
+    let compact = installation.to_string().replace('-', "");
+    format!("wg-basic-{}", &compact[..30])
 }
 
 /// One NetNAT row observed on the host.
@@ -304,6 +308,16 @@ mod tests {
         assert_eq!(first[8] & 0xc0, 0x80);
         let other = adapter_guid(InstallationId::new(), interface);
         assert_ne!(first, other);
+    }
+
+    #[test]
+    fn owned_nat_name_fits_the_winnat_key() {
+        let id: InstallationId = "00000000-0000-4000-8000-0000000000c4".parse().unwrap();
+        let name = owned_nat_name(id);
+        assert_eq!(name, "wg-basic-000000000000400080000000000000");
+        assert!(name.len() <= 39, "{}", name.len());
+        let other: InstallationId = "ffffffff-ffff-4fff-bfff-ffffffffffff".parse().unwrap();
+        assert_ne!(name, owned_nat_name(other));
     }
 
     #[test]
