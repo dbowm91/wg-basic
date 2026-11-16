@@ -1630,7 +1630,19 @@ mod tests {
     /// A socket path that cannot exist, so startup reconciliation is guaranteed
     /// to degrade rather than depend on a running netd.
     fn absent_socket(temp: &TempDir) -> PathBuf {
-        temp.path.join("no-such-netd.sock")
+        #[cfg(windows)]
+        {
+            let label = temp
+                .path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .expect("temp directory name is Unicode");
+            PathBuf::from(format!(r"\\.\pipe\{label}"))
+        }
+        #[cfg(not(windows))]
+        {
+            temp.path.join("no-such-netd.sock")
+        }
     }
 
     /// A worker configuration for a host where no backend is running.

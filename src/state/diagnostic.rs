@@ -485,6 +485,14 @@ mod tests {
             )
             .unwrap();
         assert!(sidecar(&database, "-wal").exists());
+        // The raw connection created these sidecars. The store narrows them
+        // when it opens; this test has to do the same before the read.
+        for suffix in ["-wal", "-shm"] {
+            let path = sidecar(&database, suffix);
+            if path.exists() {
+                crate::state::privacy::restrict_secret(&path).unwrap();
+            }
+        }
 
         let identity = inspect_identity_readonly(&database).unwrap();
         assert_eq!(identity.schema_version, 4);

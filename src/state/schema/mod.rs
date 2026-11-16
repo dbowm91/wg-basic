@@ -76,6 +76,10 @@ pub fn open_connection(
         .map_err(|_| StateError::DatabaseOpenFailed)?;
 
     validation::configure(&connection)?;
+    // SQLite creates the WAL sidecars with the process default ACL. On Windows
+    // that ACL is not the database's protected DACL, so narrow them before
+    // any later identity read.
+    restrict_sqlite_sidecars(&canonical)?;
     let starting_version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(StateError::database)?;
@@ -87,6 +91,23 @@ pub fn open_connection(
     )?;
     migrations::run_migrations(&mut connection)?;
     Ok(connection)
+}
+
+fn restrict_sqlite_sidecars(database: &Path) -> Result<(), StateError> {
+    for suffix in ["-wal", "-shm"] {
+        let mut name = database.as_os_str().to_owned();
+        name.push(suffix);
+        let sidecar = std::path::PathBuf::from(name);
+        if !sidecar.exists() {
+            continue;
+        }
+        crate::state::privacy::restrict_secret(&sidecar).map_err(|_| {
+            StateError::DatabaseTooPermissive {
+                path: sidecar.display().to_string(),
+            }
+        })?;
+    }
+    Ok(())
 }
 
 /// Resolves symlink components in the database parent directory.
@@ -135,6 +156,7 @@ pub(crate) fn open_connection_without_migrating(
     )
     .map_err(|_| StateError::DatabaseOpenFailed)?;
     validation::configure(&connection)?;
+    restrict_sqlite_sidecars(&canonical)?;
     Ok(connection)
 }
 

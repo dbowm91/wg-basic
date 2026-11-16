@@ -680,11 +680,15 @@ fn any_row(connection: &rusqlite::Connection, query: &str) -> Result<bool, State
 }
 
 fn sync_file(path: &Path) -> Result<(), StateError> {
-    let file =
-        fs::File::open(path).map_err(|_| StateError::Corrupt("artifact could not be synced"))?;
+    // Windows `FlushFileBuffers` requires write access. A read-only open
+    // makes the durability sync fail after a successful backup.
+    let mut handle = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(|_| StateError::Corrupt("artifact could not be synced"))?;
     // `File::sync_all` is `fsync(2)`. The database's own durability contract
     // also sets `synchronous = FULL`; this covers the file we just created.
-    let mut handle = file;
     handle
         .flush()
         .map_err(|_| StateError::Corrupt("artifact could not be synced"))?;
@@ -702,9 +706,14 @@ fn sync_directory(path: &Path) -> Result<(), StateError> {
         use std::os::unix::io::AsRawFd;
         let _ = directory.as_raw_fd();
     }
-    directory
-        .sync_all()
-        .map_err(|_| StateError::Corrupt("directory could not be synced"))
+    match directory.sync_all() {
+        Ok(()) => Ok(()),
+        // NTFS makes the rename durable. FlushFileBuffers rejects a directory
+        // handle, so that refusal is not a failed restore.
+        #[cfg(windows)]
+        Err(error) if matches!(error.raw_os_error(), Some(1 | 5 | 87)) => Ok(()),
+        Err(_) => Err(StateError::Corrupt("directory could not be synced")),
+    }
 }
 
 fn current_uid() -> u32 {
