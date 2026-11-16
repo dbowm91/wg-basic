@@ -432,7 +432,7 @@
       setup.elements.masquerade.checked = false;
       setup.elements.egress_interface.value = "";
       if (prerequisites.host_platform === "macos") setup.elements.egress_interface.placeholder = "en0";
-      else note.textContent = "This host platform is unknown, so setup starts with no forwarding and no masquerade.";
+      else if (prerequisites.host_platform !== "windows") note.textContent = "This host platform is unknown, so setup starts with no forwarding and no masquerade.";
     }
     renderAttachment();
   }

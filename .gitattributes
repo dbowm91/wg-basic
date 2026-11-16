@@ -1,0 +1,4 @@
+# Signed release fixtures are verified byte for byte. A Windows checkout
+# must not rewrite their LF endings.
+tests/fixtures/** text eol=lf
+*.minisig text eol=lf

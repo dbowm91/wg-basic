@@ -353,7 +353,7 @@ fn stage_restore(
 
 #[cfg(all(unix, feature = "update-test-fixtures"))]
 fn wait_at_update_fixture_restore_gate(target: &Path) -> Result<(), StateError> {
-    use std::os::unix::fs::MetadataExt;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 
     let parent = parent_of(target)?;
     let gate = parent.join(".update-fixture-restore-gate");

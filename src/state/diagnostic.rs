@@ -358,7 +358,7 @@ mod tests {
 
     /// A scratch directory path that no concurrent test can claim.
     fn scratch_directory(prefix: &str) -> PathBuf {
-        let path = Path::new("/tmp").join(format!(
+        let path = std::env::temp_dir().join(format!(
             "{prefix}-{}-{}",
             std::process::id(),
             SCRATCH_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),

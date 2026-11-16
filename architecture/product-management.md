@@ -106,23 +106,23 @@ than seven days; their audit events remain. Audit storage retains the newest
 inside the writing transaction. Retention does not advance DesiredGeneration.
 
 `GET /api/v1/network-prerequisites` is an authenticated read with no body and
-no CSRF token. `host_platform` is the platform this binary was built for.
-Forwarding is `enabled`, `disabled`, or `not_observed`. A missing network
-service is `not_observed` with no verdict. A conflict or an unsupported plan
-is a named `refusal`. On macOS the reply includes the three administrator
-attachment lines, their section order, and the anchor file. Linux replies
-omit that object. The route plans through the existing network-policy plan
-operation and does not apply it.
+no CSRF token. `host_platform` is the platform this binary was built for: `linux`, `macos`,
+or `windows`. Forwarding is `enabled`, `disabled`, or `not_observed`. A missing
+network service is `not_observed` with no verdict. A conflict or an unsupported
+plan is a named `refusal`. On macOS the reply includes the three administrator
+attachment lines, their section order, and the anchor file. Linux and Windows
+replies omit that object. The route plans through the existing network-policy
+plan operation and does not apply it.
 
 An omitted setup `mode` still derives the policy: forwarding or masquerade
 stores a gateway, and neither stores host-only. An explicit `gateway` mode is
 accepted with those settings. The embedded page starts from
 `GET /api/v1/network-prerequisites` when the form has not been edited. Linux
 leaves IPv4 forwarding and masquerade checked and egress at `eth0`. macOS
-clears both and the egress value, and uses `en0` as a placeholder. Any other
-platform clears both and shows that the platform is unknown. Choosing gateway
-or routed LAN on macOS shows the lines or filter rules and states that the
-product will not write them.
+clears both and the egress value, and uses `en0` as a placeholder. Windows
+clears both. Any other platform clears both and shows that the platform is
+unknown. Choosing gateway or routed LAN on macOS shows the lines or filter
+rules and states that the product will not write them.
 
 A client `expires_at` is Unix seconds on the management worker's clock, or
 null for never. A value at or before that clock is rejected and nothing is

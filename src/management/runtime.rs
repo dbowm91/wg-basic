@@ -516,6 +516,8 @@ fn host_platform() -> &'static str {
         "linux"
     } else if cfg!(target_os = "macos") {
         "macos"
+    } else if cfg!(target_os = "windows") {
+        "windows"
     } else {
         "unknown"
     }
@@ -894,7 +896,7 @@ mod tests {
             ))),
         );
         match ready.host_platform {
-            "linux" => assert!(ready.attachment.is_none()),
+            "linux" | "windows" => assert!(ready.attachment.is_none()),
             "macos" => {
                 let attachment = ready.attachment.expect("macos names the parent lines");
                 assert_eq!(attachment.sections, ["translation", "filtering", "load"]);

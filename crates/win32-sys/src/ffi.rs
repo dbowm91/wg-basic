@@ -150,9 +150,9 @@ pub fn current_user_sid() -> Result<String, SysError> {
         if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == FALSE {
             return Err(SysError::last("OpenProcessToken"));
         }
-        let sid = token_user_sid(token).map_err(|_| SysError::last("GetTokenInformation"))?;
+        let sid = token_user_sid(token);
         CloseHandle(token);
-        sid_string(sid)
+        sid
     }
 }
 
@@ -180,9 +180,12 @@ pub fn lookup_account_sid(account: &str) -> Result<String, SysError> {
     }
 }
 
-unsafe fn token_user_sid(token: HANDLE) -> Result<*mut std::ffi::c_void, ()> {
+unsafe fn token_user_sid(token: HANDLE) -> Result<String, SysError> {
     let mut needed = 0u32;
     GetTokenInformation(token, TokenUser, ptr::null_mut(), 0, &mut needed);
+    if needed == 0 {
+        return Err(SysError::last("GetTokenInformation"));
+    }
     let mut buffer = vec![0u8; needed as usize];
     if GetTokenInformation(
         token,
@@ -192,10 +195,12 @@ unsafe fn token_user_sid(token: HANDLE) -> Result<*mut std::ffi::c_void, ()> {
         &mut needed,
     ) == FALSE
     {
-        return Err(());
+        return Err(SysError::last("GetTokenInformation"));
     }
+    // TokenUser's SID pointer addresses this buffer. Convert it before the
+    // allocation is freed.
     let user = &*(buffer.as_ptr() as *const TOKEN_USER);
-    Ok(user.User.Sid)
+    sid_string(user.User.Sid)
 }
 
 unsafe fn sid_string(sid: *mut std::ffi::c_void) -> Result<String, SysError> {
@@ -324,10 +329,7 @@ pub fn accept_pipe(pipe: &PipeHandle) -> Result<AcceptedRaw, SysError> {
             CloseHandle(process);
             return Err(SysError::last("OpenProcessToken"));
         }
-        let sid = match token_user_sid(token) {
-            Ok(sid) => sid_string(sid),
-            Err(()) => Err(SysError::last("peer token")),
-        };
+        let sid = token_user_sid(token);
         let high = token_is_high(token);
         CloseHandle(token);
         CloseHandle(process);
@@ -430,19 +432,21 @@ pub fn restrict_to_sid(path: &str, sid: &str) -> Result<(), SysError> {
     if !sid.starts_with("S-1-") || sid.contains(|ch: char| ch.is_whitespace() || ch == '"') {
         return Err(SysError::invalid("sid"));
     }
+    let path = win32_path(path);
     let sddl = format!("D:P(A;;FA;;;{sid})");
-    apply_sddl(path, &sddl)
+    apply_sddl(&path, &sddl, sid)
 }
 
 pub fn is_private(path: &str) -> Result<bool, SysError> {
-    if is_reparse(path)? {
+    let path = win32_path(path);
+    if is_reparse(&path)? {
         return Ok(false);
     }
     let sid = current_user_sid()?;
     // Re-apply is not a proof. Read the DACL and require exactly one allow ACE
     // for the current user by comparing to the SDDL we would have written:
     // a protected DACL whose only trustee is the current user.
-    let path_w = wide(path);
+    let path_w = wide(&path);
     unsafe {
         let mut sd = ptr::null_mut();
         let mut dacl: *mut windows_sys::Win32::Security::ACL = ptr::null_mut();
@@ -517,10 +521,38 @@ fn is_reparse(path: &str) -> Result<bool, SysError> {
     }
 }
 
-fn apply_sddl(path: &str, sddl: &str) -> Result<(), SysError> {
+/// `fs::canonicalize` yields a `\\?\` path. The security APIs accept that
+/// prefix, and they also accept the ordinary path when it is under MAX_PATH.
+/// The ordinary form is what the tests restrict before open.
+fn win32_path(path: &str) -> String {
+    const VERBATIM_UNC: &str = "\\\\?\\UNC\\";
+    const VERBATIM: &str = "\\\\?\\";
+    if let Some(rest) = path.strip_prefix(VERBATIM_UNC) {
+        let unc = format!("\\\\{rest}");
+        if unc.len() < 260 {
+            return unc;
+        }
+    } else if let Some(rest) = path.strip_prefix(VERBATIM) {
+        if rest.len() < 260 {
+            return rest.to_owned();
+        }
+    }
+    path.to_owned()
+}
+
+fn apply_sddl(path: &str, sddl: &str, owner_sid: &str) -> Result<(), SysError> {
     let path_w = wide(path);
     let sddl_w = wide(sddl);
+    let owner_w = wide(owner_sid);
     unsafe {
+        let mut owner: windows_sys::Win32::Security::PSID = ptr::null_mut();
+        if windows_sys::Win32::Security::Authorization::ConvertStringSidToSidW(
+            owner_w.as_ptr(),
+            &mut owner,
+        ) == FALSE
+        {
+            return Err(SysError::last("ConvertStringSidToSidW"));
+        }
         let mut sd = ptr::null_mut();
         if ConvertStringSecurityDescriptorToSecurityDescriptorW(
             sddl_w.as_ptr(),
@@ -529,31 +561,40 @@ fn apply_sddl(path: &str, sddl: &str) -> Result<(), SysError> {
             ptr::null_mut(),
         ) == FALSE
         {
+            windows_sys::Win32::Foundation::LocalFree(owner.cast());
             return Err(SysError::last("ConvertStringSecurityDescriptor"));
         }
         let mut dacl = ptr::null_mut();
-        let present = 0i32;
-        let defaulted = 0i32;
+        let mut present = 0i32;
+        let mut defaulted = 0i32;
         if windows_sys::Win32::Security::GetSecurityDescriptorDacl(
             sd,
-            &present as *const i32 as *mut _,
+            &mut present,
             &mut dacl,
-            &defaulted as *const i32 as *mut _,
+            &mut defaulted,
         ) == FALSE
+            || present == 0
+            || dacl.is_null()
         {
             windows_sys::Win32::Foundation::LocalFree(sd.cast());
-            return Err(SysError::last("GetSecurityDescriptorDacl"));
+            windows_sys::Win32::Foundation::LocalFree(owner.cast());
+            return Err(SysError::invalid("security descriptor has no dacl"));
         }
+        // An elevated token's default owner is Administrators. The privacy
+        // check requires the current user, so the owner is assigned with the DACL.
         let code = SetNamedSecurityInfoW(
             path_w.as_ptr(),
             SE_FILE_OBJECT,
-            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-            ptr::null_mut(),
+            OWNER_SECURITY_INFORMATION
+                | DACL_SECURITY_INFORMATION
+                | PROTECTED_DACL_SECURITY_INFORMATION,
+            owner,
             ptr::null_mut(),
             dacl,
             ptr::null_mut(),
         );
         windows_sys::Win32::Foundation::LocalFree(sd.cast());
+        windows_sys::Win32::Foundation::LocalFree(owner.cast());
         if code != 0 {
             return Err(SysError::os("SetNamedSecurityInfoW", code));
         }
@@ -562,7 +603,8 @@ fn apply_sddl(path: &str, sddl: &str) -> Result<(), SysError> {
 }
 
 pub fn create_private_file(path: &str) -> io::Result<File> {
-    let path_w = wide(path);
+    let path = win32_path(path);
+    let path_w = wide(&path);
     unsafe {
         let handle = windows_sys::Win32::Storage::FileSystem::CreateFileW(
             path_w.as_ptr(),
@@ -577,7 +619,7 @@ pub fn create_private_file(path: &str) -> io::Result<File> {
             return Err(io::Error::from_raw_os_error(GetLastError() as i32));
         }
         let file = File::from_raw_handle(handle as RawHandle);
-        restrict_to_current_user(path)
+        restrict_to_current_user(&path)
             .map_err(|error| io::Error::new(io::ErrorKind::PermissionDenied, error.to_string()))?;
         Ok(file)
     }
