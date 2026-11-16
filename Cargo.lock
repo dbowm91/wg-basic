@@ -1845,6 +1845,7 @@ name = "wg-basic-win32-sys"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "windows",
  "windows-sys 0.59.0",
  "wmi",
 ]

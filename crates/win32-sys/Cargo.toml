@@ -13,6 +13,10 @@ license = "MIT"
 [target.'cfg(windows)'.dependencies]
 serde = { version = "1.0", features = ["derive"] }
 wmi = "0.14"
+windows = { version = "0.59", features = [
+    "Win32_System_Variant",
+    "Win32_System_Wmi",
+] }
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_NetworkManagement_IpHelper",

@@ -1682,30 +1682,12 @@ mod nat {
     }
 
     pub fn create(name: &str, prefix: &str) -> Result<(), SysError> {
-        // New-NetNat starts the Windows NAT Driver. A stopped service makes
-        // MSFT_NetNat.Create fail before the object exists.
+        // New-NetNat starts the Windows NAT Driver before the provider will
+        // accept a new instance.
         let _ = super::ensure_running("WinNat");
         let connection = connect()?;
-        let created = connection.exec_class_method::<MSFT_NetNat, _, MethodOutput>(
-            "Create",
-            NatCreate {
-                Name: name.to_owned(),
-                InternalIPInterfaceAddressPrefix: prefix.to_owned(),
-            },
-        );
-        match created {
-            Ok(output) if output.ReturnValue == 0 => Ok(()),
-            Ok(output) => Err(SysError::os("MSFT_NetNat.Create", output.ReturnValue)),
-            Err(error) => {
-                // The method can create the instance and still return an output
-                // object this deserializer cannot read. The instance is the proof.
-                if list().is_ok_and(|rows| rows.iter().any(|row| row.name == name)) {
-                    Ok(())
-                } else {
-                    Err(explain("MSFT_NetNat.Create", error))
-                }
-            }
-        }
+        // The cmdlet is `cim:CreateInstance`, not an extrinsic Create method.
+        put_instance(&connection, name, prefix)
     }
 
     pub fn delete(name: &str) -> Result<(), SysError> {
@@ -1717,14 +1699,68 @@ mod nat {
         let Some(row) = rows.into_iter().next() else {
             return Ok(());
         };
-        let output: MethodOutput = connection
-            .exec_instance_method::<MSFT_NetNat, _, _>("Delete", &row.path, ())
-            .map_err(|error| explain("MSFT_NetNat.Delete", error))?;
-        if output.ReturnValue == 0 {
-            Ok(())
-        } else {
-            Err(SysError::os("MSFT_NetNat.Delete", output.ReturnValue))
+        let path = windows::core::BSTR::from(row.path.as_str());
+        unsafe {
+            connection
+                .svc
+                .DeleteInstance(
+                    &path,
+                    windows::Win32::System::Wmi::WBEM_FLAG_RETURN_WBEM_COMPLETE,
+                    None,
+                    None,
+                )
+                .map_err(|error| hresult("MSFT_NetNat.DeleteInstance", error))?;
         }
+        Ok(())
+    }
+
+    fn put_instance(connection: &WMIConnection, name: &str, prefix: &str) -> Result<(), SysError> {
+        use windows::core::BSTR;
+        use windows::Win32::System::Wmi::{IWbemClassObject, WBEM_FLAG_RETURN_WBEM_COMPLETE};
+
+        let class_name = BSTR::from("MSFT_NetNat");
+        let mut class_definition: Option<IWbemClassObject> = None;
+        unsafe {
+            connection
+                .svc
+                .GetObject(
+                    &class_name,
+                    WBEM_FLAG_RETURN_WBEM_COMPLETE,
+                    None,
+                    Some(&mut class_definition),
+                    None,
+                )
+                .map_err(|error| hresult("MSFT_NetNat", error))?;
+            let class = class_definition.ok_or_else(|| SysError::invalid("MSFT_NetNat"))?;
+            let instance = class
+                .SpawnInstance(0)
+                .map_err(|error| hresult("MSFT_NetNat.CreateInstance", error))?;
+            put_string(&instance, "Name", name)?;
+            put_string(&instance, "InternalIPInterfaceAddressPrefix", prefix)?;
+            connection
+                .svc
+                .PutInstance(&instance, WBEM_FLAG_RETURN_WBEM_COMPLETE, None, None)
+                .map_err(|error| hresult("MSFT_NetNat.CreateInstance", error))?;
+        }
+        Ok(())
+    }
+
+    fn put_string(
+        instance: &windows::Win32::System::Wmi::IWbemClassObject,
+        name: &str,
+        value: &str,
+    ) -> Result<(), SysError> {
+        let name = windows::core::HSTRING::from(name);
+        let value = windows::Win32::System::Variant::VARIANT::from(value);
+        unsafe {
+            instance
+                .Put(&name, 0, &value, 0)
+                .map_err(|error| hresult("MSFT_NetNat.CreateInstance", error))
+        }
+    }
+
+    fn hresult(operation: &'static str, error: windows::core::Error) -> SysError {
+        SysError::detailed(operation, Some(error.code().0 as u32), error.to_string())
     }
 
     pub fn install_filter(name: &str, listen_port: u16) -> Result<(), SysError> {
@@ -1783,22 +1819,9 @@ mod nat {
 
     #[derive(Deserialize)]
     #[allow(non_camel_case_types)]
-    struct MSFT_NetNat {
-        #[serde(default)]
-        Name: String,
-    }
-
-    #[derive(Deserialize)]
-    #[allow(non_camel_case_types)]
     struct MSFT_NetFirewallRule {
         #[serde(default)]
         DisplayName: String,
-    }
-
-    #[derive(Serialize)]
-    struct NatCreate {
-        Name: String,
-        InternalIPInterfaceAddressPrefix: String,
     }
 
     #[derive(Serialize)]
