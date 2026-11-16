@@ -57,10 +57,11 @@ use windows_sys::Win32::System::Registry::{
 };
 use windows_sys::Win32::System::Services::{
     ChangeServiceConfig2W, CloseServiceHandle, ControlService, CreateServiceW, DeleteService,
-    OpenSCManagerW, OpenServiceW, StartServiceW, SC_ACTION, SC_ACTION_RESTART, SC_HANDLE,
-    SC_MANAGER_CONNECT, SC_MANAGER_CREATE_SERVICE, SERVICE_ALL_ACCESS, SERVICE_AUTO_START,
-    SERVICE_CONFIG_FAILURE_ACTIONS, SERVICE_CONTROL_STOP, SERVICE_ERROR_NORMAL,
-    SERVICE_FAILURE_ACTIONSW, SERVICE_STATUS, SERVICE_STOPPED, SERVICE_WIN32_OWN_PROCESS,
+    OpenSCManagerW, OpenServiceW, QueryServiceStatus, StartServiceW, SC_ACTION, SC_ACTION_RESTART,
+    SC_HANDLE, SC_MANAGER_CONNECT, SC_MANAGER_CREATE_SERVICE, SERVICE_ALL_ACCESS,
+    SERVICE_AUTO_START, SERVICE_CONFIG_FAILURE_ACTIONS, SERVICE_CONTROL_STOP, SERVICE_ERROR_NORMAL,
+    SERVICE_FAILURE_ACTIONSW, SERVICE_RUNNING, SERVICE_STATUS, SERVICE_STOPPED,
+    SERVICE_WIN32_OWN_PROCESS,
 };
 use windows_sys::Win32::System::SystemInformation::{GetVersionExW, OSVERSIONINFOEXW};
 use windows_sys::Win32::System::Threading::{
@@ -80,6 +81,7 @@ const UF_DONT_EXPIRE_PASSWD: u32 = 0x10000;
 pub struct SysError {
     operation: &'static str,
     code: Option<u32>,
+    detail: Option<String>,
 }
 
 impl SysError {
@@ -87,6 +89,7 @@ impl SysError {
         Self {
             operation,
             code: None,
+            detail: None,
         }
     }
 
@@ -94,6 +97,15 @@ impl SysError {
         Self {
             operation,
             code: Some(code),
+            detail: None,
+        }
+    }
+
+    fn detailed(operation: &'static str, code: Option<u32>, detail: String) -> Self {
+        Self {
+            operation,
+            code,
+            detail: Some(detail),
         }
     }
 
@@ -108,9 +120,19 @@ impl SysError {
 
 impl std::fmt::Display for SysError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.code {
-            Some(code) => write!(formatter, "{} failed: os error {code}", self.operation),
-            None => write!(formatter, "{} refused", self.operation),
+        match (self.code, &self.detail) {
+            (Some(code), Some(detail)) => {
+                write!(
+                    formatter,
+                    "{} failed: os error {code}: {detail}",
+                    self.operation
+                )
+            }
+            (Some(code), None) => {
+                write!(formatter, "{} failed: os error {code}", self.operation)
+            }
+            (None, Some(detail)) => write!(formatter, "{} refused: {detail}", self.operation),
+            (None, None) => write!(formatter, "{} refused", self.operation),
         }
     }
 }
@@ -334,10 +356,8 @@ pub fn accept_pipe(pipe: &PipeHandle) -> Result<AcceptedRaw, SysError> {
         CloseHandle(token);
         CloseHandle(process);
         let sid = sid?;
-        let io = File::from_raw_handle(pipe.handle as RawHandle);
-        // The listener still owns the handle. Duplicate so the File drop does
-        // not close the listening instance.
-        drop(io);
+        // Duplicate before any File owns a handle. `File::from_raw_handle`
+        // closes its handle on drop, and the listener must keep `pipe.handle`.
         let duplicated = duplicate(pipe.handle)?;
         Ok(AcceptedRaw {
             io: File::from_raw_handle(duplicated as RawHandle),
@@ -657,30 +677,41 @@ fn lock(file: &File, flags: u32) -> Result<(), bool> {
 }
 
 pub fn os_facts() -> Result<OsFacts, SysError> {
-    unsafe {
-        let mut info = std::mem::zeroed::<OSVERSIONINFOEXW>();
-        info.dwOSVersionInfoSize = std::mem::size_of::<OSVERSIONINFOEXW>() as u32;
-        if GetVersionExW(&mut info as *mut _ as *mut _) == FALSE {
-            return Err(SysError::last("GetVersionExW"));
-        }
-        let installation_type = registry_string(
-            r"SOFTWARE\Microsoft\Windows NT\CurrentVersion",
-            "InstallationType",
-        )
-        .unwrap_or_else(|_| "unknown".into());
-        let caption = registry_string(
-            r"SOFTWARE\Microsoft\Windows NT\CurrentVersion",
-            "ProductName",
-        )
-        .unwrap_or_else(|_| "Windows".into());
-        let architecture = std::env::consts::ARCH.to_owned();
-        Ok(OsFacts {
-            caption,
-            build: info.dwBuildNumber,
-            architecture,
-            installation_type,
-        })
-    }
+    let installation_type = registry_string(
+        r"SOFTWARE\Microsoft\Windows NT\CurrentVersion",
+        "InstallationType",
+    )
+    .unwrap_or_else(|_| "unknown".into());
+    let caption = registry_string(
+        r"SOFTWARE\Microsoft\Windows NT\CurrentVersion",
+        "ProductName",
+    )
+    .unwrap_or_else(|_| "Windows".into());
+    // `GetVersionExW` is shimmed by the application manifest and does not
+    // report the installation build. `CurrentBuildNumber` does.
+    let build = match registry_string(
+        r"SOFTWARE\Microsoft\Windows NT\CurrentVersion",
+        "CurrentBuildNumber",
+    ) {
+        Ok(text) => text
+            .trim()
+            .parse::<u32>()
+            .map_err(|_| SysError::invalid("CurrentBuildNumber"))?,
+        Err(_) => unsafe {
+            let mut info = std::mem::zeroed::<OSVERSIONINFOEXW>();
+            info.dwOSVersionInfoSize = std::mem::size_of::<OSVERSIONINFOEXW>() as u32;
+            if GetVersionExW(&mut info as *mut _ as *mut _) == FALSE {
+                return Err(SysError::last("GetVersionExW"));
+            }
+            info.dwBuildNumber
+        },
+    };
+    Ok(OsFacts {
+        caption,
+        build,
+        architecture: std::env::consts::ARCH.to_owned(),
+        installation_type,
+    })
 }
 
 fn registry_string(key: &str, value: &str) -> Result<String, SysError> {
@@ -1489,6 +1520,32 @@ pub fn start_service(name: &str) -> Result<(), SysError> {
     })
 }
 
+fn ensure_running(name: &str) -> Result<(), SysError> {
+    with_service(name, |service| unsafe {
+        if StartServiceW(service, 0, ptr::null()) == FALSE {
+            let code = GetLastError();
+            // ERROR_SERVICE_ALREADY_RUNNING
+            if code != 1056 {
+                return Err(SysError::os("StartServiceW", code));
+            }
+        }
+        for _ in 0..50 {
+            let mut status = std::mem::zeroed::<SERVICE_STATUS>();
+            if QueryServiceStatus(service, &mut status) == FALSE {
+                return Err(SysError::last("QueryServiceStatus"));
+            }
+            if status.dwCurrentState == SERVICE_RUNNING {
+                return Ok(());
+            }
+            if status.dwCurrentState == SERVICE_STOPPED {
+                return Err(SysError::os("service stopped", status.dwWin32ExitCode));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        Err(SysError::os("service start", WAIT_TIMEOUT))
+    })
+}
+
 pub fn stop_service(name: &str) -> Result<(), SysError> {
     with_service(name, |service| unsafe {
         let mut status = std::mem::zeroed::<SERVICE_STATUS>();
@@ -1614,37 +1671,60 @@ mod nat {
         let connection = connect()?;
         let rows: Vec<NatRow> = connection
             .raw_query("SELECT Name, InternalIPInterfaceAddressPrefix FROM MSFT_NetNat")
-            .map_err(|_| SysError::invalid("MSFT_NetNat query"))?;
+            .map_err(|error| explain("MSFT_NetNat query", error))?;
         Ok(rows
             .into_iter()
             .map(|row| NatObject {
                 name: row.name,
-                internal_prefix: row.prefix,
+                internal_prefix: row.prefix.unwrap_or_default(),
             })
             .collect())
     }
 
     pub fn create(name: &str, prefix: &str) -> Result<(), SysError> {
+        // New-NetNat starts the Windows NAT Driver. A stopped service makes
+        // MSFT_NetNat.Create fail before the object exists.
+        let _ = super::ensure_running("WinNat");
         let connection = connect()?;
-        let _out: MethodOutput = connection
-            .exec_class_method::<MSFT_NetNat, _, _>(
-                "Create",
-                NatCreate {
-                    Name: name.to_owned(),
-                    InternalIPInterfaceAddressPrefix: prefix.to_owned(),
-                },
-            )
-            .map_err(|_| SysError::invalid("MSFT_NetNat.Create"))?;
-        Ok(())
+        let created = connection.exec_class_method::<MSFT_NetNat, _, MethodOutput>(
+            "Create",
+            NatCreate {
+                Name: name.to_owned(),
+                InternalIPInterfaceAddressPrefix: prefix.to_owned(),
+            },
+        );
+        match created {
+            Ok(output) if output.ReturnValue == 0 => Ok(()),
+            Ok(output) => Err(SysError::os("MSFT_NetNat.Create", output.ReturnValue)),
+            Err(error) => {
+                // The method can create the instance and still return an output
+                // object this deserializer cannot read. The instance is the proof.
+                if list().is_ok_and(|rows| rows.iter().any(|row| row.name == name)) {
+                    Ok(())
+                } else {
+                    Err(explain("MSFT_NetNat.Create", error))
+                }
+            }
+        }
     }
 
     pub fn delete(name: &str) -> Result<(), SysError> {
         let connection = connect()?;
-        let path = format!("MSFT_NetNat.Name=\"{name}\"");
-        let _out: MethodOutput = connection
-            .exec_instance_method::<MSFT_NetNat, _, _>("Delete_", &path, ())
-            .map_err(|_| SysError::invalid("MSFT_NetNat delete"))?;
-        Ok(())
+        let query = format!("SELECT __PATH FROM MSFT_NetNat WHERE Name = '{name}'");
+        let rows: Vec<NatPath> = connection
+            .raw_query(&query)
+            .map_err(|error| explain("MSFT_NetNat query", error))?;
+        let Some(row) = rows.into_iter().next() else {
+            return Ok(());
+        };
+        let output: MethodOutput = connection
+            .exec_instance_method::<MSFT_NetNat, _, _>("Delete", &row.path, ())
+            .map_err(|error| explain("MSFT_NetNat.Delete", error))?;
+        if output.ReturnValue == 0 {
+            Ok(())
+        } else {
+            Err(SysError::os("MSFT_NetNat.Delete", output.ReturnValue))
+        }
     }
 
     pub fn install_filter(name: &str, listen_port: u16) -> Result<(), SysError> {
@@ -1660,7 +1740,7 @@ mod nat {
                     LocalPort: listen_port.to_string(),
                 },
             )
-            .map_err(|_| SysError::invalid("MSFT_NetFirewallRule.Create"))?;
+            .map_err(|error| explain("MSFT_NetFirewallRule.Create", error))?;
         Ok(())
     }
 
@@ -1669,22 +1749,36 @@ mod nat {
         let path = format!("MSFT_NetFirewallRule.DisplayName=\"{name}\"");
         let _out: MethodOutput = connection
             .exec_instance_method::<MSFT_NetFirewallRule, _, _>("Delete_", &path, ())
-            .map_err(|_| SysError::invalid("MSFT_NetFirewallRule delete"))?;
+            .map_err(|error| explain("MSFT_NetFirewallRule delete", error))?;
         Ok(())
     }
 
     fn connect() -> Result<WMIConnection, SysError> {
-        let com = COMLibrary::new().map_err(|_| SysError::invalid("COM"))?;
+        let com = COMLibrary::new().map_err(|error| explain("COM", error))?;
         WMIConnection::with_namespace_path("root\\StandardCimv2", com)
-            .map_err(|_| SysError::invalid("root\\StandardCimv2"))
+            .map_err(|error| explain("root\\StandardCimv2", error))
+    }
+
+    fn explain(operation: &'static str, error: wmi::WMIError) -> SysError {
+        let code = match &error {
+            wmi::WMIError::HResultError { hres } => Some(*hres as u32),
+            _ => None,
+        };
+        SysError::detailed(operation, code, error.to_string())
     }
 
     #[derive(Deserialize)]
     struct NatRow {
         #[serde(rename = "Name")]
         name: String,
-        #[serde(rename = "InternalIPInterfaceAddressPrefix")]
-        prefix: String,
+        #[serde(rename = "InternalIPInterfaceAddressPrefix", default)]
+        prefix: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    struct NatPath {
+        #[serde(rename = "__PATH")]
+        path: String,
     }
 
     #[derive(Deserialize)]
@@ -1720,6 +1814,6 @@ mod nat {
     #[allow(non_snake_case)]
     struct MethodOutput {
         #[serde(default)]
-        ReturnValue: i32,
+        ReturnValue: u32,
     }
 }
